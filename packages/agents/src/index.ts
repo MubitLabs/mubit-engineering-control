@@ -1,2 +1,7 @@
 export * from './adapter'
+export * from './claude/adapter'
+export * from './claude/bridge'
+export * from './claude/probe'
+export * from './claude/stream'
 export * from './fake/adapter'
+export * from './redact'

@@ -45,6 +45,8 @@ describe('Supervisor', () => {
     expect(s.isLive(owner)).toBe(true)
     await child.terminate(500)
     expect(alive(child.pid)).toBe(false)
+    // An orphaned grandchild can linger as a zombie for a moment before init reaps it.
+    for (let i = 0; i < 50 && alive(grandchild); i++) await new Promise((r) => setTimeout(r, 20))
     expect(alive(grandchild)).toBe(false)
     expect(s.isLive(owner)).toBe(false)
   })

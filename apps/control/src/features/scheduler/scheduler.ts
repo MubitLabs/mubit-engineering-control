@@ -13,10 +13,47 @@ interface ReadyTask {
   id: string
   deliveryId: string
   projectId: string
+  ownerId: string | null
   priority: number
   createdAt: Date
   spec: TaskSpec
   blocker: Blocker | null
+}
+
+export interface SchedulingProfile {
+  id: string
+  ownerId: string
+  runnerId: string
+  agentKind: string
+  allowedProjectIds: string[]
+  delegateIds: string[]
+  authState: string
+}
+
+/**
+ * Picks the execution profile for a task (PDF §5): the one named in the task, or any profile the
+ * task owner may use on this project. Never another employee's account without a grant, and never
+ * one whose native sign-in is known to be broken.
+ */
+export function chooseProfile(
+  task: { projectId: string; ownerId: string | null; spec: TaskSpec },
+  profiles: SchedulingProfile[],
+  byProfile: Readonly<Record<string, number>>,
+): SchedulingProfile | null {
+  const usable = (p: SchedulingProfile) =>
+    p.allowedProjectIds.includes(task.projectId) &&
+    task.ownerId !== null &&
+    (p.ownerId === task.ownerId || p.delegateIds.includes(task.ownerId)) &&
+    p.authState !== 'required'
+  if (task.spec.executionProfileId) {
+    const named = profiles.find((p) => p.id === task.spec.executionProfileId)
+    return named && usable(named) ? named : null
+  }
+  return (
+    profiles
+      .filter(usable)
+      .sort((a, b) => (byProfile[a.id] ?? 0) - (byProfile[b.id] ?? 0) || a.id.localeCompare(b.id))[0] ?? null
+  )
 }
 
 /**
@@ -70,7 +107,7 @@ export class Scheduler {
   private async pass(): Promise<void> {
     if (await dispatchPaused(this.sql)) return
     const ready = await this.sql<ReadyTask[]>`
-      select t.id, t.delivery_id, d.project_id, d.priority, t.created_at, t.spec, t.blocker
+      select t.id, t.delivery_id, d.project_id, t.owner_id, d.priority, t.created_at, t.spec, t.blocker
       from tasks t
       join deliveries d on d.id = t.delivery_id
       join projects p on p.id = d.project_id
@@ -80,21 +117,45 @@ export class Scheduler {
     `
     if (ready.length === 0) return
     const connected = this.registry.connectedIds()
-    const candidates: Candidate[] = ready.map((t) => ({
-      taskId: t.id,
-      deliveryId: t.deliveryId,
-      projectId: t.projectId,
-      priority: t.priority,
-      createdAt: t.createdAt.getTime(),
-      agentKind: this.config.defaultAgent,
-      profileId: t.spec.executionProfileId ?? null,
-      runnerId: null,
-    }))
-    const plan = planDispatches(
-      candidates,
-      await runnerSlots(this.sql, connected),
-      await currentLoad(this.sql),
-      this.config.limits,
+    const load = await currentLoad(this.sql)
+    const profiles = await this.sql<SchedulingProfile[]>`
+      select id, owner_id, runner_id, agent_kind, allowed_project_ids, delegate_ids, auth_state
+      from execution_profiles where revoked_at is null
+    `
+    const candidates: Candidate[] = []
+    const unassignable: { taskId: string; detail: string }[] = []
+    for (const t of ready) {
+      const profile = chooseProfile(t, profiles, load.byProfile)
+      const base = {
+        taskId: t.id,
+        deliveryId: t.deliveryId,
+        projectId: t.projectId,
+        priority: t.priority,
+        createdAt: t.createdAt.getTime(),
+      }
+      if (profile) {
+        candidates.push({
+          ...base,
+          agentKind: profile.agentKind,
+          profileId: profile.id,
+          runnerId: profile.runnerId,
+        })
+      } else if (this.config.defaultAgent === 'fake' && !t.spec.executionProfileId) {
+        candidates.push({ ...base, agentKind: 'fake', profileId: null, runnerId: null })
+      } else {
+        unassignable.push({
+          taskId: t.id,
+          detail: 'Waiting: no execution profile the task owner may use here',
+        })
+      }
+    }
+    const plan = planDispatches(candidates, await runnerSlots(this.sql, connected), load, this.config.limits)
+    plan.held.push(
+      ...unassignable.map((u) => ({
+        taskId: u.taskId,
+        limit: 'no_runner' as const,
+        detail: u.detail.replace('Waiting: ', ''),
+      })),
     )
 
     for (const d of plan.dispatches) {
@@ -105,6 +166,7 @@ export class Scheduler {
             taskId: d.taskId,
             runnerId: d.runnerId,
             agentKind: candidate.agentKind as 'fake' | 'claude-code',
+            profileId: candidate.profileId,
             inputs: {},
             actor: { kind: 'system', id: 'scheduler' },
             leaseMs: this.config.leaseTtlMs,

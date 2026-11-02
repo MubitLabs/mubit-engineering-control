@@ -31,6 +31,7 @@ export function Layout() {
             <span>Decision inbox</span>
             {pending > 0 && <span className="status warn">{pending}</span>}
           </NavLink>
+          <NavLink to="/accounts">Accounts</NavLink>
           {me.data?.user.isAdmin && <NavLink to="/fleet">Fleet</NavLink>}
         </nav>
         <nav className="nav">

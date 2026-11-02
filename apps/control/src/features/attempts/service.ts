@@ -23,6 +23,7 @@ import { type Db, isUniqueViolation, type Tx } from '../../db/sql'
 import { type ActorKind, appendEvent, projectStream } from '../../events/append'
 import { conflict, notFound } from '../../http/errors'
 import { enqueueCommand } from '../../outbox/commands'
+import { closeAttemptDecisions } from '../decisions/service'
 import { assertCapacity, dispatchLock, dispatchPaused } from '../scheduler/capacity'
 import { transition } from '../state'
 import { refreshReadiness } from '../tasks/readiness'
@@ -85,6 +86,7 @@ export interface ClaimInput {
   inputs: Record<string, unknown>
   actor: Actor
   leaseMs: number
+  profileId?: string | null
   /** Enforce scheduling limits under the dispatch lock (every caller except tests passes this). */
   capacity?: { limits: Limits; connectedIds: string[] }
 }
@@ -125,7 +127,7 @@ export async function claimAttempt(
         priority: task.priority,
         createdAt: 0,
         agentKind: input.agentKind,
-        profileId: task.spec.executionProfileId ?? null,
+        profileId: input.profileId ?? task.spec.executionProfileId ?? null,
         runnerId: input.runnerId,
       },
       input.runnerId,
@@ -141,10 +143,11 @@ export async function claimAttempt(
   try {
     const [row] = await tx.savepoint(
       (sp) => sp<AttemptRow[]>`
-      insert into attempts (project_id, delivery_id, task_id, number, kind, agent_kind, inputs, created_by)
+      insert into attempts (project_id, delivery_id, task_id, number, kind, agent_kind, inputs, created_by, profile_id)
       values (${task.projectId}, ${task.deliveryId}, ${task.id}, ${counter!.next}, ${input.kind ?? 'implement'},
               ${input.agentKind}, ${tx.json(input.inputs as never)},
-              ${input.actor.kind === 'user' ? (input.actor.id ?? null) : null})
+              ${input.actor.kind === 'user' ? (input.actor.id ?? null) : null},
+              ${input.profileId ?? null})
       returning *
     `,
     )
@@ -327,6 +330,9 @@ export async function applyLifecycle(
     actor: { kind: 'runner', id: attempt.runnerId },
     payload: { generation: env.generation },
   })
+  if (['interrupted', 'quota_wait', 'auth_required', ...attemptMachine.terminal].includes(to)) {
+    await closeAttemptDecisions(tx, attempt.id, 'the requesting process stopped before an answer arrived')
+  }
   await followTask(tx, { ...attempt, state: to }, to)
   return to
 }

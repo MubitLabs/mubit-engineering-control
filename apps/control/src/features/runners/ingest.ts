@@ -1,8 +1,10 @@
-import type { AttemptReport, RunnerEventEnvelope, RunnerHello } from '@mec/contracts'
+import type { AgentProbe, AttemptReport, RunnerEventEnvelope, RunnerHello } from '@mec/contracts'
 import { ACTIVE_ATTEMPT_STATES, attemptMachine, checkSequence, fence, LEASE_DEFAULTS } from '@mec/domain'
-import type { Sql, Tx } from '../../db/sql'
+import type { Db, Sql, Tx } from '../../db/sql'
 import { appendEvent, FLEET_STREAM, projectStream } from '../../events/append'
 import { type AttemptRow, applyLifecycle, followTask, isLifecycleEvent } from '../attempts/service'
+import { handleControlCall } from '../decisions/calls'
+import { openDecision } from '../decisions/service'
 import { transition } from '../state'
 
 export type IngestOutcome =
@@ -99,8 +101,10 @@ export async function renewLeases(
   runnerId: string,
   attempts: AttemptReport[],
   ttlMs: number = LEASE_DEFAULTS.ttlMs,
+  agents?: AgentProbe[],
 ): Promise<void> {
   await sql`update runners set last_seen_at = now() where id = ${runnerId}`
+  if (agents) await recordAgentHealth(sql, runnerId, agents)
   const live = attempts.filter((a) => a.process === 'live')
   for (const a of live) {
     await sql`
@@ -129,6 +133,7 @@ export async function reconcileHello(
         capacity = ${tx.json(hello.capacity as never)}, agents = ${tx.json(hello.agents as never)}
       where id = ${runnerId}
     `
+    await recordAgentHealth(tx, runnerId, hello.agents)
     await appendEvent(tx, {
       stream: FLEET_STREAM,
       type: 'runner.connected',
@@ -240,6 +245,11 @@ export async function failRejectedCommand(
       select payload from outbox where idempotency_key = ${commandId} and target = ${runnerId}
     `
     const cmd = row?.payload
+    if (cmd?.type === 'message') {
+      const messageId = (cmd as unknown as { payload: { messageId?: string } }).payload.messageId
+      if (messageId) await tx`update attempt_messages set status = 'rejected' where id = ${messageId}::uuid`
+      return
+    }
     if (!cmd?.attemptId || (cmd.type !== 'start' && cmd.type !== 'resume')) return
     const [attempt] = await tx<AttemptRow[]>`select * from attempts where id = ${cmd.attemptId} for update`
     if (attempt?.state !== 'leased' || attempt.generation !== cmd.generation) return
@@ -266,6 +276,20 @@ async function projectEvidence(tx: Tx, attempt: AttemptRow, env: RunnerEventEnve
   const p = env.payload
   const str = (v: unknown) => (typeof v === 'string' ? v : null)
   switch (env.type) {
+    case 'attempt.input_requested':
+      await openDecision(tx, attempt, env)
+      return
+    case 'control.call':
+      await handleControlCall(tx, attempt, env)
+      return
+    case 'message.delivered':
+      if (str(p.messageId)) {
+        await tx`
+          update attempt_messages set status = 'delivered', delivered_at = now()
+          where id = ${str(p.messageId)}::uuid and attempt_id = ${attempt.id} and status = 'queued'
+        `
+      }
+      return
     case 'workspace.ready': {
       await tx`
         update attempts set branch = coalesce(${str(p.branch)}, branch), base_sha = coalesce(${str(p.baseSha)}, base_sha)
@@ -303,5 +327,18 @@ async function projectEvidence(tx: Tx, attempt: AttemptRow, env: RunnerEventEnve
       `
       return
     }
+  }
+}
+
+/** Native auth health and capabilities flow from the runner's probes to the profiles it hosts. */
+export async function recordAgentHealth(db: Db, runnerId: string, agents: AgentProbe[]): Promise<void> {
+  await db`update runners set agents = ${db.json(agents as never)} where id = ${runnerId}`
+  for (const a of agents) {
+    await db`
+      update execution_profiles
+      set auth_state = ${a.available ? a.auth : 'unknown'}, agent_version = ${a.version},
+          capability_set = ${db.json(a.capabilities as never)}, updated_at = now()
+      where runner_id = ${runnerId} and agent_kind = ${a.kind}
+    `
   }
 }

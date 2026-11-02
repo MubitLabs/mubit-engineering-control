@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router'
 import { Layout } from './components/Layout'
 import { Loading } from './components/ui'
+import { AccountsPage } from './features/accounts/AccountsPage'
 import { LoginPage } from './features/auth/LoginPage'
 import { useMe } from './features/auth/useMe'
 import { DeliveryPage } from './features/deliveries/DeliveryPage'
@@ -22,6 +23,7 @@ export function App() {
         <Route index element={<ProjectsPage />} />
         <Route path="inbox" element={<InboxPage />} />
         <Route path="fleet" element={<FleetPage />} />
+        <Route path="accounts" element={<AccountsPage />} />
         <Route path="projects/:projectId" element={<ProjectPage />} />
         <Route path="projects/:projectId/deliveries/:deliveryId" element={<DeliveryPage />} />
         <Route path="projects/:projectId/tasks/:taskId" element={<TaskPage />} />

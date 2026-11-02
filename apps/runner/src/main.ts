@@ -1,6 +1,8 @@
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { ClaudeCodeAdapter, FakeAdapter } from '@mec/agents'
 import { EnrolResponse } from '@mec/contracts'
 import { createLogger, loadRunnerConfig } from './config'
 import { Runner } from './runner'
@@ -63,7 +65,19 @@ async function enrol() {
 async function run() {
   const config = loadRunnerConfig()
   const log = createLogger(config.logLevel)
-  const runner = new Runner(config, log)
+  const here = path.dirname(fileURLToPath(import.meta.url))
+  const runner = new Runner(config, log, [
+    new FakeAdapter({
+      binDir: path.join(config.home, 'bin'),
+      stateDir: path.join(config.home, 'agent-state'),
+    }),
+    new ClaudeCodeAdapter({
+      binary: process.env.MEC_CLAUDE_BIN ?? 'claude',
+      mcpServer: { command: process.execPath, args: [path.join(here, 'mec-mcp.js')] },
+      runtimeDir: path.join(config.home, 'run'),
+      model: process.env.MEC_CLAUDE_MODEL || null,
+    }),
+  ])
   await runner.start()
   log.info('runner started', {
     runnerId: config.runnerId,

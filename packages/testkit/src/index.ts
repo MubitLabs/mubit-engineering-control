@@ -135,4 +135,5 @@ export class FakeRunnerClient {
   }
 }
 
+export * from './paths'
 export * from './repo'

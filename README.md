@@ -18,6 +18,7 @@ short explainer in [`docs/milestones/`](docs/milestones/).
 | [M4](docs/milestones/M4.md) | Runner and protocol: enrolment, WebSocket, journal and replay, supervisor, fake agent, fleet UI |
 | [M5](docs/milestones/M5.md) | Scheduler, leases and recovery: fair limits, reconciliation, fencing, pause and fleet stop |
 | [M6](docs/milestones/M6.md) | Workspaces and checks: pinned worktrees, diffs, check results, artifacts |
+| [M7](docs/milestones/M7.md) | Claude Code adapter, decision bridge and inbox, execution profiles, steering messages |
 
 ## Layout
 

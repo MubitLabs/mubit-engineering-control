@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdir, statfs } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -5,8 +6,11 @@ import {
   type AgentAdapter,
   type AgentExit,
   type AgentSession,
+  type DecisionRequest,
   type DecisionResult,
+  type ExecutionMode,
   FakeAdapter,
+  redactDeep,
 } from '@mec/agents'
 import {
   type AttemptReport,
@@ -85,8 +89,15 @@ export class Runner {
     await this.workspaces.init()
     await this.recover()
     this.connection.start()
+    let beats = 0
     this.heartbeat = setInterval(() => {
-      this.connection.send({ type: 'heartbeat', attempts: this.reports() })
+      const probe = ++beats % 30 === 0
+      void (async () => {
+        const agents = probe
+          ? await Promise.all([...this.adapters.values()].map((a) => a.probe()))
+          : undefined
+        this.connection.send({ type: 'heartbeat', attempts: this.reports(), agents })
+      })()
     }, this.config.heartbeatMs)
   }
 
@@ -251,8 +262,12 @@ export class Runner {
         await journal.recordCommand(cmd.commandId)
         const live = this.live.get(cmd.attemptId)
         if (!live?.session) return this.result(cmd.commandId, 'rejected', 'no running session')
+        try {
+          await live.session.send(String(cmd.payload.text ?? ''))
+        } catch (e) {
+          return this.result(cmd.commandId, 'rejected', (e as Error).message)
+        }
         this.result(cmd.commandId, 'accepted')
-        await live.session.send(String(cmd.payload.text ?? ''))
         await this.emit(journal, T.messageDelivered, { messageId: cmd.payload.messageId ?? null })
         return
       }
@@ -273,7 +288,8 @@ export class Runner {
 
   /** Journals first, then forwards if connected. Unsent events are replayed after the welcome. */
   private async emit(journal: AttemptJournal, type: string, payload: Record<string, unknown>): Promise<void> {
-    await journal.append(type, payload)
+    // Credentials are redacted before the event is durable anywhere (PDF §26).
+    await journal.append(type, redactDeep(payload))
     this.flush(journal)
   }
 
@@ -359,8 +375,15 @@ export class Runner {
           generation,
           workdir: ws.workdir,
           prompt: briefFor(start),
-          mode: 'implement',
-          options: start.inputs,
+          mode: executionMode(start),
+          options: {
+            ...start.inputs,
+            allowedCommands: start.checks.map((c) => c.argv),
+            mecTools:
+              start.kind === 'coordinator'
+                ? ['approve', 'ask_question', 'report_result', 'propose_tasks']
+                : ['approve', 'ask_question', 'report_result'],
+          },
           env,
           resume:
             resume && journal.info.nativeSessionRef
@@ -370,7 +393,8 @@ export class Runner {
         {
           emit: ordered,
           spawn: (spec) => this.supervisor.spawn({ attemptId, generation }, spec),
-          requestDecision: () => Promise.reject(new Error('decisions arrive in M7')),
+          requestDecision: (request) => this.requestDecision(live, ordered, request),
+          callControl: (method, params) => this.callControl(live, ordered, method, params),
         },
       )
       live.session = session
@@ -505,6 +529,43 @@ export class Runner {
     await journal.update({ phase: 'done' })
   }
 
+  /**
+   * Decision bridge (PDF §7, §13): the request is journalled and forwarded; control turns it into a
+   * durable approval; the person's answer comes back as a `resolve_decision` command. An expired or
+   * stale request comes back as `closed`, which adapters treat as a denial, never as consent.
+   */
+  private requestDecision(
+    live: Live,
+    emit: (type: string, payload: Record<string, unknown>) => void,
+    request: DecisionRequest,
+  ): Promise<DecisionResult> {
+    const ref = request.nativeRequestRef
+    const answer = new Promise<DecisionResult>((resolve) => live.decisions.set(ref, resolve))
+    emit(T.inputRequested, { ...request })
+    return answer.then((decision) => {
+      live.decisions.delete(ref)
+      emit('decision.received', { nativeRequestRef: ref, kind: decision.kind })
+      if (live.decisions.size === 0) emit(T.inputResolved, { nativeRequestRef: ref })
+      return decision
+    })
+  }
+
+  /** A scoped request to control that is answered like a decision, without a person. */
+  private callControl(
+    live: Live,
+    emit: (type: string, payload: Record<string, unknown>) => void,
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown> {
+    const ref = `call-${randomUUID()}`
+    const answer = new Promise<DecisionResult>((resolve) => live.decisions.set(ref, resolve))
+    emit('control.call', { nativeRequestRef: ref, method, params })
+    return answer.then((d) => {
+      live.decisions.delete(ref)
+      return (d as unknown as { result?: unknown }).result ?? d
+    })
+  }
+
   /** Environment shared by agents and checks: no credentials, a unique port, the attempt id. */
   private taskEnv(attemptId: string, port: number): Record<string, string> {
     return {
@@ -567,4 +628,10 @@ function briefFor(start: StartPayload): string {
     spec.objective ?? '',
     spec.deliverables?.length ? `\nDeliverables:\n${spec.deliverables.map((d) => `- ${d}`).join('\n')}` : '',
   ].join('\n')
+}
+
+/** Coordinators observe; implementers implement unless the task asks for assisted mode. */
+function executionMode(start: StartPayload): ExecutionMode {
+  if (start.kind === 'coordinator') return 'observe'
+  return start.inputs.mode === 'assisted' || start.inputs.mode === 'observe' ? start.inputs.mode : 'implement'
 }

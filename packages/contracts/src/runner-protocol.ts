@@ -137,7 +137,12 @@ export const RunnerToControl = z.discriminatedUnion('type', [
     status: z.enum(['accepted', 'duplicate', 'rejected']),
     reason: z.string().optional(),
   }),
-  z.object({ type: z.literal('heartbeat'), attempts: z.array(AttemptReport) }),
+  z.object({
+    type: z.literal('heartbeat'),
+    attempts: z.array(AttemptReport),
+    /** Refreshed agent probes, sent every few minutes so auth expiry is noticed. */
+    agents: z.array(AgentProbe).optional(),
+  }),
 ])
 export type RunnerToControl = z.infer<typeof RunnerToControl>
 

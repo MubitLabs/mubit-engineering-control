@@ -125,7 +125,7 @@ export async function registerRunnerGateway(
             return
           }
           case 'heartbeat':
-            await renewLeases(sql, runnerId, msg.attempts, leaseTtlMs)
+            await renewLeases(sql, runnerId, msg.attempts, leaseTtlMs, msg.agents)
             return
           case 'command_result':
             await markCommandResult(sql, runnerId, msg.commandId, msg.status, msg.reason)

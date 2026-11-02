@@ -52,6 +52,8 @@ export interface AgentIO {
   spawn(spec: SpawnSpec): ChildHandle
   /** Ask a person. Resolves with their decision; rejects if unsupported in this context. */
   requestDecision(request: DecisionRequest): Promise<DecisionResult>
+  /** A scoped round trip to control (e.g. the coordinator's propose_tasks). */
+  callControl?(method: string, params: Record<string, unknown>): Promise<unknown>
 }
 
 export type ExecutionMode = 'observe' | 'implement' | 'assisted'

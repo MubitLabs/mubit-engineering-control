@@ -5,9 +5,11 @@ import { api } from '../../api/client'
 import { useProjectEvents } from '../../api/events'
 import type { Approval, Task } from '../../api/types'
 import { Empty, ErrorBox, Loading, Panel, Short, Status, Time } from '../../components/ui'
+import type { ProfileView } from '../accounts/AccountsPage'
 import { useMe } from '../auth/useMe'
 import { DecisionCard } from '../inbox/InboxPage'
 import { AttemptResult } from './AttemptResult'
+import { Messages } from './Messages'
 import { Transcript } from './Transcript'
 
 export interface AttemptView {
@@ -209,6 +211,10 @@ function AttemptPanel({ attempt, canPrompt }: { attempt: AttemptView; canPrompt:
       {attempt.blocker && <div className="panel-body notice">{attempt.blocker.detail}</div>}
       <AttemptResult attemptId={attempt.id} />
       <Transcript attemptId={attempt.id} />
+      <Messages
+        attemptId={attempt.id}
+        canSend={canPrompt && ['running', 'awaiting_input'].includes(attempt.state)}
+      />
       <ErrorBox error={control.error} />
     </Panel>
   )
@@ -216,12 +222,18 @@ function AttemptPanel({ attempt, canPrompt }: { attempt: AttemptView; canPrompt:
 
 function StartAttempt({ taskId }: { taskId: string }) {
   const qc = useQueryClient()
+  const profiles = useQuery({
+    queryKey: ['profiles'],
+    queryFn: () => api.get<{ profiles: ProfileView[] }>('/api/profiles'),
+  })
+  const [profileId, setProfileId] = useState('')
+  const [mode, setMode] = useState<'implement' | 'assisted'>('implement')
   const [script, setScript] = useState('')
   const start = useMutation({
     mutationFn: () =>
       api.post(`/api/tasks/${taskId}/attempts`, {
-        agentKind: 'fake',
-        script: script.trim() ? JSON.parse(script) : undefined,
+        ...(profileId ? { profileId, mode } : { agentKind: 'fake' }),
+        script: !profileId && script.trim() ? JSON.parse(script) : undefined,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['task', taskId] }),
   })
@@ -229,14 +241,36 @@ function StartAttempt({ taskId }: { taskId: string }) {
     <Panel title="Start an attempt">
       <div className="form">
         <label className="field">
-          Fake agent script (JSON steps, optional)
-          <textarea
-            rows={4}
-            value={script}
-            onChange={(e) => setScript(e.target.value)}
-            placeholder='[{"say":"hello"},{"sleepMs":1000},{"write":{"path":"a.txt","content":"x"}}]'
-          />
+          Agent account
+          <select value={profileId} onChange={(e) => setProfileId(e.target.value)}>
+            <option value="">fake agent (scripted)</option>
+            {profiles.data?.profiles.map((p) => (
+              <option key={p.id} value={p.id} disabled={p.authState === 'required'}>
+                {p.label} — {p.agentKind} on {p.runnerName} ({p.ownerLogin})
+                {p.authState === 'required' ? ' · sign-in required' : ''}
+              </option>
+            ))}
+          </select>
         </label>
+        {profileId ? (
+          <label className="field">
+            Mode
+            <select value={mode} onChange={(e) => setMode(e.target.value as 'implement' | 'assisted')}>
+              <option value="implement">Implement — scoped edits and the task's checks run freely</option>
+              <option value="assisted">Assisted — every edit and command asks first</option>
+            </select>
+          </label>
+        ) : (
+          <label className="field">
+            Fake agent script (JSON steps, optional)
+            <textarea
+              rows={4}
+              value={script}
+              onChange={(e) => setScript(e.target.value)}
+              placeholder='[{"say":"hello"},{"sleepMs":1000},{"write":{"path":"a.txt","content":"x"}}]'
+            />
+          </label>
+        )}
         <ErrorBox error={start.error} />
         <div>
           <button
@@ -245,7 +279,7 @@ function StartAttempt({ taskId }: { taskId: string }) {
             disabled={start.isPending}
             onClick={() => start.mutate()}
           >
-            Start fake attempt
+            Start attempt
           </button>
         </div>
       </div>

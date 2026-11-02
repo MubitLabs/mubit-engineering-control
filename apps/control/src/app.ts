@@ -11,9 +11,11 @@ import { registerArtifacts } from './features/artifacts/routes'
 import { registerAttemptRoutes } from './features/attempts/routes'
 import { createGithubOAuth, type GithubOAuth } from './features/auth/github'
 import { registerAuth } from './features/auth/routes'
+import { decisionHooks, onDecisionExpired } from './features/decisions/service'
 import { registerDeliveries } from './features/deliveries/routes'
 import { registerEvents } from './features/events/routes'
 import { planApprovalHooks } from './features/plans/service'
+import { registerProfiles } from './features/profiles/routes'
 import { registerProjects } from './features/projects/routes'
 import { registerRunnerGateway } from './features/runners/gateway'
 import { RunnerRegistry } from './features/runners/registry'
@@ -66,11 +68,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         ? createGithubOAuth(config.github.clientId, config.github.clientSecret)
         : null
 
-  const hooks: ApprovalHookMap = { plan: planApprovalHooks }
+  const hooks: ApprovalHookMap = { plan: planApprovalHooks, tool: decisionHooks, question: decisionHooks }
   const registry = new RunnerRegistry()
   const dispatcher = new CommandDispatcher(sql, registry, app.log)
   const scheduler = new Scheduler(sql, registry, bus, config.scheduling, app.log)
-  const reconciler = new Reconciler(sql, config.scheduling, app.log)
+  const reconciler = new Reconciler(sql, config.scheduling, app.log, onDecisionExpired)
   app.decorate('services', { registry, dispatcher, scheduler, reconciler })
   app.addHook('onReady', async () => {
     await dispatcher.start()
@@ -99,6 +101,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerAttemptRoutes(app, { sql, registry, config })
   registerSchedulerRoutes(app, { sql, registry, config })
   registerArtifacts(app, { sql, config })
+  registerProfiles(app, { sql })
   await registerRunnerGateway(app, { sql, registry, dispatcher, leaseTtlMs: config.scheduling.leaseTtlMs })
 
   const webDir = deps.webDistDir === undefined ? WEB_DIST_DIR : deps.webDistDir

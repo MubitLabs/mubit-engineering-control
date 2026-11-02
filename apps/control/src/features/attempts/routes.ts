@@ -12,6 +12,8 @@ const StartAttempt = z.object({
   runnerId: z.uuid().optional(),
   agentKind: AgentKind.default('fake'),
   script: z.array(FakeStep).max(500).optional(),
+  profileId: z.uuid().optional(),
+  mode: z.enum(['implement', 'assisted']).optional(),
 })
 
 export function registerAttemptRoutes(
@@ -68,7 +70,32 @@ export function registerAttemptRoutes(
     const body = parse(StartAttempt, req.body ?? {})
     const task = await loadTask(req.params.taskId)
     authorize(actor, 'prompt', attemptResource(task))
-    const runnerId = body.runnerId ?? (await pickRunner(sql, registry))
+    let profile: { id: string; runnerId: string; agentKind: 'fake' | 'claude-code' } | null = null
+    if (body.profileId) {
+      const [p] = await sql<
+        {
+          id: string
+          ownerId: string
+          runnerId: string
+          agentKind: 'fake' | 'claude-code'
+          allowedProjectIds: string[]
+          delegateIds: string[]
+          authState: string
+        }[]
+      >`select * from execution_profiles where id = ${body.profileId} and revoked_at is null`
+      if (!p) throw notFound('Profile')
+      authorize(actor, 'use_profile', {
+        kind: 'profile',
+        ownerId: p.ownerId,
+        delegateIds: p.delegateIds,
+        allowedProjectIds: p.allowedProjectIds,
+        projectId: task.projectId,
+      })
+      if (p.authState === 'required')
+        throw conflict('auth_required', 'The profile owner must sign in to the agent again')
+      profile = p
+    }
+    const runnerId = profile?.runnerId ?? body.runnerId ?? (await pickRunner(sql, registry))
     if (!runnerId) throw conflict('no_runner', 'No online, non-draining runner is available')
     const [runner] = await sql<{ draining: boolean; revokedAt: Date | null }[]>`
       select draining, revoked_at from runners where id = ${runnerId}
@@ -79,8 +106,12 @@ export function registerAttemptRoutes(
       claimAttempt(tx, {
         taskId: task.id,
         runnerId,
-        agentKind: body.agentKind,
-        inputs: body.script ? { script: body.script } : {},
+        agentKind: profile?.agentKind ?? body.agentKind,
+        profileId: profile?.id ?? null,
+        inputs: {
+          ...(body.script ? { script: body.script } : {}),
+          ...(body.mode ? { mode: body.mode } : {}),
+        },
         actor: { kind: 'user', id: actor.userId },
         leaseMs: config.scheduling.leaseTtlMs,
         capacity: { limits: config.scheduling.limits, connectedIds: registry.connectedIds() },
@@ -93,11 +124,16 @@ export function registerAttemptRoutes(
     const actor = await requireActor(sql, req)
     const attempt = await loadAttempt(sql, req.params.attemptId)
     authorize(actor, 'observe', { kind: 'project', projectId: attempt.projectId })
-    const [checks, artifacts] = await Promise.all([
+    const [checks, artifacts, messages] = await Promise.all([
       sql`select * from check_results where attempt_id = ${attempt.id} order by created_at`,
       sql`select id, kind, name, size_bytes, created_at from artifacts where attempt_id = ${attempt.id} order by created_at`,
+      sql`
+        select m.id, m.body, m.status, m.created_at, m.delivered_at, u.login as author_login
+        from attempt_messages m join users u on u.id = m.author_id
+        where m.attempt_id = ${attempt.id} order by m.created_at
+      `,
     ])
-    return { attempt, checks, artifacts }
+    return { attempt, checks, artifacts, messages }
   })
 
   app.get<{ Params: { attemptId: string } }>('/api/attempts/:attemptId/events', async (req) => {
@@ -117,6 +153,47 @@ export function registerAttemptRoutes(
       order by id limit ${q.limit}
     `
     return { events }
+  })
+
+  /**
+   * Steering messages (PDF §12): one ordered queue per attempt with authors; the client key makes a
+   * retried send idempotent, and the runner's delivery event marks it delivered.
+   */
+  app.post<{ Params: { attemptId: string } }>('/api/attempts/:attemptId/messages', async (req, reply) => {
+    const actor = await requireActor(sql, req)
+    const body = parse(
+      z.object({ text: z.string().min(1).max(20_000), clientKey: z.string().min(8).max(100) }),
+      req.body,
+    )
+    const attempt = await loadAttempt(sql, req.params.attemptId)
+    const task = await loadTask(attempt.taskId)
+    authorize(actor, 'prompt', attemptResource(task))
+    if (!['running', 'awaiting_input'].includes(attempt.state)) {
+      throw conflict('not_running', `Attempt is ${attempt.state}; messages reach running sessions only`)
+    }
+    const result = await sql.begin(async (tx) => {
+      const [created] = await tx<{ id: string; status: string }[]>`
+        insert into attempt_messages (attempt_id, author_id, body, client_key)
+        values (${attempt.id}, ${actor.userId}, ${body.text}, ${body.clientKey})
+        on conflict (attempt_id, client_key) do nothing
+        returning id, status
+      `
+      if (!created) {
+        const [existing] = await tx<{ id: string; status: string }[]>`
+          select id, status from attempt_messages where attempt_id = ${attempt.id} and client_key = ${body.clientKey}
+        `
+        return { message: existing!, created: false }
+      }
+      await commandAttempt(
+        tx,
+        attempt,
+        'message',
+        { messageId: created.id, text: body.text },
+        { kind: 'user', id: actor.userId },
+      )
+      return { message: created, created: true }
+    })
+    return reply.status(result.created ? 201 : 200).send(result)
   })
 
   for (const type of ['interrupt', 'cancel'] as const) {

@@ -1,0 +1,118 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`'approval' machine > matches the reviewed transition table 1`] = `
+[
+  "pending --approve--> approved",
+  "pending --reject--> rejected",
+  "pending --answer--> answered",
+  "pending --expire--> expired",
+  "pending --invalidate--> stale",
+]
+`;
+
+exports[`'attempt' machine > matches the reviewed transition table 1`] = `
+[
+  "queued --lease_granted--> leased",
+  "queued --cancel--> cancelled",
+  "leased --runner_accepted--> preparing",
+  "leased --lease_expired--> stalled",
+  "leased --error--> failed",
+  "leased --cancel--> cancelled",
+  "preparing --agent_started--> running",
+  "preparing --interrupt_confirmed--> interrupted",
+  "preparing --quota_exhausted--> quota_wait",
+  "preparing --auth_expired--> auth_required",
+  "preparing --lease_expired--> stalled",
+  "preparing --error--> failed",
+  "preparing --cancel--> cancelled",
+  "running --input_requested--> awaiting_input",
+  "running --agent_finished--> work_complete",
+  "running --interrupt_confirmed--> interrupted",
+  "running --quota_exhausted--> quota_wait",
+  "running --auth_expired--> auth_required",
+  "running --lease_expired--> stalled",
+  "running --error--> failed",
+  "running --cancel--> cancelled",
+  "awaiting_input --input_resolved--> running",
+  "awaiting_input --interrupt_confirmed--> interrupted",
+  "awaiting_input --quota_exhausted--> quota_wait",
+  "awaiting_input --auth_expired--> auth_required",
+  "awaiting_input --lease_expired--> stalled",
+  "awaiting_input --error--> failed",
+  "awaiting_input --cancel--> cancelled",
+  "work_complete --checks_started--> checking",
+  "work_complete --lease_expired--> stalled",
+  "work_complete --error--> failed",
+  "work_complete --cancel--> cancelled",
+  "checking --checks_passed--> succeeded",
+  "checking --checks_failed--> checks_failed",
+  "checking --lease_expired--> stalled",
+  "checking --error--> failed",
+  "checking --cancel--> cancelled",
+  "interrupted --resume--> leased",
+  "interrupted --cancel--> cancelled",
+  "quota_wait --resume--> leased",
+  "quota_wait --cancel--> cancelled",
+  "auth_required --resume--> leased",
+  "auth_required --cancel--> cancelled",
+  "stalled --runner_reconciled_running--> running",
+  "stalled --runner_reconciled_stopped--> interrupted",
+  "stalled --cancel--> cancelled",
+]
+`;
+
+exports[`'delivery' machine > matches the reviewed transition table 1`] = `
+[
+  "planning --plan_approved--> approved",
+  "planning --cancel--> cancelled",
+  "approved --work_started--> executing",
+  "approved --plan_revised--> planning",
+  "approved --cancel--> cancelled",
+  "executing --plan_revised--> planning",
+  "executing --integration_started--> integrating",
+  "executing --cancel--> cancelled",
+  "integrating --integration_reopened--> executing",
+  "integrating --pr_opened--> awaiting_merge",
+  "integrating --cancel--> cancelled",
+  "awaiting_merge --pr_merged--> merged",
+  "awaiting_merge --pr_closed--> integrating",
+  "awaiting_merge --cancel--> cancelled",
+]
+`;
+
+exports[`'plan_revision' machine > matches the reviewed transition table 1`] = `
+[
+  "draft --submit--> proposed",
+  "draft --edit--> draft",
+  "draft --supersede--> superseded",
+  "proposed --edit--> draft",
+  "proposed --approve--> approved",
+  "proposed --reject--> rejected",
+  "proposed --supersede--> superseded",
+  "approved --supersede--> superseded",
+]
+`;
+
+exports[`'task' machine > matches the reviewed transition table 1`] = `
+[
+  "proposed --plan_approved--> approved",
+  "proposed --cancel--> cancelled",
+  "approved --dependencies_satisfied--> ready",
+  "approved --cancel--> cancelled",
+  "ready --dependencies_reopened--> approved",
+  "ready --attempt_started--> active",
+  "ready --cancel--> cancelled",
+  "active --attempt_succeeded--> awaiting_review",
+  "active --attempt_failed_retryable--> ready",
+  "active --attempt_failed_final--> failed",
+  "active --cancel--> cancelled",
+  "awaiting_review --review_accepted--> accepted",
+  "awaiting_review --review_sent_back--> ready",
+  "awaiting_review --cancel--> cancelled",
+  "accepted --integrated--> integrated",
+  "accepted --integration_conflict--> ready",
+  "accepted --cancel--> cancelled",
+  "failed --retry--> ready",
+  "failed --cancel--> cancelled",
+]
+`;

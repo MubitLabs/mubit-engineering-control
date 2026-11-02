@@ -12,6 +12,7 @@ short explainer in [`docs/milestones/`](docs/milestones/).
 | Milestone | Component |
 | --- | --- |
 | [M0](docs/milestones/M0.md) | Foundation: workspace, event log, outbox, migrations, CI |
+| [M1](docs/milestones/M1.md) | Domain and policy: state machines, task-graph validation, leases, permissions |
 
 ## Layout
 

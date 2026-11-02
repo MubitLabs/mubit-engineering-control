@@ -222,7 +222,8 @@ describe('decision race (PDF §34)', () => {
   it('two concurrent answers to a tool request give one resolution and one command to the runner', async () => {
     runner = await connectedRunner()
     const { attempt } = await startAttempt(runner.runnerId)
-    for (const type of ['attempt.preparing', 'attempt.started']) await runner.emit(runner.envelope(attempt.id, 1, type))
+    for (const type of ['attempt.preparing', 'attempt.started'])
+      await runner.emit(runner.envelope(attempt.id, 1, type))
     await runner.emit(
       runner.envelope(attempt.id, 1, 'attempt.input_requested', {
         kind: 'tool',
@@ -232,7 +233,8 @@ describe('decision race (PDF §34)', () => {
         command: 'make deploy',
       }),
     )
-    const [approval] = await t.db.sql`select id from approvals where attempt_id = ${attempt.id} and kind = 'tool'`
+    const [approval] = await t.db
+      .sql`select id from approvals where attempt_id = ${attempt.id} and kind = 'tool'`
     const url = `/api/approvals/${approval!.id}/resolve`
     const results = await Promise.all([
       s.admin.post(url, { decision: { kind: 'approve' } }),

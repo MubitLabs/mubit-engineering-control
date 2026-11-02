@@ -24,7 +24,14 @@ export function registerRunnerRoutes(
     const actor = await requireActor(sql, req)
     if (!actor.isAdmin) throw forbidden('Only admins can enrol runners')
     const body = parse(
-      z.object({ ownerLogin: z.string().optional(), label: z.string().min(1).max(100) }),
+      z.object({
+        ownerLogin: z.string().optional(),
+        label: z.string().min(1).max(100),
+        name: z
+          .string()
+          .regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/, 'letters, digits, dot, dash and underscore')
+          .optional(),
+      }),
       req.body,
     )
     const [owner] = body.ownerLogin
@@ -47,7 +54,7 @@ export function registerRunnerRoutes(
     return reply.status(201).send({
       invite: { ...invite, owner: owner.login, label: body.label },
       token,
-      command: `node apps/runner/dist/main.js enrol --url ${config.publicUrl} --invite ${token} --name <runner-name>`,
+      command: `node apps/runner/dist/main.js enrol --url ${config.publicUrl} --invite ${token}${body.name ? ` --name ${body.name}` : ''}`,
     })
   })
 

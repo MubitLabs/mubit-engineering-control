@@ -36,7 +36,8 @@ const attemptRow = async (id: string) => (await t.db.sql`select * from attempts 
 
 describe('enrolment', () => {
   it('exchanges a single-use invitation for a device token', async () => {
-    const invite = (await s.admin.post('/api/runners/invites', { label: 'box' })).json()
+    const invite = (await s.admin.post('/api/runners/invites', { label: 'box', name: 'box' })).json()
+    expect(invite.command).toMatch(/ enrol --url \S+ --invite mec_inv_\S+ --name box$/)
     const body = { inviteToken: invite.token, name: 'box', hostname: 'h', os: 'linux', arch: 'x64' }
     const first = await t.app.inject({ method: 'POST', url: '/api/runners/enrol', payload: body })
     expect(first.statusCode).toBe(201)

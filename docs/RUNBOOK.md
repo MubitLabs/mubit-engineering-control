@@ -47,7 +47,10 @@ Migrations only move forward; a rollback across a migration needs a reviewed dow
    and in `/etc/mec/control.env` as `GITHUB_TOKEN` (pull requests), then restart both services.
 4. **A runner for an employee.** Fleet → *Enrol a runner* (or on the host:
    `node /opt/mec/current/apps/control/dist/admin.js invite --owner <login> --label <text>`), then on
-   the employee's machine `node apps/runner/dist/main.js enrol --url https://mec.139-59-181-123.sslip.io --invite <token> --name <name>`.
+   the employee's machine, in a built checkout (`pnpm install && pnpm build`):
+   `node apps/runner/dist/main.js enrol --url https://mec.139-59-181-123.sslip.io --invite <token> --name <name>`
+   writes `~/.config/mec/runner.env`; `node apps/runner/dist/main.js` then starts it (it reads that
+   file; `--help` lists the settings). The Fleet page shows the runner once it enrols and comes online.
 5. **An execution profile.** The runner's owner opens Accounts → *Offer an agent account*, picks the
    runner and agent, grants projects and (optionally) delegates.
 

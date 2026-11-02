@@ -1,0 +1,21 @@
+# Local Postgres for development and tests. Tests create and drop their own databases.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mec
+      POSTGRES_PASSWORD: mec
+      POSTGRES_DB: mec
+    ports:
+      - "127.0.0.1:5434:5432"
+    command: ["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "max_connections=300"]
+    volumes:
+      - mec-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mec"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  mec-pg:

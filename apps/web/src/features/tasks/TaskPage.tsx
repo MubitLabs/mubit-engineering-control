@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { api } from '../../api/client'
-import { useProjectEvents } from '../../api/events'
 import type { Approval, Task } from '../../api/types'
 import { Empty, ErrorBox, Loading, Panel, Short, Status, Time } from '../../components/ui'
 import type { ProfileView } from '../accounts/AccountsPage'
@@ -52,7 +51,6 @@ const LIVE = new Set([
 /** Task workbench (PDF §12): conversation, checks, diff and the controls for the current attempt. */
 export function TaskPage() {
   const { projectId, taskId } = useParams()
-  useProjectEvents(projectId)
   const q = useQuery({
     queryKey: ['task', taskId],
     queryFn: () => api.get<TaskDetail>(`/api/tasks/${taskId}`),

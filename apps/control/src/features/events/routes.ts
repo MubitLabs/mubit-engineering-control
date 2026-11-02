@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { Sql } from '../../db/sql'
-import { projectStream, readStream, type StoredEvent } from '../../events/append'
+import { projectStream, readStream, type StoredEvent, streamHead } from '../../events/append'
 import type { EventBus } from '../../events/bus'
 import { authorize, requireActor } from '../../http/actor'
 import { parse } from '../../http/errors'
@@ -41,10 +41,19 @@ export function registerEvents(app: FastifyInstance, deps: { sql: Sql; bus: Even
     const actor = await requireActor(sql, req)
     const project = await loadProject(sql, req.params.projectId)
     authorize(actor, 'observe', { kind: 'project', projectId: project.id })
-    const q = parse(z.object({ after: z.coerce.number().int().min(0).optional() }), req.query)
-    const header = Number(req.headers['last-event-id'])
-    let cursor = Number.isInteger(header) && header >= 0 ? header : (q.after ?? 0)
+    const q = parse(
+      z.object({ after: z.coerce.number().int().min(0).optional(), from: z.literal('now').optional() }),
+      req.query,
+    )
     const stream = projectStream(project.id)
+    // A reconnect's Last-Event-ID wins; `from=now` skips history for listeners that only need changes.
+    const header = Number(req.headers['last-event-id'])
+    let cursor =
+      Number.isInteger(header) && header >= 0
+        ? header
+        : q.from === 'now'
+          ? await streamHead(sql, stream)
+          : (q.after ?? 0)
 
     reply.hijack()
     const res = reply.raw

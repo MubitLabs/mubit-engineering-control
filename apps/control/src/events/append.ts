@@ -78,3 +78,9 @@ export async function readStream(
     limit ${limit}
   `
 }
+
+/** The latest sequence number in a stream (0 if it has no events yet). */
+export async function streamHead(db: Db, stream: string): Promise<number> {
+  const [row] = await db<{ lastSeq: number }[]>`select last_seq from event_streams where stream = ${stream}`
+  return row?.lastSeq ?? 0
+}

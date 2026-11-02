@@ -52,6 +52,21 @@ async function readEvents(
 }
 
 describe('project event stream (SSE)', () => {
+  it('starts at the live edge with from=now, skipping history', async () => {
+    t = await createTestApp()
+    const s = await seedProject(t)
+    const address = await t.app.listen({ host: '127.0.0.1', port: 0 })
+    const [head] = await t.db.sql`
+      select last_seq from event_streams where stream = ${`project:${s.project.id}`}
+    `
+    const live = readEvents(`${address}/api/projects/${s.project.id}/events?from=now`, s.admin.cookie, 1)
+    await new Promise((r) => setTimeout(r, 200))
+    await s.admin.post(`/api/projects/${s.project.id}/members`, { login: 'lee', role: 'viewer' })
+    const events = await live
+    expect(events.map((e) => e.id)).toEqual([(head!.lastSeq as number) + 1])
+    expect(events[0]!.data.type).toBe('project.member_set')
+  })
+
   it('replays history, delivers live events, and resumes from Last-Event-ID without gaps or duplicates', async () => {
     t = await createTestApp()
     const s = await seedProject(t)

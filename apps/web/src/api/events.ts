@@ -5,9 +5,15 @@ import type { StoredEvent } from './types'
 /**
  * Subscribes to a project's event stream. The browser's EventSource resends Last-Event-ID on
  * reconnect, so the server replays exactly what was missed. Every event invalidates cached queries
- * for the affected resources; the server stays the source of truth.
+ * for the affected resources; the server stays the source of truth. `fromNow` skips history for
+ * listeners that only need to hear about changes.
  */
-export function useProjectEvents(projectId: string | undefined, onEvent?: (e: StoredEvent) => void) {
+export function useProjectEvents(
+  projectId: string | undefined,
+  onEvent?: (e: StoredEvent) => void,
+  opts: { fromNow?: boolean } = {},
+) {
+  const { fromNow = false } = opts
   const qc = useQueryClient()
   const [connected, setConnected] = useState(false)
   const handler = useRef(onEvent)
@@ -15,7 +21,7 @@ export function useProjectEvents(projectId: string | undefined, onEvent?: (e: St
 
   useEffect(() => {
     if (!projectId) return
-    const source = new EventSource(`/api/projects/${projectId}/events`)
+    const source = new EventSource(`/api/projects/${projectId}/events${fromNow ? '?from=now' : ''}`)
     source.onopen = () => setConnected(true)
     source.onerror = () => setConnected(false)
     source.onmessage = (msg) => {
@@ -32,7 +38,7 @@ export function useProjectEvents(projectId: string | undefined, onEvent?: (e: St
       source.close()
       setConnected(false)
     }
-  }, [projectId, qc])
+  }, [projectId, fromNow, qc])
 
   return { connected }
 }

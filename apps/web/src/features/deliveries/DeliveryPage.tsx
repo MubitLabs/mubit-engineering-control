@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { ApiError, api } from '../../api/client'
-import { useProjectEvents } from '../../api/events'
 import type { DeliveryDetail, PlanRevision } from '../../api/types'
 import { Empty, ErrorBox, Loading, Panel, Status, Time } from '../../components/ui'
 import type { ProfileView } from '../accounts/AccountsPage'
@@ -11,7 +10,6 @@ import { TaskGraph } from './TaskGraph'
 
 export function DeliveryPage() {
   const { projectId, deliveryId } = useParams()
-  useProjectEvents(projectId)
   const q = useQuery({
     queryKey: ['delivery', deliveryId],
     queryFn: () => api.get<DeliveryDetail>(`/api/deliveries/${deliveryId}`),

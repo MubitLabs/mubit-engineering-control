@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { NavLink, Outlet, useNavigate, useParams } from 'react-router'
 import { api } from '../api/client'
+import { useProjectEvents } from '../api/events'
 import type { Approval, Project } from '../api/types'
 import { useMe } from '../features/auth/useMe'
 
@@ -68,9 +69,18 @@ export function Layout() {
           </button>
         </div>
       </aside>
+      {projects.data?.projects.map((p) => (
+        <LiveProject key={p.id} projectId={p.id} />
+      ))}
       <main className="main">
         <Outlet />
       </main>
     </div>
   )
+}
+
+/** Keeps every visible project's data fresh (inbox, badge, open pages) from its live event stream. */
+function LiveProject({ projectId }: { projectId: string }) {
+  useProjectEvents(projectId, undefined, { fromNow: true })
+  return null
 }

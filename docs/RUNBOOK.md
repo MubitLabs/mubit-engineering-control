@@ -39,7 +39,8 @@ Migrations only move forward; a rollback across a migration needs a reviewed dow
 2. **Claude Code on the runner.** `ssh droplet-max`, run `claude`, then `/login`. The runner's
    probe picks it up within five minutes (Accounts page shows sign-in `ok`).
 3. **Repository token.** A fine-grained PAT limited to the delivery repositories (Contents and Pull
-   requests: read and write; Checks: read, for the PR's CI status). Put it in `/home/max/.config/mec/runner.env` as `MEC_GIT_TOKEN` (push)
+   requests: read and write). Fine-grained tokens have no Checks permission; if the token cannot
+   read check runs, the PR's CI summary stays empty and merge tracking is unaffected. Put it in `/home/max/.config/mec/runner.env` as `MEC_GIT_TOKEN` (push)
    and in `/etc/mec/control.env` as `GITHUB_TOKEN` (pull requests), then restart both services.
 4. **A runner for an employee.** Fleet → *Enrol a runner* (or on the host:
    `node /opt/mec/current/apps/control/dist/admin.js invite --owner <login> --label <text>`), then on

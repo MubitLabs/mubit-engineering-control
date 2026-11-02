@@ -14,6 +14,7 @@ import { registerAuth } from './features/auth/routes'
 import { decisionHooks, onDecisionExpired } from './features/decisions/service'
 import { registerDeliveries } from './features/deliveries/routes'
 import { registerEvents } from './features/events/routes'
+import { registerCoordinator } from './features/planning/coordinator'
 import { planApprovalHooks } from './features/plans/service'
 import { registerProfiles } from './features/profiles/routes'
 import { registerProjects } from './features/projects/routes'
@@ -102,6 +103,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerSchedulerRoutes(app, { sql, registry, config })
   registerArtifacts(app, { sql, config })
   registerProfiles(app, { sql })
+  registerCoordinator(app, { sql, config, registry })
   await registerRunnerGateway(app, { sql, registry, dispatcher, leaseTtlMs: config.scheduling.leaseTtlMs })
 
   const webDir = deps.webDistDir === undefined ? WEB_DIST_DIR : deps.webDistDir

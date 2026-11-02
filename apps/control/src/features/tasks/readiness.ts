@@ -23,7 +23,7 @@ export async function refreshReadiness(
 ): Promise<string[]> {
   const tasks = await tx<TaskRow[]>`
     select id, key, state, spec, blocker from tasks
-    where delivery_id = ${delivery.id} and state <> 'cancelled'
+    where delivery_id = ${delivery.id} and state <> 'cancelled' and kind = 'work'
     for update
   `
   const deps = await tx<{ taskId: string; dependsOnTaskId: string }[]>`

@@ -164,3 +164,10 @@ describe('path helpers', () => {
     expect(hotspotCategory('src/index.ts')).toBeNull()
   })
 })
+
+describe('reserved keys', () => {
+  it('rejects task keys that use the platform prefix', () => {
+    const v = validateTaskGraph([task({ key: 'mec-plan-1' })], ctx)
+    expect(v.errors[0]?.message).toContain('reserved prefix')
+  })
+})

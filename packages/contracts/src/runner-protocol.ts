@@ -188,6 +188,8 @@ export const FakeStep = z.union([
   z.object({ ask: z.string(), options: z.array(z.string()).optional() }),
   z.object({ requestApproval: z.string(), command: z.string() }),
   z.object({ fail: z.string() }),
+  /** A scoped call to control (e.g. propose_tasks); the reply is printed as a message. */
+  z.object({ call: z.string(), params: z.record(z.string(), z.unknown()) }),
   z.object({ exit: z.enum(['quota', 'auth']) }),
 ])
 export type FakeStep = z.infer<typeof FakeStep>

@@ -57,6 +57,7 @@ export interface AttemptRow {
 
 export interface TaskRow {
   id: string
+  kind: 'work' | 'planning'
   deliveryId: string
   key: string
   title: string
@@ -347,6 +348,37 @@ export async function followTask(tx: Tx, attempt: AttemptRow, to: AttemptState):
     taskId: task.id,
     actor: { kind: 'system' as const },
     payload: { attemptId: attempt.id },
+  }
+  if (task.kind === 'planning') {
+    // A coordinator run is reviewed through the plan approval, not as a task result.
+    if (to === 'succeeded') {
+      await transition(tx, {
+        table: 'tasks',
+        machine: taskMachine,
+        id: task.id,
+        from: 'active',
+        event: 'attempt_succeeded',
+        ...ctx,
+      })
+      await transition(tx, {
+        table: 'tasks',
+        machine: taskMachine,
+        id: task.id,
+        from: 'awaiting_review',
+        event: 'review_accepted',
+        ...ctx,
+      })
+    } else if (to === 'checks_failed' || to === 'failed' || to === 'cancelled') {
+      await transition(tx, {
+        table: 'tasks',
+        machine: taskMachine,
+        id: task.id,
+        from: 'active',
+        event: 'attempt_failed_final',
+        ...ctx,
+      })
+    }
+    return
   }
   if (to === 'succeeded') {
     await transition(tx, {

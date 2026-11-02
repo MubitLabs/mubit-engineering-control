@@ -63,6 +63,11 @@ for (let i = state.done; i < script.length; i++) {
     const m = await waitFor(id)
     if (m.decision === 'approve') { out({ type: 'tool_use', name: s.requestApproval, input: { command: s.command } }); out({ type: 'tool_result', name: s.requestApproval, ok: true }) }
     else out({ type: 'message', text: 'Not approved: ' + (m.reason ?? m.decision) })
+  } else if ('call' in s) {
+    const id = 'c' + i
+    out({ type: 'call', id, method: s.call, params: s.params })
+    const m = await waitFor(id)
+    out({ type: 'message', text: 'Control replied: ' + JSON.stringify(m.result) })
   } else if ('fail' in s) {
     state.done = i + 1; save()
     out({ type: 'result', status: 'failed', detail: s.fail })

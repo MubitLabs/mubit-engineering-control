@@ -142,6 +142,16 @@ export class FakeAdapter implements AgentAdapter {
               () => reply({ id: m.id, decision: 'reject', reason: 'approvals unsupported here' }),
             )
             break
+          case 'call':
+            if (!io.callControl) {
+              reply({ id: m.id, result: { error: 'control calls unsupported here' } })
+              break
+            }
+            io.callControl(String(m.method), (m.params as Record<string, unknown>) ?? {}).then(
+              (result) => reply({ id: m.id, result }),
+              (e: Error) => reply({ id: m.id, result: { error: e.message } }),
+            )
+            break
           case 'result':
             result = m
             break

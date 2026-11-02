@@ -111,7 +111,7 @@ export class Scheduler {
       from tasks t
       join deliveries d on d.id = t.delivery_id
       join projects p on p.id = d.project_id
-      where t.state = 'ready' and p.paused_at is null and d.state in ('approved', 'executing')
+      where t.state = 'ready' and t.kind = 'work' and p.paused_at is null and d.state in ('approved', 'executing')
       order by t.created_at
       limit 500
     `

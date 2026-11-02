@@ -9,6 +9,7 @@ import type { TaskSpec } from '@mec/contracts'
 export type GraphIssueCode =
   | 'empty_graph'
   | 'duplicate_task'
+  | 'reserved_key'
   | 'unknown_dependency'
   | 'self_dependency'
   | 'cycle'
@@ -89,6 +90,9 @@ export function validateTaskGraph(tasks: readonly Spec[], ctx: GraphContext): Gr
   const limits = ctx.limits ?? DEFAULT_LIMITS
 
   for (const t of byKey.values()) {
+    if (t.key.toLowerCase().startsWith('mec-')) {
+      error('reserved_key', `Task key '${t.key}' uses the reserved prefix 'mec-'`, [t.key])
+    }
     if (t.objective.trim() === '') error('missing_objective', `Task '${t.key}' has no objective`, [t.key])
     if (t.acceptanceChecks.length === 0) {
       error('missing_acceptance_checks', `Task '${t.key}' has no acceptance checks`, [t.key])

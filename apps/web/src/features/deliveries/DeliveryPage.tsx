@@ -5,7 +5,9 @@ import { ApiError, api } from '../../api/client'
 import { useProjectEvents } from '../../api/events'
 import type { DeliveryDetail, PlanRevision } from '../../api/types'
 import { Empty, ErrorBox, Loading, Panel, Status, Time } from '../../components/ui'
+import type { ProfileView } from '../accounts/AccountsPage'
 import { useMe } from '../auth/useMe'
+import { TaskGraph } from './TaskGraph'
 
 export function DeliveryPage() {
   const { projectId, deliveryId } = useParams()
@@ -15,8 +17,31 @@ export function DeliveryPage() {
     queryFn: () => api.get<DeliveryDetail>(`/api/deliveries/${deliveryId}`),
   })
   if (!q.data) return q.error ? <ErrorBox error={q.error} /> : <Loading />
-  const { delivery, revisions, tasks, approvals, repository, owner } = q.data
+  const { delivery, revisions, tasks, approvals, repository, owner, dependencies } = q.data
   const current = revisions[0]
+  const work = tasks.filter((t) => t.kind !== 'planning' && t.state !== 'cancelled')
+  const planning = tasks.filter((t) => t.kind === 'planning')
+  const byId = new Map(tasks.map((t) => [t.id, t]))
+
+  // Live tasks once a revision is approved; otherwise the proposed graph from the current revision.
+  const graph = work.length
+    ? {
+        nodes: work.map((t) => ({ key: t.key, title: t.title, state: t.state, id: t.id })),
+        edges: dependencies
+          .filter((d) => byId.get(d.taskId)?.state !== 'cancelled')
+          .map(
+            (d) =>
+              [byId.get(d.dependsOnTaskId)?.key ?? '', byId.get(d.taskId)?.key ?? ''] as [string, string],
+          ),
+      }
+    : {
+        nodes: (current?.tasks ?? []).map((t) => ({
+          key: t.key,
+          title: t.title,
+          warn: current?.validation?.warnings.some((w) => w.taskKeys.includes(t.key)) ?? false,
+        })),
+        edges: (current?.tasks ?? []).flatMap((t) => t.dependsOn.map((d) => [d, t.key] as [string, string])),
+      }
 
   return (
     <div className="stack">
@@ -30,17 +55,27 @@ export function DeliveryPage() {
           </h1>
           <div className="muted small">
             {repository.name} @ {delivery.baseRef}
-            {delivery.baseSha && <> ({delivery.baseSha.slice(0, 10)})</>} · owner {owner.login}
+            {delivery.baseSha && <> (pinned {delivery.baseSha.slice(0, 10)})</>} · owner {owner.login}
           </div>
         </div>
       </div>
       <div className="grid-2">
         <div className="stack">
+          <Panel title="Task graph">
+            {graph.nodes.length ? (
+              <TaskGraph nodes={graph.nodes} edges={graph.edges} projectId={projectId} />
+            ) : (
+              <div className="muted">
+                No tasks yet. Write them below, or run the coordinator to propose them.
+              </div>
+            )}
+          </Panel>
+          {current && <Traceability revision={current} />}
           {current && (
             <RevisionEditor revision={current} ownerId={delivery.ownerId} deliveryId={delivery.id} />
           )}
           <Panel title="Tasks" flush>
-            {tasks.length === 0 ? (
+            {work.length === 0 ? (
               <Empty>Tasks appear here once a plan revision is approved.</Empty>
             ) : (
               <table className="table">
@@ -53,28 +88,45 @@ export function DeliveryPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {tasks
-                    .filter((t) => t.state !== 'cancelled')
-                    .map((t) => (
-                      <tr key={t.id}>
-                        <td>
-                          <Link to={`/projects/${projectId}/tasks/${t.id}`}>
-                            <code>{t.key}</code>
-                          </Link>
-                        </td>
-                        <td>{t.title}</td>
-                        <td>
-                          <Status value={t.state} />
-                        </td>
-                        <td className="muted small">{t.blocker?.detail ?? ''}</td>
-                      </tr>
-                    ))}
+                  {work.map((t) => (
+                    <tr key={t.id}>
+                      <td>
+                        <Link to={`/projects/${projectId}/tasks/${t.id}`}>
+                          <code>{t.key}</code>
+                        </Link>
+                      </td>
+                      <td>{t.title}</td>
+                      <td>
+                        <Status value={t.state} />
+                      </td>
+                      <td className="muted small">{t.blocker?.detail ?? ''}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             )}
           </Panel>
         </div>
         <div className="stack">
+          {delivery.state === 'planning' && <Coordinator deliveryId={delivery.id} />}
+          {planning.length > 0 && (
+            <Panel title="Coordinator runs" flush>
+              <table className="table">
+                <tbody>
+                  {planning.map((t) => (
+                    <tr key={t.id}>
+                      <td>
+                        <Link to={`/projects/${projectId}/tasks/${t.id}`}>{t.title}</Link>
+                      </td>
+                      <td>
+                        <Status value={t.state} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Panel>
+          )}
           <Panel title="Revisions" flush>
             <table className="table">
               <tbody>
@@ -117,6 +169,86 @@ export function DeliveryPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+/** Requirements traceability (PDF §8): every requirement and the tasks that implement it. */
+function Traceability({ revision }: { revision: PlanRevision }) {
+  if (revision.requirements.length === 0) return null
+  return (
+    <Panel title="Requirements" flush>
+      <table className="table">
+        <tbody>
+          {revision.requirements.map((r) => {
+            const covering = revision.tasks.filter((t) => t.requirementIds.includes(r.id)).map((t) => t.key)
+            return (
+              <tr key={r.id}>
+                <td>
+                  <code>{r.id}</code>
+                </td>
+                <td>{r.text}</td>
+                <td className="small">
+                  {covering.length ? covering.join(', ') : <span className="status warn">uncovered</span>}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </Panel>
+  )
+}
+
+/** Run the coordinator: a read-only agent proposes the graph; validation and the owner decide. */
+function Coordinator({ deliveryId }: { deliveryId: string }) {
+  const qc = useQueryClient()
+  const profiles = useQuery({
+    queryKey: ['profiles'],
+    queryFn: () => api.get<{ profiles: ProfileView[] }>('/api/profiles'),
+  })
+  const [profileId, setProfileId] = useState('')
+  const usable = profiles.data?.profiles.filter((p) => p.agentKind === 'claude-code') ?? []
+  const chosen = profileId || usable[0]?.id || ''
+  const run = useMutation({
+    mutationFn: () => api.post(`/api/deliveries/${deliveryId}/coordinate`, { profileId: chosen }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery', deliveryId] }),
+  })
+  return (
+    <Panel title="Coordinator">
+      <div className="form small">
+        <div className="muted">
+          A coding agent reads the repository at the pinned base (read-only) and proposes requirements and
+          tasks. Invalid graphs are sent back for repair; a valid one waits for your approval.
+        </div>
+        {usable.length === 0 ? (
+          <div className="notice">
+            Create a Claude Code profile on the Accounts page to run the coordinator.
+          </div>
+        ) : (
+          <>
+            <select value={chosen} onChange={(e) => setProfileId(e.target.value)}>
+              {usable.map((p) => (
+                <option key={p.id} value={p.id} disabled={p.authState === 'required'}>
+                  {p.label} on {p.runnerName}
+                  {p.authState === 'required' ? ' · sign-in required' : ''}
+                </option>
+              ))}
+            </select>
+            <div>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={!chosen || run.isPending}
+                onClick={() => run.mutate()}
+              >
+                Run coordinator
+              </button>
+            </div>
+          </>
+        )}
+        <ErrorBox error={run.error} />
+      </div>
+    </Panel>
   )
 }
 
@@ -230,6 +362,12 @@ function RevisionEditor(props: { revision: PlanRevision; ownerId: string; delive
           Requirements and tasks (JSON)
           <textarea rows={12} value={spec} readOnly={!editable} onChange={(e) => setSpec(e.target.value)} />
         </label>
+        {revision.impactSummary && (
+          <div className="notice small">
+            <strong>Impact on the approved plan</strong>
+            <pre>{revision.impactSummary}</pre>
+          </div>
+        )}
         {revision.validation && (
           <div className="small">
             {revision.validation.errors.map((e) => (

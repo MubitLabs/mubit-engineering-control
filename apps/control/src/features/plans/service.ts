@@ -4,8 +4,10 @@ import {
   canonicalJson,
   type DeliveryState,
   deliveryMachine,
+  describeImpact,
   type GraphValidation,
   type PlanRevisionState,
+  planImpact,
   planRevisionMachine,
   validateTaskGraph,
 } from '@mec/domain'
@@ -16,6 +18,7 @@ import type { RequestActor } from '../../http/actor'
 import { conflict, HttpError, notFound } from '../../http/errors'
 import type { ApprovalHooks } from '../approvals/service'
 import { closeApprovals, createApproval } from '../approvals/service'
+import { type AttemptRow, commandAttempt } from '../attempts/service'
 import { transition } from '../state'
 import { refreshReadiness } from '../tasks/readiness'
 
@@ -182,7 +185,7 @@ export async function updateRevision(
   revisionId: string,
   expectedVersion: number,
   patch: Partial<PlanContent>,
-  actor: RequestActor,
+  actor: { kind: 'user' | 'agent'; id: string | null },
 ): Promise<PlanRevisionRow> {
   const rev = await loadRevision(tx, revisionId, true)
   const delivery = await loadDelivery(tx, rev.deliveryId)
@@ -202,7 +205,7 @@ export async function updateRevision(
       event: 'edit',
       projectId: delivery.projectId,
       deliveryId: delivery.id,
-      actor: { kind: 'user', id: actor.userId },
+      actor,
     })
   }
   const content: PlanContent = {
@@ -225,7 +228,7 @@ export async function updateRevision(
     type: 'plan.edited',
     projectId: delivery.projectId,
     deliveryId: delivery.id,
-    actor: { kind: 'user', id: actor.userId },
+    actor,
     payload: { revisionId: rev.id, version: updated!.version },
   })
   return updated!
@@ -250,7 +253,11 @@ export async function submitRevision(
     )
   }
   const validation = await validateRevision(tx, delivery, rev)
-  await tx`update plan_revisions set validation = ${tx.json(validation as never)} where id = ${rev.id}`
+  const impact = await computeImpact(tx, delivery, rev)
+  await tx`
+    update plan_revisions set validation = ${tx.json(validation as never)}, impact_summary = ${impact}
+    where id = ${rev.id}
+  `
   if (!validation.ok) {
     throw new HttpError(422, 'invalid_plan', 'The task graph has errors', { validation })
   }
@@ -350,16 +357,28 @@ export const planApprovalHooks: ApprovalHooks = {
   },
 }
 
-/** Turns an approved revision into task rows. Unstarted tasks from older revisions are cancelled. */
+/**
+ * Turns an approved revision into task rows (PDF §12). Tasks whose spec did not change carry over
+ * with their state and work; changed or removed tasks that had not finished are cancelled (an
+ * active attempt is asked to stop); integrated work stays in the integration branch.
+ */
 export async function materializeTasks(tx: Tx, delivery: DeliveryRow, rev: PlanRevisionRow): Promise<void> {
-  const cancelled = await tx<{ id: string }[]>`
-    update tasks set state = 'cancelled', updated_at = now()
-    where delivery_id = ${delivery.id} and plan_revision_id <> ${rev.id}
-      and state in ('proposed', 'approved', 'ready')
-    returning id
+  const previous = await tx<{ id: string; key: string; spec: TaskSpec; state: string }[]>`
+    select id, key, spec, state from tasks
+    where delivery_id = ${delivery.id} and kind = 'work' and plan_revision_id <> ${rev.id}
+      and state not in ('cancelled', 'integrated')
+    for update
   `
   const ids = new Map<string, string>()
+  const carried: string[] = []
   for (const spec of rev.tasks) {
+    const old = previous.find((p) => p.key === spec.key)
+    if (old && canonicalJson(old.spec) === canonicalJson(spec)) {
+      await tx`update tasks set plan_revision_id = ${rev.id}, updated_at = now() where id = ${old.id}`
+      ids.set(spec.key, old.id)
+      carried.push(old.id)
+      continue
+    }
     const [t] = await tx<{ id: string }[]>`
       insert into tasks (delivery_id, plan_revision_id, key, title, spec, state, owner_id)
       values (${delivery.id}, ${rev.id}, ${spec.key}, ${spec.title}, ${tx.json(spec as never)}, 'approved',
@@ -368,6 +387,35 @@ export async function materializeTasks(tx: Tx, delivery: DeliveryRow, rev: PlanR
     `
     ids.set(spec.key, t!.id)
   }
+
+  const superseded = previous.filter((p) => !carried.includes(p.id))
+  for (const old of superseded) {
+    const [active] = await tx<AttemptRow[]>`
+      select * from attempts where task_id = ${old.id}
+        and state in ('leased', 'preparing', 'running', 'awaiting_input', 'work_complete', 'checking')
+    `
+    if (active) {
+      await commandAttempt(
+        tx,
+        active,
+        'cancel',
+        { reason: `superseded by plan revision ${rev.number}` },
+        { kind: 'system' },
+      )
+    }
+    await tx`update tasks set state = 'cancelled', updated_at = now() where id = ${old.id}`
+    await appendEvent(tx, {
+      stream: projectStream(delivery.projectId),
+      type: 'task.state_changed',
+      projectId: delivery.projectId,
+      deliveryId: delivery.id,
+      taskId: old.id,
+      actor: { kind: 'system' },
+      payload: { id: old.id, from: old.state, to: 'cancelled', event: 'superseded', revision: rev.number },
+    })
+  }
+
+  await tx`delete from task_dependencies where task_id = any(${tx.array([...ids.values()])}::uuid[])`
   for (const spec of rev.tasks) {
     for (const dep of spec.dependsOn) {
       await tx`
@@ -381,7 +429,29 @@ export async function materializeTasks(tx: Tx, delivery: DeliveryRow, rev: PlanR
     projectId: delivery.projectId,
     deliveryId: delivery.id,
     actor: { kind: 'system' },
-    payload: { revisionId: rev.id, taskIds: [...ids.values()], cancelledTaskIds: cancelled.map((c) => c.id) },
+    payload: {
+      revisionId: rev.id,
+      taskIds: [...ids.values()],
+      carriedTaskIds: carried,
+      cancelledTaskIds: superseded.map((c) => c.id),
+    },
   })
   await refreshReadiness(tx, delivery)
+}
+
+/** Records how this revision changes the currently approved one, shown beside the approval. */
+export async function computeImpact(
+  tx: Tx,
+  delivery: DeliveryRow,
+  rev: PlanRevisionRow,
+): Promise<string | null> {
+  const [approved] = await tx<{ tasks: TaskSpec[] }[]>`
+    select tasks from plan_revisions where delivery_id = ${delivery.id} and state = 'approved' and id <> ${rev.id}
+  `
+  if (!approved) return null
+  const started = await tx<{ key: string }[]>`
+    select key from tasks where delivery_id = ${delivery.id} and kind = 'work'
+      and state in ('active', 'awaiting_review', 'accepted', 'failed')
+  `
+  return describeImpact(planImpact(approved.tasks, rev.tasks), new Set(started.map((s) => s.key)))
 }

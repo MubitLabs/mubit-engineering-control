@@ -29,7 +29,7 @@ export function registerDeliveries(app: FastifyInstance, deps: { sql: Sql; hooks
     authorize(actor, 'observe', { kind: 'project', projectId: project.id })
     const deliveries = await sql`
       select d.*, u.login as owner_login,
-        (select count(*)::int from tasks t where t.delivery_id = d.id and t.state <> 'cancelled') as task_count,
+        (select count(*)::int from tasks t where t.delivery_id = d.id and t.state <> 'cancelled' and t.kind = 'work') as task_count,
         (select count(*)::int from approvals a where a.delivery_id = d.id and a.status = 'pending') as pending_approvals
       from deliveries d join users u on u.id = d.owner_id
       where d.project_id = ${project.id}
@@ -145,7 +145,7 @@ export function registerDeliveries(app: FastifyInstance, deps: { sql: Sql; hooks
         ownerId: delivery.ownerId,
       })
       const { expectedVersion, ...patch } = body
-      return updateRevision(tx, rev.id, expectedVersion, patch, actor)
+      return updateRevision(tx, rev.id, expectedVersion, patch, { kind: 'user', id: actor.userId })
     })
     return { revision }
   })

@@ -79,6 +79,7 @@ export interface PlanRevision {
 
 export interface Task {
   id: string
+  kind: 'work' | 'planning'
   deliveryId: string
   planRevisionId: string
   key: string

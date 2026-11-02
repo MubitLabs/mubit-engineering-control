@@ -617,6 +617,7 @@ export class Runner {
 }
 
 function briefFor(start: StartPayload): string {
+  if (typeof start.inputs.prompt === 'string') return start.inputs.prompt
   const spec = start.spec as {
     objective?: string
     deliverables?: string[]

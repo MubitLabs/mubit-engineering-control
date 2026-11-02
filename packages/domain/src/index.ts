@@ -1,6 +1,7 @@
 export * from './approval'
 export * from './blockers'
 export * from './canonical-json'
+export * from './impact'
 export * from './lease'
 export * from './machine'
 export * from './scheduling'

@@ -134,3 +134,5 @@ export class FakeRunnerClient {
     })
   }
 }
+
+export * from './repo'

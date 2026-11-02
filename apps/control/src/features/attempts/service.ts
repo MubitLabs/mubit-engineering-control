@@ -1,5 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { type AgentKind, type RunnerEventEnvelope, RunnerEventType, type TaskSpec } from '@mec/contracts'
+import {
+  type AgentKind,
+  type RunnerEventEnvelope,
+  RunnerEventType,
+  type StartPayload,
+  type TaskSpec,
+  type ValidationProfile,
+} from '@mec/contracts'
 import {
   ACTIVE_ATTEMPT_STATES,
   type AttemptEvent,
@@ -11,6 +18,7 @@ import {
   type TaskState,
   taskMachine,
 } from '@mec/domain'
+import { attemptBranch } from '@mec/git'
 import { type Db, isUniqueViolation, type Tx } from '../../db/sql'
 import { type ActorKind, appendEvent, projectStream } from '../../events/append'
 import { conflict, notFound } from '../../http/errors'
@@ -210,14 +218,7 @@ export async function claimAttempt(
     type: 'start',
     attemptId: attempt.id,
     generation,
-    payload: {
-      agentKind: input.agentKind,
-      kind: attempt.kind,
-      taskKey: task.key,
-      taskTitle: task.title,
-      spec: task.spec,
-      inputs: input.inputs,
-    },
+    payload: await startPayload(tx, task, attempt, input),
   })
   return { attempt: await loadAttempt(tx, attempt.id), created: true }
 }
@@ -380,5 +381,48 @@ export async function followTask(tx: Tx, attempt: AttemptRow, to: AttemptState):
       refs: [attempt.id],
     }
     await tx`update tasks set blocker = ${tx.json(blocker as never)}, updated_at = now() where id = ${task.id}`
+  }
+}
+
+/**
+ * Everything the runner needs to prepare the workspace and verify the result: repository, the
+ * pinned base (or the ref to pin), the attempt branch, bootstrap and the task's acceptance checks
+ * from the repository validation profile.
+ */
+async function startPayload(
+  tx: Tx,
+  task: TaskRow & { projectId: string },
+  attempt: AttemptRow,
+  input: ClaimInput,
+): Promise<StartPayload> {
+  const [row] = await tx<
+    {
+      baseRef: string
+      baseSha: string | null
+      name: string
+      cloneUrl: string
+      validationProfile: ValidationProfile
+    }[]
+  >`
+    select d.base_ref, d.base_sha, r.name, r.clone_url, r.validation_profile
+    from deliveries d join repositories r on r.id = d.repository_id
+    where d.id = ${task.deliveryId}
+  `
+  const profile = row!.validationProfile
+  const wanted = new Set(task.spec.acceptanceChecks)
+  const override = typeof input.inputs.baseSha === 'string' ? input.inputs.baseSha : null
+  return {
+    agentKind: input.agentKind,
+    kind: attempt.kind,
+    taskKey: task.key,
+    taskTitle: task.title,
+    spec: task.spec as unknown as Record<string, unknown>,
+    inputs: input.inputs,
+    repository: { name: row!.name, cloneUrl: row!.cloneUrl },
+    baseSha: override ?? row!.baseSha,
+    baseRef: row!.baseRef,
+    branch: attemptBranch(task.deliveryId, task.key, attempt.number),
+    bootstrap: profile.bootstrap,
+    checks: profile.checks.filter((c) => wanted.has(c.name)),
   }
 }

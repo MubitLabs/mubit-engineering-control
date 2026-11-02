@@ -93,7 +93,11 @@ export function registerAttemptRoutes(
     const actor = await requireActor(sql, req)
     const attempt = await loadAttempt(sql, req.params.attemptId)
     authorize(actor, 'observe', { kind: 'project', projectId: attempt.projectId })
-    return { attempt }
+    const [checks, artifacts] = await Promise.all([
+      sql`select * from check_results where attempt_id = ${attempt.id} order by created_at`,
+      sql`select id, kind, name, size_bytes, created_at from artifacts where attempt_id = ${attempt.id} order by created_at`,
+    ])
+    return { attempt, checks, artifacts }
   })
 
   app.get<{ Params: { attemptId: string } }>('/api/attempts/:attemptId/events', async (req) => {

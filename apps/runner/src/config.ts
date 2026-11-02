@@ -10,6 +10,10 @@ const Env = z.object({
   MEC_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(16).default(2),
   MEC_HEARTBEAT_MS: z.coerce.number().int().min(500).default(10_000),
   MEC_LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+  MEC_GIT_TOKEN: z.string().optional(),
+  MEC_GIT_AUTHOR_NAME: z.string().default('Mubit Engineering Control'),
+  MEC_GIT_AUTHOR_EMAIL: z.string().default('mec@mubit.ai'),
+  MEC_PUSH_BRANCHES: z.enum(['true', 'false']).optional(),
 })
 
 export interface RunnerConfig {
@@ -20,6 +24,7 @@ export interface RunnerConfig {
   maxAttempts: number
   heartbeatMs: number
   logLevel: 'debug' | 'info' | 'warn' | 'error'
+  git?: { token: string | null; authorName: string; authorEmail: string; push: boolean }
 }
 
 export function loadRunnerConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
@@ -32,6 +37,13 @@ export function loadRunnerConfig(env: NodeJS.ProcessEnv = process.env): RunnerCo
     maxAttempts: e.MEC_MAX_ATTEMPTS,
     heartbeatMs: e.MEC_HEARTBEAT_MS,
     logLevel: e.MEC_LOG_LEVEL,
+    git: {
+      token: e.MEC_GIT_TOKEN || null,
+      authorName: e.MEC_GIT_AUTHOR_NAME,
+      authorEmail: e.MEC_GIT_AUTHOR_EMAIL,
+      // Attempt branches are pushed for review visibility once a token is configured.
+      push: e.MEC_PUSH_BRANCHES ? e.MEC_PUSH_BRANCHES === 'true' : Boolean(e.MEC_GIT_TOKEN),
+    },
   }
 }
 

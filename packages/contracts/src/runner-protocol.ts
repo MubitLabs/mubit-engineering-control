@@ -186,3 +186,25 @@ export const FakeStep = z.union([
   z.object({ exit: z.enum(['quota', 'auth']) }),
 ])
 export type FakeStep = z.infer<typeof FakeStep>
+
+/** What a runner needs to prepare and verify an attempt (sent with `start`). */
+export const StartPayload = z.object({
+  agentKind: AgentKind,
+  kind: z.enum(['implement', 'repair', 'coordinator', 'integration']),
+  taskKey: z.string(),
+  taskTitle: z.string(),
+  spec: z.record(z.string(), z.unknown()),
+  inputs: z.record(z.string(), z.unknown()).default({}),
+  repository: z.object({ name: z.string(), cloneUrl: z.string() }).nullable().default(null),
+  /** Pinned commit to start from; when null the runner resolves `baseRef` and reports the SHA. */
+  baseSha: z.string().nullable().default(null),
+  baseRef: z.string().nullable().default(null),
+  branch: z.string().nullable().default(null),
+  bootstrap: z
+    .array(z.object({ name: z.string(), argv: z.array(z.string()), timeoutSec: z.number() }))
+    .default([]),
+  checks: z
+    .array(z.object({ name: z.string(), argv: z.array(z.string()), timeoutSec: z.number() }))
+    .default([]),
+})
+export type StartPayload = z.infer<typeof StartPayload>

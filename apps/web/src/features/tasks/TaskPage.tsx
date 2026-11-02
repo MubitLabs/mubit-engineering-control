@@ -7,6 +7,7 @@ import type { Approval, Task } from '../../api/types'
 import { Empty, ErrorBox, Loading, Panel, Short, Status, Time } from '../../components/ui'
 import { useMe } from '../auth/useMe'
 import { DecisionCard } from '../inbox/InboxPage'
+import { AttemptResult } from './AttemptResult'
 import { Transcript } from './Transcript'
 
 export interface AttemptView {
@@ -206,6 +207,7 @@ function AttemptPanel({ attempt, canPrompt }: { attempt: AttemptView; canPrompt:
         </div>
       )}
       {attempt.blocker && <div className="panel-body notice">{attempt.blocker.detail}</div>}
+      <AttemptResult attemptId={attempt.id} />
       <Transcript attemptId={attempt.id} />
       <ErrorBox error={control.error} />
     </Panel>

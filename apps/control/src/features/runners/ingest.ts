@@ -87,6 +87,7 @@ export async function ingestRunnerEvent(
     await tx`update attempts set last_sequence = ${env.sequence} where id = ${attempt.id}`
 
     if (stale) return { kind: 'stale' }
+    await projectEvidence(tx, attempt, env)
     if (isLifecycleEvent(env.type)) await applyLifecycle(tx, { ...attempt, lastSequence: env.sequence }, env)
     return { kind: 'stored', gap: seq.kind === 'gap' ? seq.missing : 0 }
   })
@@ -258,4 +259,49 @@ export async function failRejectedCommand(
     })
     await followTask(tx, { ...attempt, state: to }, to)
   })
+}
+
+/** Keeps queryable read models in step with evidence events (current generation only). */
+async function projectEvidence(tx: Tx, attempt: AttemptRow, env: RunnerEventEnvelope): Promise<void> {
+  const p = env.payload
+  const str = (v: unknown) => (typeof v === 'string' ? v : null)
+  switch (env.type) {
+    case 'workspace.ready': {
+      await tx`
+        update attempts set branch = coalesce(${str(p.branch)}, branch), base_sha = coalesce(${str(p.baseSha)}, base_sha)
+        where id = ${attempt.id}
+      `
+      // The first resolved base pins the delivery (PDF §8: pinned base).
+      if (str(p.baseSha) && attempt.kind !== 'integration') {
+        await tx`update deliveries set base_sha = ${str(p.baseSha)} where id = ${attempt.deliveryId} and base_sha is null`
+      }
+      return
+    }
+    case 'workspace.diff':
+      await tx`
+        update attempts set head_sha = coalesce(${str(p.headSha)}, head_sha), diff = ${tx.json(p as never)}
+        where id = ${attempt.id}
+      `
+      return
+    case 'check.result': {
+      const artifactId = str(p.logArtifactId)
+      const [artifact] = artifactId
+        ? await tx`select id from artifacts where id = ${artifactId}::uuid and attempt_id = ${attempt.id}`
+        : []
+      await tx`
+        insert into check_results (
+          project_id, attempt_id, task_id, delivery_id, scope, name, status, exit_code, duration_ms,
+          tested_sha, log_artifact_id, log_tail, source_event_id
+        ) values (
+          ${attempt.projectId}, ${attempt.id}, ${attempt.taskId}, ${attempt.deliveryId},
+          ${p.scope === 'integration' ? 'integration' : 'task'}, ${String(p.name ?? 'check')},
+          ${['passed', 'failed', 'error'].includes(String(p.status)) ? String(p.status) : 'error'},
+          ${typeof p.exitCode === 'number' ? p.exitCode : null}, ${Math.round(Number(p.durationMs) || 0)},
+          ${str(p.sha)}, ${artifact ? artifactId : null}, ${str(p.logTail)?.slice(-8000) ?? null}, ${env.eventId}
+        )
+        on conflict (attempt_id, source_event_id) do nothing
+      `
+      return
+    }
+  }
 }

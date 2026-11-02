@@ -24,6 +24,9 @@ export interface JournalMeta {
   workdir: string | null
   /** The original start payload, kept for resume. */
   start: Record<string, unknown>
+  baseSha?: string | null
+  branch?: string | null
+  port?: number | null
   commands: string[]
   updatedAt: string
 }

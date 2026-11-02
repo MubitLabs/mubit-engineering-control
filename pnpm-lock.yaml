@@ -44,6 +44,9 @@ importers:
       '@mec/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@mec/git':
+        specifier: workspace:*
+        version: link:../../packages/git
       '@mec/policy':
         specifier: workspace:*
         version: link:../../packages/policy
@@ -81,6 +84,9 @@ importers:
       '@mec/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@mec/git':
+        specifier: workspace:*
+        version: link:../../packages/git
       ws:
         specifier: 8.22.1
         version: 8.22.1
@@ -146,6 +152,12 @@ importers:
       '@mec/contracts':
         specifier: workspace:*
         version: link:../contracts
+
+  packages/git:
+    devDependencies:
+      '@mec/testkit':
+        specifier: workspace:*
+        version: link:../testkit
 
   packages/policy: {}
 

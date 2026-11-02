@@ -26,7 +26,8 @@ declare module 'fastify' {
   }
 }
 
-async function authenticate(sql: Sql, req: FastifyRequest): Promise<string | null> {
+/** Resolves the runner for a request carrying its device token, or null. */
+export async function authenticateRunner(sql: Sql, req: FastifyRequest): Promise<string | null> {
   const header = req.headers.authorization ?? ''
   const token = header.startsWith('Bearer ') ? header.slice(7) : ''
   if (!token) return null
@@ -54,7 +55,7 @@ export async function registerRunnerGateway(
     {
       websocket: true,
       preValidation: async (req, reply) => {
-        const runnerId = await authenticate(sql, req)
+        const runnerId = await authenticateRunner(sql, req)
         if (!runnerId) return reply.code(401).send({ error: 'unauthorized', message: 'Invalid runner token' })
         req.runnerId = runnerId
       },

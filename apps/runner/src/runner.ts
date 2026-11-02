@@ -14,12 +14,15 @@ import {
   RUNNER_PROTOCOL_VERSION,
   type RunnerCommand,
   type RunnerHello,
+  StartPayload,
   RunnerEventType as T,
 } from '@mec/contracts'
+import { runCheck, tail } from './checks'
 import { type Logger, RUNNER_VERSION, type RunnerConfig } from './config'
 import { ControlConnection } from './connection'
 import { AttemptJournal } from './journal'
 import { Supervisor } from './supervisor'
+import { type PreparedWorkspace, Workspaces } from './workspace'
 
 interface Live {
   journal: AttemptJournal
@@ -36,6 +39,7 @@ interface Live {
 export class Runner {
   readonly supervisor = new Supervisor()
   readonly connection: ControlConnection
+  private readonly workspaces: Workspaces
   private readonly journals = new Map<string, AttemptJournal>()
   private readonly live = new Map<string, Live>()
   private readonly adapters = new Map<string, AgentAdapter>()
@@ -56,6 +60,12 @@ export class Runner {
       }),
     ]
     for (const a of defaults) this.adapters.set(a.kind, a)
+    this.workspaces = new Workspaces(config.home, {
+      token: config.git?.token ?? null,
+      authorName: config.git?.authorName ?? 'Mubit Engineering Control',
+      authorEmail: config.git?.authorEmail ?? 'mec@mubit.ai',
+      push: config.git?.push ?? false,
+    })
     this.connection = new ControlConnection({
       controlUrl: config.controlUrl,
       token: config.token,
@@ -72,6 +82,7 @@ export class Runner {
 
   async start(): Promise<void> {
     await mkdir(this.journalRoot, { recursive: true })
+    await this.workspaces.init()
     await this.recover()
     this.connection.start()
     this.heartbeat = setInterval(() => {
@@ -281,53 +292,76 @@ export class Runner {
   }
 
   private async run(journal: AttemptJournal, resume: boolean): Promise<void> {
-    const start = journal.info.start
+    const parsed = StartPayload.safeParse(journal.info.start)
     const attemptId = journal.attemptId
     const generation = journal.generation
     const live: Live = { journal, session: null, cancelRequested: false, decisions: new Map() }
     this.live.set(attemptId, live)
     const emit = (type: string, payload: Record<string, unknown>) => this.emit(journal, type, payload)
+    const fail = async (reason: string, detail: string) => {
+      await emit(T.failed, { reason, detail })
+      await journal.update({ phase: 'done' })
+    }
 
     try {
+      if (!parsed.success) return await fail('invalid_start', 'start payload did not match the protocol')
+      const start = parsed.data
       const active = [...this.live.values()].filter((l) => l !== live).length
       if (active >= this.config.maxAttempts) {
-        await emit(T.failed, {
-          reason: 'capacity',
-          detail: `runner is at its limit of ${this.config.maxAttempts}`,
-        })
-        await journal.update({ phase: 'done' })
-        return
+        return await fail('capacity', `runner is at its limit of ${this.config.maxAttempts}`)
       }
       await emit(T.preparing, { generation, resume })
-      const workdir = journal.info.workdir ?? path.join(this.config.home, 'work', attemptId)
-      await mkdir(workdir, { recursive: true })
-      await journal.update({ workdir })
-      await emit(T.workspaceReady, { workdir })
 
-      const adapter = this.adapters.get(journal.info.agentKind)
-      if (!adapter) {
-        await emit(T.failed, {
-          reason: 'unsupported_agent',
-          detail: `no adapter for ${journal.info.agentKind}`,
-        })
-        await journal.update({ phase: 'done' })
-        return
+      let ws: PreparedWorkspace
+      try {
+        ws = await this.workspaces.prepare(attemptId, start, journal.info.workdir)
+      } catch (e) {
+        return await fail('workspace_failed', (e as Error).message)
       }
+      const port = journal.info.port ?? this.allocatePort()
+      await journal.update({ workdir: ws.workdir, baseSha: ws.baseSha, branch: ws.branch, port })
+      await emit(T.workspaceReady, {
+        workdir: ws.workdir,
+        branch: ws.branch,
+        baseSha: ws.baseSha,
+        submodules: ws.submodules,
+        port,
+      })
+      const env = this.taskEnv(attemptId, port)
+
+      if (!resume) {
+        for (const cmd of start.bootstrap) {
+          const outcome = await runCheck(this.supervisor, { attemptId, generation }, cmd, ws.workdir, env)
+          await emit('workspace.bootstrap', {
+            name: cmd.name,
+            status: outcome.status,
+            exitCode: outcome.exitCode,
+            durationMs: outcome.durationMs,
+            logTail: tail(outcome.log),
+          })
+          if (outcome.status !== 'passed') {
+            return await fail('bootstrap_failed', `${cmd.name}: ${outcome.detail ?? 'failed'}`)
+          }
+        }
+      }
+
+      const adapter = this.adapters.get(start.agentKind)
+      if (!adapter) return await fail('unsupported_agent', `no adapter for ${start.agentKind}`)
 
       // Events are serialised through one promise chain so journal order matches emission order.
       let chain: Promise<void> = Promise.resolve()
       const ordered = (type: string, payload: Record<string, unknown>) => {
         chain = chain.then(() => emit(type, payload)).catch(() => {})
       }
-      const inputs = (start.inputs ?? {}) as Record<string, unknown>
       const session = adapter.start(
         {
           attemptId,
           generation,
-          workdir,
+          workdir: ws.workdir,
           prompt: briefFor(start),
           mode: 'implement',
-          options: inputs,
+          options: start.inputs,
+          env,
           resume:
             resume && journal.info.nativeSessionRef
               ? { nativeSessionRef: journal.info.nativeSessionRef }
@@ -348,22 +382,23 @@ export class Runner {
       const exit = await session.done
       await chain
       live.session = null
-      await this.finish(journal, exit, live.cancelRequested)
+      await this.finish(journal, start, exit, live.cancelRequested)
     } finally {
       live.session = null
       this.live.delete(attemptId)
     }
   }
 
-  private async finish(journal: AttemptJournal, exit: AgentExit, cancelled: boolean): Promise<void> {
+  private async finish(
+    journal: AttemptJournal,
+    start: StartPayload,
+    exit: AgentExit,
+    cancelled: boolean,
+  ): Promise<void> {
     const emit = (type: string, payload: Record<string, unknown>) => this.emit(journal, type, payload)
     switch (exit.status) {
       case 'finished':
-        await emit(T.finished, { summary: exit.summary ?? null })
-        await emit(T.checksStarted, {})
-        await emit(T.checksCompleted, { passed: true, checks: [], note: 'no checks configured' })
-        await journal.update({ phase: 'done' })
-        return
+        return this.verify(journal, start, exit.summary ?? null)
       case 'interrupted':
         if (cancelled) {
           await emit(T.cancelled, { reason: 'cancelled by request' })
@@ -387,16 +422,147 @@ export class Runner {
         return
     }
   }
+
+  /**
+   * The agent stopping is not success (PDF §15): commit and capture the diff, run the task's
+   * checks against that exact SHA, and only then report the outcome.
+   */
+  private async verify(journal: AttemptJournal, start: StartPayload, summary: string | null): Promise<void> {
+    const emit = (type: string, payload: Record<string, unknown>) => this.emit(journal, type, payload)
+    const attemptId = journal.attemptId
+    const { workdir, baseSha, branch, port } = journal.info
+    let headSha: string | null = null
+
+    if (workdir && baseSha) {
+      try {
+        const diff = await this.workspaces.finalize(
+          workdir,
+          baseSha,
+          `${start.taskKey}: ${start.taskTitle}\n\nAttempt ${attemptId} (generation ${journal.generation})`,
+        )
+        headSha = diff.headSha
+        const patchArtifactId = diff.patch
+          ? await this.upload(attemptId, 'patch', `${start.taskKey}.patch`, diff.patch)
+          : null
+        await emit(T.workspaceDiff, {
+          baseSha: diff.baseSha,
+          headSha: diff.headSha,
+          files: diff.files.slice(0, 500),
+          fileCount: diff.files.length,
+          insertions: diff.insertions,
+          deletions: diff.deletions,
+          truncated: diff.truncated,
+          patchArtifactId,
+        })
+      } catch (e) {
+        await emit(T.failed, { reason: 'commit_failed', detail: (e as Error).message })
+        await journal.update({ phase: 'done' })
+        return
+      }
+    }
+    await emit(T.finished, { summary, headSha })
+    await emit(T.checksStarted, { checks: start.checks.map((c) => c.name), sha: headSha })
+
+    const results: { name: string; status: string }[] = []
+    const env = this.taskEnv(attemptId, port ?? this.allocatePort())
+    for (const cmd of start.checks) {
+      const outcome = await runCheck(
+        this.supervisor,
+        { attemptId, generation: journal.generation },
+        cmd,
+        workdir ?? this.config.home,
+        env,
+      )
+      const logArtifactId = await this.upload(attemptId, 'check_log', `${cmd.name}.log`, outcome.log)
+      await emit(T.checkResult, {
+        name: cmd.name,
+        status: outcome.status,
+        exitCode: outcome.exitCode,
+        durationMs: outcome.durationMs,
+        detail: outcome.detail,
+        sha: headSha,
+        logArtifactId,
+        logTail: tail(outcome.log),
+      })
+      results.push({ name: cmd.name, status: outcome.status })
+    }
+    const passed = results.every((r) => r.status === 'passed')
+
+    if (passed && workdir && branch && this.workspaces.pushEnabled) {
+      try {
+        await this.workspaces.push(workdir, branch)
+        await emit('workspace.pushed', { branch, sha: headSha })
+      } catch (e) {
+        await emit('workspace.push_failed', { branch, detail: (e as Error).message })
+      }
+    }
+    await emit(T.checksCompleted, {
+      passed,
+      results,
+      sha: headSha,
+      note: start.checks.length === 0 ? 'no checks configured for this task' : null,
+    })
+    await journal.update({ phase: 'done' })
+  }
+
+  /** Environment shared by agents and checks: no credentials, a unique port, the attempt id. */
+  private taskEnv(attemptId: string, port: number): Record<string, string> {
+    return {
+      PATH: process.env.PATH ?? '/usr/bin:/bin',
+      HOME: process.env.HOME ?? this.config.home,
+      LANG: 'C.UTF-8',
+      CI: '1',
+      MEC_ATTEMPT_ID: attemptId,
+      MEC_PORT: String(port),
+      PORT: String(port),
+    }
+  }
+
+  /** Ten consecutive ports per attempt, unique among the attempts this runner holds. */
+  private allocatePort(): number {
+    const used = new Set(
+      [...this.journals.values()].map((j) => j.info.port).filter((p) => typeof p === 'number'),
+    )
+    for (let p = 20_000; p < 30_000; p += 10) if (!used.has(p)) return p
+    throw new Error('no free port range')
+  }
+
+  /** Uploads a log or patch to control; on failure the event keeps an inline tail instead. */
+  private async upload(
+    attemptId: string,
+    kind: string,
+    name: string,
+    content: string,
+  ): Promise<string | null> {
+    try {
+      const res = await fetch(`${this.config.controlUrl}/runner/artifacts`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${this.config.token}`,
+          'content-type': 'application/octet-stream',
+          'x-mec-attempt-id': attemptId,
+          'x-mec-kind': kind,
+          'x-mec-name': name.replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 100),
+        },
+        body: content,
+        signal: AbortSignal.timeout(30_000),
+      })
+      if (!res.ok) return null
+      return ((await res.json()) as { artifactId: string }).artifactId
+    } catch {
+      return null
+    }
+  }
 }
 
-function briefFor(start: Record<string, unknown>): string {
-  const spec = (start.spec ?? {}) as {
+function briefFor(start: StartPayload): string {
+  const spec = start.spec as {
     objective?: string
     deliverables?: string[]
     acceptanceChecks?: string[]
   }
   return [
-    `Task ${String(start.taskKey ?? '')}: ${String(start.taskTitle ?? '')}`,
+    `Task ${start.taskKey}: ${start.taskTitle}`,
     '',
     spec.objective ?? '',
     spec.deliverables?.length ? `\nDeliverables:\n${spec.deliverables.map((d) => `- ${d}`).join('\n')}` : '',

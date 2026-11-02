@@ -7,6 +7,7 @@ import type { Sql } from './db/sql'
 import type { EventBus } from './events/bus'
 import { registerApprovals } from './features/approvals/routes'
 import type { ApprovalHookMap } from './features/approvals/service'
+import { registerArtifacts } from './features/artifacts/routes'
 import { registerAttemptRoutes } from './features/attempts/routes'
 import { createGithubOAuth, type GithubOAuth } from './features/auth/github'
 import { registerAuth } from './features/auth/routes'
@@ -97,6 +98,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerRunnerRoutes(app, { sql, config, registry })
   registerAttemptRoutes(app, { sql, registry, config })
   registerSchedulerRoutes(app, { sql, registry, config })
+  registerArtifacts(app, { sql, config })
   await registerRunnerGateway(app, { sql, registry, dispatcher, leaseTtlMs: config.scheduling.leaseTtlMs })
 
   const webDir = deps.webDistDir === undefined ? WEB_DIST_DIR : deps.webDistDir

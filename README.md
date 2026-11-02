@@ -17,6 +17,7 @@ short explainer in [`docs/milestones/`](docs/milestones/).
 | [M3](docs/milestones/M3.md) | Droplet provisioning and deploy pipeline (live at https://mec.139-59-181-123.sslip.io) |
 | [M4](docs/milestones/M4.md) | Runner and protocol: enrolment, WebSocket, journal and replay, supervisor, fake agent, fleet UI |
 | [M5](docs/milestones/M5.md) | Scheduler, leases and recovery: fair limits, reconciliation, fencing, pause and fleet stop |
+| [M6](docs/milestones/M6.md) | Workspaces and checks: pinned worktrees, diffs, check results, artifacts |
 
 ## Layout
 

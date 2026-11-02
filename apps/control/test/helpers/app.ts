@@ -1,3 +1,4 @@
+import { createFixtureRepo } from '@mec/testkit'
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify'
 import { buildApp } from '../../src/app'
 import type { Config } from '../../src/config'
@@ -111,19 +112,20 @@ export async function seedProject(t: TestApp) {
   const project = (await admin.post('/api/projects', { slug: 'core', name: 'Core' })).json().project
   await admin.post(`/api/projects/${project.id}/members`, { login: 'mia', role: 'member' })
   await admin.post(`/api/projects/${project.id}/members`, { login: 'vic', role: 'viewer' })
+  const fixture = createFixtureRepo()
   const repo = (
     await admin.post(`/api/projects/${project.id}/repositories`, {
       name: 'sandbox',
-      cloneUrl: 'https://github.com/MubitLabs/mec-sandbox.git',
+      cloneUrl: fixture.url,
       validationProfile: {
         checks: [
-          { name: 'test', argv: ['pnpm', 'test'] },
-          { name: 'lint', argv: ['pnpm', 'lint'] },
+          { name: 'test', argv: ['node', 'checks/require-files.mjs'], timeoutSec: 60 },
+          { name: 'lint', argv: ['node', '-e', 'process.exit(0)'], timeoutSec: 60 },
         ],
       },
     })
   ).json().repository
-  return { admin, member, viewer, project, repo }
+  return { admin, member, viewer, project, repo, fixture }
 }
 
 export const sampleTasks = [

@@ -1,4 +1,4 @@
-import { AddMember, CreateProject, CreateRepository } from '@mec/contracts'
+import { AddMember, CreateProject, CreateRepository, UpdateRepository } from '@mec/contracts'
 import type { FastifyInstance } from 'fastify'
 import type { Config } from '../../config'
 import { isUniqueViolation, type Sql } from '../../db/sql'
@@ -135,6 +135,44 @@ export function registerProjects(app: FastifyInstance, deps: { sql: Sql; config:
       throw e
     }
   })
+
+  /** Changes apply to attempts started afterwards; running attempts keep the profile they started with. */
+  app.patch<{ Params: { projectId: string; repositoryId: string } }>(
+    '/api/projects/:projectId/repositories/:repositoryId',
+    async (req) => {
+      const actor = await requireActor(sql, req)
+      const project = await loadProject(sql, req.params.projectId)
+      authorize(actor, 'manage_project', { kind: 'project', projectId: project.id })
+      const body = parse(UpdateRepository, req.body)
+      if (!/^[0-9a-f-]{36}$/i.test(req.params.repositoryId)) throw notFound('Repository')
+      const set: Record<string, unknown> = {}
+      if (body.defaultBranch) set.defaultBranch = body.defaultBranch
+      if (body.validationProfile) set.validationProfile = sql.json(body.validationProfile as never)
+      const repository = await sql.begin(async (tx) => {
+        const [r] = Object.keys(set).length
+          ? await tx`
+              update repositories set ${tx(set)}
+              where id = ${req.params.repositoryId} and project_id = ${project.id}
+              returning id, name, clone_url, default_branch, validation_profile, created_at
+            `
+          : await tx`
+              select id, name, clone_url, default_branch, validation_profile, created_at from repositories
+              where id = ${req.params.repositoryId} and project_id = ${project.id}
+            `
+        if (!r) throw notFound('Repository')
+        await appendEvent(tx, {
+          stream: projectStream(project.id),
+          type: 'repository.updated',
+          projectId: project.id,
+          actor: { kind: 'user', id: actor.userId },
+          payload: { name: r.name },
+        })
+        await audit(tx, actor.userId, 'repository.update', 'repository', r.id, project.id, body)
+        return r
+      })
+      return { repository }
+    },
+  )
 }
 
 export async function loadProject(sql: Sql, projectId: string): Promise<ProjectRow> {

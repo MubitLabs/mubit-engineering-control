@@ -1,3 +1,4 @@
+import type { CheckCommand } from '@mec/contracts'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
@@ -5,6 +6,7 @@ import { api } from '../../api/client'
 import { useProjectEvents } from '../../api/events'
 import type { Delivery, Member, Project, ProjectRole, Repository, StoredEvent } from '../../api/types'
 import { Empty, ErrorBox, Panel, Status, Time } from '../../components/ui'
+import { formatCommandLines, parseCommandLines } from './commands'
 
 interface ProjectDetail {
   project: Project
@@ -108,18 +110,11 @@ export function ProjectPage() {
           <Panel title="Repositories" flush>
             {detail.data?.repositories.length === 0 && <Empty>No repositories registered.</Empty>}
             {detail.data?.repositories.map((r) => (
-              <div key={r.id} className="panel-body" style={{ borderBottom: '1px solid var(--border)' }}>
-                <div className="spread">
-                  <strong>{r.name}</strong>
-                  <span className="faint small">{r.defaultBranch}</span>
-                </div>
-                <div className="muted small mono-ellipsis">{r.cloneUrl}</div>
-                <div className="small faint">
-                  checks: {r.validationProfile.checks.map((c) => c.name).join(', ') || 'none'}
-                </div>
-              </div>
+              <RepositoryItem key={r.id} projectId={projectId!} repository={r} canEdit={isOwner} />
             ))}
-            {isOwner && <AddRepository projectId={projectId!} />}
+            {isOwner && detail.data && (
+              <AddRepository projectId={projectId!} startOpen={detail.data.repositories.length === 0} />
+            )}
           </Panel>
           <Panel title="Members" flush>
             <table className="table">
@@ -254,57 +249,186 @@ function AddMember({ projectId }: { projectId: string }) {
   )
 }
 
-function AddRepository({ projectId }: { projectId: string }) {
+function RepositoryItem({
+  projectId,
+  repository: r,
+  canEdit,
+}: {
+  projectId: string
+  repository: Repository
+  canEdit: boolean
+}) {
+  const [editing, setEditing] = useState(false)
+  const names = (list: { name: string }[]) => list.map((c) => c.name).join(', ') || 'none'
+  return (
+    <div className="panel-body" style={{ borderBottom: '1px solid var(--border)' }}>
+      <div className="spread">
+        <strong>{r.name}</strong>
+        <span className="row small">
+          <span className="faint">{r.defaultBranch}</span>
+          {canEdit && !editing && (
+            <button type="button" className="btn small" onClick={() => setEditing(true)}>
+              Edit
+            </button>
+          )}
+        </span>
+      </div>
+      <div className="muted small mono-ellipsis">{r.cloneUrl}</div>
+      <div className="small faint">
+        setup: {names(r.validationProfile.bootstrap)} · checks: {names(r.validationProfile.checks)}
+      </div>
+      {editing && <RepositoryForm projectId={projectId} repository={r} onDone={() => setEditing(false)} />}
+    </div>
+  )
+}
+
+function AddRepository({ projectId, startOpen }: { projectId: string; startOpen: boolean }) {
+  const [open, setOpen] = useState(startOpen)
+  if (!open)
+    return (
+      <div className="panel-body">
+        <button type="button" className="btn small" onClick={() => setOpen(true)}>
+          Add a repository
+        </button>
+      </div>
+    )
+  return <RepositoryForm projectId={projectId} onDone={() => setOpen(false)} />
+}
+
+/** Registers a repository, or edits one's branch, setup commands and checks. */
+function RepositoryForm({
+  projectId,
+  repository,
+  onDone,
+}: {
+  projectId: string
+  repository?: Repository
+  onDone?: () => void
+}) {
   const qc = useQueryClient()
   const [name, setName] = useState('')
   const [cloneUrl, setCloneUrl] = useState('')
-  const [checks, setChecks] = useState('test: pnpm test\nlint: pnpm lint')
-  const add = useMutation({
-    mutationFn: () =>
-      api.post(`/api/projects/${projectId}/repositories`, {
-        name,
-        cloneUrl,
-        validationProfile: {
-          bootstrap: [{ name: 'install', argv: ['pnpm', 'install', '--frozen-lockfile'], timeoutSec: 600 }],
-          checks: checks
-            .split('\n')
-            .map((l) => l.trim())
-            .filter(Boolean)
-            .map((l) => {
-              const [checkName, cmd] = l.split(':')
-              return { name: checkName!.trim(), argv: (cmd ?? '').trim().split(/\s+/), timeoutSec: 600 }
-            }),
-        },
-      }),
+  const [defaultBranch, setDefaultBranch] = useState(repository?.defaultBranch ?? 'main')
+  const [setup, setSetup] = useState(() =>
+    repository ? formatCommandLines(repository.validationProfile.bootstrap) : '',
+  )
+  const [checks, setChecks] = useState(() =>
+    repository ? formatCommandLines(repository.validationProfile.checks) : '',
+  )
+  // Editing keeps each command's stored timeout; the text form doesn't show it.
+  const keepTimeouts = (parsed: CheckCommand[], before: CheckCommand[] = []) =>
+    parsed.map((c) => ({
+      ...c,
+      timeoutSec: before.find((b) => b.name === c.name)?.timeoutSec ?? c.timeoutSec,
+    }))
+  const parsedSetup = parseCommandLines(setup)
+  const parsedChecks = parseCommandLines(checks)
+  const errors = [
+    ...parsedSetup.errors.map((e) => `Setup ${e}`),
+    ...parsedChecks.errors.map((e) => `Checks ${e}`),
+  ]
+  const save = useMutation({
+    mutationFn: () => {
+      const validationProfile = {
+        bootstrap: keepTimeouts(parsedSetup.commands, repository?.validationProfile.bootstrap),
+        checks: keepTimeouts(parsedChecks.commands, repository?.validationProfile.checks),
+      }
+      return repository
+        ? api.patch(`/api/projects/${projectId}/repositories/${repository.id}`, {
+            defaultBranch,
+            validationProfile,
+          })
+        : api.post(`/api/projects/${projectId}/repositories`, {
+            name,
+            cloneUrl,
+            defaultBranch,
+            validationProfile,
+          })
+    },
     onSuccess: () => {
-      setName('')
-      setCloneUrl('')
+      if (!repository) {
+        setName('')
+        setCloneUrl('')
+        setDefaultBranch('main')
+        setSetup('')
+        setChecks('')
+      }
       qc.invalidateQueries({ queryKey: ['project', projectId] })
+      onDone?.()
     },
   })
   return (
     <form
-      className="panel-body form"
+      className={repository ? 'form' : 'panel-body form'}
+      style={repository ? { marginTop: 10 } : undefined}
       onSubmit={(e) => {
         e.preventDefault()
-        add.mutate()
+        save.mutate()
       }}
     >
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="name" />
-      <input
-        value={cloneUrl}
-        onChange={(e) => setCloneUrl(e.target.value)}
-        placeholder="https://github.com/org/repo.git"
-      />
+      {!repository && (
+        <>
+          <label className="field">
+            Name
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="shop-api" />
+          </label>
+          <label className="field">
+            Clone URL
+            <input
+              value={cloneUrl}
+              onChange={(e) => setCloneUrl(e.target.value)}
+              placeholder="https://github.com/org/repo.git"
+            />
+          </label>
+        </>
+      )}
       <label className="field">
-        Checks (name: command, one per line)
-        <textarea rows={3} value={checks} onChange={(e) => setChecks(e.target.value)} />
+        Default branch
+        <input value={defaultBranch} onChange={(e) => setDefaultBranch(e.target.value)} />
       </label>
-      <ErrorBox error={add.error} />
-      <div>
-        <button className="btn small" type="submit" disabled={!name || !cloneUrl}>
-          Register repository
+      <label className="field">
+        Setup commands — run in each new worktree before the agent starts (optional)
+        <textarea
+          rows={2}
+          value={setup}
+          onChange={(e) => setSetup(e.target.value)}
+          placeholder="install: pnpm install --frozen-lockfile"
+        />
+      </label>
+      <label className="field">
+        Checks — tasks name the ones that must pass
+        <textarea
+          rows={3}
+          value={checks}
+          onChange={(e) => setChecks(e.target.value)}
+          placeholder={'test: pnpm test\nlint: pnpm lint'}
+        />
+      </label>
+      <div className="small faint">
+        One per line as <code>name: command</code>. Commands run directly, not through a shell; quote
+        arguments that contain spaces.
+      </div>
+      {errors.length > 0 && (
+        <div className="error-box">
+          {errors.map((e) => (
+            <div key={e}>{e}</div>
+          ))}
+        </div>
+      )}
+      <ErrorBox error={save.error} />
+      <div className="row">
+        <button
+          className="btn small primary"
+          type="submit"
+          disabled={(!repository && (!name || !cloneUrl)) || errors.length > 0 || save.isPending}
+        >
+          {repository ? 'Save' : 'Register repository'}
         </button>
+        {onDone && (
+          <button type="button" className="btn small" onClick={onDone}>
+            Cancel
+          </button>
+        )}
       </div>
     </form>
   )

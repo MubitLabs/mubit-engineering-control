@@ -56,6 +56,26 @@ describe('projects and permissions', () => {
     }
   })
 
+  it("lets project owners change a repository's setup, checks and branch, and no one else", async () => {
+    const url = `/api/projects/${s.project.id}/repositories/${s.repo.id}`
+    const validationProfile = {
+      bootstrap: [{ name: 'install', argv: ['npm', 'ci'] }],
+      checks: [{ name: 'test', argv: ['npm', 'test'], timeoutSec: 120 }],
+    }
+    expect((await s.member.patch(url, { validationProfile })).statusCode).toBe(403)
+    const res = await s.admin.patch(url, { validationProfile, defaultBranch: 'develop' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().repository).toMatchObject({
+      defaultBranch: 'develop',
+      validationProfile: {
+        bootstrap: [{ name: 'install', argv: ['npm', 'ci'], timeoutSec: 600 }],
+        checks: [{ name: 'test', argv: ['npm', 'test'], timeoutSec: 120 }],
+      },
+    })
+    const missing = `/api/projects/${s.project.id}/repositories/00000000-0000-0000-0000-000000000000`
+    expect((await s.admin.patch(missing, { defaultBranch: 'x' })).statusCode).toBe(404)
+  })
+
   it('does not let viewers create deliveries', async () => {
     expect((await s.viewer.post('/api/deliveries', newDelivery('viewer-key'))).statusCode).toBe(403)
   })

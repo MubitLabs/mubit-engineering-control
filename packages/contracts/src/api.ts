@@ -40,6 +40,14 @@ export const CreateRepository = z.object({
   validationProfile: ValidationProfile.default({ bootstrap: [], checks: [] }),
 })
 
+export const UpdateRepository = z.object({
+  defaultBranch: z
+    .string()
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/)
+    .optional(),
+  validationProfile: ValidationProfile.optional(),
+})
+
 export const CreateDelivery = z.object({
   projectId: z.uuid(),
   repositoryId: z.uuid(),

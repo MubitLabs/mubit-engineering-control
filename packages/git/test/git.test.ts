@@ -4,7 +4,17 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createFixtureRepo } from '@mec/testkit'
 import { describe, expect, it } from 'vitest'
-import { addWorktree, assertSafeRef, attemptBranch, commitAll, diffSummary, headSha, RepoCache } from '../src'
+import {
+  addWorktree,
+  assertSafeRef,
+  attemptBranch,
+  beginMerge,
+  commitAll,
+  diffSummary,
+  git,
+  headSha,
+  RepoCache,
+} from '../src'
 
 const author = { name: 'MEC test', email: 'mec@example.com' }
 
@@ -62,6 +72,35 @@ describe('worktrees', () => {
     writeFileSync(path.join(wt, 'progress.txt'), 'half done')
     await addWorktree(cache.pathFor(remote.url), wt, 'mec/x/T1/a1', base)
     expect(readFileSync(path.join(wt, 'progress.txt'), 'utf8')).toBe('half done')
+  })
+
+  it('starts a conflicting repair merge on a host with no git identity, and completes it with both parents', async () => {
+    const remote = createFixtureRepo()
+    const cache = new RepoCache(await mkdtemp(path.join(tmpdir(), 'mec-repos-')))
+    const base = await cache.resolve(remote.url, 'main')
+    const work = await mkdtemp(path.join(tmpdir(), 'mec-work-'))
+    const side = path.join(work, 'side')
+    await addWorktree(cache.pathFor(remote.url), side, 'side', base)
+    writeFileSync(path.join(side, 'README.md'), 'from side\n')
+    const theirs = (await commitAll(side, 'side', author))!
+    const wt = path.join(work, 'repair')
+    await addWorktree(cache.pathFor(remote.url), wt, 'repair', base)
+    writeFileSync(path.join(wt, 'README.md'), 'from repair\n')
+    await commitAll(wt, 'ours', author)
+
+    await git(['config', 'user.useConfigOnly', 'true'], { cwd: wt })
+    const home = process.env.HOME
+    process.env.HOME = await mkdtemp(path.join(tmpdir(), 'mec-home-'))
+    try {
+      await expect(beginMerge(wt, 'f'.repeat(40), author)).rejects.toThrow(/merge/)
+      expect(await beginMerge(wt, theirs, author)).toEqual(['README.md'])
+    } finally {
+      process.env.HOME = home
+    }
+    writeFileSync(path.join(wt, 'README.md'), 'from both\n')
+    const head = (await commitAll(wt, 'resolved', author))!
+    const parents = (await git(['rev-list', '--parents', '-n', '1', head], { cwd: wt })).trim().split(' ')
+    expect(parents).toHaveLength(3)
   })
 })
 

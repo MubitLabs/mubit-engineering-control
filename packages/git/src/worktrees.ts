@@ -75,15 +75,7 @@ export async function commitAll(
   await git(['add', '--all'], { cwd: workdir })
   const staged = await git(['diff', '--cached', '--name-only'], { cwd: workdir })
   if (!staged.trim()) return null
-  await git(['commit', '--quiet', '--no-verify', '-m', message], {
-    cwd: workdir,
-    env: {
-      GIT_AUTHOR_NAME: author.name,
-      GIT_AUTHOR_EMAIL: author.email,
-      GIT_COMMITTER_NAME: author.name,
-      GIT_COMMITTER_EMAIL: author.email,
-    },
-  })
+  await git(['commit', '--quiet', '--no-verify', '-m', message], { cwd: workdir, env: identityEnv(author) })
   return headSha(workdir)
 }
 
@@ -152,14 +144,11 @@ export async function mergeCommit(
   message: string,
   author: { name: string; email: string },
 ): Promise<MergeOutcome> {
-  const env = {
-    GIT_AUTHOR_NAME: author.name,
-    GIT_AUTHOR_EMAIL: author.email,
-    GIT_COMMITTER_NAME: author.name,
-    GIT_COMMITTER_EMAIL: author.email,
-  }
   try {
-    await git(['merge', '--no-ff', '--no-edit', '-m', message, assertSha(sha)], { cwd: workdir, env })
+    await git(['merge', '--no-ff', '--no-edit', '-m', message, assertSha(sha)], {
+      cwd: workdir,
+      env: identityEnv(author),
+    })
     return { ok: true, sha: await headSha(workdir) }
   } catch {
     const out = await git(['diff', '--name-only', '--diff-filter=U'], { cwd: workdir }).catch(() => '')
@@ -172,10 +161,31 @@ export async function mergeCommit(
  * Starts a merge and leaves any conflicts in the working tree for an agent to resolve; the next
  * commit completes it with both parents. Returns the conflicting paths (empty if it merged cleanly).
  */
-export async function beginMerge(workdir: string, sha: string): Promise<string[]> {
-  await git(['merge', '--no-ff', '--no-commit', assertSha(sha)], { cwd: workdir }).catch(() => undefined)
-  const out = await git(['diff', '--name-only', '--diff-filter=U'], { cwd: workdir }).catch(() => '')
+export async function beginMerge(
+  workdir: string,
+  sha: string,
+  author: { name: string; email: string },
+): Promise<string[]> {
+  try {
+    await git(['merge', '--no-ff', '--no-commit', assertSha(sha)], { cwd: workdir, env: identityEnv(author) })
+  } catch (err) {
+    const inProgress = await git(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], { cwd: workdir }).then(
+      () => true,
+      () => false,
+    )
+    if (!inProgress) throw err
+  }
+  const out = await git(['diff', '--name-only', '--diff-filter=U'], { cwd: workdir })
   return out.split('\n').filter(Boolean)
+}
+
+function identityEnv(author: { name: string; email: string }): Record<string, string> {
+  return {
+    GIT_AUTHOR_NAME: author.name,
+    GIT_AUTHOR_EMAIL: author.email,
+    GIT_COMMITTER_NAME: author.name,
+    GIT_COMMITTER_EMAIL: author.email,
+  }
 }
 
 export async function commitExists(workdir: string, sha: string): Promise<boolean> {

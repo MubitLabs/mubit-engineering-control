@@ -118,7 +118,7 @@ export class Workspaces {
 
   /** Repairs of a conflict start with the merge in progress so the agent sees both changes. */
   beginMerge(workdir: string, sha: string): Promise<string[]> {
-    return beginMerge(workdir, sha)
+    return beginMerge(workdir, sha, this.author)
   }
 
   get pushEnabled(): boolean {

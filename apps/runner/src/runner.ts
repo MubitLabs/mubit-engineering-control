@@ -374,7 +374,12 @@ export class Runner {
 
       const repair = start.inputs.repair as { mergeSha?: string | null } | undefined
       if (!resume && repair?.mergeSha) {
-        const conflicts = await this.workspaces.beginMerge(ws.workdir, repair.mergeSha)
+        let conflicts: string[]
+        try {
+          conflicts = await this.workspaces.beginMerge(ws.workdir, repair.mergeSha)
+        } catch (e) {
+          return await fail('workspace_failed', `starting the repair merge failed: ${(e as Error).message}`)
+        }
         await emit('workspace.merge_started', { mergeSha: repair.mergeSha, conflicts })
       }
 

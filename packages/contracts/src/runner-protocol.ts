@@ -102,6 +102,7 @@ export type RunnerCommand = z.infer<typeof RunnerCommand>
 
 export const AttemptReport = z.object({
   attemptId: z.string(),
+  taskId: z.string().optional(),
   generation: z.number().int().nonnegative(),
   /** 'live' while the supervised process runs; 'stopped' once its process group has exited. */
   process: z.enum(['live', 'stopped']),
@@ -197,6 +198,7 @@ export type FakeStep = z.infer<typeof FakeStep>
 
 /** What a runner needs to prepare and verify an attempt (sent with `start`). */
 export const StartPayload = z.object({
+  taskId: z.string().optional(),
   agentKind: AgentKind,
   kind: z.enum(['implement', 'repair', 'coordinator', 'integration']),
   taskKey: z.string(),

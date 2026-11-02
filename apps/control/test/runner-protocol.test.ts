@@ -217,3 +217,36 @@ describe('event ingestion', () => {
     )
   })
 })
+
+describe('decision race (PDF §34)', () => {
+  it('two concurrent answers to a tool request give one resolution and one command to the runner', async () => {
+    runner = await connectedRunner()
+    const { attempt } = await startAttempt(runner.runnerId)
+    for (const type of ['attempt.preparing', 'attempt.started']) await runner.emit(runner.envelope(attempt.id, 1, type))
+    await runner.emit(
+      runner.envelope(attempt.id, 1, 'attempt.input_requested', {
+        kind: 'tool',
+        nativeRequestRef: 'toolu_race',
+        toolName: 'Bash',
+        input: { command: 'make deploy' },
+        command: 'make deploy',
+      }),
+    )
+    const [approval] = await t.db.sql`select id from approvals where attempt_id = ${attempt.id} and kind = 'tool'`
+    const url = `/api/approvals/${approval!.id}/resolve`
+    const results = await Promise.all([
+      s.admin.post(url, { decision: { kind: 'approve' } }),
+      s.admin.post(url, { decision: { kind: 'reject', reason: 'no' } }),
+      s.admin.post(url, { decision: { kind: 'approve' } }),
+    ])
+    expect(results.map((r) => r.statusCode).sort()).toEqual([200, 409, 409])
+    const commands = await t.db.sql`
+      select payload from outbox where topic = 'runner.command' and payload->>'type' = 'resolve_decision'
+    `
+    expect(commands).toHaveLength(1)
+    const winner = results.find((r) => r.statusCode === 200)!.json().approval.status
+    expect((commands[0]!.payload as { payload: { decision: { kind: string } } }).payload.decision.kind).toBe(
+      winner === 'approved' ? 'approve' : 'reject',
+    )
+  })
+})

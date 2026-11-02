@@ -137,6 +137,7 @@ export class Runner {
   reports(): AttemptReport[] {
     return [...this.journals.values()].map((j) => ({
       attemptId: j.attemptId,
+      taskId: typeof j.info.start.taskId === 'string' ? j.info.start.taskId : undefined,
       generation: j.generation,
       process: this.live.get(j.attemptId)?.session ? 'live' : 'stopped',
       lastSequence: j.lastSequence,
@@ -175,7 +176,14 @@ export class Runner {
         this.sentUpTo.clear()
         for (const j of this.journals.values()) {
           const acked = msg.acked[j.attemptId]
-          if (acked !== undefined) await j.ack(acked)
+          if (acked !== undefined && acked < j.info.acked) {
+            const replayed = await j.rewind(acked)
+            this.log.warn('control is behind this journal; replaying', {
+              attemptId: j.attemptId,
+              from: acked,
+              replayed,
+            })
+          } else if (acked !== undefined) await j.ack(acked)
           this.flush(j)
         }
         this.log.info('connected to control', { attempts: this.journals.size })

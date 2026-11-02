@@ -486,6 +486,7 @@ async function startPayload(
     diffBaseSha = repair.diffBaseSha
   }
   return {
+    taskId: task.id,
     agentKind: input.agentKind,
     kind: attempt.kind,
     taskKey: task.key,

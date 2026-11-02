@@ -2,6 +2,7 @@ import type { AgentProbe, AttemptReport, RunnerEventEnvelope, RunnerHello } from
 import { ACTIVE_ATTEMPT_STATES, attemptMachine, checkSequence, fence, LEASE_DEFAULTS } from '@mec/domain'
 import type { Db, Sql, Tx } from '../../db/sql'
 import { appendEvent, FLEET_STREAM, projectStream } from '../../events/append'
+import { enqueueCommand } from '../../outbox/commands'
 import { type AttemptRow, applyLifecycle, followTask, isLifecycleEvent } from '../attempts/service'
 import { handleControlCall } from '../decisions/calls'
 import { openDecision } from '../decisions/service'
@@ -145,11 +146,33 @@ export async function reconcileHello(
     const acked: Record<string, number> = {}
     const reported = new Map(hello.attempts.map((a) => [a.attemptId, a]))
     const ids = hello.attempts.map((a) => a.attemptId).filter((id) => /^[0-9a-f-]{36}$/i.test(id))
+    const known = new Set<string>()
     if (ids.length > 0) {
       const rows = await tx<{ id: string; lastSequence: number; runnerId: string }[]>`
         select id, last_sequence, runner_id from attempts where id = any(${tx.array(ids)}::uuid[])
       `
-      for (const r of rows) if (r.runnerId === runnerId) acked[r.id] = r.lastSequence
+      for (const r of rows) {
+        known.add(r.id)
+        if (r.runnerId === runnerId) acked[r.id] = r.lastSequence
+      }
+    }
+    // Attempts this database has no record of (e.g. after restoring an older backup) are stopped on
+    // the runner, their workspace preserved, before anything could start the same work again.
+    for (const report of hello.attempts) {
+      if (known.has(report.attemptId) || report.process !== 'live') continue
+      await enqueueCommand(tx, runnerId, {
+        commandId: `${report.attemptId}:g${report.generation}:cancel:unknown`,
+        type: 'cancel',
+        attemptId: report.attemptId,
+        generation: report.generation,
+        payload: { reason: 'control has no record of this attempt (restored from a backup?)' },
+      })
+      await appendEvent(tx, {
+        stream: FLEET_STREAM,
+        type: 'runner.unknown_attempt',
+        actor: { kind: 'system' },
+        payload: { runnerId, attemptId: report.attemptId, taskId: report.taskId ?? null, action: 'stopped' },
+      })
     }
 
     const active = await tx<AttemptRow[]>`

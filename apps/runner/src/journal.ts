@@ -140,6 +140,29 @@ export class AttemptJournal {
     return envelope
   }
 
+  /**
+   * Control's record is behind ours (it was restored from a backup): reload the events after
+   * `sequence` from the file so they are replayed. The journal file keeps every event.
+   */
+  async rewind(sequence: number): Promise<number> {
+    if (sequence >= this.meta.acked) return 0
+    const lines = (await readFile(path.join(this.dir, 'events.jsonl'), 'utf8')).split('\n')
+    const events: RunnerEventEnvelope[] = []
+    for (const line of lines) {
+      if (!line.trim()) continue
+      try {
+        const e = JSON.parse(line) as RunnerEventEnvelope
+        if (e.sequence > sequence) events.push(e)
+      } catch {
+        // torn line
+      }
+    }
+    this.pendingEvents = events
+    this.meta.acked = sequence
+    await this.saveMeta()
+    return events.length
+  }
+
   /** Control persisted everything up to `sequence`; drop it from the replay buffer. */
   async ack(sequence: number): Promise<void> {
     if (sequence <= this.meta.acked) return

@@ -21,6 +21,22 @@ short explainer in [`docs/milestones/`](docs/milestones/).
 | [M7](docs/milestones/M7.md) | Claude Code adapter, decision bridge and inbox, execution profiles, steering messages |
 | [M8](docs/milestones/M8.md) | Planning: coordinator with propose_tasks, graph view, traceability, revision carry-over |
 | [M9](docs/milestones/M9.md) | Review, repair, sequential integration on exact SHAs, conflict repair, pull request |
+| [M10](docs/milestones/M10.md) | Pilot hardening: restore without duplicate work, restore drill, fault-suite map, runbook |
+
+Operations: [`docs/RUNBOOK.md`](docs/RUNBOOK.md). Deferred to later milestones: Codex and OpenCode
+adapters, a GitHub App (v1 uses a fine-grained token), the AgentSpec factory, OpenTelemetry/MLflow
+projection, evaluations and the improvement loop, terminal attach, macOS and multi-repo deliveries.
+
+## How a delivery flows
+
+```
+plan ──► revision (hand-written or proposed by a read-only coordinator) ──► owner approves
+     ──► scheduler leases ready tasks to employee runners (limits, fairness, fencing)
+     ──► agent works in a worktree on the pinned base; questions and tool approvals go to the inbox
+     ──► commit, diff, acceptance checks on the head SHA ──► owner accepts or sends back (repair)
+     ──► integration queue merges accepted tasks in dependency order, checks the exact merge SHA
+     ──► dependents start from the integration commit ──► PR opened; merged only when GitHub says so
+```
 
 ## Layout
 
@@ -33,8 +49,8 @@ packages/domain     Pure state machines, task-graph validation, lease rules
 packages/policy     Permission checks
 packages/agents     Agent adapter interface and adapters (fake, Claude Code)
 packages/git        Clones, worktrees, merges, diffs
-packages/testkit    Fake runner, fake agent scripts, recorded fixtures
-deploy/             Droplet provisioning, systemd units, Caddy site, deploy script
+packages/testkit    Fake runner, fixture repositories, stand-in Claude CLI, recorded stream fixtures
+deploy/             Provisioning, systemd units, Caddy site, deploy script, restore drill
 ```
 
 ## Development
@@ -42,5 +58,16 @@ deploy/             Droplet provisioning, systemd units, Caddy site, deploy scri
 ```bash
 pnpm install
 pnpm db:up      # Postgres 16 in Docker on 127.0.0.1:5434
-pnpm check      # typecheck + lint + tests
+pnpm check      # typecheck + lint + tests (unit, Postgres integration, end-to-end with a real runner)
+pnpm build      # web bundle + control and runner bundles
+```
+
+Run everything locally with the fake agent:
+
+```bash
+DATABASE_URL=postgres://mec:mec@127.0.0.1:5434/mec AUTH_MODE=dev MEC_ADMIN_LOGINS=admin ALLOW_FILE_REPOS=true \
+  node apps/control/dist/main.js
+# sign in as "admin" at http://127.0.0.1:4100, create a project and a runner invitation (Fleet), then:
+node apps/runner/dist/main.js enrol --url http://127.0.0.1:4100 --invite <token> --name laptop --config-file ./runner.env
+set -a; . ./runner.env; set +a; node apps/runner/dist/main.js
 ```

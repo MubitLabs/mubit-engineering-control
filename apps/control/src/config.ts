@@ -12,6 +12,8 @@ const Env = z.object({
   GITHUB_CLIENT_SECRET: z.string().default(''),
   GITHUB_ORG: z.string().default('MubitLabs'),
   MEC_ADMIN_LOGINS: z.string().default(''),
+  /** Logins that may sign in when org membership cannot be confirmed (e.g. the org restricts OAuth apps). */
+  MEC_ALLOWED_LOGINS: z.string().default(''),
   SESSION_TTL_HOURS: z.coerce.number().int().positive().default(336),
   MIGRATE_ON_START: bool.default(true),
   ALLOW_FILE_REPOS: bool.default(false),
@@ -38,6 +40,7 @@ export interface Config {
   authMode: 'github' | 'dev'
   github: { clientId: string; clientSecret: string; org: string; token: string }
   adminLogins: string[]
+  allowedLogins: string[]
   sessionTtlHours: number
   migrateOnStart: boolean
   allowFileRepos: boolean
@@ -70,9 +73,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       org: e.GITHUB_ORG,
       token: e.GITHUB_TOKEN,
     },
-    adminLogins: e.MEC_ADMIN_LOGINS.split(',')
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean),
+    adminLogins: logins(e.MEC_ADMIN_LOGINS),
+    allowedLogins: logins(e.MEC_ALLOWED_LOGINS),
     sessionTtlHours: e.SESSION_TTL_HOURS,
     migrateOnStart: e.MIGRATE_ON_START,
     allowFileRepos: e.ALLOW_FILE_REPOS,
@@ -109,4 +111,11 @@ export function assertSafe(config: Config): void {
       throw new Error('AUTH_MODE=dev is only allowed when PUBLIC_URL is a loopback address')
     }
   }
+}
+
+function logins(list: string): string[] {
+  return list
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
 }

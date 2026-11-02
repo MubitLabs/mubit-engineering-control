@@ -68,7 +68,10 @@ export function registerAuth(
     // The GitHub token is used only for these checks and never stored.
     const token = await github.exchangeCode(q.code, redirectUri)
     const identity = await github.fetchIdentity(token)
-    if (!(await github.isActiveOrgMember(token, config.github.org))) {
+    const allowed =
+      config.allowedLogins.includes(identity.login.toLowerCase()) ||
+      (await github.isActiveOrgMember(token, config.github.org))
+    if (!allowed) {
       req.log.warn({ login: identity.login }, 'login refused: not an org member')
       return reply.redirect('/login?error=not_member')
     }

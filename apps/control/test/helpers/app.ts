@@ -21,6 +21,7 @@ export function testConfig(overrides: ConfigOverrides = {}): Config {
     authMode: 'dev',
     github: { clientId: '', clientSecret: '', org: 'MubitLabs', token: '' },
     adminLogins: ['admin'],
+    allowedLogins: [],
     sessionTtlHours: 24,
     migrateOnStart: false,
     allowFileRepos: true,

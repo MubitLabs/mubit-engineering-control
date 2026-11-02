@@ -35,7 +35,10 @@ Migrations only move forward; a rollback across a migration needs a reviewed dow
 1. **GitHub sign-in.** Create an OAuth App in MubitLabs with callback
    `https://mec.139-59-181-123.sslip.io/auth/github/callback`. Put `GITHUB_CLIENT_ID` and
    `GITHUB_CLIENT_SECRET` in `/etc/mec/control.env`, then `systemctl restart mec-control`. Only
-   active MubitLabs members can sign in; admins are listed in `MEC_ADMIN_LOGINS`.
+   active MubitLabs members can sign in; admins are listed in `MEC_ADMIN_LOGINS`. If MubitLabs
+   restricts OAuth apps and has not approved this one, membership cannot be confirmed and sign-in
+   says "not a member": an org owner approves the app, or list trusted logins in
+   `MEC_ALLOWED_LOGINS` (comma-separated) to let them in meanwhile.
 2. **Claude Code on the runner.** `ssh droplet-max`, run `claude`, then `/login`. The runner's
    probe picks it up within five minutes (Accounts page shows sign-in `ok`).
 3. **Repository token.** A fine-grained PAT limited to the delivery repositories (Contents and Pull

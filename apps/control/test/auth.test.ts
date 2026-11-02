@@ -111,6 +111,14 @@ describe('GitHub OAuth', () => {
     expect((await t.db.sql`select count(*)::int as n from users`)[0]!.n).toBe(0)
   })
 
+  it('signs in listed logins whose org membership cannot be confirmed, and no one else', async () => {
+    t = await createTestApp({ github: fakeGithub({}), config: { allowedLogins: ['e1daru'] } })
+    expect((await githubLogin(t.app, 'E1daru')).headers.location).toBe('/')
+    expect((await githubLogin(t.app, 'stranger')).headers.location).toBe('/login?error=not_member')
+    const users = await t.db.sql`select login from users`
+    expect(users.map((u) => u.login)).toEqual(['E1daru'])
+  })
+
   it('rejects a callback whose state does not match the cookie', async () => {
     t = await createTestApp({ github: fakeGithub({ admin: true }) })
     await t.app.inject({ method: 'GET', url: '/auth/github/login' })

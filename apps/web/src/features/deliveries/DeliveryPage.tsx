@@ -70,10 +70,6 @@ export function DeliveryPage() {
               </div>
             )}
           </Panel>
-          {current && <Traceability revision={current} />}
-          {current && (
-            <RevisionEditor revision={current} ownerId={delivery.ownerId} deliveryId={delivery.id} />
-          )}
           <Panel title="Tasks" flush>
             {work.length === 0 ? (
               <Empty>Tasks appear here once a plan revision is approved.</Empty>
@@ -106,6 +102,15 @@ export function DeliveryPage() {
               </table>
             )}
           </Panel>
+          {current && <Traceability revision={current} />}
+          {current && (
+            <RevisionEditor
+              key={current.id}
+              revision={current}
+              ownerId={delivery.ownerId}
+              deliveryId={delivery.id}
+            />
+          )}
         </div>
         <div className="stack">
           {delivery.state === 'planning' && <Coordinator deliveryId={delivery.id} />}
@@ -187,8 +192,21 @@ export function DeliveryPage() {
                   {approvals.map((a) => (
                     <tr key={a.id}>
                       <td>
-                        <div>{a.title}</div>
-                        <div className="faint small">{a.kind}</div>
+                        <div>
+                          {a.taskId ? (
+                            <Link to={`/projects/${projectId}/tasks/${a.taskId}`}>{a.title}</Link>
+                          ) : a.status === 'pending' ? (
+                            <Link to="/inbox">{a.title}</Link>
+                          ) : (
+                            a.title
+                          )}
+                        </div>
+                        <div className="faint small">
+                          {a.kind}
+                          {a.status === 'pending' &&
+                            a.kind === 'plan' &&
+                            ' · approve in the plan revision panel or the inbox'}
+                        </div>
                       </td>
                       <td>
                         <Status value={a.status} />
@@ -295,6 +313,7 @@ function RevisionEditor(props: { revision: PlanRevision; ownerId: string; delive
   const [plan, setPlan] = useState(revision.planMarkdown)
   const [spec, setSpec] = useState(() => toSpecText(revision))
   const [conflict, setConflict] = useState<PlanRevision | null>(null)
+  const [open, setOpen] = useState(editable)
 
   useEffect(() => {
     setPlan(revision.planMarkdown)
@@ -375,53 +394,65 @@ function RevisionEditor(props: { revision: PlanRevision; ownerId: string; delive
             </button>
           )}
           {!editable && (
-            <button type="button" className="btn small" onClick={() => start(newRevision)}>
-              New revision
-            </button>
+            <>
+              <button type="button" className="btn small" onClick={() => setOpen(!open)}>
+                {open ? 'Hide plan' : 'Show plan'}
+              </button>
+              <button type="button" className="btn small" onClick={() => start(newRevision)}>
+                New revision
+              </button>
+            </>
           )}
         </>
       }
     >
-      <div className="form">
-        {conflict && (
-          <div className="error-box">
-            Someone else saved version {conflict.version}. Their text:
-            <pre className="muted">{conflict.planMarkdown}</pre>
-            <button type="button" className="btn small" onClick={refresh}>
-              Load their version
-            </button>
-          </div>
-        )}
-        <label className="field">
-          Plan
-          <textarea rows={8} value={plan} readOnly={!editable} onChange={(e) => setPlan(e.target.value)} />
-        </label>
-        <label className="field">
-          Requirements and tasks (JSON)
-          <textarea rows={12} value={spec} readOnly={!editable} onChange={(e) => setSpec(e.target.value)} />
-        </label>
-        {revision.impactSummary && (
-          <div className="notice small">
-            <strong>Impact on the approved plan</strong>
-            <pre>{revision.impactSummary}</pre>
-          </div>
-        )}
-        {revision.validation && (
-          <div className="small">
-            {revision.validation.errors.map((e) => (
-              <div key={e.message} className="status err" style={{ display: 'block', marginBottom: 4 }}>
-                {e.message}
-              </div>
-            ))}
-            {revision.validation.warnings.map((w) => (
-              <div key={w.message} className="muted">
-                ⚠ {w.message}
-              </div>
-            ))}
-          </div>
-        )}
-        <ErrorBox error={save.error ?? submit.error ?? approve.error ?? newRevision.error} />
-      </div>
+      {!open ? (
+        <div className="muted small">
+          {revision.state} plan with {revision.tasks.length} tasks. Changing it starts a new revision.
+          <ErrorBox error={newRevision.error} />
+        </div>
+      ) : (
+        <div className="form">
+          {conflict && (
+            <div className="error-box">
+              Someone else saved version {conflict.version}. Their text:
+              <pre className="muted">{conflict.planMarkdown}</pre>
+              <button type="button" className="btn small" onClick={refresh}>
+                Load their version
+              </button>
+            </div>
+          )}
+          <label className="field">
+            Plan
+            <textarea rows={8} value={plan} readOnly={!editable} onChange={(e) => setPlan(e.target.value)} />
+          </label>
+          <label className="field">
+            Requirements and tasks (JSON)
+            <textarea rows={12} value={spec} readOnly={!editable} onChange={(e) => setSpec(e.target.value)} />
+          </label>
+          {revision.impactSummary && (
+            <div className="notice small">
+              <strong>Impact on the approved plan</strong>
+              <pre>{revision.impactSummary}</pre>
+            </div>
+          )}
+          {revision.validation && (
+            <div className="small">
+              {revision.validation.errors.map((e) => (
+                <div key={e.message} className="status err" style={{ display: 'block', marginBottom: 4 }}>
+                  {e.message}
+                </div>
+              ))}
+              {revision.validation.warnings.map((w) => (
+                <div key={w.message} className="muted">
+                  ⚠ {w.message}
+                </div>
+              ))}
+            </div>
+          )}
+          <ErrorBox error={save.error ?? submit.error ?? approve.error ?? newRevision.error} />
+        </div>
+      )}
     </Panel>
   )
 }

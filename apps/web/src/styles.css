@@ -39,6 +39,13 @@ a {
 a:hover {
   color: var(--accent);
 }
+.main a:not(.btn):not(svg a) {
+  text-decoration: underline dotted var(--faint);
+  text-underline-offset: 3px;
+}
+.main a:not(.btn):not(svg a):hover {
+  text-decoration-color: var(--accent);
+}
 
 h1,
 h2,

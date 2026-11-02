@@ -135,3 +135,45 @@ export const sampleRequirements = [
   { id: 'R1', text: 'Expose GET /audit' },
   { id: 'R2', text: 'Show audit records in the console' },
 ]
+
+/** Creates, submits and approves a delivery; returns its tasks keyed by task key. */
+export async function approvedDelivery(
+  s: Awaited<ReturnType<typeof seedProject>>,
+  tasks: unknown[] = sampleTasks,
+  key = `key-${Math.random().toString(36).slice(2)}`,
+) {
+  const { delivery } = (
+    await s.admin.post('/api/deliveries', {
+      projectId: s.project.id,
+      repositoryId: s.repo.id,
+      title: 'Audit log',
+      planMarkdown: '# Audit log',
+      requirements: sampleRequirements,
+      tasks,
+      idempotencyKey: key,
+    })
+  ).json()
+  const rev = (await s.admin.get(`/api/deliveries/${delivery.id}`)).json().revisions[0]
+  const submit = await s.admin.post(`/api/plans/${rev.id}/submit`, { expectedVersion: rev.version })
+  if (submit.statusCode !== 200) throw new Error(`submit failed: ${submit.body}`)
+  const approve = await s.admin.post(`/api/plans/${rev.id}/approve`, { expectedVersion: rev.version })
+  if (approve.statusCode !== 200) throw new Error(`approve failed: ${approve.body}`)
+  const detail = (await s.admin.get(`/api/deliveries/${delivery.id}`)).json()
+  const byKey = Object.fromEntries(detail.tasks.map((x: { key: string }) => [x.key, x])) as Record<
+    string,
+    { id: string; key: string; state: string }
+  >
+  return { delivery, tasks: byKey }
+}
+
+/** Invites and enrols a runner through the public API. */
+export async function enrolRunner(admin: Client, app: FastifyInstance, name = 'runner-1') {
+  const invite = (await admin.post('/api/runners/invites', { label: name })).json()
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/runners/enrol',
+    payload: { inviteToken: invite.token, name, hostname: 'test', os: 'linux', arch: 'x64' },
+  })
+  if (res.statusCode !== 201) throw new Error(`enrol failed: ${res.body}`)
+  return res.json() as { runnerId: string; token: string }
+}

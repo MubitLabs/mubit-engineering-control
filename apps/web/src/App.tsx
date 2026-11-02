@@ -8,6 +8,7 @@ import { FleetPage } from './features/fleet/FleetPage'
 import { InboxPage } from './features/inbox/InboxPage'
 import { ProjectPage } from './features/projects/ProjectPage'
 import { ProjectsPage } from './features/projects/ProjectsPage'
+import { TaskPage } from './features/tasks/TaskPage'
 
 export function App() {
   const me = useMe()
@@ -23,6 +24,7 @@ export function App() {
         <Route path="fleet" element={<FleetPage />} />
         <Route path="projects/:projectId" element={<ProjectPage />} />
         <Route path="projects/:projectId/deliveries/:deliveryId" element={<DeliveryPage />} />
+        <Route path="projects/:projectId/tasks/:taskId" element={<TaskPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

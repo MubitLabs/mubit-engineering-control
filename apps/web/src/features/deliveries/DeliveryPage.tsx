@@ -58,7 +58,9 @@ export function DeliveryPage() {
                     .map((t) => (
                       <tr key={t.id}>
                         <td>
-                          <code>{t.key}</code>
+                          <Link to={`/projects/${projectId}/tasks/${t.id}`}>
+                            <code>{t.key}</code>
+                          </Link>
                         </td>
                         <td>{t.title}</td>
                         <td>

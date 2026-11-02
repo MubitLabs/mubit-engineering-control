@@ -15,6 +15,7 @@ short explainer in [`docs/milestones/`](docs/milestones/).
 | [M1](docs/milestones/M1.md) | Domain and policy: state machines, task-graph validation, leases, permissions |
 | [M2](docs/milestones/M2.md) | Control API, GitHub login, plan revisions, atomic approvals, SSE, web shell |
 | [M3](docs/milestones/M3.md) | Droplet provisioning and deploy pipeline (live at https://mec.139-59-181-123.sslip.io) |
+| [M4](docs/milestones/M4.md) | Runner and protocol: enrolment, WebSocket, journal and replay, supervisor, fake agent, fleet UI |
 
 ## Layout
 

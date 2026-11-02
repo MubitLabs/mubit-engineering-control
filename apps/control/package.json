@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "build": "node ../../scripts/bundle.mjs src/main.ts dist/main.js && node ../../scripts/bundle.mjs src/migrate-cli.ts dist/migrate.js",
+    "build": "node ../../scripts/bundle.mjs src/main.ts dist/main.js && node ../../scripts/bundle.mjs src/migrate-cli.ts dist/migrate.js && node ../../scripts/bundle.mjs src/admin-cli.ts dist/admin.js",
     "dev": "tsx watch src/main.ts",
     "start": "node --enable-source-maps dist/main.js",
     "migrate": "tsx src/migrate-cli.ts"
@@ -13,11 +13,19 @@
   "dependencies": {
     "@fastify/cookie": "11.1.5",
     "@fastify/static": "10.1.8",
+    "@fastify/websocket": "11.3.6",
     "@mec/contracts": "workspace:*",
     "@mec/domain": "workspace:*",
     "@mec/policy": "workspace:*",
     "fastify": "5.12.7",
     "postgres": "3.4.9",
+    "ws": "8.22.1",
     "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.2",
+    "@mec/runner": "workspace:*",
+    "@mec/testkit": "workspace:*",
+    "@mec/agents": "workspace:*"
   }
 }

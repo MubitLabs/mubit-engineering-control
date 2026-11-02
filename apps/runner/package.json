@@ -1,0 +1,23 @@
+{
+  "name": "@mec/runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "node ../../scripts/bundle.mjs src/main.ts dist/main.js",
+    "dev": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@mec/agents": "workspace:*",
+    "@mec/contracts": "workspace:*",
+    "ws": "8.22.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.2"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

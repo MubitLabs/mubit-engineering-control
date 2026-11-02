@@ -7,13 +7,18 @@ import type { Sql } from './db/sql'
 import type { EventBus } from './events/bus'
 import { registerApprovals } from './features/approvals/routes'
 import type { ApprovalHookMap } from './features/approvals/service'
+import { registerAttemptRoutes } from './features/attempts/routes'
 import { createGithubOAuth, type GithubOAuth } from './features/auth/github'
 import { registerAuth } from './features/auth/routes'
 import { registerDeliveries } from './features/deliveries/routes'
 import { registerEvents } from './features/events/routes'
 import { planApprovalHooks } from './features/plans/service'
 import { registerProjects } from './features/projects/routes'
+import { registerRunnerGateway } from './features/runners/gateway'
+import { RunnerRegistry } from './features/runners/registry'
+import { registerRunnerRoutes } from './features/runners/routes'
 import { registerErrorHandler } from './http/errors'
+import { CommandDispatcher } from './outbox/dispatcher'
 import { WEB_DIST_DIR } from './paths'
 
 export interface AppDeps {
@@ -23,6 +28,17 @@ export interface AppDeps {
   /** Override the GitHub client (tests). Defaults to the real one when configured. */
   github?: GithubOAuth | null
   webDistDir?: string | null
+}
+
+export interface Services {
+  registry: RunnerRegistry
+  dispatcher: CommandDispatcher
+}
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    services: Services
+  }
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
@@ -43,6 +59,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         : null
 
   const hooks: ApprovalHookMap = { plan: planApprovalHooks }
+  const registry = new RunnerRegistry()
+  const dispatcher = new CommandDispatcher(sql, registry, app.log)
+  app.decorate('services', { registry, dispatcher })
+  app.addHook('onReady', () => dispatcher.start())
+  app.addHook('onClose', () => dispatcher.stop())
 
   app.get('/healthz', async () => {
     await sql`select 1`
@@ -54,6 +75,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerDeliveries(app, { sql, hooks })
   registerApprovals(app, { sql, hooks })
   registerEvents(app, { sql, bus })
+  registerRunnerRoutes(app, { sql, config, registry })
+  registerAttemptRoutes(app, { sql, registry })
+  await registerRunnerGateway(app, { sql, registry, dispatcher })
 
   const webDir = deps.webDistDir === undefined ? WEB_DIST_DIR : deps.webDistDir
   if (webDir && existsSync(webDir)) {

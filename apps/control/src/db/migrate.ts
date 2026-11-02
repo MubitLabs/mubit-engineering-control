@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { Sql } from 'postgres'
+import type { Sql } from './sql'
 
 export interface MigrationFile {
   version: string

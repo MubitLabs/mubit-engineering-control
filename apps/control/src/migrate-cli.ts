@@ -1,5 +1,5 @@
-import postgres from 'postgres'
 import { migrate } from './db/migrate'
+import { createSql } from './db/sql'
 import { MIGRATIONS_DIR } from './paths'
 
 const url = process.env.DATABASE_URL
@@ -8,7 +8,7 @@ if (!url) {
   process.exit(1)
 }
 
-const sql = postgres(url, { max: 1, onnotice: () => {} })
+const sql = createSql(url, { max: 1 })
 try {
   const result = await migrate(sql, MIGRATIONS_DIR)
   console.log(`migrations applied: [${result.applied.join(', ')}] already present: ${result.skipped.length}`)

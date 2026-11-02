@@ -13,6 +13,7 @@ short explainer in [`docs/milestones/`](docs/milestones/).
 | --- | --- |
 | [M0](docs/milestones/M0.md) | Foundation: workspace, event log, outbox, migrations, CI |
 | [M1](docs/milestones/M1.md) | Domain and policy: state machines, task-graph validation, leases, permissions |
+| [M2](docs/milestones/M2.md) | Control API, GitHub login, plan revisions, atomic approvals, SSE, web shell |
 
 ## Layout
 

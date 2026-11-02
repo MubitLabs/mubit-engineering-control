@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
-import postgres, { type Sql } from 'postgres'
+import postgres from 'postgres'
 import { migrate } from '../../src/db/migrate'
+import { createSql, type Sql } from '../../src/db/sql'
 import { MIGRATIONS_DIR } from '../../src/paths'
 
 export interface TestDb {
@@ -25,7 +26,7 @@ export async function createTestDb(opts: { migrate?: boolean } = {}): Promise<Te
 
   const url = new URL(base)
   url.pathname = `/${name}`
-  const sql = postgres(url.toString(), { max: 10, onnotice: () => {} })
+  const sql = createSql(url.toString(), { max: 10 })
   if (opts.migrate !== false) await migrate(sql, MIGRATIONS_DIR)
 
   return {

@@ -514,7 +514,9 @@ export class Runner {
     const results = await this.runChecks(journal, start, workdir, headSha, port, 'task')
     const passed = results.every((r) => r.status === 'passed')
 
-    if (passed && workdir && branch && this.workspaces.pushEnabled) {
+    // A commit that never moved from where the worktree started (e.g. a coordinator) has nothing to push.
+    const changed = headSha !== null && headSha !== journal.info.baseSha
+    if (passed && changed && workdir && branch && this.workspaces.pushEnabled) {
       try {
         await this.workspaces.push(workdir, branch)
         await emit('workspace.pushed', { branch, sha: headSha })

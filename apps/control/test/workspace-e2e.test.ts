@@ -115,6 +115,19 @@ describe('workspaces and checks', () => {
     expect(task_!.state).toBe('awaiting_review')
   })
 
+  it('pushes no branch for an attempt that changed nothing', async () => {
+    const r = await run('T1', [task('T1')], [{ say: 'nothing to change' }])
+    expect(r.attempt.state).toBe('succeeded')
+    expect(r.attempt.headSha).toBe(r.attempt.baseSha)
+    expect(() =>
+      gitIn(s.fixture.dir, 'rev-parse', '--verify', '--quiet', `refs/heads/${r.attempt.branch}`),
+    ).toThrow()
+    const pushed = await t.db.sql`
+      select 1 from events where attempt_id = ${r.attemptId} and type = 'workspace.pushed'
+    `
+    expect(pushed).toHaveLength(0)
+  })
+
   it('distinguishes a failing check from one that could not start', async () => {
     await s.admin.post(`/api/projects/${s.project.id}/repositories`, {
       name: 'broken',

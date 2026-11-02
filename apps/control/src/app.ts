@@ -27,6 +27,7 @@ import { registerRunnerRoutes } from './features/runners/routes'
 import { Reconciler } from './features/scheduler/reconciler'
 import { registerSchedulerRoutes } from './features/scheduler/routes'
 import { Scheduler } from './features/scheduler/scheduler'
+import { registerSetup } from './features/setup'
 import { registerErrorHandler } from './http/errors'
 import { CommandDispatcher } from './outbox/dispatcher'
 import { WEB_DIST_DIR } from './paths'
@@ -125,6 +126,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerSchedulerRoutes(app, { sql, registry, config })
   registerArtifacts(app, { sql, config })
   registerProfiles(app, { sql })
+  registerSetup(app, { sql })
   registerCoordinator(app, { sql, config, registry })
   await registerRunnerGateway(app, { sql, registry, dispatcher, leaseTtlMs: config.scheduling.leaseTtlMs })
 

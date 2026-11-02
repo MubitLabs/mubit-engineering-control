@@ -159,3 +159,8 @@ export interface PullRequest {
   checks: { total: number; failed: number; conclusion: string } | null
   mergedAt: string | null
 }
+
+export interface Setup {
+  projectId: string | null
+  steps: { project: boolean; repository: boolean; runner: boolean; profile: boolean; delivery: boolean }
+}

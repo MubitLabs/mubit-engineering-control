@@ -365,6 +365,47 @@ label.field {
 .feed-type {
   color: var(--accent);
 }
+.checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.checklist li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+}
+.checklist li.done {
+  color: var(--faint);
+}
+.checklist li.next {
+  background: var(--accent-soft);
+}
+.check-mark {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  font-size: 11px;
+}
+.checklist li.done .check-mark {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.checklist li.next .check-mark {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .dot {
   display: inline-block;
   width: 7px;

@@ -99,11 +99,12 @@ export function Time({ value }: { value: string | null | undefined }) {
 
 function relative(d: Date): string {
   const s = Math.round((Date.now() - d.getTime()) / 1000)
-  if (s < 5) return 'just now'
-  if (s < 60) return `${s}s ago`
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
-  return d.toISOString().slice(0, 10)
+  const a = Math.abs(s)
+  if (a < 5) return 'just now'
+  const span =
+    a < 60 ? `${a}s` : a < 3600 ? `${Math.floor(a / 60)}m` : a < 86400 ? `${Math.floor(a / 3600)}h` : null
+  if (!span) return d.toISOString().slice(0, 10)
+  return s < 0 ? `in ${span}` : `${span} ago`
 }
 
 export function Short({ id }: { id: string | null | undefined }) {

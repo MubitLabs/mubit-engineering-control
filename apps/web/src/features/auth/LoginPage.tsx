@@ -6,6 +6,7 @@ import { ErrorBox } from '../../components/ui'
 
 const ERRORS: Record<string, string> = {
   not_member: 'Your GitHub account is not an active member of the organisation.',
+  not_configured: 'GitHub sign-in is not configured on this server yet.',
 }
 
 export function LoginPage() {

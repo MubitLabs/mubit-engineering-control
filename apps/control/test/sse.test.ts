@@ -79,6 +79,19 @@ describe('project event stream (SSE)', () => {
     expect(resumed.map((e) => e.id)).toEqual([initial + 2, initial + 3, initial + 4])
   })
 
+  it('ends open streams on shutdown so a restart is not blocked', async () => {
+    t = await createTestApp()
+    const s = await seedProject(t)
+    const address = await t.app.listen({ host: '127.0.0.1', port: 0 })
+    const res = await fetch(`${address}/api/projects/${s.project.id}/events`, {
+      headers: { cookie: s.admin.cookie },
+    })
+    expect(res.status).toBe(200)
+    const started = Date.now()
+    await t.app.close()
+    expect(Date.now() - started).toBeLessThan(2_000)
+  })
+
   it('refuses non-members', async () => {
     t = await createTestApp()
     const s = await seedProject(t)

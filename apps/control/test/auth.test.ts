@@ -71,11 +71,20 @@ describe('authentication', () => {
     expect(() => loadConfig({ ...env, HOST: '0.0.0.0' })).toThrow(/loopback/)
     expect(() => loadConfig({ ...env, PUBLIC_URL: 'https://mec.example.com' })).toThrow(/loopback/)
     expect(loadConfig(env).authMode).toBe('dev')
-    expect(() => loadConfig({ DATABASE_URL: 'postgres://x' })).toThrow(/GITHUB_CLIENT_ID/)
+    expect(loadConfig({ DATABASE_URL: 'postgres://x' }).authMode).toBe('github')
   })
 })
 
 describe('GitHub OAuth', () => {
+  it('starts with sign-in disabled until the OAuth app is configured', async () => {
+    t = await createTestApp({ config: { authMode: 'github' } })
+    const res = await t.app.inject({ method: 'GET', url: '/auth/github/login' })
+    expect(res.headers.location).toBe('/login?error=not_configured')
+    expect(
+      (await t.app.inject({ method: 'POST', url: '/auth/dev/login', payload: { login: 'a' } })).statusCode,
+    ).toBe(404)
+  })
+
   it('signs in active org members and discards the GitHub token', async () => {
     t = await createTestApp({ github: fakeGithub({ admin: true }) })
     const res = await githubLogin(t.app, 'admin')

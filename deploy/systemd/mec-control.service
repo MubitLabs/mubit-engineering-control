@@ -1,0 +1,25 @@
+[Unit]
+Description=Mubit Engineering Control (control plane)
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=mec
+Group=mec
+WorkingDirectory=/opt/mec/current/apps/control
+EnvironmentFile=/etc/mec/control.env
+ExecStart=/usr/bin/node --enable-source-maps dist/main.js
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/mec
+MemoryMax=700M
+
+[Install]
+WantedBy=multi-user.target

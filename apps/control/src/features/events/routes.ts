@@ -12,6 +12,11 @@ const BATCH = 500
 
 export function registerEvents(app: FastifyInstance, deps: { sql: Sql; bus: EventBus }) {
   const { sql, bus } = deps
+  // Open SSE responses are hijacked from Fastify, so shutdown must end them explicitly.
+  const open = new Set<() => void>()
+  app.addHook('preClose', async () => {
+    for (const end of open) end()
+  })
 
   /** Paged history for one project stream. */
   app.get<{ Params: { projectId: string } }>('/api/projects/:projectId/events/history', async (req) => {
@@ -87,10 +92,17 @@ export function registerEvents(app: FastifyInstance, deps: { sql: Sql; bus: Even
       void flush()
     }, KEEPALIVE_MS)
     const close = () => {
+      if (closed) return
       closed = true
       clearInterval(keepalive)
       unsubscribe()
+      open.delete(end)
     }
+    const end = () => {
+      close()
+      res.end()
+    }
+    open.add(end)
     req.raw.on('close', close)
     res.on('error', close)
     await flush()

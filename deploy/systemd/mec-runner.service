@@ -1,0 +1,22 @@
+[Unit]
+Description=Mubit Engineering Control runner (employee: max)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=max
+Group=max
+WorkingDirectory=/opt/mec/current/apps/runner
+EnvironmentFile=/home/max/.config/mec/runner.env
+ExecStart=/usr/bin/node --enable-source-maps dist/main.js
+# Agents run in the runner's cgroup: stopping the runner stops them, and the journal + workspace
+# survive so the attempt can be reconciled and resumed after restart.
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target

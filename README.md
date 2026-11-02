@@ -14,6 +14,7 @@ short explainer in [`docs/milestones/`](docs/milestones/).
 | [M0](docs/milestones/M0.md) | Foundation: workspace, event log, outbox, migrations, CI |
 | [M1](docs/milestones/M1.md) | Domain and policy: state machines, task-graph validation, leases, permissions |
 | [M2](docs/milestones/M2.md) | Control API, GitHub login, plan revisions, atomic approvals, SSE, web shell |
+| [M3](docs/milestones/M3.md) | Droplet provisioning and deploy pipeline (live at https://mec.139-59-181-123.sslip.io) |
 
 ## Layout
 

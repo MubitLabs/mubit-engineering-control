@@ -45,7 +45,7 @@ export function registerAuth(
   }
 
   app.get('/auth/github/login', async (_req, reply) => {
-    if (!github) throw new HttpError(404, 'not_found', 'GitHub login is not configured')
+    if (!github) return reply.redirect('/login?error=not_configured')
     const state = randomBytes(16).toString('base64url')
     reply.setCookie(STATE_COOKIE, state, {
       httpOnly: true,
@@ -103,5 +103,9 @@ export function registerAuth(
     return { user: actor.user, projectRoles: actor.projectRoles, authMode: config.authMode }
   })
 
-  app.get('/api/auth/config', async () => ({ authMode: config.authMode, org: config.github.org }))
+  app.get('/api/auth/config', async () => ({
+    authMode: config.authMode,
+    org: config.github.org,
+    githubConfigured: github !== null,
+  }))
 }

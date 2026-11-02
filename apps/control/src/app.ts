@@ -38,7 +38,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const github =
     deps.github !== undefined
       ? deps.github
-      : config.authMode === 'github'
+      : config.authMode === 'github' && config.github.clientId && config.github.clientSecret
         ? createGithubOAuth(config.github.clientId, config.github.clientSecret)
         : null
 

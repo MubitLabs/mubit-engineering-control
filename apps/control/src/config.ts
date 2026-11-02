@@ -58,7 +58,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return config
 }
 
-/** Refuses configurations that would expose an unauthenticated login. */
+/**
+ * Refuses configurations that would expose an unauthenticated login. GitHub mode without client
+ * credentials starts with sign-in disabled, so a fresh install is up before the OAuth app exists.
+ */
 export function assertSafe(config: Config): void {
   if (config.authMode === 'dev') {
     if (!LOOPBACK.has(config.host)) {
@@ -67,8 +70,5 @@ export function assertSafe(config: Config): void {
     if (!LOOPBACK.has(new URL(config.publicUrl).hostname)) {
       throw new Error('AUTH_MODE=dev is only allowed when PUBLIC_URL is a loopback address')
     }
-  }
-  if (config.authMode === 'github' && (!config.github.clientId || !config.github.clientSecret)) {
-    throw new Error('AUTH_MODE=github needs GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET')
   }
 }

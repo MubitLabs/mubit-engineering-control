@@ -1,0 +1,11 @@
+mec.139-59-181-123.sslip.io {
+	# Event streams are flushed unbuffered and never compressed.
+	@compressible not path_regexp sse ^/api/projects/[^/]+/events$
+	encode @compressible zstd gzip
+	reverse_proxy 127.0.0.1:4100 {
+		flush_interval -1
+	}
+	log {
+		output discard
+	}
+}

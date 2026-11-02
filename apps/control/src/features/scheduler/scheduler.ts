@@ -28,6 +28,7 @@ export interface SchedulingProfile {
   allowedProjectIds: string[]
   delegateIds: string[]
   authState: string
+  maxActive: number
 }
 
 /**
@@ -49,10 +50,12 @@ export function chooseProfile(
     const named = profiles.find((p) => p.id === task.spec.executionProfileId)
     return named && usable(named) ? named : null
   }
+  const load = (p: SchedulingProfile) => byProfile[p.id] ?? 0
+  const full = (p: SchedulingProfile) => (load(p) >= p.maxActive ? 1 : 0)
   return (
     profiles
       .filter(usable)
-      .sort((a, b) => (byProfile[a.id] ?? 0) - (byProfile[b.id] ?? 0) || a.id.localeCompare(b.id))[0] ?? null
+      .sort((a, b) => full(a) - full(b) || load(a) - load(b) || a.id.localeCompare(b.id))[0] ?? null
   )
 }
 
@@ -120,7 +123,7 @@ export class Scheduler {
     const connected = this.registry.connectedIds()
     const load = await currentLoad(this.sql)
     const profiles = await this.sql<SchedulingProfile[]>`
-      select id, owner_id, runner_id, agent_kind, allowed_project_ids, delegate_ids, auth_state
+      select id, owner_id, runner_id, agent_kind, allowed_project_ids, delegate_ids, auth_state, max_active
       from execution_profiles where revoked_at is null
     `
     const candidates: Candidate[] = []
@@ -140,6 +143,7 @@ export class Scheduler {
           agentKind: profile.agentKind,
           profileId: profile.id,
           runnerId: profile.runnerId,
+          profileMaxActive: profile.maxActive,
         })
       } else if (this.config.defaultAgent === 'fake' && !t.spec.executionProfileId) {
         candidates.push({ ...base, agentKind: 'fake', profileId: null, runnerId: null })

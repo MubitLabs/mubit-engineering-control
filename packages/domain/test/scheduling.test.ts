@@ -104,6 +104,20 @@ describe('planDispatches', () => {
     })
   })
 
+  it("holds work beyond an execution profile's own limit", () => {
+    const profiled = [
+      cand('t1', { profileId: 'p', profileMaxActive: 1 }),
+      cand('t2', { profileId: 'p', profileMaxActive: 1 }),
+    ]
+    const r = planDispatches(profiled, [runner('r1', { capacity: 10 })], idle, {
+      ...limits,
+      perProfile: 3,
+      perEmployee: 10,
+    })
+    expect(r.dispatches.map((d) => d.taskId)).toEqual(['t1'])
+    expect(r.held[0]).toMatchObject({ taskId: 't2', limit: 'profile', detail: 'profile limit of 1' })
+  })
+
   it('only uses runners that offer the agent and the bound runner', () => {
     const r = planDispatches(
       [cand('t1', { agentKind: 'codex' }), cand('t2', { runnerId: 'r2' })],

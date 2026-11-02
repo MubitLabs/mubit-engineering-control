@@ -21,13 +21,15 @@ export async function dispatchPaused(db: Db): Promise<boolean> {
   return row?.value.dispatchPaused === true
 }
 
-/** Current load: every attempt holding a slot, including stalled ones awaiting reconciliation. */
+/**
+ * Current load: every attempt holding a slot, including stalled ones awaiting reconciliation.
+ * Attempts count against the profile they run on, whether the task named it or the scheduler chose it.
+ */
 export async function currentLoad(db: Db): Promise<Load> {
   const rows = await db<{ deliveryId: string; ownerId: string; profileId: string | null }[]>`
-    select a.delivery_id, r.owner_id, t.spec->>'executionProfileId' as profile_id
+    select a.delivery_id, r.owner_id, a.profile_id
     from attempts a
     join runners r on r.id = a.runner_id
-    join tasks t on t.id = a.task_id
     where a.state = any(${db.array([...ACTIVE_ATTEMPT_STATES])})
   `
   const count = (key: (r: (typeof rows)[number]) => string | null) => {

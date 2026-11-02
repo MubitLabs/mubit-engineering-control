@@ -135,6 +135,10 @@ export async function claimAttempt(
       { pausedAt: Date | null }[]
     >`select paused_at from projects where id = ${task.projectId}`
     if (project?.pausedAt) throw conflict('project_paused', 'This project is paused')
+    const profileId = input.profileId ?? task.spec.executionProfileId ?? null
+    const [profile] = profileId
+      ? await tx<{ maxActive: number }[]>`select max_active from execution_profiles where id = ${profileId}`
+      : []
     await assertCapacity(
       tx,
       {
@@ -144,8 +148,9 @@ export async function claimAttempt(
         priority: task.priority,
         createdAt: 0,
         agentKind: input.agentKind,
-        profileId: input.profileId ?? task.spec.executionProfileId ?? null,
+        profileId,
         runnerId: input.runnerId,
+        profileMaxActive: profile?.maxActive,
       },
       input.runnerId,
       input.capacity.connectedIds,

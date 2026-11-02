@@ -18,6 +18,8 @@ export interface Candidate {
   profileId: string | null
   /** Runner required by the profile, if any. */
   runnerId: string | null
+  /** The profile owner's own cap on simultaneous attempts; the lower of it and the global cap applies. */
+  profileMaxActive?: number
 }
 
 export interface RunnerSlot {
@@ -110,8 +112,9 @@ export function planDispatches(
       held.push({ taskId: c.taskId, limit: 'delivery', detail: `delivery limit of ${limits.perDelivery}` })
       continue
     }
-    if (c.profileId && (profile[c.profileId] ?? 0) >= limits.perProfile) {
-      held.push({ taskId: c.taskId, limit: 'profile', detail: `profile limit of ${limits.perProfile}` })
+    const profileLimit = Math.min(limits.perProfile, c.profileMaxActive ?? limits.perProfile)
+    if (c.profileId && (profile[c.profileId] ?? 0) >= profileLimit) {
+      held.push({ taskId: c.taskId, limit: 'profile', detail: `profile limit of ${profileLimit}` })
       continue
     }
 

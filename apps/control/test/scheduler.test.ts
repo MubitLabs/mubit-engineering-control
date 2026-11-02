@@ -117,6 +117,30 @@ describe('scheduler', () => {
     expect(await attempts()).toHaveLength(3)
   })
 
+  it("holds tasks beyond a profile's own limit, counting attempts by the profile they run on", async () => {
+    await setup({ limits: { global: 4, perEmployee: 4, perDelivery: 4, perProfile: 3 } }, false)
+    const runner = await fakeRunner()
+    const res = await s.admin.post('/api/profiles', {
+      runnerId: runner.runnerId,
+      agentKind: 'fake',
+      label: 'one at a time',
+      allowedProjectIds: [s.project.id],
+      maxActive: 1,
+    })
+    expect(res.statusCode).toBe(201)
+    const profileId = res.json().profile.id
+    await approvedDelivery(s, independent(3))
+
+    await t.app.services.scheduler.tick()
+    await t.app.services.scheduler.tick()
+    expect((await attempts()).map((a) => a.profileId)).toEqual([profileId])
+    const waiting = await t.db.sql`select blocker->>'detail' as detail from tasks where state = 'ready'`
+    expect(waiting.map((w) => w.detail)).toEqual([
+      'Waiting: profile limit of 1',
+      'Waiting: profile limit of 1',
+    ])
+  })
+
   it('dispatches nothing for a paused project until it resumes', async () => {
     await setup()
     await realRunner()

@@ -104,7 +104,9 @@ export function systemPrompt(mode: ExecutionMode, allowedCommands: string[][]): 
     'Work only inside the current directory. Do not push, create branches or change git remotes; the platform commits and integrates your work.',
     'When you need a decision from a person, call the mcp__mec__ask_question tool instead of asking in prose, then continue with their answer.',
     'When you are done, call mcp__mec__report_result with a short summary of what changed and anything left open.',
-    mode === 'observe' ? 'This is a read-only session: analyse and report, do not modify files.' : '',
+    mode === 'observe'
+      ? 'This is a read-only session: analyse and report, do not modify files.'
+      : 'Create and change files with the Write and Edit tools, which are pre-approved. Any other shell command, including writing files through the shell (cat <<EOF, sed -i, python), waits for a person to approve it, so use the shell only for the acceptance checks, ls and read-only git commands.',
     allowedCommands.length
       ? `The platform will run these acceptance checks on your final commit: ${allowedCommands.map((a) => a.join(' ')).join('; ')}.`
       : '',

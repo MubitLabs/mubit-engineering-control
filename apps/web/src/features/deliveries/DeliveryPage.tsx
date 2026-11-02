@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { ApiError, api } from '../../api/client'
 import type { DeliveryDetail, PlanRevision } from '../../api/types'
+import { ProjectCrumb } from '../../components/Layout'
 import { Empty, ErrorBox, Loading, Panel, Status, Time } from '../../components/ui'
 import type { ProfileView } from '../accounts/AccountsPage'
 import { useMe } from '../auth/useMe'
@@ -47,7 +48,7 @@ export function DeliveryPage() {
       <div className="page-head">
         <div>
           <div className="crumbs">
-            <Link to={`/projects/${projectId}`}>project</Link> / delivery
+            <ProjectCrumb projectId={projectId} /> / delivery
           </div>
           <h1>
             {delivery.title} <Status value={delivery.state} />
@@ -254,7 +255,8 @@ function Coordinator({ deliveryId }: { deliveryId: string }) {
         </div>
         {usable.length === 0 ? (
           <div className="notice">
-            Create a Claude Code profile on the Accounts page to run the coordinator.
+            No Claude Code account is offered to you yet. A runner owner offers one on the{' '}
+            <Link to="/accounts">Accounts</Link> page.
           </div>
         ) : (
           <>
@@ -331,6 +333,10 @@ function RevisionEditor(props: { revision: PlanRevision; ownerId: string; delive
     onSuccess: refresh,
   })
   const dirty = plan !== revision.planMarkdown || spec !== toSpecText(revision)
+  const start = (m: { mutate: () => void }) => {
+    for (const other of [save, submit, approve, newRevision]) other.reset()
+    m.mutate()
+  }
   const isOwner = me.data?.user.id === props.ownerId
 
   return (
@@ -348,13 +354,13 @@ function RevisionEditor(props: { revision: PlanRevision; ownerId: string; delive
               type="button"
               className="btn small"
               disabled={!dirty || save.isPending}
-              onClick={() => save.mutate()}
+              onClick={() => start(save)}
             >
               Save
             </button>
           )}
           {revision.state === 'draft' && (
-            <button type="button" className="btn small" disabled={dirty} onClick={() => submit.mutate()}>
+            <button type="button" className="btn small" disabled={dirty} onClick={() => start(submit)}>
               Submit for approval
             </button>
           )}
@@ -363,13 +369,13 @@ function RevisionEditor(props: { revision: PlanRevision; ownerId: string; delive
               type="button"
               className="btn small primary"
               disabled={dirty}
-              onClick={() => approve.mutate()}
+              onClick={() => start(approve)}
             >
               Approve revision
             </button>
           )}
           {!editable && (
-            <button type="button" className="btn small" onClick={() => newRevision.mutate()}>
+            <button type="button" className="btn small" onClick={() => start(newRevision)}>
               New revision
             </button>
           )}

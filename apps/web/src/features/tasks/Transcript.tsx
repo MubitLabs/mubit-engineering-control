@@ -19,23 +19,24 @@ export function Transcript({ attemptId }: { attemptId: string }) {
     queryKey: ['attempt', attemptId, 'events'],
     queryFn: () => api.get<{ events: AttemptEvent[] }>(`/api/attempts/${attemptId}/events`),
   })
-  const end = useRef<HTMLDivElement>(null)
+  const feed = useRef<HTMLDivElement>(null)
   const count = q.data?.events.length ?? 0
+  // Follow new events inside the feed only; scrollIntoView would also scroll the page.
   useEffect(() => {
-    if (count > 0) end.current?.scrollIntoView({ block: 'nearest' })
+    const el = feed.current
+    if (el && count > 0) el.scrollTop = el.scrollHeight
   }, [count])
 
   if (!q.data) return null
   if (q.data.events.length === 0) return <Empty>No events yet.</Empty>
   return (
-    <div className="feed" style={{ maxHeight: 520 }}>
+    <div className="feed" ref={feed} style={{ maxHeight: 520 }}>
       {q.data.events.map((e) => (
         <div className="feed-row" key={e.id}>
           <span className="faint">{e.sourceSequence ?? '·'}</span>
           <Line event={e} />
         </div>
       ))}
-      <div ref={end} />
     </div>
   )
 }

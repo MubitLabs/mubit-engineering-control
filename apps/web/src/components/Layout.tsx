@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { NavLink, Outlet, useNavigate, useParams } from 'react-router'
+import { useEffect } from 'react'
+import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router'
 import { api } from '../api/client'
 import { useProjectEvents } from '../api/events'
 import type { Approval, Project } from '../api/types'
@@ -20,6 +21,11 @@ export function Layout() {
     refetchInterval: 30_000,
   })
   const pending = inbox.data?.approvals.length ?? 0
+  const { pathname } = useLocation()
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on every route change
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [pathname])
 
   return (
     <div className="shell">
@@ -83,4 +89,14 @@ export function Layout() {
 function LiveProject({ projectId }: { projectId: string }) {
   useProjectEvents(projectId, undefined, { fromNow: true })
   return null
+}
+
+/** Breadcrumb link to a project by name, from the sidebar's cached project list. */
+export function ProjectCrumb({ projectId }: { projectId: string | undefined }) {
+  const projects = useQuery({
+    queryKey: ['projects'],
+    queryFn: () => api.get<{ projects: Project[] }>('/api/projects'),
+  })
+  const name = projects.data?.projects.find((p) => p.id === projectId)?.name ?? 'project'
+  return <Link to={`/projects/${projectId}`}>{name}</Link>
 }

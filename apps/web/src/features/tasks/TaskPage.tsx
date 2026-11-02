@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { api } from '../../api/client'
 import type { Approval, Task } from '../../api/types'
+import { ProjectCrumb } from '../../components/Layout'
 import { Empty, ErrorBox, Loading, Panel, Short, Status, Time } from '../../components/ui'
 import type { ProfileView } from '../accounts/AccountsPage'
 import { useMe } from '../auth/useMe'
@@ -66,7 +67,7 @@ export function TaskPage() {
       <div className="page-head">
         <div>
           <div className="crumbs">
-            <Link to={`/projects/${projectId}`}>project</Link> /{' '}
+            <ProjectCrumb projectId={projectId} /> /{' '}
             <Link to={`/projects/${projectId}/deliveries/${task.deliveryId}`}>{task.deliveryTitle}</Link> /
             task
           </div>

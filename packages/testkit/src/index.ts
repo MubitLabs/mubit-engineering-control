@@ -38,7 +38,7 @@ export function hello(overrides: Partial<RunnerHello> = {}): RunnerHello {
     os: 'linux',
     arch: 'x64',
     capacity: { maxAttempts: 2, cpus: 2, memoryMb: 4096, diskFreeMb: 10_000 },
-    agents: [],
+    agents: [{ kind: 'fake', version: '1.0.0', available: true, auth: 'ok', capabilities: [], notes: [] }],
     attempts: [],
     ...overrides,
   }
@@ -52,21 +52,27 @@ export class FakeRunnerClient {
   readonly commands: RunnerCommand[] = []
   readonly acks: { attemptId: string; sequence: number; eventId: string }[] = []
   welcome: Extract<ControlToRunner, { type: 'welcome' }> | null = null
+  /** Close code of the last connection, once it closed. */
+  closeCode: number | null = null
   private ws: WebSocket | null = null
   private sequences = new Map<string, number>()
 
   constructor(
     private readonly url: string,
     readonly runnerId: string,
-    private readonly token: string,
+    readonly token: string,
   ) {}
 
   async connect(h: RunnerHello = hello()): Promise<void> {
     this.welcome = null
+    this.closeCode = null
     const ws = new WebSocket(`${this.url.replace(/^http/, 'ws')}/runner/ws`, {
       headers: { authorization: `Bearer ${this.token}` },
     })
     this.ws = ws
+    ws.on('close', (code) => {
+      this.closeCode = code
+    })
     ws.on('message', (data) => {
       const msg = JSON.parse(data.toString()) as ControlToRunner
       if (msg.type === 'welcome') this.welcome = msg

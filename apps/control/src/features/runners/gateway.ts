@@ -5,7 +5,13 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Sql } from '../../db/sql'
 import { markCommandResult } from '../../outbox/commands'
 import type { CommandDispatcher } from '../../outbox/dispatcher'
-import { ingestRunnerEvent, markRunnerOffline, reconcileHello, renewLeases } from './ingest'
+import {
+  failRejectedCommand,
+  ingestRunnerEvent,
+  markRunnerOffline,
+  reconcileHello,
+  renewLeases,
+} from './ingest'
 import type { RunnerRegistry } from './registry'
 
 const HELLO_TIMEOUT_MS = 10_000
@@ -36,9 +42,9 @@ async function authenticate(sql: Sql, req: FastifyRequest): Promise<string | nul
  */
 export async function registerRunnerGateway(
   app: FastifyInstance,
-  deps: { sql: Sql; registry: RunnerRegistry; dispatcher: CommandDispatcher },
+  deps: { sql: Sql; registry: RunnerRegistry; dispatcher: CommandDispatcher; leaseTtlMs: number },
 ) {
-  const { sql, registry, dispatcher } = deps
+  const { sql, registry, dispatcher, leaseTtlMs } = deps
   await app.register(websocket, { options: { maxPayload: 4 * 1024 * 1024 } })
 
   app.addHook('preClose', async () => registry.closeAll())
@@ -86,6 +92,11 @@ export async function registerRunnerGateway(
         switch (msg.type) {
           case 'hello': {
             const acked = await reconcileHello(sql, runnerId, msg)
+            // Anything sent on a previous connection may have been lost with it.
+            await sql`
+              update outbox set sent_at = null
+              where topic = 'runner.command' and target = ${runnerId} and delivered_at is null
+            `
             registry.add({
               runnerId,
               connectionId,
@@ -113,10 +124,13 @@ export async function registerRunnerGateway(
             return
           }
           case 'heartbeat':
-            await renewLeases(sql, runnerId, msg.attempts)
+            await renewLeases(sql, runnerId, msg.attempts, leaseTtlMs)
             return
           case 'command_result':
             await markCommandResult(sql, runnerId, msg.commandId, msg.status, msg.reason)
+            if (msg.status === 'rejected') {
+              await failRejectedCommand(sql, runnerId, msg.commandId, msg.reason ?? 'rejected')
+            }
             return
         }
       }

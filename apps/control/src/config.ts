@@ -17,6 +17,15 @@ const Env = z.object({
   ALLOW_FILE_REPOS: bool.default(false),
   ARTIFACTS_DIR: z.string().default('/var/lib/mec/artifacts'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  MEC_LIMIT_GLOBAL: z.coerce.number().int().min(0).default(6),
+  MEC_LIMIT_PER_EMPLOYEE: z.coerce.number().int().min(0).default(2),
+  MEC_LIMIT_PER_DELIVERY: z.coerce.number().int().min(0).default(3),
+  MEC_LIMIT_PER_PROFILE: z.coerce.number().int().min(0).default(1),
+  MEC_LEASE_TTL_MS: z.coerce.number().int().min(1000).default(60_000),
+  MEC_SCHEDULER_TICK_MS: z.coerce.number().int().min(50).default(1_000),
+  MEC_RECONCILE_TICK_MS: z.coerce.number().int().min(50).default(5_000),
+  MEC_STARTUP_GRACE_MS: z.coerce.number().int().min(0).default(30_000),
+  MEC_DEFAULT_AGENT: z.enum(['fake', 'claude-code']).default('fake'),
 })
 
 export interface Config {
@@ -32,6 +41,15 @@ export interface Config {
   allowFileRepos: boolean
   artifactsDir: string
   logLevel: string
+  scheduling: {
+    limits: { global: number; perEmployee: number; perDelivery: number; perProfile: number }
+    leaseTtlMs: number
+    tickMs: number
+    reconcileTickMs: number
+    /** After a control restart, leases are not expired until runners had time to reconnect. */
+    startupGraceMs: number
+    defaultAgent: 'fake' | 'claude-code'
+  }
 }
 
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1'])
@@ -53,6 +71,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     allowFileRepos: e.ALLOW_FILE_REPOS,
     artifactsDir: e.ARTIFACTS_DIR,
     logLevel: e.LOG_LEVEL,
+    scheduling: {
+      limits: {
+        global: e.MEC_LIMIT_GLOBAL,
+        perEmployee: e.MEC_LIMIT_PER_EMPLOYEE,
+        perDelivery: e.MEC_LIMIT_PER_DELIVERY,
+        perProfile: e.MEC_LIMIT_PER_PROFILE,
+      },
+      leaseTtlMs: e.MEC_LEASE_TTL_MS,
+      tickMs: e.MEC_SCHEDULER_TICK_MS,
+      reconcileTickMs: e.MEC_RECONCILE_TICK_MS,
+      startupGraceMs: e.MEC_STARTUP_GRACE_MS,
+      defaultAgent: e.MEC_DEFAULT_AGENT,
+    },
   }
   assertSafe(config)
   return config

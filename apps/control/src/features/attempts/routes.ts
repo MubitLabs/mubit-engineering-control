@@ -1,6 +1,7 @@
 import { AgentKind, FakeStep } from '@mec/contracts'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import type { Config } from '../../config'
 import type { Sql } from '../../db/sql'
 import { authorize, type RequestActor, requireActor } from '../../http/actor'
 import { conflict, notFound, parse } from '../../http/errors'
@@ -13,8 +14,11 @@ const StartAttempt = z.object({
   script: z.array(FakeStep).max(500).optional(),
 })
 
-export function registerAttemptRoutes(app: FastifyInstance, deps: { sql: Sql; registry: RunnerRegistry }) {
-  const { sql, registry } = deps
+export function registerAttemptRoutes(
+  app: FastifyInstance,
+  deps: { sql: Sql; registry: RunnerRegistry; config: Config },
+) {
+  const { sql, registry, config } = deps
 
   const loadTask = async (taskId: string) => {
     if (!/^[0-9a-f-]{36}$/i.test(taskId)) throw notFound('Task')
@@ -78,6 +82,8 @@ export function registerAttemptRoutes(app: FastifyInstance, deps: { sql: Sql; re
         agentKind: body.agentKind,
         inputs: body.script ? { script: body.script } : {},
         actor: { kind: 'user', id: actor.userId },
+        leaseMs: config.scheduling.leaseTtlMs,
+        capacity: { limits: config.scheduling.limits, connectedIds: registry.connectedIds() },
       }),
     )
     return reply.status(result.created ? 201 : 200).send(result)

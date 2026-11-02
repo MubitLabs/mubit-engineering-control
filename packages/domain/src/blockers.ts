@@ -10,6 +10,7 @@ export const BLOCKER_KINDS = [
   'policy',
   'reviewer',
   'decision',
+  'infrastructure',
 ] as const
 export type BlockerKind = (typeof BLOCKER_KINDS)[number]
 

@@ -7,7 +7,7 @@ import {
   attemptMachine,
   type Blocker,
   deliveryMachine,
-  LEASE_DEFAULTS,
+  type Limits,
   type TaskState,
   taskMachine,
 } from '@mec/domain'
@@ -15,6 +15,7 @@ import { type Db, isUniqueViolation, type Tx } from '../../db/sql'
 import { type ActorKind, appendEvent, projectStream } from '../../events/append'
 import { conflict, notFound } from '../../http/errors'
 import { enqueueCommand } from '../../outbox/commands'
+import { assertCapacity, dispatchLock, dispatchPaused } from '../scheduler/capacity'
 import { transition } from '../state'
 import { refreshReadiness } from '../tasks/readiness'
 
@@ -75,7 +76,9 @@ export interface ClaimInput {
   kind?: AttemptRow['kind']
   inputs: Record<string, unknown>
   actor: Actor
-  leaseMs?: number
+  leaseMs: number
+  /** Enforce scheduling limits under the dispatch lock (every caller except tests passes this). */
+  capacity?: { limits: Limits; connectedIds: string[] }
 }
 
 /**
@@ -86,8 +89,9 @@ export async function claimAttempt(
   tx: Tx,
   input: ClaimInput,
 ): Promise<{ attempt: AttemptRow; created: boolean }> {
-  const [task] = await tx<(TaskRow & { projectId: string; deliveryState: string })[]>`
-    select t.*, d.project_id, d.state as delivery_state
+  if (input.capacity) await dispatchLock(tx)
+  const [task] = await tx<(TaskRow & { projectId: string; deliveryState: string; priority: number })[]>`
+    select t.*, d.project_id, d.state as delivery_state, d.priority
     from tasks t join deliveries d on d.id = t.delivery_id
     where t.id = ${input.taskId}
     for update of t
@@ -98,6 +102,29 @@ export async function claimAttempt(
   `
   if (active) return { attempt: active, created: false }
   if (task.state !== 'ready') throw conflict('task_not_ready', `Task ${task.key} is ${task.state}, not ready`)
+  if (input.capacity) {
+    if (await dispatchPaused(tx)) throw conflict('dispatch_paused', 'Dispatch is paused after a fleet stop')
+    const [project] = await tx<
+      { pausedAt: Date | null }[]
+    >`select paused_at from projects where id = ${task.projectId}`
+    if (project?.pausedAt) throw conflict('project_paused', 'This project is paused')
+    await assertCapacity(
+      tx,
+      {
+        taskId: task.id,
+        deliveryId: task.deliveryId,
+        projectId: task.projectId,
+        priority: task.priority,
+        createdAt: 0,
+        agentKind: input.agentKind,
+        profileId: task.spec.executionProfileId ?? null,
+        runnerId: input.runnerId,
+      },
+      input.runnerId,
+      input.capacity.connectedIds,
+      input.capacity.limits,
+    )
+  }
 
   const [counter] = await tx<{ next: number }[]>`
     select coalesce(max(number), 0) + 1 as next from attempts where task_id = ${task.id}
@@ -148,7 +175,7 @@ export async function claimAttempt(
     set: {
       runnerId: input.runnerId,
       generation,
-      leaseExpiresAt: new Date(Date.now() + (input.leaseMs ?? LEASE_DEFAULTS.ttlMs)),
+      leaseExpiresAt: new Date(Date.now() + input.leaseMs),
     },
     ...ctx,
     attemptId: attempt.id,
@@ -306,7 +333,7 @@ export async function applyLifecycle(
 /** Task consequences of an attempt reaching a terminal or parked state. */
 export async function followTask(tx: Tx, attempt: AttemptRow, to: AttemptState): Promise<void> {
   const [task] = await tx<TaskRow[]>`select * from tasks where id = ${attempt.taskId} for update`
-  if (!task || task.state !== 'active') return
+  if (task?.state !== 'active') return
   const ctx = {
     projectId: attempt.projectId,
     deliveryId: attempt.deliveryId,

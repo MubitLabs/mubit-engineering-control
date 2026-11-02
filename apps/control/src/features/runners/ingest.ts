@@ -93,12 +93,17 @@ export async function ingestRunnerEvent(
 }
 
 /** Renews the lease of every attempt the runner reports alive for the current generation. */
-export async function renewLeases(sql: Sql, runnerId: string, attempts: AttemptReport[]): Promise<void> {
+export async function renewLeases(
+  sql: Sql,
+  runnerId: string,
+  attempts: AttemptReport[],
+  ttlMs: number = LEASE_DEFAULTS.ttlMs,
+): Promise<void> {
   await sql`update runners set last_seen_at = now() where id = ${runnerId}`
   const live = attempts.filter((a) => a.process === 'live')
   for (const a of live) {
     await sql`
-      update attempts set lease_expires_at = now() + make_interval(secs => ${LEASE_DEFAULTS.ttlMs / 1000})
+      update attempts set lease_expires_at = now() + make_interval(secs => ${ttlMs / 1000})
       where id = ${a.attemptId} and runner_id = ${runnerId} and generation = ${a.generation}
         and state = any(${sql.array(['leased', 'preparing', 'running', 'awaiting_input', 'work_complete', 'checking'])})
     `
@@ -147,10 +152,14 @@ export async function reconcileHello(
     `
     for (const attempt of active) {
       const report = reported.get(attempt.id)
-      if (report && report.process === 'live' && report.generation === attempt.generation) {
+      // The lease holder is back: un-stall it. Whatever happened meanwhile (finished, interrupted)
+      // arrives next as replayed events from its journal and applies in order.
+      if (report && report.generation === attempt.generation) {
         if (attempt.state === 'stalled') await reconcileStalled(tx, attempt, 'runner_reconciled_running')
         continue
       }
+      // The runner holds an older generation; the queued resume command will bring it forward.
+      if (report && report.generation < attempt.generation) continue
       // A leased attempt whose start command is still queued is not yet known to the runner.
       if (!report && attempt.state === 'leased') continue
       if (!report || report.process === 'stopped') {
@@ -164,6 +173,7 @@ export async function reconcileHello(
 }
 
 async function reconcileStalled(tx: Tx, attempt: AttemptRow, event: 'runner_reconciled_running') {
+  await tx`update tasks set blocker = null, updated_at = now() where id = ${attempt.taskId}`
   await transition(tx, {
     table: 'attempts',
     machine: attemptMachine,
@@ -209,5 +219,43 @@ export async function markRunnerOffline(sql: Sql, runnerId: string): Promise<voi
       actor: { kind: 'system' },
       payload: { runnerId },
     })
+  })
+}
+
+/**
+ * A runner refused a start or resume (capacity, unknown attempt, stale generation). The attempt
+ * cannot be running there, so it fails and the task follows the normal retry rules.
+ */
+export async function failRejectedCommand(
+  sql: Sql,
+  runnerId: string,
+  commandId: string,
+  reason: string,
+): Promise<void> {
+  await sql.begin(async (tx) => {
+    const [row] = await tx<
+      { payload: { type: string; attemptId: string | null; generation: number | null } }[]
+    >`
+      select payload from outbox where idempotency_key = ${commandId} and target = ${runnerId}
+    `
+    const cmd = row?.payload
+    if (!cmd?.attemptId || (cmd.type !== 'start' && cmd.type !== 'resume')) return
+    const [attempt] = await tx<AttemptRow[]>`select * from attempts where id = ${cmd.attemptId} for update`
+    if (attempt?.state !== 'leased' || attempt.generation !== cmd.generation) return
+    const to = await transition(tx, {
+      table: 'attempts',
+      machine: attemptMachine,
+      id: attempt.id,
+      from: 'leased',
+      event: 'error',
+      set: { leaseExpiresAt: null, finishedAt: new Date() },
+      projectId: attempt.projectId,
+      deliveryId: attempt.deliveryId,
+      taskId: attempt.taskId,
+      attemptId: attempt.id,
+      actor: { kind: 'runner', id: runnerId },
+      payload: { reason: `runner rejected ${cmd.type}: ${reason}` },
+    })
+    await followTask(tx, { ...attempt, state: to }, to)
   })
 }

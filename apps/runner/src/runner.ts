@@ -211,6 +211,8 @@ export class Runner {
           })
           this.journals.set(cmd.attemptId, journal)
         } else {
+          if (journal.phase === 'done')
+            return this.result(cmd.commandId, 'rejected', 'attempt already finished')
           await journal.update({ generation: cmd.generation, phase: 'active' })
         }
         await journal.recordCommand(cmd.commandId)

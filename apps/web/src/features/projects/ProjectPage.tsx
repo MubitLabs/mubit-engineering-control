@@ -38,6 +38,8 @@ export function ProjectPage() {
           <h1>{detail.data?.project.name}</h1>
         </div>
         <span className="row small muted">
+          {detail.data?.project.pausedAt && <Status value="paused" />}
+          {isOwner && <PauseButton projectId={projectId!} paused={!!detail.data?.project.pausedAt} />}
           <span className={`dot ${connected ? 'live' : ''}`} /> {connected ? 'live' : 'reconnecting'}
         </span>
       </div>
@@ -305,5 +307,21 @@ function AddRepository({ projectId }: { projectId: string }) {
         </button>
       </div>
     </form>
+  )
+}
+
+function PauseButton({ projectId, paused }: { projectId: string; paused: boolean }) {
+  const qc = useQueryClient()
+  const toggle = useMutation({
+    mutationFn: () => api.post(`/api/projects/${projectId}/pause`, { paused: !paused }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['project', projectId] })
+      qc.invalidateQueries({ queryKey: ['projects'] })
+    },
+  })
+  return (
+    <button type="button" className="btn small" onClick={() => toggle.mutate()} disabled={toggle.isPending}>
+      {paused ? 'Resume dispatch' : 'Pause dispatch'}
+    </button>
   )
 }

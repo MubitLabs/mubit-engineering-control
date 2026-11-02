@@ -5,7 +5,12 @@ import { EventBus } from '../../src/events/bus'
 import type { GithubOAuth } from '../../src/features/auth/github'
 import { createTestDb, type TestDb } from './db'
 
-export function testConfig(overrides: Partial<Config> = {}): Config {
+export type ConfigOverrides = Omit<Partial<Config>, 'scheduling'> & {
+  scheduling?: Partial<Config['scheduling']>
+}
+
+export function testConfig(overrides: ConfigOverrides = {}): Config {
+  const { scheduling, ...rest } = overrides
   return {
     databaseUrl: '',
     host: '127.0.0.1',
@@ -19,7 +24,19 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     allowFileRepos: true,
     artifactsDir: '/tmp/mec-test-artifacts',
     logLevel: 'silent',
-    ...overrides,
+    ...rest,
+    scheduling: { ...defaultsScheduling(), ...scheduling },
+  }
+}
+
+function defaultsScheduling(): Config['scheduling'] {
+  return {
+    limits: { global: 6, perEmployee: 2, perDelivery: 3, perProfile: 1 },
+    leaseTtlMs: 60_000,
+    tickMs: 100,
+    reconcileTickMs: 100,
+    startupGraceMs: 0,
+    defaultAgent: 'fake',
   }
 }
 
@@ -41,13 +58,20 @@ export interface TestApp {
 }
 
 export async function createTestApp(
-  opts: { github?: GithubOAuth; config?: Partial<Config> } = {},
+  opts: { github?: GithubOAuth; config?: ConfigOverrides; background?: boolean } = {},
 ): Promise<TestApp> {
   const db = await createTestDb()
   const bus = new EventBus(db.sql)
   await bus.start()
   const config = testConfig({ databaseUrl: db.url, authMode: opts.github ? 'github' : 'dev', ...opts.config })
-  const app = await buildApp({ sql: db.sql, bus, config, github: opts.github ?? null, webDistDir: null })
+  const app = await buildApp({
+    sql: db.sql,
+    bus,
+    config,
+    github: opts.github ?? null,
+    webDistDir: null,
+    background: opts.background ?? false,
+  })
   await app.ready()
 
   const client = (cookie: string): Client => {

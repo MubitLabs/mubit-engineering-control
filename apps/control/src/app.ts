@@ -17,6 +17,9 @@ import { registerProjects } from './features/projects/routes'
 import { registerRunnerGateway } from './features/runners/gateway'
 import { RunnerRegistry } from './features/runners/registry'
 import { registerRunnerRoutes } from './features/runners/routes'
+import { Reconciler } from './features/scheduler/reconciler'
+import { registerSchedulerRoutes } from './features/scheduler/routes'
+import { Scheduler } from './features/scheduler/scheduler'
 import { registerErrorHandler } from './http/errors'
 import { CommandDispatcher } from './outbox/dispatcher'
 import { WEB_DIST_DIR } from './paths'
@@ -28,11 +31,15 @@ export interface AppDeps {
   /** Override the GitHub client (tests). Defaults to the real one when configured. */
   github?: GithubOAuth | null
   webDistDir?: string | null
+  /** Run the scheduler and reconciler loops (tests drive them by hand when false). */
+  background?: boolean
 }
 
 export interface Services {
   registry: RunnerRegistry
   dispatcher: CommandDispatcher
+  scheduler: Scheduler
+  reconciler: Reconciler
 }
 
 declare module 'fastify' {
@@ -61,9 +68,21 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const hooks: ApprovalHookMap = { plan: planApprovalHooks }
   const registry = new RunnerRegistry()
   const dispatcher = new CommandDispatcher(sql, registry, app.log)
-  app.decorate('services', { registry, dispatcher })
-  app.addHook('onReady', () => dispatcher.start())
-  app.addHook('onClose', () => dispatcher.stop())
+  const scheduler = new Scheduler(sql, registry, bus, config.scheduling, app.log)
+  const reconciler = new Reconciler(sql, config.scheduling, app.log)
+  app.decorate('services', { registry, dispatcher, scheduler, reconciler })
+  app.addHook('onReady', async () => {
+    await dispatcher.start()
+    if (deps.background !== false) {
+      scheduler.start()
+      reconciler.start()
+    }
+  })
+  app.addHook('onClose', async () => {
+    scheduler.stop()
+    reconciler.stop()
+    await dispatcher.stop()
+  })
 
   app.get('/healthz', async () => {
     await sql`select 1`
@@ -76,8 +95,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerApprovals(app, { sql, hooks })
   registerEvents(app, { sql, bus })
   registerRunnerRoutes(app, { sql, config, registry })
-  registerAttemptRoutes(app, { sql, registry })
-  await registerRunnerGateway(app, { sql, registry, dispatcher })
+  registerAttemptRoutes(app, { sql, registry, config })
+  registerSchedulerRoutes(app, { sql, registry, config })
+  await registerRunnerGateway(app, { sql, registry, dispatcher, leaseTtlMs: config.scheduling.leaseTtlMs })
 
   const webDir = deps.webDistDir === undefined ? WEB_DIST_DIR : deps.webDistDir
   if (webDir && existsSync(webDir)) {

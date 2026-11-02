@@ -109,14 +109,23 @@ describe('dispatch', () => {
     expect(n).toBe(1)
   })
 
-  it('queues commands for an offline runner and delivers them on connect', async () => {
-    const { runnerId, token } = await enrolRunner(s.admin, t.app)
+  it('resends unacknowledged commands as soon as the runner reconnects', async () => {
+    runner = await connectedRunner()
+    const { attempt } = await startAttempt(runner.runnerId)
+    await waitFor(() => runner!.commands.find((c) => c.type === 'start'))
+    await runner.close()
+    runner.commands.length = 0
+    await runner.connect()
+    const again = await waitFor(() => runner!.commands.find((c) => c.type === 'start'), 2_000)
+    expect(again.attemptId).toBe(attempt.id)
+  })
+
+  it('refuses to dispatch to a runner that is not connected', async () => {
+    const { runnerId } = await enrolRunner(s.admin, t.app)
     const { tasks } = await approvedDelivery(s)
     const res = await s.admin.post(`/api/tasks/${tasks.T1!.id}/attempts`, { runnerId })
-    expect(res.statusCode).toBe(201)
-    runner = new FakeRunnerClient(url, runnerId, token)
-    await runner.connect()
-    await waitFor(() => runner!.commands.find((c) => c.type === 'start'))
+    expect(res.statusCode).toBe(409)
+    expect(res.json().error).toBe('capacity')
   })
 })
 

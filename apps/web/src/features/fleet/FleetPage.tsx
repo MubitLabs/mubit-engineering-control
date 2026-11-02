@@ -110,6 +110,7 @@ export function FleetPage() {
         )}
         <ErrorBox error={drain.error ?? revoke.error} />
       </Panel>
+      <Dispatch />
       <Invite />
     </div>
   )
@@ -158,6 +159,82 @@ function Invite() {
           </div>
         )}
       </form>
+    </Panel>
+  )
+}
+
+interface FleetStatus {
+  dispatchPaused: boolean
+  limits: { global: number; perEmployee: number; perDelivery: number; perProfile: number }
+  load: { total: number }
+  latestStop: {
+    id: string
+    createdAt: string
+    reason: string
+    summary: { total: number; stopped: number; unreachable: number }
+    attempts: {
+      attemptId: string
+      state: string
+      acknowledged: boolean
+      stopped: boolean
+      runnerReachable: boolean
+    }[]
+  } | null
+}
+
+/** Dispatch status and the fleet stop (PDF §13): stop requests are tracked until each runner confirms. */
+function Dispatch() {
+  const qc = useQueryClient()
+  const status = useQuery({
+    queryKey: ['fleet', 'status'],
+    queryFn: () => api.get<FleetStatus>('/api/fleet/status'),
+    refetchInterval: 3_000,
+  })
+  const stop = useMutation({
+    mutationFn: () => api.post('/api/fleet/stop', { reason: 'stopped from the fleet page' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['fleet'] }),
+  })
+  const resume = useMutation({
+    mutationFn: () => api.post('/api/fleet/resume'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['fleet'] }),
+  })
+  const d = status.data
+  if (!d) return null
+  return (
+    <Panel
+      title={
+        <div className="row">
+          <h2>Dispatch</h2> {d.dispatchPaused ? <Status value="paused" /> : <Status value="active" />}
+        </div>
+      }
+      actions={
+        d.dispatchPaused ? (
+          <button type="button" className="btn small primary" onClick={() => resume.mutate()}>
+            Resume dispatch
+          </button>
+        ) : (
+          <button type="button" className="btn small danger" onClick={() => stop.mutate()}>
+            Stop fleet
+          </button>
+        )
+      }
+    >
+      <div className="stack small">
+        <div className="muted">
+          {d.load.total} active attempts · limits: {d.limits.global} global, {d.limits.perEmployee} per
+          employee, {d.limits.perDelivery} per delivery, {d.limits.perProfile} per profile
+        </div>
+        {d.latestStop && (
+          <div>
+            Last stop <Time value={d.latestStop.createdAt} />: {d.latestStop.summary.stopped}/
+            {d.latestStop.summary.total} confirmed stopped
+            {d.latestStop.summary.unreachable > 0 && (
+              <span className="status err"> {d.latestStop.summary.unreachable} unreachable</span>
+            )}
+          </div>
+        )}
+        <ErrorBox error={stop.error ?? resume.error} />
+      </div>
     </Panel>
   )
 }

@@ -5,6 +5,7 @@ import { api } from '../../api/client'
 import { useProjectEvents } from '../../api/events'
 import type { Approval, Task } from '../../api/types'
 import { Empty, ErrorBox, Loading, Panel, Short, Status, Time } from '../../components/ui'
+import { useMe } from '../auth/useMe'
 import { DecisionCard } from '../inbox/InboxPage'
 import { Transcript } from './Transcript'
 
@@ -148,12 +149,27 @@ export function TaskPage() {
   )
 }
 
+const PARKED = new Set(['interrupted', 'quota_wait', 'auth_required'])
+
 function AttemptPanel({ attempt, canPrompt }: { attempt: AttemptView; canPrompt: boolean }) {
   const qc = useQueryClient()
+  const me = useMe()
   const control = useMutation({
-    mutationFn: (action: 'interrupt' | 'cancel') => api.post(`/api/attempts/${attempt.id}/${action}`),
+    mutationFn: (action: 'interrupt' | 'cancel' | 'resume' | 'abandon' | 'confirm-stopped') =>
+      api.post(`/api/attempts/${attempt.id}/${action}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['task'] }),
   })
+  const button = (action: Parameters<typeof control.mutate>[0], label: string, tone = '') => (
+    <button
+      type="button"
+      className={`btn small ${tone}`}
+      disabled={control.isPending}
+      onClick={() => control.mutate(action)}
+    >
+      {label}
+    </button>
+  )
+  const stalled = attempt.state === 'stalled'
   return (
     <Panel
       title={
@@ -165,20 +181,30 @@ function AttemptPanel({ attempt, canPrompt }: { attempt: AttemptView; canPrompt:
         </h2>
       }
       actions={
-        canPrompt &&
-        LIVE.has(attempt.state) && (
-          <>
-            <button type="button" className="btn small" onClick={() => control.mutate('interrupt')}>
-              Interrupt
-            </button>
-            <button type="button" className="btn small danger" onClick={() => control.mutate('cancel')}>
-              Cancel
-            </button>
-          </>
-        )
+        <>
+          {canPrompt && LIVE.has(attempt.state) && !stalled && (
+            <>
+              {button('interrupt', 'Interrupt')}
+              {button('cancel', 'Cancel', 'danger')}
+            </>
+          )}
+          {canPrompt && PARKED.has(attempt.state) && (
+            <>
+              {button('resume', 'Resume', 'primary')}
+              {button('abandon', 'Abandon', 'danger')}
+            </>
+          )}
+          {stalled && me.data?.user.isAdmin && button('confirm-stopped', 'Confirm process stopped')}
+        </>
       }
       flush
     >
+      {stalled && (
+        <div className="panel-body notice">
+          The runner stopped reporting. This attempt keeps its slot until the runner reconnects or an operator
+          confirms its process is gone.
+        </div>
+      )}
       {attempt.blocker && <div className="panel-body notice">{attempt.blocker.detail}</div>}
       <Transcript attemptId={attempt.id} />
       <ErrorBox error={control.error} />

@@ -52,3 +52,13 @@ export async function markCommandResult(
     where idempotency_key = ${commandId} and target = ${runnerId} and delivered_at is null
   `
 }
+
+/** Withdraws undelivered commands for an attempt that control has moved on from. */
+export async function withdrawCommands(tx: Tx, attemptId: string, reason: string): Promise<number> {
+  const rows = await tx`
+    update outbox set delivered_at = now(), last_error = ${`withdrawn: ${reason}`}
+    where topic = 'runner.command' and delivered_at is null and payload->>'attemptId' = ${attemptId}
+    returning id
+  `
+  return rows.length
+}

@@ -28,7 +28,7 @@ export function LoginPage() {
           {config.data?.org ?? 'GitHub'} account.
         </p>
         {error && <div className="error-box">{ERRORS[error] ?? error}</div>}
-        {config.data?.authMode === 'dev' ? (
+        {!config.data ? null : config.data.authMode === 'dev' ? (
           <DevLogin />
         ) : (
           <a className="btn primary" href="/auth/github/login" style={{ textAlign: 'center' }}>

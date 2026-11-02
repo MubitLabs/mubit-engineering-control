@@ -18,11 +18,12 @@ import {
   type TaskState,
   taskMachine,
 } from '@mec/domain'
-import { attemptBranch } from '@mec/git'
+import { attemptBranch, integrationBranch } from '@mec/git'
 import { type Db, isUniqueViolation, type Tx } from '../../db/sql'
 import { type ActorKind, appendEvent, projectStream } from '../../events/append'
 import { conflict, notFound } from '../../http/errors'
 import { enqueueCommand } from '../../outbox/commands'
+import { createApproval } from '../approvals/service'
 import { closeAttemptDecisions } from '../decisions/service'
 import { assertCapacity, dispatchLock, dispatchPaused } from '../scheduler/capacity'
 import { transition } from '../state'
@@ -55,9 +56,24 @@ export interface AttemptRow {
   finishedAt: Date | null
 }
 
+export interface RepairContext {
+  reason: 'review_sent_back' | 'checks_failed' | 'integration_conflict' | 'integration_checks_failed'
+  notes: string
+  /** Commit the repair starts from: the previous head, or the integration commit for conflicts. */
+  startSha: string | null
+  /** Commit the review diff is measured against. */
+  diffBaseSha: string | null
+  /** For integration conflicts: the task's previous head, merged into the worktree for resolution. */
+  mergeSha?: string | null
+  conflicts?: string[]
+  failures?: { name: string; status: string; logTail: string | null }[]
+  previousAttemptId: string
+}
+
 export interface TaskRow {
   id: string
-  kind: 'work' | 'planning'
+  kind: 'work' | 'planning' | 'integration'
+  repairContext: RepairContext | null
   deliveryId: string
   key: string
   title: string
@@ -137,6 +153,11 @@ export async function claimAttempt(
     )
   }
 
+  // A task sent back (review, failed checks, conflict) starts a bounded repair with that context.
+  const repair = task.repairContext
+  const kind = repair && (input.kind ?? 'implement') === 'implement' ? 'repair' : (input.kind ?? 'implement')
+  const inputs = repair ? { ...input.inputs, repair } : input.inputs
+  if (repair) await tx`update tasks set repair_context = null where id = ${task.id}`
   const [counter] = await tx<{ next: number }[]>`
     select coalesce(max(number), 0) + 1 as next from attempts where task_id = ${task.id}
   `
@@ -145,8 +166,8 @@ export async function claimAttempt(
     const [row] = await tx.savepoint(
       (sp) => sp<AttemptRow[]>`
       insert into attempts (project_id, delivery_id, task_id, number, kind, agent_kind, inputs, created_by, profile_id)
-      values (${task.projectId}, ${task.deliveryId}, ${task.id}, ${counter!.next}, ${input.kind ?? 'implement'},
-              ${input.agentKind}, ${tx.json(input.inputs as never)},
+      values (${task.projectId}, ${task.deliveryId}, ${task.id}, ${counter!.next}, ${kind},
+              ${input.agentKind}, ${tx.json(inputs as never)},
               ${input.actor.kind === 'user' ? (input.actor.id ?? null) : null},
               ${input.profileId ?? null})
       returning *
@@ -222,7 +243,7 @@ export async function claimAttempt(
     type: 'start',
     attemptId: attempt.id,
     generation,
-    payload: await startPayload(tx, task, attempt, input),
+    payload: await startPayload(tx, task, attempt, { ...input, inputs }),
   })
   return { attempt: await loadAttempt(tx, attempt.id), created: true }
 }
@@ -349,7 +370,7 @@ export async function followTask(tx: Tx, attempt: AttemptRow, to: AttemptState):
     actor: { kind: 'system' as const },
     payload: { attemptId: attempt.id },
   }
-  if (task.kind === 'planning') {
+  if (task.kind !== 'work') {
     // A coordinator run is reviewed through the plan approval, not as a task result.
     if (to === 'succeeded') {
       await transition(tx, {
@@ -389,8 +410,10 @@ export async function followTask(tx: Tx, attempt: AttemptRow, to: AttemptState):
       event: 'attempt_succeeded',
       ...ctx,
     })
+    await requestReview(tx, task, attempt)
   } else if (to === 'checks_failed' || to === 'failed' || to === 'cancelled') {
     const retryable = task.attemptsUsed < (task.spec.maxAttempts ?? 2)
+    if (retryable && to === 'checks_failed') await setRepairFromChecks(tx, task, attempt)
     await transition(tx, {
       table: 'tasks',
       machine: taskMachine,
@@ -437,18 +460,31 @@ async function startPayload(
     {
       baseRef: string
       baseSha: string | null
+      integrationSha: string | null
       name: string
       cloneUrl: string
       validationProfile: ValidationProfile
     }[]
   >`
-    select d.base_ref, d.base_sha, r.name, r.clone_url, r.validation_profile
+    select d.base_ref, d.base_sha, d.integration_sha, r.name, r.clone_url, r.validation_profile
     from deliveries d join repositories r on r.id = d.repository_id
     where d.id = ${task.deliveryId}
   `
-  const profile = row!.validationProfile
-  const wanted = new Set(task.spec.acceptanceChecks)
-  const override = typeof input.inputs.baseSha === 'string' ? input.inputs.baseSha : null
+  const d = row!
+  const profile = d.validationProfile
+  const repair = input.inputs.repair as RepairContext | undefined
+  const integration = input.inputs.integration as StartPayload['integration'] | undefined
+  const [dep] = await tx`select 1 from task_dependencies where task_id = ${task.id} limit 1`
+
+  // Code dependencies start from the integration commit that contains their prerequisites (PDF §8).
+  const taskBase = dep && d.integrationSha ? d.integrationSha : d.baseSha
+  let baseSha = taskBase
+  let diffBaseSha: string | null = null
+  if (integration) baseSha = d.integrationSha ?? d.baseSha
+  else if (repair?.startSha) {
+    baseSha = repair.startSha
+    diffBaseSha = repair.diffBaseSha
+  }
   return {
     agentKind: input.agentKind,
     kind: attempt.kind,
@@ -456,11 +492,78 @@ async function startPayload(
     taskTitle: task.title,
     spec: task.spec as unknown as Record<string, unknown>,
     inputs: input.inputs,
-    repository: { name: row!.name, cloneUrl: row!.cloneUrl },
-    baseSha: override ?? row!.baseSha,
-    baseRef: row!.baseRef,
-    branch: attemptBranch(task.deliveryId, task.key, attempt.number),
+    repository: { name: d.name, cloneUrl: d.cloneUrl },
+    baseSha: typeof input.inputs.baseSha === 'string' ? input.inputs.baseSha : baseSha,
+    baseRef: d.baseRef,
+    branch: integration
+      ? integrationBranch(task.deliveryId)
+      : attemptBranch(task.deliveryId, task.key, attempt.number),
+    diffBaseSha,
+    integration: integration ?? null,
     bootstrap: profile.bootstrap,
-    checks: profile.checks.filter((c) => wanted.has(c.name)),
+    checks: integration
+      ? profile.checks
+      : profile.checks.filter((c) => new Set(task.spec.acceptanceChecks).has(c.name)),
   }
+}
+
+/**
+ * Result acceptance is its own decision (PDF §12, §15): bound to the exact head SHA, decided by
+ * the delivery owner. A later commit makes it stale.
+ */
+async function requestReview(tx: Tx, task: TaskRow, attempt: AttemptRow): Promise<void> {
+  const [ctx] = await tx<
+    { ownerId: string; title: string; headSha: string | null; diff: { fileCount?: number } | null }[]
+  >`
+    select d.owner_id, d.title, a.head_sha, a.diff
+    from deliveries d join attempts a on a.delivery_id = d.id
+    where a.id = ${attempt.id}
+  `
+  if (!ctx) return
+  const passed = await tx<{ name: string }[]>`
+    select name from check_results where attempt_id = ${attempt.id} and status = 'passed'
+  `
+  await createApproval(tx, {
+    kind: 'result',
+    projectId: attempt.projectId,
+    deliveryId: attempt.deliveryId,
+    taskId: task.id,
+    attemptId: attempt.id,
+    generation: attempt.generation,
+    bindingHash: ctx.headSha ?? `attempt:${attempt.id}`,
+    inputCommit: ctx.headSha,
+    title: `Review ${task.key}: ${task.title}`,
+    detail: {
+      headSha: ctx.headSha,
+      files: ctx.diff?.fileCount ?? 0,
+      checksPassed: passed.map((p) => p.name),
+      consequence:
+        'Accepting queues this exact commit for integration; sending back starts a repair attempt with your notes.',
+    },
+    requestedBy: { kind: 'system' },
+    allowedDeciderIds: [ctx.ownerId],
+  })
+  const blocker: Blocker = { kind: 'reviewer', detail: 'Waiting for review', refs: [attempt.id] }
+  await tx`update tasks set blocker = ${tx.json(blocker as never)} where id = ${task.id}`
+}
+
+/** The next attempt receives the exact failures and continues from this attempt's commit (PDF §15). */
+async function setRepairFromChecks(tx: Tx, task: TaskRow, attempt: AttemptRow): Promise<void> {
+  const failures = await tx<{ name: string; status: string; logTail: string | null }[]>`
+    select name, status, log_tail from check_results where attempt_id = ${attempt.id} and status <> 'passed'
+  `
+  const [a] = await tx<
+    { headSha: string | null; baseSha: string | null; diff: { baseSha?: string } | null }[]
+  >`
+    select head_sha, base_sha, diff from attempts where id = ${attempt.id}
+  `
+  const context: RepairContext = {
+    reason: 'checks_failed',
+    notes: `Acceptance checks failed on ${a?.headSha?.slice(0, 10) ?? 'the last commit'}. Fix them.`,
+    failures,
+    startSha: a?.headSha ?? null,
+    diffBaseSha: a?.diff?.baseSha ?? a?.baseSha ?? null,
+    previousAttemptId: attempt.id,
+  }
+  await tx`update tasks set repair_context = ${tx.json(context as never)} where id = ${task.id}`
 }

@@ -47,6 +47,10 @@ const TONES: Record<string, string> = {
   draining: 'warn',
   revoked: 'err',
   passed: 'ok',
+  pushed: 'ok',
+  open: 'warn',
+  closed: 'neutral',
+  repair: 'warn',
   error: 'err',
 }
 

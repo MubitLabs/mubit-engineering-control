@@ -50,7 +50,8 @@ export const RunnerEventType = {
 } as const
 export type RunnerEventType = (typeof RunnerEventType)[keyof typeof RunnerEventType]
 
-export const AgentKind = z.enum(['fake', 'claude-code'])
+/** 'none' marks runner-native work (integration merges) that starts no agent. */
+export const AgentKind = z.enum(['fake', 'claude-code', 'none'])
 export type AgentKind = z.infer<typeof AgentKind>
 
 /** Capabilities are advertised separately; absence means "unsupported", never assumed (PDF §7). */
@@ -207,6 +208,17 @@ export const StartPayload = z.object({
   baseSha: z.string().nullable().default(null),
   baseRef: z.string().nullable().default(null),
   branch: z.string().nullable().default(null),
+  /** Diff against this commit instead of the start point (repairs continue from earlier work). */
+  diffBaseSha: z.string().nullable().default(null),
+  /** Integration runs: merge these accepted commits, in order, into the integration branch. */
+  integration: z
+    .object({
+      merges: z.array(
+        z.object({ taskId: z.string(), taskKey: z.string(), sha: z.string(), branch: z.string().nullable() }),
+      ),
+    })
+    .nullable()
+    .default(null),
   bootstrap: z
     .array(z.object({ name: z.string(), argv: z.array(z.string()), timeoutSec: z.number() }))
     .default([]),

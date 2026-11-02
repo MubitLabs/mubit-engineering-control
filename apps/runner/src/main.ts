@@ -8,7 +8,7 @@ import { createLogger, loadRunnerConfig } from './config'
 import { Runner } from './runner'
 
 /**
- *   mec-runner enrol --url <control> --invite <token> --name <name> [--env-file <path>]
+ *   mec-runner enrol --url <control> --invite <token> --name <name> [--config-file <path>]
  *   mec-runner            (run; configuration from the environment)
  */
 const args = process.argv.slice(2)
@@ -27,7 +27,7 @@ async function enrol() {
   const url = opt('--url')
   const invite = opt('--invite')
   const name = opt('--name')
-  const envFile = opt('--env-file') ?? path.join(os.homedir(), '.config', 'mec', 'runner.env')
+  const envFile = opt('--config-file') ?? path.join(os.homedir(), '.config', 'mec', 'runner.env')
   if (!url || !invite || !name) {
     console.error('usage: mec-runner enrol --url <control-url> --invite <token> --name <runner-name>')
     process.exit(2)

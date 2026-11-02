@@ -4,6 +4,7 @@ import { buildApp } from '../../src/app'
 import type { Config } from '../../src/config'
 import { EventBus } from '../../src/events/bus'
 import type { GithubOAuth } from '../../src/features/auth/github'
+import type { GitHubApi } from '../../src/features/integration/github'
 import { createTestDb, type TestDb } from './db'
 
 export type ConfigOverrides = Omit<Partial<Config>, 'scheduling'> & {
@@ -18,7 +19,7 @@ export function testConfig(overrides: ConfigOverrides = {}): Config {
     port: 0,
     publicUrl: 'http://127.0.0.1:4100',
     authMode: 'dev',
-    github: { clientId: '', clientSecret: '', org: 'MubitLabs' },
+    github: { clientId: '', clientSecret: '', org: 'MubitLabs', token: '' },
     adminLogins: ['admin'],
     sessionTtlHours: 24,
     migrateOnStart: false,
@@ -59,7 +60,7 @@ export interface TestApp {
 }
 
 export async function createTestApp(
-  opts: { github?: GithubOAuth; config?: ConfigOverrides; background?: boolean } = {},
+  opts: { github?: GithubOAuth; config?: ConfigOverrides; background?: boolean; githubApi?: GitHubApi } = {},
 ): Promise<TestApp> {
   const db = await createTestDb()
   const bus = new EventBus(db.sql)
@@ -72,6 +73,7 @@ export async function createTestApp(
     github: opts.github ?? null,
     webDistDir: null,
     background: opts.background ?? false,
+    githubApi: opts.githubApi ?? null,
   })
   await app.ready()
 

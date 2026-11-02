@@ -5,6 +5,7 @@ import { appendEvent, FLEET_STREAM, projectStream } from '../../events/append'
 import { type AttemptRow, applyLifecycle, followTask, isLifecycleEvent } from '../attempts/service'
 import { handleControlCall } from '../decisions/calls'
 import { openDecision } from '../decisions/service'
+import { onIntegrationCompleted, onIntegrationConflict } from '../integration/outcomes'
 import { transition } from '../state'
 
 export type IngestOutcome =
@@ -281,6 +282,12 @@ async function projectEvidence(tx: Tx, attempt: AttemptRow, env: RunnerEventEnve
       return
     case 'control.call':
       await handleControlCall(tx, attempt, env)
+      return
+    case 'integration.completed':
+      await onIntegrationCompleted(tx, attempt, env)
+      return
+    case 'integration.conflict':
+      await onIntegrationConflict(tx, attempt, env)
       return
     case 'message.delivered':
       if (str(p.messageId)) {

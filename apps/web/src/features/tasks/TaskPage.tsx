@@ -76,6 +76,12 @@ export function TaskPage() {
             <code>{task.key}</code> {task.title} <Status value={task.state} />
           </h1>
           {task.blocker && <div className="muted small">waiting: {task.blocker.detail}</div>}
+          {task.repairContext && (
+            <div className="notice small" style={{ marginTop: 6 }}>
+              Next attempt is a repair ({task.repairContext.reason.replace(/_/g, ' ')}):{' '}
+              {task.repairContext.notes}
+            </div>
+          )}
         </div>
       </div>
       <div className="grid-2">

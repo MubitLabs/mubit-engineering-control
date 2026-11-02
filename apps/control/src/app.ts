@@ -14,6 +14,9 @@ import { registerAuth } from './features/auth/routes'
 import { decisionHooks, onDecisionExpired } from './features/decisions/service'
 import { registerDeliveries } from './features/deliveries/routes'
 import { registerEvents } from './features/events/routes'
+import { createGitHubApi, type GitHubApi } from './features/integration/github'
+import { Integrator } from './features/integration/integrator'
+import { resultHooks } from './features/integration/review'
 import { registerCoordinator } from './features/planning/coordinator'
 import { planApprovalHooks } from './features/plans/service'
 import { registerProfiles } from './features/profiles/routes'
@@ -35,6 +38,8 @@ export interface AppDeps {
   /** Override the GitHub client (tests). Defaults to the real one when configured. */
   github?: GithubOAuth | null
   webDistDir?: string | null
+  /** Override the GitHub REST client used for pull requests (tests). */
+  githubApi?: GitHubApi | null
   /** Run the scheduler and reconciler loops (tests drive them by hand when false). */
   background?: boolean
 }
@@ -44,6 +49,7 @@ export interface Services {
   dispatcher: CommandDispatcher
   scheduler: Scheduler
   reconciler: Reconciler
+  integrator: Integrator
 }
 
 declare module 'fastify' {
@@ -69,22 +75,38 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         ? createGithubOAuth(config.github.clientId, config.github.clientSecret)
         : null
 
-  const hooks: ApprovalHookMap = { plan: planApprovalHooks, tool: decisionHooks, question: decisionHooks }
+  const hooks: ApprovalHookMap = {
+    plan: planApprovalHooks,
+    tool: decisionHooks,
+    question: decisionHooks,
+    result: resultHooks,
+  }
   const registry = new RunnerRegistry()
   const dispatcher = new CommandDispatcher(sql, registry, app.log)
   const scheduler = new Scheduler(sql, registry, bus, config.scheduling, app.log)
   const reconciler = new Reconciler(sql, config.scheduling, app.log, onDecisionExpired)
-  app.decorate('services', { registry, dispatcher, scheduler, reconciler })
+  const githubApi =
+    deps.githubApi !== undefined
+      ? deps.githubApi
+      : config.github.token
+        ? createGitHubApi(config.github.token)
+        : null
+  const integrator = new Integrator(sql, registry, config, githubApi, app.log)
+  app.decorate('services', { registry, dispatcher, scheduler, reconciler, integrator })
   app.addHook('onReady', async () => {
+    // Connections live in this process: until a runner says hello again it is offline.
+    await sql`update runners set status = 'offline' where status = 'online'`
     await dispatcher.start()
     if (deps.background !== false) {
       scheduler.start()
       reconciler.start()
+      integrator.start()
     }
   })
   app.addHook('onClose', async () => {
     scheduler.stop()
     reconciler.stop()
+    integrator.stop()
     await dispatcher.stop()
   })
 
@@ -112,7 +134,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     // Client-side routes fall back to the SPA shell; API and auth paths keep their 404s.
     app.setNotFoundHandler((req, reply) => {
       const path = req.url.split('?')[0] ?? ''
-      if (req.method === 'GET' && !/^\/(api|auth|runner)\//.test(path) && path !== '/healthz') {
+      // Missing build assets must 404, not return the HTML shell.
+      if (req.method === 'GET' && !/^\/(api|auth|runner|assets)\//.test(path) && path !== '/healthz') {
         return reply.sendFile('index.html')
       }
       return reply.status(404).send({ error: 'not_found', message: 'Not found', details: null })

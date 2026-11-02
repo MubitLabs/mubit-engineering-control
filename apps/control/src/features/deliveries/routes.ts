@@ -88,20 +88,22 @@ export function registerDeliveries(app: FastifyInstance, deps: { sql: Sql; hooks
     const actor = await requireActor(sql, req)
     const delivery = await loadDelivery(sql, req.params.deliveryId)
     authorize(actor, 'observe', { kind: 'project', projectId: delivery.projectId })
-    const [revisions, tasks, dependencies, approvals, [owner], [repository]] = await Promise.all([
-      sql<
-        PlanRevisionRow[]
-      >`select * from plan_revisions where delivery_id = ${delivery.id} order by number desc`,
-      sql`select * from tasks where delivery_id = ${delivery.id} order by created_at, key`,
-      sql`
+    const [revisions, tasks, dependencies, approvals, [owner], [repository], pullRequests] =
+      await Promise.all([
+        sql<
+          PlanRevisionRow[]
+        >`select * from plan_revisions where delivery_id = ${delivery.id} order by number desc`,
+        sql`select * from tasks where delivery_id = ${delivery.id} order by created_at, key`,
+        sql`
         select d.task_id, d.depends_on_task_id from task_dependencies d
         join tasks t on t.id = d.task_id where t.delivery_id = ${delivery.id}
       `,
-      sql`select * from approvals where delivery_id = ${delivery.id} order by created_at desc`,
-      sql`select id, login, name, avatar_url from users where id = ${delivery.ownerId}`,
-      sql`select id, name, clone_url, default_branch, validation_profile from repositories where id = ${delivery.repositoryId}`,
-    ])
-    return { delivery, owner, repository, revisions, tasks, dependencies, approvals }
+        sql`select * from approvals where delivery_id = ${delivery.id} order by created_at desc`,
+        sql`select id, login, name, avatar_url from users where id = ${delivery.ownerId}`,
+        sql`select id, name, clone_url, default_branch, validation_profile from repositories where id = ${delivery.repositoryId}`,
+        sql`select * from pull_requests where delivery_id = ${delivery.id} order by created_at desc`,
+      ])
+    return { delivery, owner, repository, revisions, tasks, dependencies, approvals, pullRequests }
   })
 
   app.get<{ Params: { revisionId: string } }>('/api/plans/:revisionId', async (req) => {

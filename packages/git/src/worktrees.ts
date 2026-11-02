@@ -10,20 +10,21 @@ export function integrationBranch(deliveryId: string): string {
   return assertSafeRef(`mec/${deliveryId.slice(0, 8)}/integration`)
 }
 
-/** Adds a worktree on a new branch at the pinned base. Reuses an existing one (resume). */
+/**
+ * Adds a worktree at the pinned base, on a new branch (attempts) or detached (integration runs,
+ * whose branch is only ever pushed). Reuses an existing worktree on resume.
+ */
 export async function addWorktree(
   clone: string,
   workdir: string,
-  branch: string,
+  branch: string | null,
   baseSha: string,
 ): Promise<void> {
   if (existsSync(`${workdir}/.git`)) return
   await git(['worktree', 'prune'], { cwd: clone })
-  await git(['worktree', 'add', '--force', '-B', assertSafeRef(branch), '--', workdir, assertSha(baseSha)], {
-    cwd: clone,
-  })
+  const target = branch ? ['-B', assertSafeRef(branch)] : ['--detach']
+  await git(['worktree', 'add', '--force', ...target, '--', workdir, assertSha(baseSha)], { cwd: clone })
 }
-
 export async function removeWorktree(clone: string, workdir: string): Promise<void> {
   await git(['worktree', 'remove', '--force', '--', workdir], { cwd: clone }).catch(() => undefined)
 }
@@ -137,4 +138,51 @@ export async function pushBranch(
     env,
     timeoutMs: 300_000,
   })
+}
+
+export type MergeOutcome = { ok: true; sha: string } | { ok: false; conflicts: string[] }
+
+/**
+ * Merges one commit with an explicit merge commit. On conflict the merge is aborted and the
+ * conflicting paths are returned; nothing is silently resolved (PDF §14).
+ */
+export async function mergeCommit(
+  workdir: string,
+  sha: string,
+  message: string,
+  author: { name: string; email: string },
+): Promise<MergeOutcome> {
+  const env = {
+    GIT_AUTHOR_NAME: author.name,
+    GIT_AUTHOR_EMAIL: author.email,
+    GIT_COMMITTER_NAME: author.name,
+    GIT_COMMITTER_EMAIL: author.email,
+  }
+  try {
+    await git(['merge', '--no-ff', '--no-edit', '-m', message, assertSha(sha)], { cwd: workdir, env })
+    return { ok: true, sha: await headSha(workdir) }
+  } catch {
+    const out = await git(['diff', '--name-only', '--diff-filter=U'], { cwd: workdir }).catch(() => '')
+    await git(['merge', '--abort'], { cwd: workdir }).catch(() => undefined)
+    return { ok: false, conflicts: out.split('\n').filter(Boolean) }
+  }
+}
+
+/**
+ * Starts a merge and leaves any conflicts in the working tree for an agent to resolve; the next
+ * commit completes it with both parents. Returns the conflicting paths (empty if it merged cleanly).
+ */
+export async function beginMerge(workdir: string, sha: string): Promise<string[]> {
+  await git(['merge', '--no-ff', '--no-commit', assertSha(sha)], { cwd: workdir }).catch(() => undefined)
+  const out = await git(['diff', '--name-only', '--diff-filter=U'], { cwd: workdir }).catch(() => '')
+  return out.split('\n').filter(Boolean)
+}
+
+export async function commitExists(workdir: string, sha: string): Promise<boolean> {
+  try {
+    await git(['cat-file', '-e', `${assertSha(sha)}^{commit}`], { cwd: workdir })
+    return true
+  } catch {
+    return false
+  }
 }

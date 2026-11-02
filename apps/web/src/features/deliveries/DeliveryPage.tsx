@@ -19,7 +19,8 @@ export function DeliveryPage() {
   if (!q.data) return q.error ? <ErrorBox error={q.error} /> : <Loading />
   const { delivery, revisions, tasks, approvals, repository, owner, dependencies } = q.data
   const current = revisions[0]
-  const work = tasks.filter((t) => t.kind !== 'planning' && t.state !== 'cancelled')
+  const work = tasks.filter((t) => t.kind === 'work' && t.state !== 'cancelled')
+  const integrationRuns = tasks.filter((t) => t.kind === 'integration')
   const planning = tasks.filter((t) => t.kind === 'planning')
   const byId = new Map(tasks.map((t) => [t.id, t]))
 
@@ -109,6 +110,39 @@ export function DeliveryPage() {
         </div>
         <div className="stack">
           {delivery.state === 'planning' && <Coordinator deliveryId={delivery.id} />}
+          {(delivery.integrationSha || q.data.pullRequests.length > 0) && (
+            <Panel title="Integration">
+              <div className="stack small">
+                <div>
+                  integration branch <code>mec/{delivery.id.slice(0, 8)}/integration</code> at{' '}
+                  <code>{delivery.integrationSha?.slice(0, 12) ?? '—'}</code>{' '}
+                  {delivery.integrationSha && delivery.integrationPushedSha === delivery.integrationSha ? (
+                    <Status value="pushed" />
+                  ) : (
+                    <span className="faint">not pushed</span>
+                  )}
+                </div>
+                <div className="muted">
+                  {work.filter((t) => t.state === 'integrated').length}/{work.length} tasks integrated
+                </div>
+                {integrationRuns.map((r) => (
+                  <div key={r.id} className="row">
+                    <Link to={`/projects/${projectId}/tasks/${r.id}`}>{r.title}</Link>
+                    <Status value={r.state === 'accepted' ? 'passed' : r.state} />
+                  </div>
+                ))}
+                {q.data.pullRequests.map((pr) => (
+                  <div key={pr.id} className="row">
+                    <a href={pr.url} target="_blank" rel="noreferrer">
+                      PR #{pr.number}
+                    </a>
+                    <Status value={pr.state} />
+                    {pr.checks && <span className="faint">CI {pr.checks.conclusion}</span>}
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          )}
           {planning.length > 0 && (
             <Panel title="Coordinator runs" flush>
               <table className="table">

@@ -20,6 +20,7 @@ short explainer in [`docs/milestones/`](docs/milestones/).
 | [M6](docs/milestones/M6.md) | Workspaces and checks: pinned worktrees, diffs, check results, artifacts |
 | [M7](docs/milestones/M7.md) | Claude Code adapter, decision bridge and inbox, execution profiles, steering messages |
 | [M8](docs/milestones/M8.md) | Planning: coordinator with propose_tasks, graph view, traceability, revision carry-over |
+| [M9](docs/milestones/M9.md) | Review, repair, sequential integration on exact SHAs, conflict repair, pull request |
 
 ## Layout
 

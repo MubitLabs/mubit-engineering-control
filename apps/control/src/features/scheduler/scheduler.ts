@@ -112,6 +112,7 @@ export class Scheduler {
       join deliveries d on d.id = t.delivery_id
       join projects p on p.id = d.project_id
       where t.state = 'ready' and t.kind = 'work' and p.paused_at is null and d.state in ('approved', 'executing')
+        and t.attempts_used < coalesce((t.spec->>'maxAttempts')::int, 2)
       order by t.created_at
       limit 500
     `

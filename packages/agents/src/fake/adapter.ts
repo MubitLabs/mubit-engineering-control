@@ -13,15 +13,23 @@ import {
 } from '../adapter'
 import { FAKE_AGENT_SOURCE } from './agent-source'
 
-export const DEFAULT_FAKE_SCRIPT: FakeStep[] = [
-  { say: 'Reading the task brief.' },
-  { sleepMs: 500 },
-  { tool: 'Read', input: { path: 'README.md' } },
-  { say: 'Writing the change.' },
-  { write: { path: 'FAKE_AGENT_OUTPUT.md', content: 'Written by the fake agent.\n' } },
-  { sleepMs: 500 },
-  { say: 'Done.' },
-]
+/** The default script writes a file unique to the attempt, so parallel tasks do not collide. */
+export function defaultScript(attemptId: string): FakeStep[] {
+  return [
+    { say: 'Reading the task brief.' },
+    { sleepMs: 500 },
+    { tool: 'Read', input: { path: 'README.md' } },
+    { say: 'Writing the change.' },
+    {
+      write: {
+        path: `fake-agent/${attemptId.slice(0, 8)}.md`,
+        content: `Written by the fake agent for ${attemptId}.\n`,
+      },
+    },
+    { sleepMs: 500 },
+    { say: 'Done.' },
+  ]
+}
 
 /** Writes the fake agent program once per content hash and returns its path. */
 function ensureProgram(binDir: string): string {
@@ -66,7 +74,7 @@ export class FakeAdapter implements AgentAdapter {
     const stateFile = path.join(dir, 'checkpoint.json')
     const parsed = z.array(FakeStepSchema).safeParse(input.options?.script)
     if (!input.resume || !existsSync(scriptFile)) {
-      writeFileSync(scriptFile, JSON.stringify(parsed.success ? parsed.data : DEFAULT_FAKE_SCRIPT))
+      writeFileSync(scriptFile, JSON.stringify(parsed.success ? parsed.data : defaultScript(input.attemptId)))
     }
 
     const argv = [

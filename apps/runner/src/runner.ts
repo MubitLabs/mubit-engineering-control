@@ -26,7 +26,7 @@ import { type Logger, RUNNER_VERSION, type RunnerConfig } from './config'
 import { ControlConnection } from './connection'
 import { AttemptJournal } from './journal'
 import { Supervisor } from './supervisor'
-import { type PreparedWorkspace, Workspaces } from './workspace'
+import { integrate, type PreparedWorkspace, Workspaces } from './workspace'
 
 interface Live {
   journal: AttemptJournal
@@ -323,7 +323,8 @@ export class Runner {
       if (!parsed.success) return await fail('invalid_start', 'start payload did not match the protocol')
       const start = parsed.data
       const active = [...this.live.values()].filter((l) => l !== live).length
-      if (active >= this.config.maxAttempts) {
+      // Integration runs are git and checks only; they never wait behind agent work.
+      if (start.kind !== 'integration' && active >= this.config.maxAttempts) {
         return await fail('capacity', `runner is at its limit of ${this.config.maxAttempts}`)
       }
       await emit(T.preparing, { generation, resume })
@@ -359,6 +360,14 @@ export class Runner {
             return await fail('bootstrap_failed', `${cmd.name}: ${outcome.detail ?? 'failed'}`)
           }
         }
+      }
+
+      if (start.integration) return await this.runIntegration(journal, start, ws)
+
+      const repair = start.inputs.repair as { mergeSha?: string | null } | undefined
+      if (!resume && repair?.mergeSha) {
+        const conflicts = await this.workspaces.beginMerge(ws.workdir, repair.mergeSha)
+        await emit('workspace.merge_started', { mergeSha: repair.mergeSha, conflicts })
       }
 
       const adapter = this.adapters.get(start.agentKind)
@@ -454,7 +463,9 @@ export class Runner {
   private async verify(journal: AttemptJournal, start: StartPayload, summary: string | null): Promise<void> {
     const emit = (type: string, payload: Record<string, unknown>) => this.emit(journal, type, payload)
     const attemptId = journal.attemptId
-    const { workdir, baseSha, branch, port } = journal.info
+    const { workdir, branch, port } = journal.info
+    // Repairs continue from earlier work but are reviewed against the task's original base.
+    const baseSha = start.diffBaseSha ?? journal.info.baseSha
     let headSha: string | null = null
 
     if (workdir && baseSha) {
@@ -487,29 +498,7 @@ export class Runner {
     await emit(T.finished, { summary, headSha })
     await emit(T.checksStarted, { checks: start.checks.map((c) => c.name), sha: headSha })
 
-    const results: { name: string; status: string }[] = []
-    const env = this.taskEnv(attemptId, port ?? this.allocatePort())
-    for (const cmd of start.checks) {
-      const outcome = await runCheck(
-        this.supervisor,
-        { attemptId, generation: journal.generation },
-        cmd,
-        workdir ?? this.config.home,
-        env,
-      )
-      const logArtifactId = await this.upload(attemptId, 'check_log', `${cmd.name}.log`, outcome.log)
-      await emit(T.checkResult, {
-        name: cmd.name,
-        status: outcome.status,
-        exitCode: outcome.exitCode,
-        durationMs: outcome.durationMs,
-        detail: outcome.detail,
-        sha: headSha,
-        logArtifactId,
-        logTail: tail(outcome.log),
-      })
-      results.push({ name: cmd.name, status: outcome.status })
-    }
+    const results = await this.runChecks(journal, start, workdir, headSha, port, 'task')
     const passed = results.every((r) => r.status === 'passed')
 
     if (passed && workdir && branch && this.workspaces.pushEnabled) {
@@ -526,6 +515,109 @@ export class Runner {
       sha: headSha,
       note: start.checks.length === 0 ? 'no checks configured for this task' : null,
     })
+    await journal.update({ phase: 'done' })
+  }
+
+  private async runChecks(
+    journal: AttemptJournal,
+    start: StartPayload,
+    workdir: string | null,
+    sha: string | null,
+    port: number | null | undefined,
+    scope: 'task' | 'integration',
+  ): Promise<{ name: string; status: string }[]> {
+    const attemptId = journal.attemptId
+    const results: { name: string; status: string }[] = []
+    const env = this.taskEnv(attemptId, port ?? this.allocatePort())
+    for (const cmd of start.checks) {
+      const outcome = await runCheck(
+        this.supervisor,
+        { attemptId, generation: journal.generation },
+        cmd,
+        workdir ?? this.config.home,
+        env,
+      )
+      const logArtifactId = await this.upload(attemptId, 'check_log', `${cmd.name}.log`, outcome.log)
+      await this.emit(journal, T.checkResult, {
+        name: cmd.name,
+        scope,
+        status: outcome.status,
+        exitCode: outcome.exitCode,
+        durationMs: outcome.durationMs,
+        detail: outcome.detail,
+        sha,
+        logArtifactId,
+        logTail: tail(outcome.log),
+      })
+      results.push({ name: cmd.name, status: outcome.status })
+    }
+    return results
+  }
+
+  /**
+   * An integration run (PDF §14): merge accepted task commits in order on the delivery's
+   * integration line, run the integration checks on the exact resulting SHA, push it.
+   */
+  private async runIntegration(
+    journal: AttemptJournal,
+    start: StartPayload,
+    ws: PreparedWorkspace,
+  ): Promise<void> {
+    const emit = (type: string, payload: Record<string, unknown>) => this.emit(journal, type, payload)
+    await emit(T.started, {
+      agentKind: 'none',
+      merges: start.integration?.merges.map((m) => m.taskKey) ?? [],
+    })
+    let outcome: Awaited<ReturnType<typeof integrate>>
+    try {
+      outcome = await integrate(this.workspaces, start, ws.workdir, (m) => emit('integration.merged', m))
+    } catch (e) {
+      await emit(T.failed, { reason: 'integration_failed', detail: (e as Error).message })
+      await journal.update({ phase: 'done' })
+      return
+    }
+    if (outcome.conflict) {
+      await emit('integration.conflict', { ...outcome.conflict, integrationSha: ws.baseSha })
+      await emit(T.failed, {
+        reason: 'integration_conflict',
+        detail: `${outcome.conflict.taskKey} conflicts in ${outcome.conflict.conflicts.join(', ') || 'unknown files'}`,
+      })
+      await journal.update({ phase: 'done' })
+      return
+    }
+    await emit(T.finished, { headSha: outcome.headSha, merged: outcome.merged.map((m) => m.taskKey) })
+    await emit(T.checksStarted, {
+      checks: start.checks.map((c) => c.name),
+      sha: outcome.headSha,
+      scope: 'integration',
+    })
+    const results = await this.runChecks(
+      journal,
+      start,
+      ws.workdir,
+      outcome.headSha,
+      journal.info.port,
+      'integration',
+    )
+    const passed = results.every((r) => r.status === 'passed')
+    let pushed = false
+    if (passed && start.branch && this.workspaces.pushEnabled) {
+      try {
+        await this.workspaces.push(ws.workdir, start.branch)
+        pushed = true
+      } catch (e) {
+        await emit('workspace.push_failed', { branch: start.branch, detail: (e as Error).message })
+      }
+    }
+    await emit('integration.completed', {
+      sha: outcome.headSha,
+      baseSha: ws.baseSha,
+      passed,
+      pushed,
+      branch: start.branch,
+      merged: outcome.merged,
+    })
+    await emit(T.checksCompleted, { passed, results, sha: outcome.headSha, scope: 'integration' })
     await journal.update({ phase: 'done' })
   }
 
@@ -618,6 +710,24 @@ export class Runner {
 
 function briefFor(start: StartPayload): string {
   if (typeof start.inputs.prompt === 'string') return start.inputs.prompt
+  const repair = start.inputs.repair as
+    | {
+        reason: string
+        notes: string
+        conflicts?: string[]
+        failures?: { name: string; status: string; logTail: string | null }[]
+      }
+    | undefined
+  const repairText = repair
+    ? [
+        '',
+        'This is a repair attempt. Your previous work for this task is already in this working tree.',
+        repair.reason === 'integration_conflict'
+          ? `Merging it into the integration branch conflicted in: ${(repair.conflicts ?? []).join(', ')}. The merge is in progress here; resolve the conflicts keeping the intent of both changes.`
+          : repair.notes,
+        ...(repair.failures ?? []).map((f) => `Check ${f.name} ${f.status}:\n${f.logTail ?? ''}`),
+      ].join('\n')
+    : ''
   const spec = start.spec as {
     objective?: string
     deliverables?: string[]
@@ -628,6 +738,7 @@ function briefFor(start: StartPayload): string {
     '',
     spec.objective ?? '',
     spec.deliverables?.length ? `\nDeliverables:\n${spec.deliverables.map((d) => `- ${d}`).join('\n')}` : '',
+    repairText,
   ].join('\n')
 }
 

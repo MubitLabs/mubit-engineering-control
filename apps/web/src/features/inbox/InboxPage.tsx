@@ -155,6 +155,19 @@ export function DecisionCard({ approval }: { approval: Approval }) {
             </div>
           </div>
         )}
+        {approval.kind === 'result' && (
+          <div className="small muted">
+            commit <code>{String(approval.detail.headSha ?? '').slice(0, 12)}</code> ·{' '}
+            {String(approval.detail.files ?? 0)} files · checks passed:{' '}
+            {((approval.detail.checksPassed as string[] | undefined) ?? []).join(', ') || 'none'}
+            {approval.taskId && (
+              <>
+                {' '}
+                · <Link to={`/projects/${approval.projectId}/tasks/${approval.taskId}`}>open the diff</Link>
+              </>
+            )}
+          </div>
+        )}
         {pending && approval.kind !== 'question' && (
           <div className="row">
             <button
@@ -163,13 +176,17 @@ export function DecisionCard({ approval }: { approval: Approval }) {
               disabled={resolve.isPending}
               onClick={() => resolve.mutate({ kind: 'approve' })}
             >
-              Approve
+              {approval.kind === 'result' ? 'Accept result' : 'Approve'}
             </button>
             <input
               style={{ flex: 1 }}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="Reason (optional, sent with a rejection)"
+              placeholder={
+                approval.kind === 'result'
+                  ? 'What should the repair attempt change?'
+                  : 'Reason (optional, sent with a rejection)'
+              }
             />
             <button
               type="button"
@@ -177,7 +194,7 @@ export function DecisionCard({ approval }: { approval: Approval }) {
               disabled={resolve.isPending}
               onClick={() => resolve.mutate({ kind: 'reject', reason })}
             >
-              Reject
+              {approval.kind === 'result' ? 'Send back' : 'Reject'}
             </button>
           </div>
         )}

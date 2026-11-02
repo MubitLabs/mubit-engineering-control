@@ -50,6 +50,8 @@ export interface Delivery {
   state: string
   baseRef: string
   baseSha: string | null
+  integrationSha?: string | null
+  integrationPushedSha?: string | null
   priority: number
   createdAt: string
   updatedAt: string
@@ -79,7 +81,7 @@ export interface PlanRevision {
 
 export interface Task {
   id: string
-  kind: 'work' | 'planning'
+  kind: 'work' | 'planning' | 'integration'
   deliveryId: string
   planRevisionId: string
   key: string
@@ -90,6 +92,7 @@ export interface Task {
   ownerId: string | null
   attemptsUsed: number
   acceptedSha: string | null
+  repairContext?: { reason: string; notes: string; conflicts?: string[] } | null
   createdAt: string
   updatedAt: string
 }
@@ -142,4 +145,17 @@ export interface DeliveryDetail {
   tasks: Task[]
   dependencies: { taskId: string; dependsOnTaskId: string }[]
   approvals: Approval[]
+  pullRequests: PullRequest[]
+}
+
+export interface PullRequest {
+  id: string
+  number: number
+  url: string
+  headBranch: string
+  headSha: string
+  baseRef: string
+  state: 'open' | 'closed' | 'merged'
+  checks: { total: number; failed: number; conclusion: string } | null
+  mergedAt: string | null
 }

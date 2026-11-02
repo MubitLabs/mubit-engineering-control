@@ -26,6 +26,8 @@ const Env = z.object({
   MEC_RECONCILE_TICK_MS: z.coerce.number().int().min(50).default(5_000),
   MEC_STARTUP_GRACE_MS: z.coerce.number().int().min(0).default(30_000),
   MEC_DEFAULT_AGENT: z.enum(['fake', 'claude-code']).default('fake'),
+  /** Fine-grained token for pull requests on delivery repositories (a GitHub App replaces it later). */
+  GITHUB_TOKEN: z.string().default(''),
 })
 
 export interface Config {
@@ -34,7 +36,7 @@ export interface Config {
   port: number
   publicUrl: string
   authMode: 'github' | 'dev'
-  github: { clientId: string; clientSecret: string; org: string }
+  github: { clientId: string; clientSecret: string; org: string; token: string }
   adminLogins: string[]
   sessionTtlHours: number
   migrateOnStart: boolean
@@ -62,7 +64,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: e.PORT,
     publicUrl: e.PUBLIC_URL.replace(/\/+$/, ''),
     authMode: e.AUTH_MODE,
-    github: { clientId: e.GITHUB_CLIENT_ID, clientSecret: e.GITHUB_CLIENT_SECRET, org: e.GITHUB_ORG },
+    github: {
+      clientId: e.GITHUB_CLIENT_ID,
+      clientSecret: e.GITHUB_CLIENT_SECRET,
+      org: e.GITHUB_ORG,
+      token: e.GITHUB_TOKEN,
+    },
     adminLogins: e.MEC_ADMIN_LOGINS.split(',')
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean),

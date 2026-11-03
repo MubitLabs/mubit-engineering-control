@@ -1,0 +1,10 @@
+event: session.created
+data: {"type":"session.created","sessionID":"ses_7f3ab2c4","title":"Add the audit log view","directory":"/wt/audit-view","version":"2.2.5","model":"zai-coding-plan/glm-5.3"}
+event: permission.asked
+data: {"type":"permission.asked","sessionID":"ses_7f3ab2c4","requestID":"perm_01","permission":{"type":"command","command":["git","log","--oneline","-5"],"summary":"git log --oneline -5"},"directory":"/wt/audit-view"}
+event: permission.updated
+data: {"type":"permission.updated","sessionID":"ses_7f3ab2c4","requestID":"perm_01","decision":"once"}
+event: session.usage.updated
+data: {"type":"session.usage.updated","sessionID":"ses_7f3ab2c4","usage":{"input":2480,"output":210,"cache_read":12020,"cache_write":0,"cost":0.0046}}
+event: session.idle
+data: {"type":"session.idle","sessionID":"ses_7f3ab2c4","reason":"turn ended"}

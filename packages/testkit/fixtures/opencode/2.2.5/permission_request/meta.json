@@ -1,0 +1,15 @@
+{
+  "engine": "opencode",
+  "engine_version": "2.2.5",
+  "scenario": "permission_request",
+  "recorded_at": "2026-11-03T16:41:31.000Z",
+  "recorded_by": "fake",
+  "redacted": true,
+  "expected": {
+    "reports": [],
+    "permission_requests": 1,
+    "rate_limits": [],
+    "exit": "completed"
+  },
+  "notes": "synthesised from the documented V2 server API"
+}

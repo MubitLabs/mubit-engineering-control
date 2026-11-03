@@ -1,0 +1,6 @@
+event: session.created
+data: {"type":"session.created","sessionID":"ses_ab17d3e9","title":"Security pass","directory":"/wt/audit-security","version":"2.2.5","model":"google/gemini-3.8-flash"}
+event: error
+data: {"type":"error","sessionID":"ses_ab17d3e9","error":{"code":401,"status":"UNAUTHENTICATED","message":"Request had invalid authentication credentials. Expected Bearer or API key."}}
+event: session.idle
+data: {"type":"session.idle","sessionID":"ses_ab17d3e9","reason":"turn ended"}

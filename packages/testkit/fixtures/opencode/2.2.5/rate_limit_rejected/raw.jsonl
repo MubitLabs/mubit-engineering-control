@@ -1,0 +1,6 @@
+event: session.created
+data: {"type":"session.created","sessionID":"ses_9c41e0b8","title":"Review the diff","directory":"/wt/audit-review","version":"2.2.5","model":"google/gemini-3.8-flash"}
+event: error
+data: {"type":"error","sessionID":"ses_9c41e0b8","error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"Resource has been exhausted (e.g. check quota).","details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaId":"GenerateRequestsPerMinutePerProject","subject":"project:mec-preflight"}]},{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"12s"}]}}
+event: session.idle
+data: {"type":"session.idle","sessionID":"ses_9c41e0b8","reason":"turn ended"}

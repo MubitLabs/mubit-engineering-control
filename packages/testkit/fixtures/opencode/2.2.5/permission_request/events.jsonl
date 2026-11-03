@@ -1,0 +1,5 @@
+{"type": "session_started", "session_id": "ses_7f3ab2c4", "engine": "opencode", "engine_version": "2.2.5", "model": "zai-coding-plan/glm-5.3"}
+{"type": "permission_request", "request_id": "perm_01", "operation": {"kind": "shell", "summary": "git log --oneline -5", "command": ["git", "log", "--oneline", "-5"]}, "evidence": {"raw": {"type": "permission.asked", "sessionID": "ses_7f3ab2c4", "requestID": "perm_01", "permission": {"type": "command", "command": ["git", "log", "--oneline", "-5"], "summary": "git log --oneline -5"}, "directory": "/wt/audit-view"}, "worktree": "/wt/audit-view"}}
+{"type": "permission_result", "request_id": "perm_01", "decision": "allow"}
+{"type": "usage", "input_tokens": 2480, "output_tokens": 210, "cache_read": 12020, "cache_write": 0, "cost_usd": 0.0046}
+{"type": "exit", "code": 0, "terminal_reason": "completed"}

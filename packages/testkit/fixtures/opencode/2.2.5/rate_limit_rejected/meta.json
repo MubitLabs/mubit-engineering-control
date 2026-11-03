@@ -1,0 +1,17 @@
+{
+  "engine": "opencode",
+  "engine_version": "2.2.5",
+  "scenario": "rate_limit_rejected",
+  "recorded_at": "2026-11-03T16:41:58.000Z",
+  "recorded_by": "fake",
+  "redacted": true,
+  "expected": {
+    "reports": [],
+    "permission_requests": 0,
+    "rate_limits": [
+      "per_minute"
+    ],
+    "exit": "api_error"
+  },
+  "notes": "synthesised from the documented V2 server API"
+}

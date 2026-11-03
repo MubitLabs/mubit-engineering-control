@@ -1,0 +1,4 @@
+{"type": "session_started", "session_id": "ses_9c41e0b8", "engine": "opencode", "engine_version": "2.2.5", "model": "google/gemini-3.8-flash"}
+{"type": "rate_limit", "window": "per_minute", "status": "rejected", "resets_at": "2026-11-03T15:19:09.000Z", "raw": {"code": 429, "status": "RESOURCE_EXHAUSTED", "quotaId": "GenerateRequestsPerMinutePerProject", "retryDelay": "12s"}}
+{"type": "error", "class": "quota", "detail": "Resource has been exhausted (e.g. check quota).", "raw": {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": "Resource has been exhausted (e.g. check quota).", "details": [{"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [{"quotaId": "GenerateRequestsPerMinutePerProject", "subject": "project:mec-preflight"}]}, {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "12s"}]}}
+{"type": "exit", "code": 1, "terminal_reason": "api_error"}

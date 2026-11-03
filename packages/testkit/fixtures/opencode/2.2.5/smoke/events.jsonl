@@ -1,0 +1,4 @@
+{"type": "session_started", "session_id": "ses_2f9d41a7", "engine": "opencode", "engine_version": "2.2.5", "model": "zai-coding-plan/glm-5.3"}
+{"type": "usage", "input_tokens": 2100, "output_tokens": 96, "cost_usd": 0.0031}
+{"type": "usage", "input_tokens": 2100, "output_tokens": 96, "cache_read": 11840, "cache_write": 0, "cost_usd": 0.0031}
+{"type": "exit", "code": 0, "terminal_reason": "completed"}

@@ -1,0 +1,15 @@
+{
+  "engine": "opencode",
+  "engine_version": "2.2.5",
+  "scenario": "auth_expired",
+  "recorded_at": "2026-11-03T16:42:24.000Z",
+  "recorded_by": "fake",
+  "redacted": true,
+  "expected": {
+    "reports": [],
+    "permission_requests": 0,
+    "rate_limits": [],
+    "exit": "api_error"
+  },
+  "notes": "synthesised from the documented V2 server API"
+}

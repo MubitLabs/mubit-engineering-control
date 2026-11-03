@@ -34,11 +34,12 @@ const defaultSpawn: SpawnFn = (argv, opts) => {
     env: opts.env,
     stdio: ['pipe', 'pipe', 'ignore'],
   })
+  const emptyLineStream = (async function* () {})()
   return {
     pid: child.pid,
-    stdout: createInterface({ input: child.stdout ?? null }),
-    kill: (signal = 'SIGTERM') => {
-      child.kill(signal)
+    stdout: child.stdout ? createInterface({ input: child.stdout }) : emptyLineStream,
+    kill: (signal: string = 'SIGTERM') => {
+      child.kill(signal as NodeJS.Signals)
     },
     killed: false,
   }

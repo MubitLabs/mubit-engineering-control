@@ -1,0 +1,3 @@
+{"type": "session_started", "session_id": "ses_ab17d3e9", "engine": "opencode", "engine_version": "2.2.5", "model": "google/gemini-3.8-flash"}
+{"type": "error", "class": "auth", "detail": "Request had invalid authentication credentials. Expected Bearer or API key.", "raw": {"code": 401, "status": "UNAUTHENTICATED", "message": "Request had invalid authentication credentials. Expected Bearer or API key."}}
+{"type": "exit", "code": 1, "terminal_reason": "api_error"}

@@ -89,8 +89,8 @@ export function parseClaudeStream(rawLines: readonly string[], opts: ParseOption
               events.push({
                 type: 'tool_call',
                 tool: pending.tool,
-                input: (pending.input ?? {}) as AnyRecord,
-                output: (block.content ?? null) as unknown,
+                input: JSON.parse(JSON.stringify(pending.input ?? {})) as AnyRecord as never,
+                output: JSON.parse(JSON.stringify(block.content ?? null)) as never,
                 ok: block.is_error === true ? false : true,
               })
             }
@@ -120,11 +120,13 @@ export function parseClaudeStream(rawLines: readonly string[], opts: ParseOption
           status,
           utilization: num(raw.utilization),
           resets_at: isoFromUnixSeconds(raw.resetsAt ?? info.resetsAt) ?? 'unknown',
-          raw: {
-            rateLimitType: str(info.rateLimitType),
-            overageStatus: str(info.overageStatus) || undefined,
-            isUsingOverage: info.isUsingOverage === true,
-          },
+          raw: JSON.parse(
+            JSON.stringify({
+              rateLimitType: str(info.rateLimitType),
+              overageStatus: str(info.overageStatus) || undefined,
+              isUsingOverage: info.isUsingOverage === true,
+            }),
+          ) as never,
         })
       }
       continue

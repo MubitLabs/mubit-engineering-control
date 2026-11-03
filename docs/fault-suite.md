@@ -4,7 +4,7 @@ Every row of plan §26, what proves it today, and what remains. Written 3 Nov (s
 
 | §26 row | Evidence today | Gap |
 | --- | --- | --- |
-| Quota park | `engines` fixtures: codex/opencode `rate_limit_rejected` parse+classify; claude `rate_limit` fan-out conformance | runtime wiring that parks an attempt from a rejected event (composition) |
+| Quota park | engines fixtures: parse+classify per engine; runtime `parkFromEvents` (quota/auth/provider, last-writer-wins) | composition: park an attempt from a rejected event end-to-end |
 | Slot failover | — | handoff orchestration across slots (same worktree, new attempt, recorded handoff) |
 | Auth expiry | slots probes (degraded `auth_expired`); scheduler defers `slot_unhealthy` | re-login card + auto-resume after healthy probe |
 | Confirmation race | policy CAS: double resolve throws `already_handled` | server 409 path (server agent in flight) |
@@ -17,7 +17,7 @@ Every row of plan §26, what proves it today, and what remains. Written 3 Nov (s
 | Parallel branches | git worktrees + clean-merge tests (two parents, exact SHA) | — |
 | Integration conflict | mid-merge repair: both sides, parentCount 2, checks on repaired SHA | queue wiring to create the repair task |
 | Prompt upgrade | prompts: identical-to-default removed, stale base → draft preserved | Default-updated UI flow |
-| Redaction | secrets lint (schema fields); slots redaction patterns; doctor by-construction | journal pre-append redaction filter wiring |
+| Redaction | secrets lint (schema fields); slots redaction patterns; doctor by-construction; runtime `redactEvent` pre-append filter | wire the filter into the journal write path at composition |
 | Restore | backup/restore + drill (agent in flight) | — |
 | Slot isolation | pre-flight Keychain proofs (3 items, issue #92252); homes tests | Linux machine bubblewrap check |
 | Env scrubbing | env builder: exact-allowlist key-set test | — |
@@ -25,12 +25,12 @@ Every row of plan §26, what proves it today, and what remains. Written 3 Nov (s
 | Login serialisation | — | terminal cards (node-pty) — deferred with B2 UI |
 | Quota classification | per-engine fixtures incl. Gemini RetryInfo shape | — |
 | Pre-flight exclusion | scheduler `slot_unhealthy` deferral | — |
-| Repo config hazards | manual proof: repo `opencode.json` dials MCP even from `auth list`; disable var stops it | env builder must ADD `OPENCODE_DISABLE_PROJECT_CONFIG=1` for opencode slots |
+| Repo config hazards | manual proof (repo `opencode.json` dials MCP; disable var stops it); runtime `opencodeSlotEnv` always sets the var for untrusted repos | — |
 | Sandbox profile | isolation settings builder + macOS Seatbelt implicit | Linux sandbox dependency check in `mec doctor` |
 | Shims and gitconfig | shims manifest/tamper/foreign-file tests | — |
 | Platform-tool fencing | mec-tools stale generation → empty set; specialist cannot call `propose_plan` | — |
 | Compliance guard | slots `scanSourceForViolations` + tests + **self-scan over the product source in CI** (compliance-self.test.ts) | — |
-| Capability drift | probe `flags_verified` from `--help` | drift → `engine_unsupported` degradation wiring |
+| Capability drift | probe `flags_verified` from `--help`; runtime `checkDrift` (lost flag → `engine_unsupported`) | composition: degrade the slot before any attempt starts |
 | Secrets in chat | — | server redact-before-durability + Slots pointer reply |
 | Acknowledgement | acks: one per message id, first-text-final | — |
 | Follow-up ownership | routing binds by reference only; hand-back once, never back | release-at-end to intake |

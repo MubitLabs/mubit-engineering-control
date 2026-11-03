@@ -305,7 +305,6 @@ describe('login card routes (§5.6)', () => {
   })
 })
 
-
 describe('the real node-pty (R1.3)', () => {
   it('drives a real interactive shell through the seam (no vendor command)', async () => {
     const { nodePtySpawn } = await import('../src/login-cards')

@@ -106,7 +106,12 @@ export function ProjectPage() {
             )}
           </Panel>
           {canWrite && detail.data && (
-            <NewDelivery projectId={projectId!} repositories={detail.data.repositories} />
+            <NewDelivery
+              key={deliveries.data ? 'loaded' : 'loading'}
+              projectId={projectId!}
+              repositories={detail.data.repositories}
+              startOpen={deliveries.data?.deliveries.length === 0}
+            />
           )}
           <Panel title="Live events" flush>
             {feed.length === 0 ? (
@@ -181,7 +186,16 @@ function summarise(payload: Record<string, unknown>): string {
   return parts.join(' ')
 }
 
-function NewDelivery({ projectId, repositories }: { projectId: string; repositories: Repository[] }) {
+function NewDelivery({
+  projectId,
+  repositories,
+  startOpen,
+}: {
+  projectId: string
+  repositories: Repository[]
+  startOpen: boolean
+}) {
+  const [open, setOpen] = useState(startOpen)
   const qc = useQueryClient()
   const navigate = useNavigate()
   const [title, setTitle] = useState('')
@@ -203,6 +217,14 @@ function NewDelivery({ projectId, repositories }: { projectId: string; repositor
     },
   })
   if (repositories.length === 0) return null
+  if (!open)
+    return (
+      <div>
+        <button type="button" className="btn primary" onClick={() => setOpen(true)}>
+          New delivery
+        </button>
+      </div>
+    )
   return (
     <Panel title="New delivery">
       <form

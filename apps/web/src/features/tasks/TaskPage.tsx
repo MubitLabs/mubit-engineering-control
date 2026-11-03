@@ -137,6 +137,7 @@ export function TaskPage() {
             </div>
           </Panel>
           {canPrompt && task.state === 'ready' && <StartAttempt taskId={task.id} />}
+          {canPrompt && task.state === 'failed' && <RetryTask taskId={task.id} />}
           {attempts.length > 0 && (
             <Panel title="Attempts" flush>
               <table className="table">
@@ -317,6 +318,36 @@ function StartAttempt({ taskId }: { taskId: string }) {
             onClick={() => start.mutate()}
           >
             Start attempt
+          </button>
+        </div>
+      </div>
+    </Panel>
+  )
+}
+
+function RetryTask({ taskId }: { taskId: string }) {
+  const qc = useQueryClient()
+  const retry = useMutation({
+    mutationFn: () => api.post(`/api/tasks/${taskId}/retry`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['task', taskId] }),
+  })
+  return (
+    <Panel title="Retry">
+      <div className="form small">
+        <div className="muted">
+          Every attempt in the budget failed. Check the failed checks first: if a check command itself is
+          wrong, fix it on the project page. Retrying lets you start another attempt, which repairs from the
+          last failures.
+        </div>
+        <ErrorBox error={retry.error} />
+        <div>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={retry.isPending}
+            onClick={() => retry.mutate()}
+          >
+            Retry task
           </button>
         </div>
       </div>

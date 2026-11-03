@@ -418,7 +418,8 @@ export async function followTask(tx: Tx, attempt: AttemptRow, to: AttemptState):
     await requestReview(tx, task, attempt)
   } else if (to === 'checks_failed' || to === 'failed' || to === 'cancelled') {
     const retryable = task.attemptsUsed < (task.spec.maxAttempts ?? 2)
-    if (retryable && to === 'checks_failed') await setRepairFromChecks(tx, task, attempt)
+    // Recorded even when the budget is used, so a manual retry still starts from the failures.
+    if (to === 'checks_failed') await setRepairFromChecks(tx, task, attempt)
     await transition(tx, {
       table: 'tasks',
       machine: taskMachine,
@@ -430,7 +431,8 @@ export async function followTask(tx: Tx, attempt: AttemptRow, to: AttemptState):
           ? null
           : tx.json({
               kind: 'decision',
-              detail: 'All attempts used; a person must retry or cancel',
+              detail:
+                'All attempts used. Fix the cause, then retry; or drop the task in a new plan revision.',
               refs: [],
             } as never),
       },

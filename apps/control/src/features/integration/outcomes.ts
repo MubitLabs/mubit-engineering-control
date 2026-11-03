@@ -12,15 +12,30 @@ interface Merged {
 }
 
 async function sendBack(tx: Tx, attempt: AttemptRow, taskId: string, repair: RepairContext): Promise<void> {
-  const [task] = await tx<{ state: string }[]>`select state from tasks where id = ${taskId} for update`
+  const [task] = await tx<{ state: string; attemptsUsed: number; maxAttempts: number | null }[]>`
+    select state, attempts_used, (spec->>'maxAttempts')::int as max_attempts from tasks where id = ${taskId} for update
+  `
   if (task?.state !== 'accepted') return
+  // The scheduler starts repairs only within the budget; past it, say so instead of sitting in "ready".
+  const exhausted = task.attemptsUsed >= (task.maxAttempts ?? 2)
+  const why = repair.reason === 'integration_conflict' ? 'a merge conflict' : 'failed integration checks'
   await transition(tx, {
     table: 'tasks',
     machine: taskMachine,
     id: taskId,
     from: 'accepted',
     event: 'integration_conflict',
-    set: { repairContext: tx.json(repair as never), acceptedSha: null },
+    set: {
+      repairContext: tx.json(repair as never),
+      acceptedSha: null,
+      blocker: exhausted
+        ? tx.json({
+            kind: 'decision',
+            detail: `Integration sent this back (${why}) and its attempt budget is used; start the repair attempt from the task page`,
+            refs: [],
+          } as never)
+        : null,
+    },
     projectId: attempt.projectId,
     deliveryId: attempt.deliveryId,
     taskId,

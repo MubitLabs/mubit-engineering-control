@@ -159,6 +159,22 @@ describe('review', () => {
     ])
   })
 
+  it('a task that used its whole budget can be retried by its owner, keeping the failures', async () => {
+    const { tasks } = await approvedDelivery(s, [task('T1', { maxAttempts: 1 })])
+    const first = await runTask(tasks.T1!.id, [write('REQUIRED_FILES', 'src/t1/missing.txt\n')])
+    expect(first.state).toBe('checks_failed')
+    expect(await taskState(tasks.T1!.id)).toBe('failed')
+    expect((await s.viewer.post(`/api/tasks/${tasks.T1!.id}/retry`)).statusCode).toBe(403)
+    expect((await s.admin.post(`/api/tasks/${tasks.T1!.id}/retry`)).statusCode).toBe(200)
+    expect((await s.admin.post(`/api/tasks/${tasks.T1!.id}/retry`)).statusCode).toBe(409)
+    const [row] = await t.db.sql`select state, blocker, repair_context from tasks where id = ${tasks.T1!.id}`
+    expect(row!.state).toBe('ready')
+    expect(row!.blocker.detail).toMatch(/start an attempt/)
+    expect(row!.repairContext.failures[0]).toMatchObject({ name: 'test', status: 'failed' })
+    const second = await runTask(tasks.T1!.id, [write('src/t1/missing.txt', 'here')])
+    expect(second.state).toBe('succeeded')
+  })
+
   it('failed checks give the next attempt the exact failures', async () => {
     const { tasks } = await approvedDelivery(s, [task('T1')])
     const first = await runTask(tasks.T1!.id, [write('REQUIRED_FILES', 'src/t1/missing.txt\n')])
@@ -292,7 +308,10 @@ describe('integration', () => {
   })
 
   it('a merge conflict sends the task back with both changes in its repair worktree', async () => {
-    const { tasks } = await approvedDelivery(s, [task('T1'), task('T2', { requirementIds: ['R2'] })])
+    const { tasks } = await approvedDelivery(s, [
+      task('T1'),
+      task('T2', { requirementIds: ['R2'], maxAttempts: 1 }),
+    ])
     await runTask(tasks.T1!.id, [write('src/shared.txt', 'from T1')])
     await runTask(tasks.T2!.id, [write('src/shared.txt', 'from T2')])
     await review(tasks.T1!.id, { kind: 'approve' })
@@ -300,11 +319,13 @@ describe('integration', () => {
     await integrate(tasks.T1!.id)
     await integrate(tasks.T2!.id, ['ready'])
 
-    const [row] = await t.db.sql`select repair_context from tasks where id = ${tasks.T2!.id}`
+    const [row] = await t.db.sql`select repair_context, blocker from tasks where id = ${tasks.T2!.id}`
     expect(row!.repairContext).toMatchObject({
       reason: 'integration_conflict',
       conflicts: ['src/shared.txt'],
     })
+    // Its one attempt is used, so the scheduler will not start the repair: the wait says so.
+    expect(row!.blocker.detail).toMatch(/merge conflict.*budget is used/)
 
     // The repair starts on the integration commit with T2's change mid-merge, resolves it, and integrates.
     const repair = await runTask(tasks.T2!.id, [write('src/shared.txt', 'from T1 and T2')])

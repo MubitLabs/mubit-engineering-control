@@ -7,3 +7,4 @@ coverage/
 !.env.example
 .mec/
 .preflight/
+apps/desktop/dist

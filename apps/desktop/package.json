@@ -9,6 +9,10 @@
   "bin": {
     "mec": "./bin/mec.js"
   },
+  "files": [
+    "bin",
+    "dist"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit"
   },

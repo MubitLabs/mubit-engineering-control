@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
-import { api, type PartEntry, type StatusSnapshot } from '../api'
-import { Badge, type BadgeState, Card, EmptyState } from '../components/ui'
+import { api, HttpError, type PartEntry, type SlotEntry, type StatusSnapshot } from '../api'
+import { Badge, type BadgeState, Button, Card, EmptyState } from '../components/ui'
 import { usePolling } from '../usePolling'
 
 const SLOT_PREFIX = 'slot:'
@@ -38,18 +38,175 @@ function SetupBanner({ hasSlot, hasRepository }: { hasSlot: boolean; hasReposito
   )
 }
 
+/**
+ * §5.7 courier form — provider → key (masked, never echoed) → Add. The ONLY way a key
+ * enters MEC: it goes to the slot keystore and the field is cleared the moment the
+ * courier accepts it, so the key never lingers in component state either.
+ */
+function AddApiKeyCard({ onAdded }: { onAdded: () => void }) {
+  const [label, setLabel] = useState('')
+  const [key, setKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+
+  const add = useCallback(async () => {
+    const trimmedLabel = label.trim()
+    if (trimmedLabel === '' || key === '') return
+    setBusy(true)
+    setNote(null)
+    try {
+      await api.addApiKey(trimmedLabel, key)
+      setKey('')
+      setLabel('')
+      setNote('key stored — validate it below')
+      onAdded()
+    } catch (error) {
+      if (error instanceof HttpError) {
+        setNote(
+          error.status === 400
+            ? 'rejected: not an Anthropic-shaped key'
+            : error.status === 409
+              ? 'a slot with that label already exists'
+              : `failed (HTTP ${error.status})`,
+        )
+      } else {
+        setNote('could not reach the runtime — try again')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }, [label, key, onAdded])
+
+  return (
+    <Card>
+      <h3 className="card-title">Add API key</h3>
+      <p className="card-detail">
+        Anthropic key → slot keystore (0600, inside the slot home). Stored nowhere else; the database keeps
+        only a fingerprint.
+      </p>
+      <form
+        className="key-form"
+        onSubmit={(event) => {
+          event.preventDefault()
+          void add()
+        }}
+      >
+        <input
+          aria-label="Slot label"
+          onChange={(event) => setLabel(event.target.value)}
+          placeholder="slot label, e.g. max-1"
+          value={label}
+        />
+        <input
+          aria-label="API key"
+          autoComplete="off"
+          onChange={(event) => setKey(event.target.value)}
+          placeholder="sk-ant-…"
+          type="password"
+          value={key}
+        />
+        <Button disabled={busy || label.trim() === '' || key === ''} type="submit" variant="primary">
+          {busy ? 'Adding…' : 'Add'}
+        </Button>
+        {note === null ? null : <span className="error-note">{note}</span>}
+      </form>
+    </Card>
+  )
+}
+
+function badgeOf(state: string): BadgeState {
+  if (state === 'healthy') return 'ok'
+  if (state === 'degraded') return 'error'
+  return 'degraded'
+}
+
+/** A claude-api slot from GET /api/slots: fingerprint display + Validate / Retire. */
+function ApiSlotCard({ slot, onChanged }: { slot: SlotEntry; onChanged: () => void }) {
+  const [busy, setBusy] = useState<'validate' | 'retire' | null>(null)
+  const [note, setNote] = useState<string | null>(null)
+  const retired = slot.state === 'retired'
+
+  const validate = useCallback(async () => {
+    setBusy('validate')
+    setNote(null)
+    try {
+      const result = await api.validateSlot(slot.id)
+      setNote(
+        result.ok
+          ? 'probe ok — slot healthy'
+          : result.reason === 'key_rejected'
+            ? 'provider rejected the key — replace it'
+            : 'provider unreachable — state unchanged',
+      )
+    } catch {
+      setNote('could not reach the runtime — try again')
+    } finally {
+      setBusy(null)
+      onChanged()
+    }
+  }, [slot.id, onChanged])
+
+  const retire = useCallback(async () => {
+    if (!window.confirm(`Retire slot ${slot.label}? Its keystore file is shredded.`)) return
+    setBusy('retire')
+    setNote(null)
+    try {
+      await api.retireSlot(slot.id)
+      setNote('retired — key file shredded')
+    } catch {
+      setNote('could not reach the runtime — try again')
+    } finally {
+      setBusy(null)
+      onChanged()
+    }
+  }, [slot.id, slot.label, onChanged])
+
+  const detail = [
+    slot.fingerprint === undefined ? slot.provider : `${slot.provider} key ····${slot.fingerprint.last4}`,
+    slot.stateReason,
+  ]
+    .filter((part) => part !== undefined && part !== '')
+    .join(' — ')
+
+  return (
+    <Card>
+      <div className="slot-head">
+        <span className="slot-label">{slot.label}</span>
+        <Badge label={slot.state} state={badgeOf(slot.state)} />
+      </div>
+      <p className="mono slot-detail">{detail}</p>
+      <div className="card-actions">
+        {slot.kind === 'claude-api' ? (
+          <Button disabled={busy !== null || retired} onClick={() => void validate()}>
+            {busy === 'validate' ? 'Validating…' : 'Validate'}
+          </Button>
+        ) : null}
+        <Button disabled={busy !== null || retired} onClick={() => void retire()}>
+          {busy === 'retire' ? 'Retiring…' : 'Retire'}
+        </Button>
+        {note === null ? null : <span className="error-note">{note}</span>}
+      </div>
+    </Card>
+  )
+}
+
 export function SlotsView() {
   const [status, setStatus] = useState<StatusSnapshot | null>(null)
+  const [entries, setEntries] = useState<SlotEntry[]>([])
 
   const refresh = useCallback(() => {
     api
       .status()
       .then(setStatus)
       .catch(() => {})
+    api
+      .slots()
+      .then(setEntries)
+      .catch(() => {})
   }, [])
   usePolling(refresh, 5000)
 
-  const slots: Array<[string, PartEntry]> = status
+  const parts: Array<[string, PartEntry]> = status
     ? Object.entries(status.parts).filter(([name]) => name.startsWith(SLOT_PREFIX))
     : []
 
@@ -59,11 +216,16 @@ export function SlotsView() {
       {status !== null && (!status.setup.has_slot || !status.setup.has_repository) ? (
         <SetupBanner hasRepository={status.setup.has_repository} hasSlot={status.setup.has_slot} />
       ) : null}
-      {slots.length === 0 ? (
-        <EmptyState>No slots registered</EmptyState>
-      ) : (
+      <AddApiKeyCard onAdded={refresh} />
+      {entries.length > 0 ? (
         <div className="slot-grid">
-          {slots.map(([name, part]) => (
+          {entries.map((slot) => (
+            <ApiSlotCard key={slot.id} onChanged={refresh} slot={slot} />
+          ))}
+        </div>
+      ) : parts.length > 0 ? (
+        <div className="slot-grid">
+          {parts.map(([name, part]) => (
             <SlotCard
               detail={part.detail}
               key={name}
@@ -72,6 +234,8 @@ export function SlotsView() {
             />
           ))}
         </div>
+      ) : (
+        <EmptyState>No slots registered</EmptyState>
       )}
     </div>
   )

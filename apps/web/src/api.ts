@@ -34,6 +34,28 @@ export type WorkTaskCounts = {
 /** GET /api/work — one row per work item, placed on the board by `stage`. */
 export type WorkItem = { id: string; stage: string; taskCounts: WorkTaskCounts; createdAt: string }
 
+/**
+ * GET /api/slots — slot docs from the store. Fingerprints only: a key never leaves the
+ * slot keystore on disk (§5.4), so no endpoint could ever echo one.
+ */
+export type SlotEntry = {
+  id: string
+  label: string
+  engine: string
+  kind: string
+  provider: string
+  state: string
+  stateReason?: string
+  home?: string
+  fingerprint?: { provider: string; last4: string }
+}
+
+/** POST /api/slots/api-key — the §5.7 courier's receipt: identity + fingerprint, never the key. */
+export type AddApiKeyResult = { id: string; fingerprint: { provider: string; last4: string } }
+
+/** POST /api/slots/:id/validate — the §5.8 zero-token probe verdict. */
+export type ValidateSlotResult = { ok: boolean; reason?: 'key_rejected' | 'provider_unreachable' }
+
 export type ResolveAnswer = 'approve' | 'deny'
 export type ResolveResult = { status: string }
 
@@ -120,6 +142,36 @@ export const api = {
 
   work(): Promise<WorkItem[]> {
     return request<WorkItem[]>('/api/work')
+  },
+
+  slots(): Promise<SlotEntry[]> {
+    return request<SlotEntry[]>('/api/slots')
+  },
+
+  /**
+   * The §5.7 courier: provider → masked key → slot keystore. The key is sent exactly once
+   * and the receipt carries only the fingerprint — the key is never echoed back.
+   */
+  addApiKey(label: string, key: string): Promise<AddApiKeyResult> {
+    return request<AddApiKeyResult>('/api/slots/api-key', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ label, provider: 'anthropic-api', key }),
+    })
+  },
+
+  /** §5.8 zero-token probe (GET /v1/models) against the slot's stored key. */
+  validateSlot(id: string): Promise<ValidateSlotResult> {
+    return request<ValidateSlotResult>(`/api/slots/${encodeURIComponent(id)}/validate`, {
+      method: 'POST',
+    })
+  },
+
+  /** §5.7 retire: shreds the slot's keystore file and retires the slot doc. */
+  retireSlot(id: string): Promise<{ id: string; state: string }> {
+    return request<{ id: string; state: string }>(`/api/slots/${encodeURIComponent(id)}/retire`, {
+      method: 'POST',
+    })
   },
 }
 

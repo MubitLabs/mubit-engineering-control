@@ -11,16 +11,17 @@
 import { randomBytes } from 'node:crypto'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { Socket } from 'node:net'
-import { extname, resolve, sep } from 'node:path'
+import { homedir } from 'node:os'
+import { extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Effects, HealthBoard, HealthName, Json, Store, StoreDoc } from '@mec/contracts'
-import { matchesSecret } from '@mec/contracts'
+import { matchesSecret, SECRET_PATTERNS } from '@mec/contracts'
 import { WORK_ITEM_TERMINAL, type WorkItemState } from '@mec/domain'
 import type { LiveWork } from '@mec/meta'
 import { routeMessage } from '@mec/meta'
 import type { ConfirmationRecord } from '@mec/policy'
 import { resolveConfirmation } from '@mec/policy'
-import { redact } from '@mec/slots'
+import { claudeHome, redact, SlotKeystore } from '@mec/slots'
 import Fastify, { type FastifyInstance } from 'fastify'
 import type { HealthSnapshot, PartEntry } from './health'
 import { type CardEvent, LoginCardManager } from './login-cards'
@@ -33,6 +34,19 @@ export type ServerDeps = {
   now?: () => Date
   /** §5.6 login terminal cards; a default manager is built when absent. */
   loginCards?: LoginCardManager
+  /**
+   * §5.4 root the engines tree hangs off: slot homes land at
+   * `<keystoreRoot>/engines/<engine>/<slot>` and key files at
+   * `<keystoreRoot>/engines/<engine>/<slot>/keys/<provider>.key` (0600, nowhere else).
+   * Defaults to `~/.mec`, so keys live under `~/.mec/engines/…` exactly as §5.4 states.
+   */
+  keystoreRoot?: string
+  /**
+   * §5.8 zero-token validators run through this seam; tests inject a stub, production
+   * gets `globalThis.fetch`. The key read straight from the keystore file travels only
+   * into the request headers — never into the store, events or logs.
+   */
+  validateFetch?: typeof globalThis.fetch
   /** Present in the composed app: the chat route delegates message+work+plan+launch to it. */
   metaAgent?: {
     onUserMessage(input: { messageId: string; text: string; referencesWorkItem?: string }): Promise<{
@@ -76,6 +90,45 @@ let idCounter = 0
 function freshId(prefix: string): string {
   idCounter += 1
   return `${prefix}${Date.now().toString(36)}${idCounter.toString(36)}${randomBytes(4).toString('hex')}`
+}
+
+/** §5.4 default keystore root: the engines tree under `~/.mec`. */
+const DEFAULT_KEYSTORE_ROOT = join(homedir(), '.mec')
+
+/** §5.8 zero-token validity probe for Anthropic API keys: GET /v1/models costs no tokens. */
+const ANTHROPIC_MODELS_URL = 'https://api.anthropic.com/v1/models'
+const VALIDATE_TIMEOUT_MS = 15_000
+
+/**
+ * §5.4/§5.7: the anthropic key shape — contracts' `SECRET_PATTERNS[0]`. The gate a pasted
+ * key must pass before MEC writes anything anywhere.
+ */
+const ANTHROPIC_KEY_PATTERN = SECRET_PATTERNS[0]?.pattern
+
+/**
+ * The claude-api slot doc kept in the store's slots repo: {id, label, engine, kind,
+ * provider, fingerprint, state} — the fingerprint (provider, last4, salted SHA-256) is the
+ * ONLY secret-adjacent thing in it; the key itself lives in the keystore file, never here.
+ */
+type ApiSlotDoc = {
+  id: string
+  label: string
+  engine: 'claude'
+  kind: 'claude-api'
+  provider: 'anthropic-api'
+  home: string
+  fingerprint?: { provider: string; last4: string; hash: string }
+  state: string
+  state_reason?: string
+  last_probe_at?: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** Reads one slot doc by id, narrowed to the claude-api shape these routes write. */
+function slotDocOf(store: Store, id: string): ApiSlotDoc | undefined {
+  const doc = store.slots.get(id)
+  return doc === undefined ? undefined : (doc as unknown as ApiSlotDoc)
 }
 
 /**
@@ -148,6 +201,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // §5.6 login cards: shared per server so logins stay serialised machine-wide;
   // tests inject one with a fake pty, everyone else gets the default manager.
   const loginCards = deps.loginCards ?? new LoginCardManager()
+  // §5.4 where slot homes (and only they) hold keys; §5.8 transport for the zero-token probe.
+  const keystoreRoot = deps.keystoreRoot ?? DEFAULT_KEYSTORE_ROOT
+  const validateFetch = deps.validateFetch ?? globalThis.fetch
   const app = Fastify({ logger: false })
 
   app.get('/healthz', async () => ({ ok: true }))
@@ -423,6 +479,207 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     loginCards.cancel(id)
     reply.code(204).send()
   })
+
+  // §5.7 API-key courier — the form is the ONLY way a key enters MEC. The key travels from
+  // the request body straight into the slot keystore (`claudeHome(root, label)` + SlotKeystore,
+  // 0600) and appears in NO response, event or store doc: the store keeps the fingerprint
+  // (provider, last4, salted SHA-256) only, per §5.4.
+  app.post('/api/slots/api-key', async (request, reply) => {
+    const body = (request.body ?? {}) as { label?: unknown; provider?: unknown; key?: unknown }
+    const label = typeof body.label === 'string' ? body.label.trim() : ''
+    if (label === '') {
+      reply.code(400).send({ error: 'label is required' })
+      return
+    }
+    if (body.provider !== 'anthropic-api') {
+      reply.code(400).send({ error: "provider must be 'anthropic-api' (v0)" })
+      return
+    }
+    // A pasted key may carry clipboard whitespace; the pattern gate runs on the trimmed form.
+    const key = typeof body.key === 'string' ? body.key.trim() : ''
+    if (key === '' || ANTHROPIC_KEY_PATTERN === undefined || !ANTHROPIC_KEY_PATTERN.test(key)) {
+      reply.code(400).send({ error: 'key does not match the anthropic key pattern' })
+      return
+    }
+
+    const id = `slot_${label}`
+    if (store.slots.get(id) !== undefined) {
+      reply.code(409).send({ error: 'a slot with that label already exists — retire it first' })
+      return
+    }
+
+    // §5.3: the slot home is created (and validated as a single path segment) before anything
+    // is written into it. An escaping label dies here, before any file exists.
+    let home: ReturnType<typeof claudeHome>
+    try {
+      home = claudeHome(keystoreRoot, label)
+    } catch (error) {
+      reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid slot label' })
+      return
+    }
+
+    const keystore = new SlotKeystore(home.homeDir)
+    let fingerprint: { provider: string; last4: string; hash: string }
+    try {
+      fingerprint = keystore.store('anthropic-api', key)
+    } catch (error) {
+      // The only expected cause is a key file left behind by a doc-less slot (§5.7: rotation
+      // replaces, store never clobbers); anything else is a genuine IO failure.
+      if (error instanceof Error && error.message.includes('already exists')) {
+        reply.code(409).send({ error: 'a key for this slot already exists on disk' })
+        return
+      }
+      throw error
+    }
+
+    const at = now().toISOString()
+    store.atomic(() => {
+      store.slots.save({
+        id,
+        label,
+        engine: 'claude',
+        kind: 'claude-api',
+        provider: 'anthropic-api',
+        home: home.homeDir,
+        fingerprint,
+        state: 'login_pending',
+        createdAt: at,
+        updatedAt: at,
+      })
+      appendEvent(
+        store,
+        `slot:${label}`,
+        'slot_created',
+        { slotId: id, label, kind: 'claude-api', provider: 'anthropic-api', fingerprint, at },
+        at,
+      )
+    })
+    // The response carries identity + fingerprint only — never the key, in any form.
+    return { id, fingerprint: { provider: fingerprint.provider, last4: fingerprint.last4 } }
+  })
+
+  // §5.8 zero-token validity probe: GET /v1/models with the key read STRAIGHT from the
+  // keystore file (§5.4 read path #2). 200 → healthy; 401 → degraded/key_rejected; a network
+  // failure is provider_unreachable and changes nothing — an unreachable provider says
+  // nothing about the key. 15s cap via AbortController.
+  app.post('/api/slots/:id/validate', async (request, reply) => {
+    const id = String((request.params as { id?: string }).id ?? '')
+    const doc = slotDocOf(store, id)
+    if (doc === undefined) {
+      reply.code(404).send({ error: 'slot not found' })
+      return
+    }
+    if (doc.kind !== 'claude-api' || doc.provider !== 'anthropic-api') {
+      reply.code(400).send({ error: "only 'claude-api' slots validate in v0" })
+      return
+    }
+    if (doc.state === 'retired') {
+      reply.code(409).send({ error: 'slot is retired' })
+      return
+    }
+    const key = new SlotKeystore(doc.home).read(doc.provider)
+    if (key === undefined) {
+      reply.code(409).send({ error: 'no key stored for this slot' })
+      return
+    }
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), VALIDATE_TIMEOUT_MS)
+    timer.unref()
+    let outcome: { ok: true } | { ok: false; reason: 'key_rejected' | 'provider_unreachable' }
+    try {
+      const res = await validateFetch(ANTHROPIC_MODELS_URL, {
+        headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+        signal: controller.signal,
+      })
+      if (res.ok) outcome = { ok: true }
+      else if (res.status === 401) outcome = { ok: false, reason: 'key_rejected' }
+      else outcome = { ok: false, reason: 'provider_unreachable' }
+    } catch {
+      outcome = { ok: false, reason: 'provider_unreachable' }
+    } finally {
+      clearTimeout(timer)
+    }
+
+    const at = now().toISOString()
+    if (outcome.ok) {
+      store.atomic(() => {
+        const next: StoreDoc = { ...doc, state: 'healthy', last_probe_at: at, updatedAt: at }
+        delete next.state_reason
+        store.slots.save(next)
+        appendEvent(
+          store,
+          `slot:${doc.label}`,
+          'slot_healthy',
+          { slotId: id, probe: 'anthropic:/v1/models', at },
+          at,
+        )
+      })
+      return { ok: true }
+    }
+    if (outcome.reason === 'key_rejected') {
+      store.atomic(() => {
+        store.slots.save({
+          ...doc,
+          state: 'degraded',
+          state_reason: 'key_rejected',
+          last_probe_at: at,
+          updatedAt: at,
+        })
+        appendEvent(
+          store,
+          `slot:${doc.label}`,
+          'slot_degraded',
+          { slotId: id, reason: 'key_rejected', at },
+          at,
+        )
+      })
+      return { ok: false, reason: 'key_rejected' }
+    }
+    // provider_unreachable: no transition, no event — the slot keeps its state (§5.8).
+    return { ok: false, reason: 'provider_unreachable' }
+  })
+
+  // §5.7 "deleting a slot shreds its keystore": the key file's bytes are scrambled and
+  // unlinked; the doc moves to retired with the fingerprint kept for display/redaction.
+  app.post('/api/slots/:id/retire', async (request, reply) => {
+    const id = String((request.params as { id?: string }).id ?? '')
+    const doc = slotDocOf(store, id)
+    if (doc === undefined) {
+      reply.code(404).send({ error: 'slot not found' })
+      return
+    }
+    new SlotKeystore(doc.home).shred(doc.provider)
+    const at = now().toISOString()
+    store.atomic(() => {
+      const next: StoreDoc = { ...doc, state: 'retired', updatedAt: at }
+      delete next.state_reason
+      store.slots.save(next)
+      appendEvent(store, `slot:${doc.label}`, 'slot_retired', { slotId: id, at }, at)
+    })
+    return { id, state: 'retired' }
+  })
+
+  // Fingerprints only — every doc in the slots repo is key-free by construction; the
+  // projection makes that explicit rather than accidental.
+  app.get('/api/slots', async () =>
+    store.slots.list().map((doc) => {
+      const slot = doc as unknown as ApiSlotDoc
+      return {
+        id: slot.id,
+        label: slot.label,
+        engine: slot.engine,
+        kind: slot.kind,
+        provider: slot.provider,
+        state: slot.state,
+        ...(slot.state_reason !== undefined && { stateReason: slot.state_reason }),
+        ...(slot.fingerprint !== undefined && {
+          fingerprint: { provider: slot.fingerprint.provider, last4: slot.fingerprint.last4 },
+        }),
+        home: slot.home,
+      }
+    }),
+  )
 
   app.get('/api/events', (request, reply) => {
     const query = (request.query ?? {}) as { stream?: string; after?: string }

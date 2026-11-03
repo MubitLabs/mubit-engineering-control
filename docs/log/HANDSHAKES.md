@@ -44,3 +44,16 @@ Fixed on the way: adapter mints a UUID session id; `--input-format stream-json` 
 5. **Card 3 (pr_merge)** — user approved → merged; MEC reported `merged` only after GitHub's state said `MERGED` (20:57:41Z). main advanced to `6bd0e35` with the full provenance chain.
 
 Real bugs the run caught in the release module (all fixed, unit tests green): `gh repo view` takes the repo positionally (not `-R`); gh reports check states UPPERCASE (`SUCCESS` vs `success`); the PR body must travel by stdin (`--body-file -`) or gh hangs. Sandbox lesson recorded in docs/engines.md: the protection context must match the reported check name exactly (`check`, not `ci / check`).
+
+## H4 — mixed-engine delivery + restore drill — 3 November 2026
+
+**PASSED** (`MubitLabs/mec-sandbox`, PR [#3](https://github.com/MubitLabs/mec-sandbox/pull/3) merged GitHub-confirmed 21:58:57Z, main `a99d2b1`). The first flow ever to cross engines, live end to end:
+
+1. **Claude implementer** (slot `preflight-a`, sandboxed, bridge) wrote the greeting feature on a worktree pinned to base `6bd0e35`; `npm-test` passed on head `ab5a8f2`.
+2. **Codex reviewer** (slot `codex-1`, read-only, 3 real turns) — round 1 **CHANGES**: caught `.mec/` attempt artifacts (engine settings + attempt-scoped bearer token) staged into the task commit — a genuine leak class every fake-based check is blind to. Round 2 **CHANGES**: flagged the remediation itself as an unrelated deletion (H3's identical leak sits in BASE). Resolved by SPLITTING: task branch restored greeting-only; the H3-leak removal rode as its own labeled hygiene commit. Round 3 **LGTM** on the clean diff.
+3. Integration at `819f617` (merge + hygiene), checks passed on the exact SHA; push/PR/merge behind three approved cards (the third under standing authority, DECISIONS #8); CI green twice on the self-hosted runner; merge confirmed by GitHub state only.
+4. **Restore drill against the REAL state dir**: backup excluded by rule the Codex `auth.json`, every keystore key and salt, locks and tmp; the drill restored into scratch and verified db sha-vs-manifest, zero credential files, slots-to-reprobe. A stolen backup carries no credentials by construction.
+
+Real product bug found and fixed (`packages/git` commitAll): `git add --all` staged the worktree's `.mec/` control directory into task commits (H3 pushed it to GitHub; f9af3a6 retains the dead attempt token in history — private repo, token dead, removal noted in 819f617, history rewrite not warranted). The seam now pathspec-excludes `.mec/` in both status and add — a tree whose only changes are attempt artifacts is CLEAN to it. Regression test included.
+
+H4 quota: ~4 Claude implementer turns + 5 Codex review turns (vendor-accounted, cents).

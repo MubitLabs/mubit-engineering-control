@@ -70,15 +70,24 @@ export async function headSha(path: string): Promise<string> {
 /**
  * Stages everything and commits if anything changed, with the identity supplied through
  * `-c` rather than any config file. Returns the new HEAD, or null when the tree was clean.
+ *
+ * H4 lesson (3 Nov 2026): the attempt-control directory `.mec/` (engine settings, MCP
+ * config with the attempt-scoped bearer token, gitconfig) lives INSIDE the worktree —
+ * `git add --all` staged it into a task branch and H3 pushed it to GitHub before the
+ * Codex reviewer caught the class. The pathspec exclusion makes this seam incapable of
+ * committing attempt artifacts, whatever the caller does.
  */
 export async function commitAll(
   path: string,
   message: string,
   opts: { name: string; email: string },
 ): Promise<string | null> {
-  const status = await git(['status', '--porcelain'], { cwd: path })
+  // The same pathspec governs both checks: a tree whose only changes sit in .mec/ is
+  // CLEAN to this seam (nothing stageable), so it returns null instead of attempting
+  // a commit that would exit "nothing to commit".
+  const status = await git(['status', '--porcelain', '--', ':!.mec'], { cwd: path })
   if (!status.stdout.trim()) return null
-  await git(['add', '--all'], { cwd: path })
+  await git(['add', '--all', '--', ':!.mec'], { cwd: path })
   await git(
     [
       '-c',

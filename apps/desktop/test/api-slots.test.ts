@@ -367,7 +367,10 @@ describe('courier intake: structure, not format-oracle (the 3 Nov lesson)', () =
     })
     expect(res.statusCode).toBe(200)
     expect(
-      readFileSync(join(ctx.enginesRoot, 'engines', 'opencode', 'glm-2', 'keys', 'zai-coding-plan.key'), 'utf8'),
+      readFileSync(
+        join(ctx.enginesRoot, 'engines', 'opencode', 'glm-2', 'keys', 'zai-coding-plan.key'),
+        'utf8',
+      ),
     ).toBe(drifted)
   })
 
@@ -381,7 +384,10 @@ describe('courier intake: structure, not format-oracle (the 3 Nov lesson)', () =
     })
     expect(res.statusCode).toBe(200)
     expect(
-      readFileSync(join(ctx.enginesRoot, 'engines', 'opencode', 'gem-2', 'keys', 'google-gemini.key'), 'utf8'),
+      readFileSync(
+        join(ctx.enginesRoot, 'engines', 'opencode', 'gem-2', 'keys', 'google-gemini.key'),
+        'utf8',
+      ),
     ).toBe(aqKey)
   })
 

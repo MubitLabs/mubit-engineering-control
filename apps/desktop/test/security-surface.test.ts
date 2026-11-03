@@ -87,7 +87,7 @@ describe('§22 leg 1: non-local origins are rejected before any route runs', () 
     })
     expect(res.statusCode).toBe(403)
     const listed = await app.inject({ method: 'GET', url: '/api/chat/messages' })
-    expect((listed.json() as { text: string }[])).toHaveLength(0)
+    expect(listed.json() as { text: string }[]).toHaveLength(0)
   })
 
   it('a read from https://evil.com is 403 too (CORS response blocking is not execution blocking)', async () => {

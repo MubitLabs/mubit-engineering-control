@@ -5,7 +5,7 @@
 // fixture repositories built in tmpdirs and file:// remotes; tests that mutate a source
 // repo get their own fixture so ordering never changes an expectation.
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { git } from '../src/exec'
@@ -187,6 +187,34 @@ describe('Worktrees', () => {
     const author = await git(['log', '-1', '--format=%an <%ae>'], { cwd: path })
     expect(author.stdout.trim()).toBe('Ada Lovelace <ada@example.com>')
     expect(await commitAll(path, 'clean now', { name: 'Ada', email: 'ada@example.com' })).toBeNull()
+  })
+
+  it('commitAll never stages the attempt-control directory (.mec) — the H4 leak', async () => {
+    const path = join(root, 'wt-mec-exclusion')
+    await new Worktrees(gitDir).add({
+      path,
+      branch: 'mec/attempts/h4-exclusion',
+      baseSha: base,
+      createBranch: true,
+    })
+    mkdirSync(join(path, '.mec'), { recursive: true })
+    writeFileSync(join(path, '.mec', 'claude-settings.json'), '{"sandbox": "required"}\n')
+    writeFileSync(
+      join(path, '.mec', 'mcp.json'),
+      '{"mcpServers": {"mec": {"url": "http://127.0.0.1:1/mcp"}}}\n',
+    )
+    writeFileSync(join(path, 'feature.js'), 'export const x = 1\n')
+
+    const sha = await commitAll(path, 'add feature', { name: 'Ada', email: 'ada@example.com' })
+    expect(sha).not.toBeNull()
+    const committed = await git(['show', '--name-only', '--format=', 'HEAD'], { cwd: path })
+    expect(committed.stdout).toContain('feature.js')
+    expect(committed.stdout).not.toContain('.mec')
+    // the files still sit in the working tree (the attempt needs them); only the COMMIT excludes them
+    expect(existsSync(join(path, '.mec', 'mcp.json'))).toBe(true)
+    expect(
+      await commitAll(path, 'still nothing staged', { name: 'Ada', email: 'ada@example.com' }),
+    ).toBeNull()
   })
 
   it('diffSummary aggregates numstat between two SHAs in the bare cache', async () => {

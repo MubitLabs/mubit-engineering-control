@@ -6,6 +6,7 @@ import type { Sql } from '../../db/sql'
 import { authorize, type RequestActor, requireActor } from '../../http/actor'
 import { conflict, notFound, parse } from '../../http/errors'
 import type { RunnerRegistry } from '../runners/registry'
+import { dispatchPaused } from '../scheduler/capacity'
 import { claimAttempt, commandAttempt, loadAttempt, type TaskRow } from './service'
 
 const StartAttempt = z.object({
@@ -55,6 +56,17 @@ export function registerAttemptRoutes(
       `,
       sql`select * from approvals where task_id = ${task.id} order by created_at desc`,
     ])
+    if (task.state === 'ready' && !task.blocker) {
+      const [project] = await sql<
+        { pausedAt: Date | null }[]
+      >`select paused_at from projects where id = ${task.projectId}`
+      const detail = project?.pausedAt
+        ? 'Dispatch is paused for this project; resume it on the project page.'
+        : (await dispatchPaused(sql))
+          ? 'Dispatch is stopped for the whole fleet; an admin resumes it on the Fleet page.'
+          : null
+      if (detail) task.blocker = { kind: 'policy', detail, refs: [] }
+    }
     return {
       task,
       attempts,

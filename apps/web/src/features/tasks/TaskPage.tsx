@@ -92,7 +92,10 @@ export function TaskPage() {
             <AttemptPanel attempt={attempt} canPrompt={canPrompt} />
           ) : (
             <Panel title="Attempts">
-              <Empty>No attempts yet.</Empty>
+              <Empty>
+                No attempts yet.{' '}
+                {task.state === 'ready' && !task.blocker && 'The scheduler starts one when a runner is free.'}
+              </Empty>
             </Panel>
           )}
         </div>
@@ -131,26 +134,28 @@ export function TaskPage() {
             </div>
           </Panel>
           {canPrompt && task.state === 'ready' && <StartAttempt taskId={task.id} />}
-          <Panel title="Attempts" flush>
-            <table className="table">
-              <tbody>
-                {attempts.map((a) => (
-                  <tr key={a.id} className="clickable" onClick={() => setSelected(a.id)}>
-                    <td>#{a.number}</td>
-                    <td>
-                      <Status value={a.state} />
-                    </td>
-                    <td className="small muted">
-                      {a.agentKind} · {a.runnerName ?? '—'} · g{a.generation}
-                    </td>
-                    <td>
-                      <Time value={a.createdAt} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Panel>
+          {attempts.length > 0 && (
+            <Panel title="Attempts" flush>
+              <table className="table">
+                <tbody>
+                  {attempts.map((a) => (
+                    <tr key={a.id} className="clickable" onClick={() => setSelected(a.id)}>
+                      <td>#{a.number}</td>
+                      <td>
+                        <Status value={a.state} />
+                      </td>
+                      <td className="small muted">
+                        {a.agentKind} · {a.runnerName ?? '—'} · g{a.generation}
+                      </td>
+                      <td>
+                        <Time value={a.createdAt} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Panel>
+          )}
         </div>
       </div>
     </div>
@@ -167,12 +172,19 @@ function AttemptPanel({ attempt, canPrompt }: { attempt: AttemptView; canPrompt:
       api.post(`/api/attempts/${attempt.id}/${action}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['task'] }),
   })
-  const button = (action: Parameters<typeof control.mutate>[0], label: string, tone = '') => (
+  const button = (
+    action: Parameters<typeof control.mutate>[0],
+    label: string,
+    tone = '',
+    confirm?: string,
+  ) => (
     <button
       type="button"
       className={`btn small ${tone}`}
       disabled={control.isPending}
-      onClick={() => control.mutate(action)}
+      onClick={() => {
+        if (!confirm || window.confirm(confirm)) control.mutate(action)
+      }}
     >
       {label}
     </button>
@@ -193,16 +205,33 @@ function AttemptPanel({ attempt, canPrompt }: { attempt: AttemptView; canPrompt:
           {canPrompt && LIVE.has(attempt.state) && !stalled && (
             <>
               {button('interrupt', 'Interrupt')}
-              {button('cancel', 'Cancel', 'danger')}
+              {button(
+                'cancel',
+                'Cancel',
+                'danger',
+                'Cancel this attempt? The agent is stopped and its work is not reviewed.',
+              )}
             </>
           )}
           {canPrompt && PARKED.has(attempt.state) && (
             <>
               {button('resume', 'Resume', 'primary')}
-              {button('abandon', 'Abandon', 'danger')}
+              {button(
+                'abandon',
+                'Abandon',
+                'danger',
+                'Abandon this attempt? It cannot be resumed; the task can start a fresh attempt.',
+              )}
             </>
           )}
-          {stalled && me.data?.user.isAdmin && button('confirm-stopped', 'Confirm process stopped')}
+          {stalled &&
+            me.data?.user.isAdmin &&
+            button(
+              'confirm-stopped',
+              'Confirm process stopped',
+              '',
+              'Only confirm if you know the agent process on that machine is no longer running.',
+            )}
         </>
       }
       flush

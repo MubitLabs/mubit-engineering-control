@@ -21,6 +21,7 @@ import type { ConfirmationRecord } from '@mec/policy'
 import { resolveConfirmation } from '@mec/policy'
 import Fastify, { type FastifyInstance } from 'fastify'
 import type { HealthSnapshot, PartEntry } from './health'
+import { type CardEvent, LoginCardManager } from './login-cards'
 
 export type ServerDeps = {
   store: Store
@@ -28,6 +29,8 @@ export type ServerDeps = {
   health: HealthBoard
   policyText: string
   now?: () => Date
+  /** §5.6 login terminal cards; a default manager is built when absent. */
+  loginCards?: LoginCardManager
 }
 
 /**
@@ -130,6 +133,9 @@ function appendEvent(store: Store, stream: string, type: string, body: Json, at:
 export function buildServer(deps: ServerDeps): FastifyInstance {
   const store = deps.store
   const now = deps.now ?? (() => new Date())
+  // §5.6 login cards: shared per server so logins stay serialised machine-wide;
+  // tests inject one with a fake pty, everyone else gets the default manager.
+  const loginCards = deps.loginCards ?? new LoginCardManager()
   const app = Fastify({ logger: false })
 
   app.get('/healthz', async () => ({ ok: true }))
@@ -274,6 +280,83 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       }
     }),
   )
+
+  app.post('/api/slots/login', async (request, reply) => {
+    const body = (request.body ?? {}) as { engine?: unknown; slotHome?: unknown }
+    const { engine } = body
+    if (engine !== 'claude' && engine !== 'codex' && engine !== 'opencode') {
+      reply.code(400).send({ error: "engine must be 'claude', 'codex' or 'opencode'" })
+      return
+    }
+    const slotHome = typeof body.slotHome === 'string' ? body.slotHome.trim() : ''
+    if (slotHome === '') {
+      reply.code(400).send({ error: 'slotHome is required' })
+      return
+    }
+    // §5.6 serialised: while a card runs, this returns the running card's id with
+    // busy=true and spawns nothing — the client's terminal attaches to that card
+    // through /api/slots/login/current. The POST itself never sees stream data.
+    const started = loginCards.start({ engine, slotHome }, () => {})
+    return { id: started.id, busy: started.busy }
+  })
+
+  // §5.6: the login stream is live-only. It is never journaled or persisted, and
+  // this endpoint replays nothing — a subscriber sees card events from the moment
+  // it attaches until the card's terminal event (exit/timeout) ends the stream.
+  app.get('/api/slots/login/current', (_request, reply) => {
+    reply.hijack()
+    const raw = reply.raw
+    raw.on('error', () => {})
+    let detach: (() => void) | null = null
+    const finish = (): void => {
+      detach?.()
+      raw.end()
+    }
+    const onEvent = (event: CardEvent): void => {
+      if (raw.writableEnded) return
+      raw.write(`data: ${JSON.stringify(event)}\n\n`)
+      if (event.kind === 'exit' || event.kind === 'timeout') finish()
+    }
+    detach = loginCards.subscribe(onEvent)
+    if (detach === null) {
+      // Nothing is running and, by design, there is no backlog to serve (§5.6).
+      raw.writeHead(404, { 'content-type': 'application/json; charset=utf-8' })
+      raw.end(JSON.stringify({ error: 'no login card running' }))
+      return
+    }
+    raw.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    })
+    // A mocked transport (fastify `.inject`) has no real socket to hold open: end
+    // immediately, exactly like /api/events. A real connection stays open below.
+    if (!(raw.socket instanceof Socket)) {
+      finish()
+      return
+    }
+    raw.on('close', () => {
+      detach?.()
+      raw.end()
+    })
+  })
+
+  app.post('/api/slots/login/cancel', async (request, reply) => {
+    const body = (request.body ?? {}) as { id?: unknown }
+    const id = typeof body.id === 'string' ? body.id : ''
+    if (id === '') {
+      reply.code(400).send({ error: 'id is required' })
+      return
+    }
+    const activeCard = loginCards.active()
+    if (activeCard === null || activeCard.id !== id) {
+      reply.code(404).send({ error: 'no such login card' })
+      return
+    }
+    loginCards.cancel(id)
+    reply.code(204).send()
+  })
 
   app.get('/api/events', (request, reply) => {
     const query = (request.query ?? {}) as { stream?: string; after?: string }

@@ -71,6 +71,19 @@ describe('enrolment', () => {
     )
   })
 
+  it("sends a probe to a connected runner on its owner's request", async () => {
+    runner = await connectedRunner()
+    expect((await s.member.post(`/api/runners/${runner.runnerId}/probe`)).statusCode).toBe(403)
+    expect((await s.admin.post(`/api/runners/${runner.runnerId}/probe`)).statusCode).toBe(200)
+    await waitFor(() => runner!.commands.some((c) => c.type === 'probe' && c.attemptId === null))
+    await runner.close()
+    await waitFor(
+      async () =>
+        (await t.db.sql`select status from runners where id = ${runner!.runnerId}`)[0]!.status === 'offline',
+    )
+    expect((await s.admin.post(`/api/runners/${runner.runnerId}/probe`)).statusCode).toBe(409)
+  })
+
   it('revoking a runner closes its connection and refuses reconnects', async () => {
     runner = await connectedRunner()
     expect((await s.admin.post(`/api/runners/${runner.runnerId}/revoke`)).statusCode).toBe(200)

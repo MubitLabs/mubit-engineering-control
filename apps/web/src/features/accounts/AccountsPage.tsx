@@ -115,11 +115,13 @@ export function AccountsPage() {
                         <div className="faint small">
                           {p.agentKind === 'claude-code' ? (
                             <>
-                              on {p.runnerName} run <code>claude</code>, then <code>/login</code>; this turns
-                              OK within 5 minutes
+                              on {p.runnerName} run <code>claude</code>, then <code>/login</code>, then{' '}
+                              <CheckAgain runnerId={p.runnerId} />
                             </>
                           ) : (
-                            `sign the agent in on ${p.runnerName}; this turns OK within 5 minutes`
+                            <>
+                              sign the agent in on {p.runnerName}, then <CheckAgain runnerId={p.runnerId} />
+                            </>
                           )}
                         </div>
                       )}
@@ -377,5 +379,22 @@ function EditProfile(props: { profile: ProfileView; projects: Project[]; onDone:
         </button>
       </div>
     </form>
+  )
+}
+
+/** Asks the runner to re-check its agents now instead of at its next periodic probe. */
+function CheckAgain({ runnerId }: { runnerId: string }) {
+  const qc = useQueryClient()
+  const probe = useMutation({
+    mutationFn: () => api.post(`/api/runners/${runnerId}/probe`),
+    onSuccess: () => {
+      for (const ms of [4_000, 12_000]) setTimeout(() => qc.invalidateQueries({ queryKey: ['profiles'] }), ms)
+    },
+  })
+  if (probe.isError) return <span>{(probe.error as Error).message}</span>
+  return (
+    <button type="button" className="linklike" disabled={probe.isPending} onClick={() => probe.mutate()}>
+      {probe.isSuccess ? 'checking…' : 'check again'}
+    </button>
   )
 }

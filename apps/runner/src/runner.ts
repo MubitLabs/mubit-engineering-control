@@ -289,8 +289,12 @@ export class Runner {
         resolve(cmd.payload.decision as DecisionResult)
         return
       }
-      case 'probe':
-        return this.result(cmd.commandId, 'accepted')
+      case 'probe': {
+        this.result(cmd.commandId, 'accepted')
+        const agents = await Promise.all([...this.adapters.values()].map((a) => a.probe()))
+        this.connection.send({ type: 'heartbeat', attempts: this.reports(), agents })
+        return
+      }
     }
   }
 

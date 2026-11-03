@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BUILTIN_ROSTER, BUILTIN_ROLE_NAMES, compileAdHocRole, type RoleDef } from '../src/registry'
+import { BUILTIN_ROLE_NAMES, BUILTIN_ROSTER, compileAdHocRole, type RoleDef } from '../src/registry'
 
 const OPTS = {
   knownTools: ['read', 'report', 'ask_user', 'request_confirmation', 'handback', 'edit', 'shell'],
@@ -64,7 +64,13 @@ describe('compileAdHocRole', () => {
 
   it('collects actionable issues: taken name, reserved prefix, unknown tool, unknown check, budget, bad schema', () => {
     const result = compileAdHocRole(
-      adHoc({ name: 'implementer', allowedTools: ['read', 'teleport'], checks: ['smoke'], budgetTurns: 99, inputSchema: 'nope' as never }),
+      adHoc({
+        name: 'implementer',
+        allowedTools: ['read', 'teleport'],
+        checks: ['smoke'],
+        budgetTurns: 99,
+        inputSchema: 'nope' as never,
+      }),
       OPTS,
     )
     expect(result.ok).toBe(false)

@@ -104,7 +104,10 @@ export type RoleIssue =
   | { kind: 'budget_ceiling'; detail: string }
   | { kind: 'invalid_schema'; detail: string }
 
-function isPlainObjectSchema(schema: Json | undefined, field: 'inputSchema' | 'outputSchema'): RoleIssue | null {
+function isPlainObjectSchema(
+  schema: Json | undefined,
+  field: 'inputSchema' | 'outputSchema',
+): RoleIssue | null {
   if (schema === undefined) return null
   if (typeof schema !== 'object' || schema === null || Array.isArray(schema)) {
     return { kind: 'invalid_schema', detail: `${field} must be a JSON object` }
@@ -120,12 +123,15 @@ export function compileAdHocRole(
   opts: { knownTools: readonly string[]; knownChecks: readonly string[]; maxBudgetTurns: number },
 ): { ok: true; revision: string } | { ok: false; issues: RoleIssue[] } {
   const issues: RoleIssue[] = []
-  if (BUILTIN_ROSTER.hasOwnProperty(candidate.name) || candidate.name === 'meta_agent') {
+  if (Object.hasOwn(BUILTIN_ROSTER, candidate.name) || candidate.name === 'meta_agent') {
     issues.push({ kind: 'name_taken', detail: `'${candidate.name}' is a built-in role` })
   }
   const reserved = RESERVED_NAME_PREFIXES.find((p) => candidate.name.startsWith(p))
   if (reserved) {
-    issues.push({ kind: 'reserved_name', detail: `'${candidate.name}' starts with reserved prefix '${reserved}'` })
+    issues.push({
+      kind: 'reserved_name',
+      detail: `'${candidate.name}' starts with reserved prefix '${reserved}'`,
+    })
   }
   for (const tool of candidate.allowedTools) {
     if (!opts.knownTools.includes(tool)) {
@@ -138,7 +144,10 @@ export function compileAdHocRole(
     }
   }
   if (candidate.budgetTurns < 1 || candidate.budgetTurns > opts.maxBudgetTurns) {
-    issues.push({ kind: 'budget_ceiling', detail: `budget ${candidate.budgetTurns} turns is outside 1..${opts.maxBudgetTurns}` })
+    issues.push({
+      kind: 'budget_ceiling',
+      detail: `budget ${candidate.budgetTurns} turns is outside 1..${opts.maxBudgetTurns}`,
+    })
   }
   const inputIssue = isPlainObjectSchema(candidate.inputSchema, 'inputSchema')
   if (inputIssue) issues.push(inputIssue)

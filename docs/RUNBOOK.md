@@ -74,12 +74,15 @@ Every waiting task shows a blocker on the delivery page.
 | `infrastructure` — no runner | No connected runner offers the agent / no usable profile | Check Fleet and Accounts |
 | attempt `stalled` | The runner stopped reporting; the lease expired | Wait for it to reconnect. If the machine is gone, an admin uses *Confirm process stopped*, then *Abandon* to start fresh |
 | `reviewer` | Waiting for result review | Inbox → Accept result / Send back |
-| `decision` | Attempt budget used | Start a repair attempt manually or cancel the task |
+| `decision` | Attempt budget used | Task page → *Start attempt* (a repair from the recorded failures). A **failed** task first needs *Retry task*; to drop it instead, change the plan in a new revision |
+| `policy` — dispatch paused | The project is paused, or the fleet is stopped | Project page → *Resume dispatch*, or Fleet → *Resume dispatch* |
 | attempt `awaiting_input` | The agent asked a question or needs a tool approval | Inbox |
 | attempt `auth_required` | Native agent sign-in expired | The account owner signs in again on the runner, then *Resume* |
 | attempt `quota_wait` | Usage limit reached (reset time shown if known) | Wait and *Resume*, or *Abandon* and start on another granted profile — never automatic |
-| attempt `checks_failed` | Acceptance checks failed | The next attempt repairs with the exact failures |
-| repair after `integration_conflict` | The accepted change conflicts with the integration branch | The repair attempt resolves the merge it starts with |
+| attempt `checks_failed` | Acceptance checks failed | The next attempt repairs with the exact failures. If the attempt says a check *failed before testing anything*, fix the check command in the repository settings, then retry |
+| repair after `integration_conflict` | The accepted change conflicts with the integration branch | The repair attempt resolves the merge it starts with (start it by hand if the budget is used) |
+| delivery `integrating`, no PR | The integration branch was not pushed, or `GITHUB_TOKEN` is missing | The Integration panel says which. After fixing the token or network, *Push again* |
+| delivery `awaiting_merge` | The PR is open | Review and merge on GitHub; "merged" is recorded when GitHub reports it |
 
 Useful queries: `ssh openclaw runuser -u postgres -- psql -d mec`, then e.g.
 `select key, state, blocker->>'detail' from tasks where delivery_id = '<id>';`.

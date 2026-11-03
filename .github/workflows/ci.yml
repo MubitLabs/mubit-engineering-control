@@ -7,7 +7,7 @@ on:
 
 jobs:
   static:
-    runs-on: ubuntu-24.04
+    runs-on: mubit-any
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -20,7 +20,7 @@ jobs:
       - run: pnpm lint
 
   suite-a:
-    runs-on: ubuntu-24.04
+    runs-on: mubit-any
     strategy:
       fail-fast: false
       matrix:
@@ -36,7 +36,7 @@ jobs:
       - run: pnpm test:a
 
   suite-b:
-    runs-on: ubuntu-24.04
+    runs-on: mubit-any
     strategy:
       fail-fast: false
       matrix:

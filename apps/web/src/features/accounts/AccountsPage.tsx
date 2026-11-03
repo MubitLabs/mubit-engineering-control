@@ -111,6 +111,21 @@ export function AccountsPage() {
                               : 'unknown'
                         }
                       />
+                      {p.authState === 'required' && p.ownerId === me.data?.user.id && (
+                        <div className="faint small">
+                          {p.agentKind === 'claude-code' ? (
+                            <>
+                              on {p.runnerName} run <code>claude</code>, then <code>/login</code>; this turns
+                              OK within 5 minutes
+                            </>
+                          ) : (
+                            `sign the agent in on ${p.runnerName}; this turns OK within 5 minutes`
+                          )}
+                        </div>
+                      )}
+                      {p.runnerStatus !== 'online' && (
+                        <div className="faint small">runner {p.runnerStatus}</div>
+                      )}
                     </td>
                     <td className="small">
                       {p.allowedProjectIds.map(projectName).join(', ') || <span className="faint">none</span>}

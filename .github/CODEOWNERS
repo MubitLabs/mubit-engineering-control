@@ -1,0 +1,36 @@
+# Ownership follows docs/plan/PLAN_v4.1_parallel_split.md §2. The last matching line wins.
+# Stream A (core and workflow) = @e1daru; Stream B (engines, slots and runtime) = @shankha98.
+
+# Stream A: everything not claimed below, including docs/ and this file
+*                                                   @e1daru
+
+# Shared: changes need both reviewers
+/packages/contracts/                                @e1daru @shankha98
+/docs/log/                                          @e1daru @shankha98
+
+# Stream B
+/packages/runtime/                                  @shankha98
+/packages/engines/                                  @shankha98
+/packages/slots/                                    @shankha98
+/packages/git/                                      @shankha98
+/packages/testkit/                                  @shankha98
+/apps/desktop/                                      @shankha98
+/apps/web/src/features/slots/                       @shankha98
+/apps/web/src/features/terminal/                    @shankha98
+/apps/web/src/features/wizard/                      @shankha98
+/apps/web/src/features/repositories/                @shankha98
+/apps/web/src/features/scorecards/                  @shankha98
+/docs/engines.md                                    @shankha98
+/SETUP.md                                           @shankha98
+
+# Stream A's files inside Stream B's packages
+/packages/git/**/merge.*                            @e1daru
+/packages/git/**/conflict.*                         @e1daru
+/packages/git/**/impact.*                           @e1daru
+/packages/testkit/**/memory-repositories.*          @e1daru
+/packages/testkit/**/fake-engine.*                  @e1daru
+/packages/testkit/**/fake-slots.*                   @e1daru
+/packages/testkit/**/memory-core-for-engines.*      @e1daru
+
+# Fixtures are recorded by Stream B only
+/packages/testkit/fixtures/                         @shankha98

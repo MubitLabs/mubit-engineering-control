@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { api } from '../../api/client'
 import { useTitle } from '../../components/Layout'
 import { Empty, ErrorBox, Panel, Status, Time } from '../../components/ui'
+import { useMe } from '../auth/useMe'
 
 interface RunnerView {
   id: string
@@ -25,6 +26,7 @@ interface RunnerView {
 /** Fleet and accounts (PDF §12): owner, agent, runner, authentication, capacity. */
 export function FleetPage() {
   useTitle('Fleet')
+  const isAdmin = useMe().data?.user.isAdmin ?? false
   const qc = useQueryClient()
   const runners = useQuery({
     queryKey: ['fleet'],
@@ -47,7 +49,11 @@ export function FleetPage() {
       </div>
       <Panel title="Runners" flush>
         {runners.data?.runners.length === 0 ? (
-          <Empty>No runners enrolled. Create an invitation below.</Empty>
+          <Empty>
+            {isAdmin
+              ? 'No runners enrolled. Create an invitation below.'
+              : 'You have no runners. An admin can create an enrolment invitation for you.'}
+          </Empty>
         ) : (
           <table className="table">
             <thead>
@@ -129,8 +135,8 @@ export function FleetPage() {
         )}
         <ErrorBox error={drain.error ?? revoke.error} />
       </Panel>
-      <Dispatch />
-      <Invite runners={runners.data?.runners ?? []} />
+      {isAdmin && <Dispatch />}
+      {isAdmin && <Invite runners={runners.data?.runners ?? []} />}
     </div>
   )
 }

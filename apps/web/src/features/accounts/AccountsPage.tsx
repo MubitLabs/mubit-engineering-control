@@ -69,7 +69,11 @@ export function AccountsPage() {
       </div>
       <Panel title="Execution profiles" flush>
         {profiles.data?.profiles.length === 0 ? (
-          <Empty>No profiles yet. Offer an agent account from one of your runners below.</Empty>
+          <Empty>
+            {mine.length > 0
+              ? 'No profiles yet. Offer an agent account from one of your runners below.'
+              : 'No agent accounts are shared with you yet. Runner owners offer theirs to projects here.'}
+          </Empty>
         ) : (
           <table className="table">
             <thead>

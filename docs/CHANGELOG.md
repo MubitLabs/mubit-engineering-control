@@ -14,7 +14,7 @@ Internal build, week 1 (3 November 2026). Seeded from [`docs/log/week1.md`](log/
 ### Engines
 
 - Claude adapter running the real binary headless (stream-json, permission bridge via `mcp__mec__confirm`, `rate_limit_event` normalisation, capability probe); conformance-proven on four real recordings.
-- Codex and OpenCode adapters implemented against documented protocols with synthetic recordings (`recorded_by: 'fake'`); no real binary has run for either.
+- Codex adapter on the REAL ChatGPT login (R2.1): protocol reconciled to codex-cli 0.148.0, real recordings for smoke/permission/auth-expiry, gated canary green. OpenCode adapter on the REAL GLM Coding Plan + Gemini slots (R2.2): config-file providers with `{env:}` key substitution, real SSE protocol shapes, both live slots validate healthy. The rate-limit fixtures stay synthetic, honestly noted.
 - Vendor-reality finding logged: `node-pty-prebuilt-multiarch@^1.0.0-beta` is not published; login cards ship with an injectable `ptySpawn` seam and a loud `pty unavailable` default.
 
 ### Runtime
@@ -46,3 +46,13 @@ Internal build, week 1 (3 November 2026). Seeded from [`docs/log/week1.md`](log/
 - Env scrubbing proven against a real child process; shims and gitconfig refuse foreign files; mec-tools tokens are attempt-scoped and role-fenced over real loopback HTTP.
 - Compliance guard: static scan for reads of vendor credential stores, plus a self-scan over the product source in CI; verified by planting a violation on a throwaway branch.
 - Repository-resident engine configuration treated as untrusted (no project settings, hooks, MCP servers or plugins from a cloned repo unless it is marked trusted).
+
+### R1 completion + the R2 wave (3 Nov, evening — single operator)
+
+- **R1.3–R1.7**: real node-pty login cards; the real meta brain (tool-mediated turns over the in-process MCP server); API-key slots end to end; the §26 composition rows closed (35/38 proven).
+- **H3**: the §23 delivery on `mec-sandbox` — PR #2 merged GitHub-confirmed behind three approved cards.
+- **H4 + R2.3**: mixed-engine delivery in BOTH pairings (Claude implements + Codex reviews; Codex implements + Claude reviews) — PRs #3/#4 merged; the Codex reviewer caught the `.mec` attempt-artifact leak class, fixed in `commitAll` and proven live; the restore drill ran against the real state dir with every credential excluded by rule.
+- **R2.4/R2.5/R2.8**: `mec slot` CLI + internal tarball; first-run wizard; user guide, reference, CONTRIBUTING.
+- **R2.7 + hardening**: threat model with every control cited to a test; the two High gaps (§22 origin/CSRF discipline, secrets-in-chat route test) closed the same day; `pnpm audit` clean.
+- **Courier**: GLM + Gemini keys accepted (intake is a structure check, not a format oracle — vendor formats drift); live keys stored via the form only and validated healthy.
+- **Repo readiness**: full Apache-2.0 LICENSE + NOTICE at root (tarball copies both verbatim); §21.1 CLI dispatch wired (`mec status|stop|restart|doctor|slot|update` from `bin/mec.js`).

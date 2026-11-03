@@ -284,7 +284,7 @@ function StartAttempt({ taskId }: { taskId: string }) {
             <option value="">fake agent (scripted)</option>
             {profiles.data?.profiles.map((p) => (
               <option key={p.id} value={p.id} disabled={p.authState === 'required'}>
-                {p.label} — {p.agentKind} on {p.runnerName} ({p.ownerLogin})
+                {p.label.includes(p.runnerName) ? p.label : `${p.label} on ${p.runnerName}`} ({p.ownerLogin})
                 {p.authState === 'required' ? ' · sign-in required' : ''}
               </option>
             ))}

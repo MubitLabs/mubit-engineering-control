@@ -436,6 +436,21 @@ label.field {
   padding: 28px;
 }
 
+.graph-scroll {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+/* A styled scrollbar is always drawn, so a wide graph visibly continues. */
+.graph-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+.graph-scroll::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+.graph-scroll::-webkit-scrollbar-track {
+  background: var(--panel-2);
+}
 .linklike {
   background: none;
   border: none;

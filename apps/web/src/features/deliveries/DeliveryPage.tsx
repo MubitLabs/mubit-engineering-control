@@ -298,7 +298,8 @@ function Coordinator({ deliveryId }: { deliveryId: string }) {
   })
   const [profileId, setProfileId] = useState('')
   const usable = profiles.data?.profiles.filter((p) => p.agentKind === 'claude-code') ?? []
-  const chosen = profileId || usable[0]?.id || ''
+  const chosen = profileId || (usable.find((p) => p.authState !== 'required') ?? usable[0])?.id || ''
+  const signedOut = usable.find((p) => p.id === chosen)?.authState === 'required'
   const run = useMutation({
     mutationFn: () => api.post(`/api/deliveries/${deliveryId}/coordinate`, { profileId: chosen }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery', deliveryId] }),
@@ -320,7 +321,7 @@ function Coordinator({ deliveryId }: { deliveryId: string }) {
             <select value={chosen} onChange={(e) => setProfileId(e.target.value)}>
               {usable.map((p) => (
                 <option key={p.id} value={p.id} disabled={p.authState === 'required'}>
-                  {p.label} on {p.runnerName}
+                  {p.label.includes(p.runnerName) ? p.label : `${p.label} on ${p.runnerName}`}
                   {p.authState === 'required' ? ' · sign-in required' : ''}
                 </option>
               ))}
@@ -329,12 +330,18 @@ function Coordinator({ deliveryId }: { deliveryId: string }) {
               <button
                 type="button"
                 className="btn primary"
-                disabled={!chosen || run.isPending}
+                disabled={!chosen || signedOut || run.isPending}
                 onClick={() => run.mutate()}
               >
                 Run coordinator
               </button>
             </div>
+            {signedOut && (
+              <div className="notice">
+                This account's agent is not signed in on its runner. Its owner signs in there, then uses{' '}
+                <Link to="/accounts">check again</Link> on the Accounts page.
+              </div>
+            )}
           </>
         )}
         <ErrorBox error={run.error} />

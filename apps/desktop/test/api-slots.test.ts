@@ -355,3 +355,59 @@ describe('slots api-key courier: GLM and Gemini providers (R2.2 seam)', () => {
     })
   })
 })
+
+describe('courier intake: structure, not format-oracle (the 3 Nov lesson)', () => {
+  it('accepts a GLM key with drifted segment lengths and mixed-case first segment', async () => {
+    const ctx = makeServer()
+    const drifted = `${'AbCdEf0123456789AbCdEf01'}.${'z9Y8x7W6v5U4t3S2R1Q0'}`
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/slots/api-key',
+      payload: { label: 'glm-2', provider: 'glm-api', key: drifted },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(
+      readFileSync(join(ctx.enginesRoot, 'engines', 'opencode', 'glm-2', 'keys', 'glm-api.key'), 'utf8'),
+    ).toBe(drifted)
+  })
+
+  it('accepts a Google AQ.Ab auth key (the 2026 transition shape)', async () => {
+    const ctx = makeServer()
+    const aqKey = `AQ.Ab${'x1_-'.repeat(11)}`
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/slots/api-key',
+      payload: { label: 'gem-2', provider: 'gemini-api', key: aqKey },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(
+      readFileSync(join(ctx.enginesRoot, 'engines', 'opencode', 'gem-2', 'keys', 'gemini-api.key'), 'utf8'),
+    ).toBe(aqKey)
+  })
+
+  it('a pasted URL is rejected with a safe shape diagnostic that never echoes the key', async () => {
+    const ctx = makeServer()
+    const urlPaste = 'https://z.ai/manage-apikey/apikey-list'
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/slots/api-key',
+      payload: { label: 'oops-1', provider: 'glm-api', key: urlPaste },
+    })
+    expect(res.statusCode).toBe(400)
+    const error = (res.json() as { error: string }).error
+    expect(error).toContain('two dot-separated segments')
+    expect(error).toMatch(/\d+ chars/)
+    expect(error).not.toContain(urlPaste)
+  })
+
+  it('a too-short segment GLM key is rejected (truncation guard)', async () => {
+    const ctx = makeServer()
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/slots/api-key',
+      payload: { label: 'short-1', provider: 'glm-api', key: 'abc.def' },
+    })
+    expect(res.statusCode).toBe(400)
+    expect(ctx.store.slots.list()).toHaveLength(0)
+  })
+})

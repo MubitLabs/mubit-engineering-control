@@ -8,6 +8,9 @@ export const SECRET_PATTERNS: readonly { readonly name: string; readonly pattern
   { name: 'openai-scoped', pattern: /\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}/ },
   { name: 'openai-legacy', pattern: /\bsk-[A-Za-z0-9]{32,}\b/ },
   { name: 'google', pattern: /\bAIza[0-9A-Za-z_-]{35}/ },
+  // Google's 2026 transition: AI Studio also issues auth keys "AQ.Ab…" now
+  // (the classic AIza… shape keeps its own pattern above).
+  { name: 'google-auth', pattern: /\bAQ\.Ab[A-Za-z0-9_-]{20,}/ },
   { name: 'zai', pattern: /\b[0-9a-f]{32}\.[A-Za-z0-9]{16}\b/ },
   { name: 'github', pattern: /\bgh[pousr]_[A-Za-z0-9]{30,}\b/ },
   { name: 'github-pat', pattern: /\bgithub_pat_[A-Za-z0-9_]{40,}\b/ },

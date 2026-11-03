@@ -30,6 +30,7 @@ const CONTRACTS_NAME_MAP: Readonly<Record<string, ProviderKeyName>> = {
   'openai-scoped': 'openai',
   'openai-legacy': 'openai',
   google: 'google-gemini',
+  'google-auth': 'google-gemini',
   zai: 'zai-coding-plan',
   github: 'github',
   'github-pat': 'github',

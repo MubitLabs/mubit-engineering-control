@@ -16,7 +16,7 @@ import { homedir } from 'node:os'
 import { extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Effects, HealthBoard, HealthName, Json, Store, StoreDoc } from '@mec/contracts'
-import { matchesSecret, SECRET_PATTERNS } from '@mec/contracts'
+import { matchesSecret } from '@mec/contracts'
 import { WORK_ITEM_TERMINAL, type WorkItemState } from '@mec/domain'
 import type { LiveWork } from '@mec/meta'
 import { routeMessage } from '@mec/meta'
@@ -134,33 +134,58 @@ const ANTHROPIC_MODELS_URL = 'https://api.anthropic.com/v1/models'
 const VALIDATE_TIMEOUT_MS = 15_000
 
 /**
- * §5.4/§5.7: the key shapes the courier accepts, one per provider. Contracts'
- * `SECRET_PATTERNS` stays the single source (anthropic / zai / google); the gate a
- * pasted key must pass for ITS provider before MEC writes anything anywhere.
- * GLM/Gemini keys are pattern-gated in v0 — their live zero-token probes arrive with
- * the R2.2 OpenCode wiring (R1.5 proved the keystore custody once, per provider kind).
+ * §5.4/§5.7: the courier's INTAKE gate — a structure check, not a format oracle.
+ * Lesson of 3 Nov 2026 (user's real GLM + Gemini keys both rejected): vendor key
+ * formats drift (z.ai split Standard/Coding-Plan key types in Oct 2026; Google is
+ * mid-transition from AIza… to AQ.Ab… auth keys), and an exact-pattern gate built
+ * from documentation BLOCKS the real key. So intake accepts a provider's key
+ * FAMILY (right prefix/segment structure, sane lengths — catches clipboard
+ * garbage, wrong-field pastes, truncations); the strict exact patterns live in
+ * contracts' SECRET_PATTERNS for the REDACTION scanner, where strict is the safe
+ * direction. Live probes (R2.2) are the real validity check.
  */
-const providerPattern = (name: string): RegExp | undefined =>
-  SECRET_PATTERNS.find((entry) => entry.name === name)?.pattern
+const INTAKE_PATTERNS: Record<string, RegExp> = {
+  // sk-ant-… — documented, stable.
+  'anthropic-api': /^sk-ant-[A-Za-z0-9_-]{20,}$/,
+  // z.ai/bigmodel: two dot-separated segments (id.secret), each ≥16 word chars —
+  // accepts the classic 32-hex.16-alnum and any segment-length/charset drift.
+  'glm-api': /^[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}$/,
+  // Google: classic AIza… (39 chars) OR the new AQ.Ab… auth keys.
+  'gemini-api': /^(AIza[A-Za-z0-9_-]{30,}|AQ\.[A-Za-z0-9_.-]{30,})$/,
+}
+
+/**
+ * A safe shape diagnostic for the 400 — the received key's structure WITHOUT the
+ * key: length, segment count, a masked prefix and last4 (last4 already travels in
+ * fingerprints). Makes format drift self-diagnosing without ever echoing the key.
+ */
+function intakeDiagnostic(key: string): string {
+  const segments = key.split('.').length
+  const last4 = key.length >= 8 ? `…${key.slice(-4)}` : '…'
+  return `${key.length} chars, ${segments} dot-segment(s), ends ${last4}`
+}
 
 const API_KEY_PROVIDERS = {
   'anthropic-api': {
     engine: 'claude',
     kind: 'claude-api',
-    pattern: providerPattern('anthropic'),
+    pattern: INTAKE_PATTERNS['anthropic-api'],
     home: claudeHome,
+    shape: "'sk-ant-…' (anthropic)",
   },
   'glm-api': {
     engine: 'opencode',
     kind: 'opencode-glm',
-    pattern: providerPattern('zai'),
+    pattern: INTAKE_PATTERNS['glm-api'],
     home: opencodeHome,
+    shape: "'<id>.<secret>' — two dot-separated segments (z.ai)",
   },
   'gemini-api': {
     engine: 'opencode',
     kind: 'opencode-gemini',
-    pattern: providerPattern('google'),
+    pattern: INTAKE_PATTERNS['gemini-api'],
     home: opencodeHome,
+    shape: "'AIza…' or 'AQ.Ab…' (Google)",
   },
 } as const
 
@@ -686,10 +711,12 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       })
       return
     }
-    // A pasted key may carry clipboard whitespace; the pattern gate runs on the trimmed form.
+    // A pasted key may carry clipboard whitespace; the structure gate runs on the trimmed form.
     const key = typeof body.key === 'string' ? body.key.trim() : ''
     if (key === '' || provider.pattern === undefined || !provider.pattern.test(key)) {
-      reply.code(400).send({ error: `key does not match the ${providerName} key pattern` })
+      reply.code(400).send({
+        error: `key does not match the ${providerName} shape (${provider.shape}); got ${intakeDiagnostic(key)}`,
+      })
       return
     }
 

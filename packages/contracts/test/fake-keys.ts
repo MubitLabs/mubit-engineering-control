@@ -7,4 +7,6 @@ export const FAKE_KEYS: Record<string, string> = {
   zai: `${'0123456789abcdef'.repeat(2)}.${'AbCd1234'.repeat(2)}`,
   github: `${'gh'}p_${'A1'.repeat(18)}`,
   'github-pat': `${'github'}_pat_${'A1_'.repeat(20)}`,
+  // Google's 2026 auth-key transition: AI Studio now also issues AQ.Ab… keys.
+  'google-auth': `${'AQ'}.Ab${'x1_'.repeat(11)}`,
 }

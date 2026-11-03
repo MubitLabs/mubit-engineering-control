@@ -76,7 +76,7 @@ export function AddApiKeyCard({ onAdded }: { onAdded: () => void }) {
       if (error instanceof HttpError) {
         setNote(
           error.status === 400
-            ? 'rejected: the key does not match the selected provider’s shape'
+            ? (error.reason ?? 'rejected: the key does not match the selected provider’s shape')
             : error.status === 409
               ? 'a slot with that label already exists'
               : `failed (HTTP ${error.status})`,

@@ -240,3 +240,4 @@ Scenarios every engine must have before its handshake: `smoke`, `permission_requ
 | Date | Change | Reviewers |
 | --- | --- | --- |
 | 2026-11-03 | v0 frozen (tag `contracts-v0`), all nine parts implemented. Two documented exemptions to the §0 credential-field lint: `AttemptBrief.tools.token` (attempt-scoped, minted at launch, never stored) and `EffectJob.key` (the §7 coalescing key — an id, never a secret). §4 `SlotRef` = `Pick<Slot, 'id'\|'engine'\|'kind'\|'home'\|'credential_kind'>`; §6 `attemptStarted` takes `session_id: string \| undefined`. Engine facts from Claude 2.1.317 recordings folded into §1 (see `docs/engines.md` in the pre-flight record) | A, B (one operator from 3 Nov evening) |
+| 2026-11-03 | Additive: `SECRET_PATTERNS` gains `google-auth` (`AQ.Ab…`, Google's 2026 auth-key transition) — redaction-side only; no existing pattern changed, no fixture invalidated | A (post R2.2 intake fix) |

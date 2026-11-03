@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build:desktop": "node scripts/bundle-desktop.mjs",
+    "pack:internal": "node scripts/pack-tarball.mjs",
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "typecheck": "pnpm -r --parallel typecheck",
     "lint": "biome check .",

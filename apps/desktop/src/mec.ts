@@ -5,12 +5,15 @@
  * so tests drive `runCli` with fakes; the guarded `main` at the bottom is the only place
  * that touches the real process.
  */
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { buildDoctorReport, defaultVersionRunner } from './doctor'
 import type { HealthSnapshot } from './health'
 import { parseHealthSnapshot } from './health'
+import { runSlotCli } from './slot-cli'
 import { formatStatus, statusFromSnapshot } from './status'
 import { clearStopMarker, readStopMarker, writeStopMarker } from './stop-marker'
 
@@ -21,12 +24,22 @@ export type CliIo = {
   initialized: () => boolean
   /** directory holding the stop marker */
   markerDir: string
+  /**
+   * §21.1 `mec slot …`: the root that holds mec.db and the engines/ slot-home tree
+   * (~/.mec in production). The slot subcommands operate on that local state, never on
+   * a running server.
+   */
+  dataDir: string
   stdout: (line: string) => void
   /** called on 'restart' when allowed; record calls in tests */
   startServer: () => Promise<void>
+  /** `mec update` seams; defaults read the nearest package.json, git and process.env. */
+  readVersion?: () => string
+  gitRemote?: () => string | null
+  env?: Record<string, string | undefined>
 }
 
-const USAGE = 'usage: mec <status|stop|restart|doctor> [flags]'
+const USAGE = 'usage: mec <status|stop|restart|doctor|slot|update> [flags]'
 
 /** `parseHealthSnapshot` handles '' but not invalid JSON; a corrupt file is "no snapshot". */
 function parseSnapshot(text: string | null): HealthSnapshot | null {
@@ -71,8 +84,69 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     return 0
   }
 
+  // §21.1 `mec slot add|list|probe|retire`: local slot state in io.dataDir, never a
+  // server call — runSlotCli owns its store open/close and exit codes.
+  if (command === 'slot') {
+    return runSlotCli(argv.slice(1), { dataDir: io.dataDir, stdout: io.stdout })
+  }
+
+  if (command === 'update') {
+    io.stdout(buildUpdateReport(io))
+    return 0
+  }
+
   io.stdout(USAGE)
   return 1
+}
+
+/**
+ * `mec update` (plan §21.5, amended by DECISIONS #4): MEC is distributed internally —
+ * the artifact of record is the git repository (or an internal registry via MEC_REGISTRY),
+ * so this reports the installed version and the reinstall path. No network check exists
+ * by design; nothing here ever fetches.
+ */
+export function buildUpdateReport(io: CliIo): string {
+  const version = (io.readVersion ?? defaultReadVersion)()
+  const env = io.env ?? process.env
+  const registry =
+    env.MEC_REGISTRY ??
+    (io.gitRemote ?? defaultGitRemote)() ??
+    'unset — set MEC_REGISTRY or reinstall from the repository'
+  return [
+    `mec ${version} (installed)`,
+    `registry: ${registry} (internal distribution)`,
+    'internal distribution: reinstall from the repository (pnpm install && pnpm build:desktop)',
+    'no auto-update exists by design',
+  ].join('\n')
+}
+
+/** The nearest package.json — apps/desktop's in dev, the staged one in an internal install. */
+function defaultReadVersion(): string {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf8'),
+    ) as {
+      version?: unknown
+    }
+    return typeof pkg.version === 'string' && pkg.version !== '' ? pkg.version : 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
+/** The install's git origin, when this checkout is a repository (local git only, no network). */
+function defaultGitRemote(): string | null {
+  try {
+    const out = execFileSync('git', ['remote', 'get-url', 'origin'], {
+      cwd: fileURLToPath(new URL('../..', import.meta.url)),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    const url = out.trim()
+    return url === '' ? null : url
+  } catch {
+    return null
+  }
 }
 
 async function main(): Promise<void> {
@@ -88,6 +162,7 @@ async function main(): Promise<void> {
     },
     initialized: () => existsSync(home),
     markerDir: home,
+    dataDir: home,
     stdout: (line) => console.log(line),
     startServer: async () => {},
   })

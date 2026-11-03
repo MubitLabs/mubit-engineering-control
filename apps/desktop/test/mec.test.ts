@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,16 +13,18 @@ const normalBoardText = readFileSync(
 
 const tempDirs: string[] = []
 
-/** A CliIo double: records stdout lines and startServer calls, markerDir is a fresh tmpdir. */
+/** A CliIo double: records stdout lines and startServer calls, markerDir/dataDir are fresh tmpdirs. */
 function makeIo(overrides: { readSnapshotText?: () => string; initialized?: boolean } = {}) {
   const lines: string[] = []
   let starts = 0
   const markerDir = mkdtempSync(join(tmpdir(), 'mec-cli-'))
-  tempDirs.push(markerDir)
+  const dataDir = mkdtempSync(join(tmpdir(), 'mec-cli-data-'))
+  tempDirs.push(markerDir, dataDir)
   const io = {
     readSnapshotText: overrides.readSnapshotText ?? (() => normalBoardText),
     initialized: () => overrides.initialized ?? true,
     markerDir,
+    dataDir,
     stdout: (line: string) => {
       lines.push(line)
     },
@@ -30,7 +32,7 @@ function makeIo(overrides: { readSnapshotText?: () => string; initialized?: bool
       starts += 1
     },
   }
-  return { io, lines, markerDir, starts: () => starts }
+  return { io, lines, markerDir, dataDir, starts: () => starts }
 }
 
 afterEach(() => {
@@ -81,5 +83,42 @@ describe('runCli', () => {
     const code = await runCli(['bogus'], io)
     expect(code).toBe(1)
     expect(lines.some((line) => line.toLowerCase().includes('usage'))).toBe(true)
+  })
+
+  it('slot dispatches to the slot CLI against the local data dir', async () => {
+    const { io, lines, dataDir } = makeIo()
+    const code = await runCli(['slot', 'add', 'claude-sub', 'max-1'], io)
+    expect(code).toBe(0)
+    expect(lines.some((line) => line.startsWith('created max-1 (home '))).toBe(true)
+    expect(existsSync(join(dataDir, 'engines', 'claude', 'max-1'))).toBe(true)
+  })
+
+  it('update prints the installed version and the internal reinstall path, exit 0', async () => {
+    const { io, lines } = makeIo()
+    const code = await runCli(['update'], {
+      ...io,
+      readVersion: () => '0.1.0',
+      gitRemote: () => 'git@github.com:mubit/mec.git',
+      env: {},
+    })
+    expect(code).toBe(0)
+    const text = lines.join('\n')
+    expect(text).toContain('mec 0.1.0 (installed)')
+    expect(text).toContain('registry: git@github.com:mubit/mec.git')
+    expect(text).toContain(
+      'internal distribution: reinstall from the repository (pnpm install && pnpm build:desktop)',
+    )
+    expect(text).toContain('no auto-update exists by design')
+  })
+
+  it('update prefers MEC_REGISTRY over the git remote', async () => {
+    const { io, lines } = makeIo()
+    await runCli(['update'], {
+      ...io,
+      readVersion: () => '0.1.0',
+      gitRemote: () => 'git@github.com:mubit/mec.git',
+      env: { MEC_REGISTRY: 'https://npm.internal.mubit.example' },
+    })
+    expect(lines.join('\n')).toContain('registry: https://npm.internal.mubit.example')
   })
 })

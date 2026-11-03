@@ -8,3 +8,4 @@ coverage/
 .mec/
 .preflight/
 apps/desktop/dist
+dist-internal/

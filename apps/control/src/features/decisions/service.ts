@@ -90,7 +90,9 @@ export async function openDecision(tx: Tx, attempt: AttemptRow, env: RunnerEvent
     title:
       kind === 'question'
         ? `${ctx.taskKey}: ${(question ?? 'Question').slice(0, 140)}`
-        : `${ctx.taskKey}: run ${toolName ?? 'a tool'}${command ? ` — ${command.slice(0, 100)}` : ''}`,
+        : command
+          ? `${ctx.taskKey} wants to run: ${command.slice(0, 120)}`
+          : `${ctx.taskKey} wants to use ${toolName ?? 'a tool'}`,
     detail: {
       question,
       options: Array.isArray(p.options) ? p.options : undefined,

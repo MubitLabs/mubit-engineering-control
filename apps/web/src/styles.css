@@ -290,3 +290,124 @@ body {
   color: var(--text);
   background: var(--bg-raised);
 }
+
+/* Live wiring — inbox strip, chat rows, chips */
+.inbox-strip {
+  display: block;
+  font-family: var(--mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  text-decoration: none;
+}
+.inbox-strip:hover {
+  text-decoration: underline;
+}
+.message-list {
+  flex: 1;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.msg {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--sp-2) var(--sp-3);
+}
+.msg-pending {
+  border-style: dashed;
+  opacity: 0.55;
+}
+.msg-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.msg-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+}
+.chip {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 var(--sp-1);
+  cursor: pointer;
+}
+.chip:hover {
+  border-color: var(--accent);
+}
+.composer-aux {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 22px;
+}
+.error-note {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--error);
+}
+
+/* Inbox — expiry countdown beside the actions */
+.countdown {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  align-self: center;
+}
+.countdown-expired {
+  color: var(--error);
+}
+
+/* Work board — clickable cards */
+.work-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--sp-2);
+  margin-top: var(--sp-2);
+  cursor: pointer;
+}
+.work-card:hover {
+  border-color: var(--accent);
+}
+.work-card-title {
+  display: block;
+}
+.work-card-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* Slots grid + setup banner */
+.slot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--sp-3);
+}
+.slot-detail {
+  margin: var(--sp-1) 0 0;
+}
+.setup-banner {
+  border-color: var(--degraded);
+}

@@ -48,6 +48,7 @@ export function Messages({ attemptId, canSend }: { attemptId: string; canSend: b
             style={{ flex: 1 }}
             value={text}
             onChange={(e) => setText(e.target.value)}
+            aria-label="Message to the agent"
             placeholder="Steer the agent (queued, delivered in order)"
           />
           <button type="submit" className="btn small" disabled={!text.trim() || send.isPending}>

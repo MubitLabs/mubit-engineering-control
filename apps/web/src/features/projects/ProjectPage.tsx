@@ -265,6 +265,7 @@ function AddMember({ projectId }: { projectId: string }) {
           style={{ flex: 2 }}
           value={login}
           onChange={(e) => setLogin(e.target.value)}
+          aria-label="GitHub login of the new member"
           placeholder="github login"
         />
         <select style={{ flex: 1 }} value={role} onChange={(e) => setRole(e.target.value as ProjectRole)}>

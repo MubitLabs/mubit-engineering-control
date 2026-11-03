@@ -141,6 +141,7 @@ export function DecisionCard({ approval, onTaskPage = false }: { approval: Appro
               rows={3}
               value={answer}
               onChange={(e) => setAnswer(e.target.value)}
+              aria-label="Your answer"
               placeholder="Your answer"
             />
             <div className="row">
@@ -200,6 +201,9 @@ export function DecisionCard({ approval, onTaskPage = false }: { approval: Appro
               style={{ flex: 1 }}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
+              aria-label={
+                approval.kind === 'result' ? 'Notes for the repair attempt' : 'Reason for rejecting'
+              }
               placeholder={
                 approval.kind === 'result'
                   ? 'What should the repair attempt change?'
@@ -209,7 +213,12 @@ export function DecisionCard({ approval, onTaskPage = false }: { approval: Appro
             <button
               type="button"
               className="btn danger"
-              disabled={resolve.isPending}
+              disabled={resolve.isPending || (approval.kind === 'result' && !reason.trim())}
+              title={
+                approval.kind === 'result' && !reason.trim()
+                  ? 'Say what the repair attempt should change'
+                  : undefined
+              }
               onClick={() => resolve.mutate({ kind: 'reject', reason })}
             >
               {approval.kind === 'result' ? 'Send back' : 'Reject'}

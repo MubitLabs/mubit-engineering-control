@@ -1,0 +1,7 @@
+{
+  "runtime": { "state": "ready", "instances": 1, "answering": true },
+  "parts": {
+    "slot:max-1": { "state": "error", "detail": "login expired" }
+  },
+  "setup": { "has_slot": true, "has_repository": true }
+}

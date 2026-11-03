@@ -19,6 +19,20 @@ interface WorkTask {
   updatedAt: Date
 }
 
+/** Why an integrated delivery has no pull request yet, in the order finalise() checks. */
+export function pullRequestWait(
+  delivery: { state: string; integrationSha: string | null; integrationPushedSha: string | null },
+  opts: { hasPullRequest: boolean; github: GitHubApi | null; cloneUrl: string },
+): string | null {
+  if (delivery.state !== 'integrating' || !delivery.integrationSha || opts.hasPullRequest) return null
+  if (delivery.integrationPushedSha !== delivery.integrationSha)
+    return 'The integration branch was not pushed: the runner pushes branches only when MEC_GIT_TOKEN (or MEC_PUSH_BRANCHES=true) is set in its runner.env.'
+  if (!opts.github) return 'The branch is pushed. Opening the pull request needs GITHUB_TOKEN in control.env.'
+  if (!opts.github.supports(opts.cloneUrl))
+    return 'The branch is pushed. Pull requests are opened only for github.com repositories.'
+  return 'Opening the pull request.'
+}
+
 /**
  * The integration queue (PDF §14). For each executing delivery, under a single integration lease,
  * merge the next accepted task whose prerequisites are integrated into the delivery's integration

@@ -126,7 +126,7 @@ export function TaskPage() {
                 </div>
               )}
               <div className="faint">
-                attempts used {task.attemptsUsed} / {task.spec.maxAttempts}
+                attempts used {task.attemptsUsed} · budget {task.spec.maxAttempts}
               </div>
             </div>
           </Panel>

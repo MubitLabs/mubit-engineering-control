@@ -14,6 +14,7 @@ const TONES: Record<string, string> = {
   draft: 'neutral',
   proposed: 'warn',
   rejected: 'err',
+  sent_back: 'warn',
   superseded: 'neutral',
   // task
   ready: 'info',
@@ -52,6 +53,12 @@ const TONES: Record<string, string> = {
   closed: 'neutral',
   repair: 'warn',
   error: 'err',
+}
+
+/** Reviews read as accepted / sent back rather than approved / rejected. */
+export function decisionStatus(a: { kind: string; status: string }): string {
+  if (a.kind !== 'result') return a.status
+  return a.status === 'approved' ? 'accepted' : a.status === 'rejected' ? 'sent_back' : a.status
 }
 
 export function Status({ value }: { value: string | null | undefined }) {

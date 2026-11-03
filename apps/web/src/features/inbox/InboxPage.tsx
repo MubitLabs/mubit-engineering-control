@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import { api } from '../../api/client'
 import type { Approval } from '../../api/types'
-import { Empty, ErrorBox, Panel, Status, Time } from '../../components/ui'
+import { decisionStatus, Empty, ErrorBox, Panel, Status, Time } from '../../components/ui'
 
 /**
  * Decision inbox (PDF §12): the exact question or operation, its evidence, and plain choices.
@@ -81,7 +81,7 @@ export function DecisionCard({ approval }: { approval: Approval }) {
           <h3>{approval.title}</h3>
         </div>
       }
-      actions={<Status value={approval.status} />}
+      actions={<Status value={decisionStatus(approval)} />}
     >
       <div className="stack">
         <div className="small muted row">
@@ -90,7 +90,12 @@ export function DecisionCard({ approval }: { approval: Approval }) {
               {approval.deliveryTitle}
             </Link>
           )}
-          {approval.taskKey && <span>task {approval.taskKey}</span>}
+          {approval.taskKey && approval.taskId && (
+            <span>
+              task{' '}
+              <Link to={`/projects/${approval.projectId}/tasks/${approval.taskId}`}>{approval.taskKey}</Link>
+            </span>
+          )}
           <span>requested by {detail.requester ?? approval.requestedByKind}</span>
           {detail.profileOwner && <span>on {detail.profileOwner}'s account</span>}
           <Time value={approval.createdAt} />

@@ -544,7 +544,9 @@ async function requestReview(tx: Tx, task: TaskRow, attempt: AttemptRow): Promis
       files: ctx.diff?.fileCount ?? 0,
       checksPassed: passed.map((p) => p.name),
       consequence:
-        'Accepting queues this exact commit for integration; sending back starts a repair attempt with your notes.',
+        task.attemptsUsed >= (task.spec.maxAttempts ?? 2)
+          ? 'Accepting queues this exact commit for integration. This was the last attempt in the budget: sending back keeps your notes, and someone starts the repair attempt from the task page.'
+          : 'Accepting queues this exact commit for integration; sending back starts a repair attempt with your notes.',
     },
     requestedBy: { kind: 'system' },
     allowedDeciderIds: [ctx.ownerId],

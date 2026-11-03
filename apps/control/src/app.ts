@@ -118,7 +118,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   registerAuth(app, { sql, config, github })
   registerProjects(app, { sql, config })
-  registerDeliveries(app, { sql, hooks })
+  registerDeliveries(app, { sql, hooks, github: githubApi })
   registerApprovals(app, { sql, hooks })
   registerEvents(app, { sql, bus })
   registerRunnerRoutes(app, { sql, config, registry })

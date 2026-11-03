@@ -146,6 +146,7 @@ export interface DeliveryDetail {
   dependencies: { taskId: string; dependsOnTaskId: string }[]
   approvals: Approval[]
   pullRequests: PullRequest[]
+  nextStep?: string | null
 }
 
 export interface PullRequest {

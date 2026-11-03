@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router'
 import { ApiError, api } from '../../api/client'
 import type { DeliveryDetail, PlanRevision } from '../../api/types'
 import { ProjectCrumb } from '../../components/Layout'
-import { Empty, ErrorBox, Loading, Panel, Status, Time } from '../../components/ui'
+import { decisionStatus, Empty, ErrorBox, Loading, Panel, Status, Time } from '../../components/ui'
 import type { ProfileView } from '../accounts/AccountsPage'
 import { useMe } from '../auth/useMe'
 import { TaskGraph } from './TaskGraph'
@@ -136,6 +136,7 @@ export function DeliveryPage() {
                     <Status value={r.state === 'accepted' ? 'passed' : r.state} />
                   </div>
                 ))}
+                {q.data.nextStep && <div className="notice">{q.data.nextStep}</div>}
                 {q.data.pullRequests.map((pr) => (
                   <div key={pr.id} className="row">
                     <a href={pr.url} target="_blank" rel="noreferrer">
@@ -210,7 +211,7 @@ export function DeliveryPage() {
                         </div>
                       </td>
                       <td>
-                        <Status value={a.status} />
+                        <Status value={decisionStatus(a)} />
                       </td>
                     </tr>
                   ))}

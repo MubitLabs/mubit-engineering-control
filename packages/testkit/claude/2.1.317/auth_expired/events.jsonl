@@ -1,3 +1,0 @@
-{"type": "session_started", "session_id": "28fca5ab-f860-485c-a099-f4c54cd43dea", "engine": "claude", "engine_version": "2.1.317", "model": "claude-opus-5-5"}
-{"type": "error", "class": "auth", "detail": "Not logged in \u00b7 Please run /login", "raw": {"error": "authentication_failed", "is_api_error_message": true}}
-{"type": "exit", "code": 1, "terminal_reason": "api_error"}

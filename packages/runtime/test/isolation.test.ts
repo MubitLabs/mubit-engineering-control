@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
 import type { IsolationProfile } from '@mec/contracts'
+import { describe, expect, it } from 'vitest'
 import { buildAttemptSettings, defaultDenyRead, serialiseAttemptSettings } from '../src/isolation'
 
 const home = '/Users/tester'
@@ -48,7 +48,9 @@ describe('buildAttemptSettings', () => {
   })
 
   it('preferred degrades failIfUnavailable; off disables the sandbox', () => {
-    expect(buildAttemptSettings(profile({ sandbox: 'preferred' }), opts).sandbox.failIfUnavailable).toBe(false)
+    expect(buildAttemptSettings(profile({ sandbox: 'preferred' }), opts).sandbox.failIfUnavailable).toBe(
+      false,
+    )
     expect(buildAttemptSettings(profile({ sandbox: 'off' }), opts).sandbox.enabled).toBe(false)
   })
 

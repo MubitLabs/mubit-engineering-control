@@ -1,0 +1,6 @@
+export type { GitOptions, GitResult } from './exec'
+export { GitError, git, gitLines } from './exec'
+export type { EnsureResult } from './repos'
+export { RepoCache } from './repos'
+export type { DiffSummary, WorktreeAddOptions } from './worktrees'
+export { assertSafeRef, assertSha, commitAll, diffSummary, headSha, Worktrees } from './worktrees'

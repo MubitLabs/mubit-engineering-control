@@ -45,7 +45,10 @@ export type AttemptSettings = {
   disableAllHooks: true
 }
 
-export function buildAttemptSettings(profile: IsolationProfile, opts: AttemptSettingsOptions): AttemptSettings {
+export function buildAttemptSettings(
+  profile: IsolationProfile,
+  opts: AttemptSettingsOptions,
+): AttemptSettings {
   const denyRead = [...new Set([...defaultDenyRead(opts.homeDir), ...profile.deny_read])]
   const allowWrite = [...new Set([opts.worktree, opts.tempDir, ...profile.allow_write])]
   const allowedDomains = [...new Set([...opts.allowedDomains, ...profile.allowed_domains])]

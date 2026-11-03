@@ -1,0 +1,5 @@
+export { FakeEngine } from './fake-engine'
+export type { RecordedFact } from './memory-core-for-engines'
+export { factsOf, MemoryCoreForEngines } from './memory-core-for-engines'
+export type { RepositoriesSnapshot, RepositoryName } from './memory-repositories'
+export { MemoryRepositories } from './memory-repositories'

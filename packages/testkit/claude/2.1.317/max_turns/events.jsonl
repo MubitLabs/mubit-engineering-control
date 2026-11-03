@@ -1,5 +1,0 @@
-{"type": "session_started", "session_id": "278be031-0256-4b22-8830-518788c81e7a", "engine": "claude", "engine_version": "2.1.317", "model": "claude-opus-5-5"}
-{"type": "tool_call", "tool": "Read", "input": {"file_path": "/Users/shankhadutta/code/mec-v4.1-stream-b/.preflight/fixture-repo/hello.txt"}, "ok": true}
-{"type": "rate_limit", "window": "five_hour", "status": "allowed", "utilization": 0.23, "resets_at": "2026-11-03T18:20:00.000Z", "raw": {"rateLimitType": "five_hour", "isUsingOverage": false}}
-{"type": "rate_limit", "window": "seven_day", "status": "allowed", "utilization": 0.07, "resets_at": "2026-11-03T18:20:00.000Z", "raw": {"rateLimitType": "five_hour", "isUsingOverage": false}}
-{"type": "exit", "code": 1, "terminal_reason": "max_turns"}

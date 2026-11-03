@@ -5,8 +5,10 @@ import * as contracts from '../src'
 // CONTRACTS §0: no credential has a field. A field fails when one of its name segments is one of these.
 const FORBIDDEN = new Set(['token', 'key', 'secret', 'password'])
 
-// The only exemption: an attempt-scoped mec-tools token, minted at launch and never stored (plan §6, §17).
-const EXEMPT = ['AttemptBrief.tools.token']
+// Exemptions (each carries no credential):
+// - AttemptBrief.tools.token: an attempt-scoped mec-tools token, minted at launch and never stored (plan §6, §17).
+// - EffectJob.key: the effects coalescing key (CONTRACTS §7 'enqueue(kind, key, payload)') — an id, never a secret.
+const EXEMPT = ['AttemptBrief.tools.token', 'EffectJob.key']
 
 type LooseDef = {
   type: string

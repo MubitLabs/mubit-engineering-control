@@ -32,6 +32,15 @@ The normalised, engine-agnostic stream every adapter emits and the `FakeEngine` 
 
 Invariants the conformance test checks: exactly one `session_started` first and one `exit` last; `seq` strictly increasing; no `message.text` matches a provider key pattern (§9 redaction patterns live in `packages/slots` but the contracts package exports the regex list so the lint can run everywhere).
 
+Clarifications from part 1, from B's recordings of Claude Code 2.1.317 (`docs/engines.md`):
+
+- One `rate_limit_event` carries several `unifiedWindows`; the adapter emits one `rate_limit` per window. `raw` carries the engine event's top-level fields, so on the `seven_day` event `raw.rateLimitType` names the binding window, not that event's window.
+- `resetsAt` arrives in unix seconds; the adapter converts it to `toISOString` form. Claude's `allowed_warning` maps to `warning`.
+- `system/commands_changed` is not normalised; the raw stream and the journal keep it.
+- `role: 'user'` appears only for streamed two-way input: a static `-p` prompt is not echoed, and user-type events carrying `tool_result` blocks complete a `tool_call` instead.
+- `exit.terminal_reason` comes from the engine's `terminal_reason`, never `result.subtype`. With no `result` (a crash), the runtime emits `exit { code: 128 + signal, terminal_reason: 'crashed' }`.
+- `checkEventStream(events)` in `events.ts` implements the invariants and accepts fixture bodies (no `seq`) as well as enveloped events.
+
 ## 2. `brief.ts` and `report.ts`
 
 **`AttemptBrief`** (A builds, B launches):
@@ -66,6 +75,13 @@ handback?: { message_id, reason }                    // once per message
 ```
 
 **`Question`**: `{ id?, text (≤ 400 chars), options?: string[], for_message_id?: string, evidence_ref?: string }`. Same `text` as the open question = reuse; different = replace.
+
+Clarifications from part 1:
+
+- **`AttemptRef`** = `{ attempt_id, generation }` (`common.ts`); every runtime call, bridge request and fact names an attempt this way.
+- **`IsolationProfile`** is defined in `brief.ts`, because the brief carries it; part 2's `slots.ts` re-exports it.
+- **`tools.token`** is the one field the §0 secret-field lint exempts. `issueToken` mints it at launch; it is never written to an effects payload or any table (plan §17).
+- `origin.messages` items carry `text` or `pointer`, never both. `env` refuses names that contain `KEY`, `PASSWORD`, `SECRET` or `TOKEN` (plan §5.12), and values that match a provider key pattern; `MEC_TOOLS_TOKEN` therefore travels only through `tools.token`.
 
 ## 3. `bridge.ts` — permissions
 
@@ -209,8 +225,11 @@ Path: `packages/testkit/fixtures/<engine>/<engine_version>/<scenario>/` containi
 ```
 meta.json = { engine, engine_version, scenario, recorded_at, recorded_by: 'fake' | 'real',
               redacted: true, expected: { reports: ReportKind[], permission_requests: number,
-              rate_limits: Window[], exit: ExitReason } }
+              rate_limits: Window[], exit: ExitReason },
+              notes?: string }
 ```
+
+Clarifications from part 1 (the schema itself lands in part 3): `notes` is free text on what the recording shows; a scenario directory may also hold `stderr.log` (the engine's stderr, redacted, possibly empty); `recorded_at` is in `toISOString` form like every other time (§0).
 
 Scenarios every engine must have before its handshake: `smoke`, `permission_request`, `rate_limit_warning`, `rate_limit_rejected`, `auth_expired`, `provider_down`, `max_turns`, `report_ready_with_question`, `report_blocked`, `report_dropped`, `crash_mid_turn`. Provider error bodies (GLM 429, Gemini 429 with `RetryInfo`, Anthropic/OpenAI 429) live under `providers/<provider>/`.
 

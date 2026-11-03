@@ -1,0 +1,15 @@
+{
+  "engine": "claude",
+  "engine_version": "2.1.317",
+  "scenario": "crash_mid_turn",
+  "recorded_at": "2026-11-03T15:33:43.397897Z",
+  "recorded_by": "real",
+  "redacted": true,
+  "expected": {
+    "reports": [],
+    "permission_requests": 0,
+    "rate_limits": [],
+    "exit": "crashed"
+  },
+  "notes": "process SIGKILLed mid-turn; raw.jsonl has NO result event \u2014 the exit EngineEvent is synthesized by the runtime (code 137 = 128+SIGKILL)"
+}

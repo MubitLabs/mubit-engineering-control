@@ -1,0 +1,18 @@
+{
+  "engine": "claude",
+  "engine_version": "2.1.317",
+  "scenario": "smoke",
+  "recorded_at": "2026-11-03T15:18:57.626420Z",
+  "recorded_by": "real",
+  "redacted": true,
+  "expected": {
+    "reports": [],
+    "permission_requests": 0,
+    "rate_limits": [
+      "five_hour",
+      "seven_day"
+    ],
+    "exit": "completed"
+  },
+  "notes": "real subscription slot (preflight-a); resetsAt converted from unix seconds; rate_limit_event fans out one EngineEvent per unifiedWindow; system/commands_changed not normalised"
+}

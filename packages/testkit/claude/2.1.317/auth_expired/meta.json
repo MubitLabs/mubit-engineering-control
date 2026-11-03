@@ -1,0 +1,15 @@
+{
+  "engine": "claude",
+  "engine_version": "2.1.317",
+  "scenario": "auth_expired",
+  "recorded_at": "2026-11-03T15:33:43.397897Z",
+  "recorded_by": "real",
+  "redacted": true,
+  "expected": {
+    "reports": [],
+    "permission_requests": 0,
+    "rate_limits": [],
+    "exit": "api_error"
+  },
+  "notes": "empty CLAUDE_CONFIG_DIR home; failure arrives as a synthetic assistant message (model '<synthetic>', error=authentication_failed); result.subtype says 'success' while is_error=true and terminal_reason=api_error \u2014 exit must key off terminal_reason; apiKeySource 'none' in init"
+}

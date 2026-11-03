@@ -1,0 +1,18 @@
+{
+  "engine": "claude",
+  "engine_version": "2.1.317",
+  "scenario": "max_turns",
+  "recorded_at": "2026-11-03T15:33:43.397897Z",
+  "recorded_by": "real",
+  "redacted": true,
+  "expected": {
+    "reports": [],
+    "permission_requests": 0,
+    "rate_limits": [
+      "five_hour",
+      "seven_day"
+    ],
+    "exit": "max_turns"
+  },
+  "notes": "--max-turns 1 with a forced Read; raw includes a user-type event that is the TOOL RESULT (not prompt echo) \u2014 message role=user mapping must account for tool_result content blocks"
+}

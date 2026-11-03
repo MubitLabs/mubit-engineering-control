@@ -1,0 +1,6 @@
+{"type": "session_started", "session_id": "f5fdd8dd-5fb7-49ed-80cb-9eec8412c6e3", "engine": "claude", "engine_version": "2.1.317", "model": "claude-opus-5-5"}
+{"type": "message", "role": "assistant", "text": "MEC pre-flight smoke ok."}
+{"type": "rate_limit", "window": "five_hour", "status": "allowed", "utilization": 0.23, "resets_at": "2026-11-03T18:20:00.000Z", "raw": {"rateLimitType": "five_hour", "overageStatus": "allowed", "isUsingOverage": false}}
+{"type": "rate_limit", "window": "seven_day", "status": "allowed", "utilization": 0.07, "resets_at": "2026-11-10T07:00:00.000Z", "raw": {"rateLimitType": "five_hour", "overageStatus": "allowed", "isUsingOverage": false}}
+{"type": "usage", "input_tokens": 2, "output_tokens": 16, "cache_read": 11382, "cache_write": 7335, "cost_usd": 0.0612844}
+{"type": "exit", "code": 0, "terminal_reason": "completed"}

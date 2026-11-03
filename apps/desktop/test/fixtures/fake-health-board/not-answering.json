@@ -1,0 +1,5 @@
+{
+  "runtime": { "state": "ready", "instances": 1, "answering": false },
+  "parts": {},
+  "setup": { "has_slot": true, "has_repository": true }
+}

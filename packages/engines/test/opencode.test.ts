@@ -266,6 +266,26 @@ describe('classifyOpencodeError', () => {
         },
       }),
     ).toBe('quota')
+    // REAL z.ai coding-plan 429 body (R2.6 deliberate burst, 3 Nov 2026 — captured
+    // verbatim in testkit/fixtures/providers/zai-coding-plan/429.json): HTTP 429 with
+    // z.ai's own code 1302 inside; classified by status before the body matters.
+    {
+      const realBody = readFileSync(
+        join(
+          fileURLToPath(
+            new URL('../../testkit/fixtures/providers/zai-coding-plan/429.json', import.meta.url),
+          ),
+        ),
+        'utf8',
+      ).trim()
+      expect(
+        classifyOpencodeError({
+          type: 'provider.rateLimit',
+          status: 429,
+          response: { body: realBody },
+        }),
+      ).toBe('quota')
+    }
     expect(classifyOpencodeError('401 Unauthorized: API key not valid. Please pass a valid API key.')).toBe(
       'auth',
     )

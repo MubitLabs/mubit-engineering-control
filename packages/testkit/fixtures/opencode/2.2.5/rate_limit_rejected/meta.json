@@ -14,5 +14,5 @@
     ],
     "exit": "api_error"
   },
-  "notes": "SYNTHETIC (no quota burned to record a real one): a Google 429 RESOURCE_EXHAUSTED carried through opencode 2.2.5 as session.step.failed + session.execution.failed, with the Google error JSON stringified inside error.response.body exactly as the real envelope nests provider bodies (see auth_expired for a real response.body); RetryInfo 12s → resets_at, quotaId …PerMinutePerProject → window per_minute"
+  "notes": "The opencode envelope is SYNTHETIC (no opencode turn was burned): a Google 429 RESOURCE_EXHAUSTED carried through opencode 2.2.5 as session.step.failed + session.execution.failed, with the Google error JSON stringified inside error.response.body exactly as the real envelope nests provider bodies (see auth_expired for a real response.body); RetryInfo 12s → resets_at, quotaId …PerMinutePerProject → window per_minute. The REAL z.ai 429 body (code 1302, R2.6 deliberate burst) is recorded verbatim at fixtures/providers/zai-coding-plan/429.json and drives a parser case in opencode.test.ts; a Gemini 429 was NOT forceable — the billing-linked key's paid RPM absorbed 45 concurrent tiny requests without one (attempt recorded in HANDSHAKES R2.6)."
 }

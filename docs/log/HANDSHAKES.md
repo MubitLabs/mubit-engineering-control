@@ -69,3 +69,13 @@ H4 quota: ~4 Claude implementer turns + 5 Codex review turns (vendor-accounted, 
 - Transient lesson: a superseded check-run reports `CANCELLED` between check-suite updates; `mergeBehindCard` correctly refuses any non-green read — the retry with a fresh card merged cleanly. (Possible follow-up: treat CANCELLED-when-a-successor-exists as non-blocking.)
 
 Quota: ~3 Codex turns + 2 Claude review turns.
+
+## R2.6 — provider limits on real signals — 3 November 2026
+
+**PARTIAL-PASS, honest.** Deliberate bursts against the live slots (keys from keystores inside the scripts, never printed; curl via stdin config; bodies carry no secrets):
+
+- **z.ai GLM: REAL 429 captured.** 30-concurrent tiny chat-completions on the coding endpoint (`api.z.ai/api/coding/paas/v4`) — 16 of 75 requests across three waves answered HTTP 429 with body `{"error":{"code":"1302","message":"Rate limit reached for requests"}}`. Recorded verbatim at `packages/testkit/fixtures/providers/zai-coding-plan/429.json` (the exact `providers/<provider>/` artifact CONTRACTS §9 promised) with a real capture meta; drives a `classifyOpencodeError` regression case. The opencode turn-level fixture stays envelope-synthetic (no turn burned) — its meta says exactly that.
+- **Gemini 429: NOT forceable on this key.** The billing-linked project absorbed 45 concurrent tiny `generateContent` calls with zero 429s (paid-tier RPM ≫ the free-tier 10 RPM the plan assumed). Recorded as attempted; the Google-429 fixture shape stays synthetic with RetryInfo/quotaId parsing exercised. A free-tier key would trip it in one burst if ever needed.
+- **Claude `allowed_warning`: not forceable cheaply.** The real fixtures carry live `allowed` five-hour/seven-day events (smoke, max_turns) with utilization 0.23/0.07; pushing a Max-plan window to its warning tier means burning real subscription quota wholesale. R1.11 daily use will capture it naturally — the parser's warning tier is unit-covered until then.
+
+Sequencing lesson recorded for the burst scripts: `--data-binary` without `content-type: application/json` makes Google's gateway bind the JSON as form fields ("Cannot bind query parameter") — 400s that look like payload bugs.

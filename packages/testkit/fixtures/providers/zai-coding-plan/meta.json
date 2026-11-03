@@ -1,0 +1,8 @@
+{
+  "provider": "zai-coding-plan",
+  "artifact": "429.json",
+  "recorded_by": "real",
+  "recorded_at": "2026-11-03T23:05:00.000Z",
+  "method": "R2.6 deliberate burst: 30 concurrent tiny chat-completions against https://api.z.ai/api/coding/paas/v4 (the Coding-Plan-billed endpoint) with the slot key from the keystore; 16 of 75 requests answered 429 across three waves. Body captured verbatim; no secret appears in it.",
+  "notes": "z.ai codes its rate limit 1302 inside an HTTP 429. The opencode envelope carries it as error.response.body (stringified), status 429 — classified quota/rate_limit by HTTP status before the body is even parsed."
+}

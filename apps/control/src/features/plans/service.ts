@@ -278,7 +278,14 @@ export async function submitRevision(
     planRevisionId: rev.id,
     bindingHash: rev.contentHash,
     title: `Approve plan revision ${rev.number} for "${delivery.title}"`,
-    detail: { revisionNumber: rev.number, taskCount: rev.tasks.length, warnings: validation.warnings.length },
+    detail: {
+      revisionNumber: rev.number,
+      taskCount: rev.tasks.length,
+      warnings: validation.warnings.length,
+      tasks: rev.tasks.slice(0, 50).map((t) => ({ key: t.key, title: t.title, dependsOn: t.dependsOn })),
+      impact: impact ?? undefined,
+      consequence: `Approving freezes this revision and starts its ${rev.tasks.length} task(s) on agent accounts offered to the project. Later changes need a new revision.`,
+    },
     requestedBy: actor,
     allowedDeciderIds: defaultDeciders('plan', { deliveryOwnerId: delivery.ownerId }),
   })

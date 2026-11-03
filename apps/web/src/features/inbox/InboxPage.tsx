@@ -72,6 +72,9 @@ export function DecisionCard({ approval, onTaskPage = false }: { approval: Appro
     requester?: string
     profileOwner?: string
     consequence?: string
+    tasks?: { key: string; title: string; dependsOn: string[] }[]
+    warnings?: number
+    impact?: string
   }
   const pending = approval.status === 'pending'
 
@@ -119,6 +122,26 @@ export function DecisionCard({ approval, onTaskPage = false }: { approval: Appro
           <pre className="panel panel-body small">{JSON.stringify(detail.input, null, 2)}</pre>
         )}
         {detail.diff && <pre className="panel panel-body small">{detail.diff}</pre>}
+        {detail.tasks && detail.tasks.length > 0 && (
+          <div className="small stack" style={{ gap: 2 }}>
+            {detail.tasks.map((t) => (
+              <div key={t.key}>
+                <code>{t.key}</code> {t.title}
+                {t.dependsOn.length > 0 && <span className="faint"> · after {t.dependsOn.join(', ')}</span>}
+              </div>
+            ))}
+            {(detail.warnings ?? 0) > 0 && approval.deliveryId && (
+              <Link
+                className="status warn"
+                style={{ alignSelf: 'flex-start' }}
+                to={`/projects/${approval.projectId}/deliveries/${approval.deliveryId}`}
+              >
+                {detail.warnings} warning(s): see the plan
+              </Link>
+            )}
+          </div>
+        )}
+        {detail.impact && <pre className="panel panel-body small">{detail.impact}</pre>}
         {detail.consequence && <div className="notice">{detail.consequence}</div>}
         {!pending && approval.answer && (
           <div className="muted small">

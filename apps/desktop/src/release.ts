@@ -507,7 +507,9 @@ export async function mergeBehindCard(
   const normalise = (state: string): string => state.toUpperCase()
   const ciGreen = checks.length > 0 && checks.every((check) => normalise(check.state) === 'SUCCESS')
   if (!ciGreen) {
-    const reason = checks.some((check) => normalise(check.state) !== 'PENDING' && normalise(check.state) !== 'SUCCESS')
+    const reason = checks.some(
+      (check) => normalise(check.state) !== 'PENDING' && normalise(check.state) !== 'SUCCESS',
+    )
       ? 'ci_failed'
       : 'ci_pending'
     deps.store.atomic(() => {

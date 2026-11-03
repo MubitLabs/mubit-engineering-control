@@ -130,7 +130,13 @@ export function newIdempotencyKey(): string {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init)
+  // §22 CSRF discipline: the custom header every mutating call must carry; a
+  // cross-origin page cannot add it without a preflight this server never answers.
+  const withHeader: RequestInit = {
+    ...init,
+    headers: { ...(init?.headers as Record<string, string> | undefined), 'x-mec-client': '1' },
+  }
+  const response = await fetch(path, withHeader)
   if (!response.ok) throw new HttpError(path, response.status, await errorOf(response))
   return (await response.json()) as T
 }

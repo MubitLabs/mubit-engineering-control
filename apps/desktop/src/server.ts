@@ -307,6 +307,49 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   }
   const app = Fastify({ logger: false })
 
+  // §22 "rejects non-local origins and requires a custom request header (v1's CSRF
+  // discipline)". Two legs, both scoped to BROWSER requests — a browser always sends
+  // Origin (cross-origin) and Sec-Fetch-*; local non-browser clients (the CLI, tests,
+  // the engine-side MCP client) send neither and are authenticated by their own seams.
+  //  1. Any request carrying an Origin must name a loopback host (the workbench itself,
+  //     or the dev server proxying to it). A web page at https://evil.com is 403 before
+  //     any route runs — for reads AND for "simple-request" mutations that would
+  //     otherwise execute despite CORS response blocking. `null` origins (sandboxed
+  //     frames, data: URLs) are rejected with it.
+  //  2. A browser-shaped MUTATION additionally needs the custom header the workbench
+  //     sends on every call (apps/web request()): a cross-origin page cannot add it
+  //     without a preflight, and this server answers no preflight. This also stops a
+  //     *local* page (another project's dev server) from posting as the user.
+  // EventSource streams are GETs: leg 1 covers them, leg 2 never applies.
+  const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
+  app.addHook('onRequest', async (request, reply) => {
+    const origin = request.headers.origin
+    if (origin !== undefined) {
+      const host =
+        typeof origin === 'string' && origin !== 'null'
+          ? (() => {
+              try {
+                return new URL(origin).hostname
+              } catch {
+                return ''
+              }
+            })()
+          : ''
+      if (!LOOPBACK_HOSTS.has(host)) {
+        return reply.code(403).send({ error: 'origin not local' })
+      }
+    }
+    const browserShaped =
+      origin !== undefined ||
+      request.headers['sec-fetch-site'] !== undefined ||
+      request.headers.referer !== undefined
+    const mutating = !['GET', 'HEAD', 'OPTIONS'].includes(request.method)
+    if (browserShaped && mutating && request.headers['x-mec-client'] !== '1') {
+      return reply.code(403).send({ error: 'missing client header' })
+    }
+    return undefined
+  })
+
   app.get('/healthz', async () => ({ ok: true }))
 
   app.get('/api/status', async () => buildHealthSnapshot(store, deps.health))

@@ -134,16 +134,15 @@ door is the courier, which writes the keystore (0600) and the store's fingerprin
 | Non-matching key / escaping label write nothing | `apps/desktop/src/server.ts` | `apps/desktop/test/api-slots.test.ts` — *rejects a non-anthropic key (and an escaping label) with 400, writing nothing* |
 | Slot listing exposes fingerprints only | `apps/desktop/src/server.ts` | `apps/desktop/test/api-slots.test.ts` — *GET /api/slots lists slot docs as fingerprints only* |
 
-**GAP.** The chat-route guard itself (`apps/desktop/src/server.ts:247-267`: `matchesSecret`
-→ store the redacted text, set `secretGuard`, answer with the Slots pointer) has **no
-test** — `grep` across every `*.test.ts` in the tree finds no case exercising it; the
-nearest test, `packages/contracts/test/events.test.ts` — *rejects a key-shaped message*,
-covers the event-stream validator, not the HTTP route. `docs/fault-suite.md`'s
-"Secrets in chat" row already carried this gap; it is still open.
+**CLOSED (post-review fix).** The chat-route guard (`apps/desktop/src/server.ts`:
+`matchesSecret` → store the redacted text, set `secretGuard`, answer with the Slots
+pointer) is now tested at the route level: `apps/desktop/test/security-surface.test.ts`
+— *a key-shaped message is stored redacted, answered with the Slots pointer, and the raw
+key never persists* (asserts `secretGuard: true`, the Slots pointer in the answer, and
+that the raw key appears nowhere in `GET /api/chat/messages`). Issue #8.
 
-**Residual risk.** The implemented guard is one untested `if` away from regressing
-silently, and it only recognises the known key shapes — an unpatterned key pasted in chat
-is stored verbatim today.
+**Residual risk.** The guard only recognises the known key shapes — an unpatterned key
+pasted in chat is stored verbatim today.
 
 ---
 
@@ -268,35 +267,42 @@ attempt's environment owns that attempt's tool surface.
 process reaches the workbench server: posts chat, resolves confirmations, reads the SSE
 event stream.
 
-**What `server.ts` actually enforces — the truth, checked.** `buildServer`
-(`apps/desktop/src/server.ts`) enforces **no** request authentication, **no** Origin or
-Host check, and **no** custom-header requirement on any route. `grep` over the app finds
-no `origin` header read, no `x-mec-*` check, nothing. The plan's §22 sentence — "binds
-to `127.0.0.1`, rejects non-local origins and requires a custom request header (v1's
-CSRF discipline)" — is implemented **one third**: only the loopback bind is real
-(`composition.ts:173`, `app.listen({ port: 0, host: '127.0.0.1' })`). The other two
-thirds (origin rejection, CSRF header) exist in no code and no test. This is the most
-consequential finding of this review: a browser page can `fetch`-POST simple requests to
-`127.0.0.1:<port>` and create work or resolve a confirmation; the ephemeral port is the
-only barrier, and port-scanning localhost is trivial. Local processes need not even
-scan — the URL is printed to stdout (`serve.ts:20`).
+**What `server.ts` actually enforces — the truth, re-checked after the fix (issue #7).**
+`buildServer` (`apps/desktop/src/server.ts`) now carries §22's full sentence as an
+`onRequest` hook ahead of every route: **(1) origin rejection** — any request carrying an
+`Origin` must name a loopback host (`localhost`/`127.0.0.1`/`::1`; opaque `null` origins
+are rejected too), else 403 before any route runs — this covers browser reads, the
+"simple-request" POST that CORS response blocking would NOT have stopped, and
+DNS-rebinding (the rebound origin still says the attacker's host); **(2) the custom
+header** — any browser-shaped mutation (`Origin`/`Sec-Fetch-*`/`Referer` present) must
+carry `x-mec-client: 1` — the header the workbench's `request()` wrapper
+(`apps/web/src/api.ts`) sends on every call — which a cross-origin page cannot add
+without a preflight this server never answers; local non-browser clients (the CLI,
+tests, the engine-side MCP client whose `/mcp` route keeps its token fence) carry no
+browser headers and are unaffected. Loopback bind remains (`composition.ts`,
+`app.listen({ port: 0, host: '127.0.0.1' })`).
 
-**Tests that exist for the surface's behaviour (not its access control).**
+**Tests that prove the surface's access control.**
 
-| Behaviour | Test (verified) |
+| Control | Test (verified) |
 | --- | --- |
-| SSE streams with id lines | `apps/desktop/test/server.test.ts` — *GET /api/events streams the backlog as SSE with an id line* |
-| Chat intake, idempotency | `apps/desktop/test/server.test.ts` — *replays the same answer for a repeated idempotency key* |
-| Login stream is live-only, no replay | `apps/desktop/test/login-cards.test.ts` — *subscribes live-only: a late subscriber sees new output, never a replay*, *never writes to disk: a login run with a tmpdir cwd leaves both it and the home empty* |
-| Login cards serialise (no port clash) | `apps/desktop/test/login-cards.test.ts` — *serialises logins: a second start is busy with the same id; after exit a fresh id* |
+| Leg 1: mutation from `https://evil.com` → 403, nothing stored | `apps/desktop/test/security-surface.test.ts` — *a mutation from https://evil.com is 403 and nothing is stored* |
+| Leg 1: read from `https://evil.com` → 403 (CORS response blocking is not execution blocking) | `apps/desktop/test/security-surface.test.ts` — *a read from https://evil.com is 403 too (CORS response blocking is not execution blocking)* |
+| Leg 1: opaque `null` origin rejected | `apps/desktop/test/security-surface.test.ts` — *an opaque 'null' origin is rejected with the remote ones* |
+| Leg 1: loopback origin allowed on reads (EventSource parity) | `apps/desktop/test/security-surface.test.ts` — *a loopback origin (the workbench, or its dev proxy) is allowed on reads — EventSource parity* |
+| Leg 2: loopback-origin POST without the header → 403 (another local page cannot post as the user) | `apps/desktop/test/security-surface.test.ts` — *a loopback-origin POST without the header is 403 (another local page cannot post as the user)* |
+| Leg 2: the same POST with `x-mec-client` accepted | `apps/desktop/test/security-surface.test.ts` — *the same POST with x-mec-client is accepted (the workbench request() wrapper)* |
+| Leg 2: `Sec-Fetch-Site`-only (no Origin) cross-site mutation fenced | `apps/desktop/test/security-surface.test.ts` — *a cross-site fetch that omits Origin but carries Sec-Fetch-Site is still fenced* |
+| Local non-browser clients unchanged | `apps/desktop/test/security-surface.test.ts` — *a local non-browser client (the CLI, tests, the engine MCP client) posts unchanged* |
 
-**GAP (the one that matters).** §22's origin-rejection + custom-header CSRF discipline:
-unimplemented, untested — the SSE stream, chat intake and inbox resolve are reachable by
-any web page the user's browser can be tricked into visiting and by every local process.
+The SSE/chat/login behavioural tests listed in the original review (streaming shapes,
+idempotency, live-only login streams, serialised logins) are unchanged and still pass.
 
-**Residual risk.** Until that lands, the composition server's entire authorisation model
-is "you found the port" — loopback plus an ephemeral port, which stops neither browsers
-nor local processes.
+**Residual risk.** A local *non-browser* process remains able to talk to the server once
+it knows the port — that is the accepted v1 posture (§22 scopes the discipline to the
+browser surface; the port is printed to stdout for the user, and the privileged `/mcp`
+route keeps its attempt-scoped token). Fingerprinting beyond loopback+port (a
+server-shared secret the CLI and UI would carry) is a deliberate non-goal for v0.
 
 ---
 
@@ -348,13 +354,13 @@ clean on this date.)
 
 | # | Gap | Where it bites | Severity |
 | --- | --- | --- | --- |
-| 1 | §22 CSRF discipline (origin rejection + custom header) not implemented on the composition server | §9 — browsers and local processes reach every route | High |
-| 2 | Secrets-in-chat route guard has no test | §4 — silent regression would store keys | High |
+| 1 | ~~§22 CSRF discipline (origin rejection + custom header) not implemented on the composition server~~ **CLOSED 3 Nov 2026**: `onRequest` hook in `buildServer` + 8 tests in `apps/desktop/test/security-surface.test.ts` (issue #7) — see §9 | §9 — browsers and local processes reach every route | ~~High~~ |
+| 2 | ~~Secrets-in-chat route guard has no test~~ **CLOSED 3 Nov 2026**: `apps/desktop/test/security-surface.test.ts` — *a key-shaped message is stored redacted…* (issue #8) — see §4 | §4 — silent regression would store keys | ~~High~~ |
 | 3 | No test executes a process inside the sandbox; Linux sandbox path absent | §2 — the OS boundary is asserted-as-JSON only | High |
 | 4 | Codex project-trust refusal, instruction-files-as-data, trusted-repo marking: no code, no tests | §1 — Codex + `AGENTS.md` surfaces unguarded | Medium |
 | 5 | Journal pre-append redaction filter unwired in production | §3 — first durable stop unfiltered | Medium |
 | 6 | Compliance guard evades under aliasing/template-literals/dynamic paths | §10 — tripwire only | Medium (issue #6) |
 | 7 | No automated `pnpm audit` CI gate; no prebuild-provenance policy | §7 — supply chain | Low |
-| 8 | `docs/fault-suite.md` Confirmation-race row still describes the fixed `expectedInputSha` bug | §5 — doc drift | Low |
+| 8 | ~~`docs/fault-suite.md` Confirmation-race row still describes the fixed `expectedInputSha` bug~~ **CLOSED 3 Nov 2026**: rows corrected to fixed+tested | §5 — doc drift | ~~Low~~ |
 
 Every citation above was verified by `grep -rn` against this tree on 3 Nov 2026.

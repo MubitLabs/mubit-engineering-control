@@ -37,7 +37,7 @@ Every row of plan §26, what proves it today, and what remains. Written 3 Nov (s
 | Platform-tool fencing | mec-tools stale generation → empty set; specialist cannot call `propose_plan` (`packages/mec-tools/test/server.test.ts` over real loopback HTTP, `tokens.test.ts` · **no fixture**) | — |
 | Compliance guard | slots `scanSourceForViolations` + tests (`packages/slots/test/compliance.test.ts`) + self-scan over the product source in CI (`compliance-self.test.ts`) — **no fixture**; R0 audit planted a `readFileSync('.claude/.credentials.json')` line into `probe.ts` on a throwaway branch and the self-scan failed as required (docs/STATUS.md) | — (note: an aliased import — `readFileSync as x` two lines from the path — evaded the scanner; within its documented heuristic limits) |
 | Capability drift | probe `flags_verified` from `--help` (`packages/engines/test/argv-classify-probe.test.ts` · injected `run`, **no fixture**); runtime `checkDrift` lost flag → `engine_unsupported` (`packages/runtime/test/drift.test.ts` · **no fixture**) | composition: degrade the slot before any attempt starts |
-| Secrets in chat | — | server redact-before-durability + Slots pointer reply |
+| Secrets in chat | — | server redact-before-durability + Slots pointer reply (route-tested: `security-surface.test.ts` — redacted, answered, raw key never in `GET /api/chat/messages`; issue #8 closed) |
 | Acknowledgement | acks: one per message id, first-text-final (`packages/meta/test/acks.test.ts` · **no fixture**) | — |
 | Follow-up ownership | routing binds by reference only (`packages/meta/test/routing.test.ts`); hand-back once, never back (`packages/meta/test/handback.test.ts`) — **no fixture** | release-at-end to intake |
 | Hold | — | hold model + persistence across restart |

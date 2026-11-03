@@ -205,6 +205,16 @@ export class MecToolsServer {
       return errorFor(id, INVALID_REQUEST, 'invalid request: method must be a string')
     }
     switch (method) {
+      case 'initialize':
+        // The MCP handshake (clients drop a server that cannot answer it).
+        return resultFor(id, {
+          protocolVersion: '2025-06-18',
+          capabilities: { tools: {}, resources: {} },
+          serverInfo: { name: 'mec-tools', version: '0.1.0' },
+        })
+      case 'notifications/initialized':
+      case 'notifications/cancelled':
+        return null
       case 'tools/list':
         return resultFor(id, { tools: this.toolListFor(ctx) })
       case 'tools/call':

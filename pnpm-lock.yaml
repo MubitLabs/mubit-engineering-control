@@ -32,6 +32,12 @@ importers:
       '@mec/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@mec/engines':
+        specifier: workspace:*
+        version: link:../../packages/engines
+      '@mec/git':
+        specifier: workspace:*
+        version: link:../../packages/git
       '@mec/mec-tools':
         specifier: workspace:*
         version: link:../../packages/mec-tools
@@ -41,6 +47,12 @@ importers:
       '@mec/policy':
         specifier: workspace:*
         version: link:../../packages/policy
+      '@mec/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      '@mec/slots':
+        specifier: workspace:*
+        version: link:../../packages/slots
       '@mec/store':
         specifier: workspace:*
         version: link:../../packages/store

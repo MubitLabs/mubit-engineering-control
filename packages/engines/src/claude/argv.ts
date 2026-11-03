@@ -28,16 +28,10 @@ export type ClaudeArgvInput = {
 }
 
 export function buildClaudeArgv(input: ClaudeArgvInput): string[] {
-  const argv = [
-    'claude',
-    '-p',
-    input.prompt,
-    '--verbose',
-    '--output-format',
-    'stream-json',
-    '--input-format',
-    'stream-json',
-  ]
+  const argv = ['claude', '-p', input.prompt, '--verbose', '--output-format', 'stream-json']
+  // NOTE: --input-format stream-json is deliberately absent in v0: with it, `-p` waits on a
+  // stdin user-message that a one-shot spawn must write and close. Steering (send) brings the
+  // two-way wiring; until then the objective rides the -p prompt.
   if (input.resumeSessionId) {
     argv.push('--resume', input.resumeSessionId)
   } else {

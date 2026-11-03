@@ -18,3 +18,14 @@ Each gate's demo, recorded when it runs (implementation plan Appendix B). Honest
 ## R0 audit gate — 3 November 2026
 
 **PASSED on macOS (cold clone, fresh reviewer instance); Linux manual run pending (CI-Linux green as partial evidence).** Full report in PR #3; issues #4 (test-quality survey: clean — no self-mocking tests) and #5 (expectedInputSha route bug — fixed same day, closed). Honest absences recorded in docs/STATUS.md: node-pty is a seam not a dependency; real Codex/OpenCode fixtures; CONTRACTS §9 artifacts (recorder, providers/ bodies, conformance.spec.ts, 7 scenarios/engine) listed as R1 backlog. R0 exits; R1 starts.
+
+## H1 — one attempt end to end, on the real binary — 3 November 2026
+
+**PASSED** (`MEC_REAL_ENGINE=1`, dedicated slot `~/.mec/engines/claude/preflight-a`, Claude Code 2.1.317, macOS arm64; the canary lives at `apps/desktop/test/h1.real.test.ts` — the §7.1 real-engine canary, rerun at every handshake and engine pin change):
+- stage 0: fixture repo → bare-clone cache → worktree on the pinned base → mec-tools server up
+- stage A: real attempt through the real adapter/supervisor/env: assistant message, **live `rate_limit_event` observed**, usage, exit `completed`; journal appended; `parkFromEvents` correctly reports no park on an `allowed` reading (the rejected→park leg is proven on the recorded fixtures; a live rejected recording is opportunistic)
+- stage B: the macOS sandbox **denied reading `~/.ssh`** from inside the attempt (settings from `buildAttemptSettings`, `failIfUnavailable`)
+- stage C: a Bash permission request **round-tripped through `mcp__mec__confirm`** on our MCP server (initialize handshake answered; allow decision returned in Claude's `{behavior, updatedInput}` shape) and both files landed
+- stage D: worktree commit + acceptance check **passed on the head SHA**
+
+Fixed on the way: adapter mints a UUID session id; `--input-format stream-json` dropped for one-shot `-p` (it waits on stdin); settings/mcp paths flow via `brief.env`; engine stderr surfaced; MCP config URL already carries `/mcp`; mec-tools answers the MCP `initialize` handshake. Learnings recorded in docs/engines.md.

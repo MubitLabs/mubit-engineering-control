@@ -287,7 +287,11 @@ describe('inbox resolve binds to the card input (audit #5)', () => {
         expiresAt: '2999-01-01T00:00:00.000Z',
       })
     })
-    const res = await app.inject({ method: 'POST', url: '/api/inbox/conf_bound_1/resolve', payload: { answer: 'approve' } })
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/inbox/conf_bound_1/resolve',
+      payload: { answer: 'approve' },
+    })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({ id: 'conf_bound_1', status: 'approved' })
   })

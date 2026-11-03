@@ -21,9 +21,10 @@ const SPECIALIST_TOOL_SET: readonly ToolName[] = [
   'request_confirmation',
   'handback',
   'read',
+  'confirm',
 ]
 
-const EVERY_TOOL_NAME: readonly ToolName[] = [...PLATFORM_TOOLS, 'report', 'handback']
+const EVERY_TOOL_NAME: readonly ToolName[] = [...PLATFORM_TOOLS, 'report', 'handback', 'confirm']
 
 describe('toolsForRole', () => {
   it('gives the meta agent exactly the §6 platform tool set', () => {

@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { createInterface } from 'node:readline'
 import type {
   AttemptHandle,
@@ -26,22 +27,36 @@ import { classifyClaudeError, parseClaudeStream } from './stream'
 export type SpawnFn = (
   argv: readonly string[],
   opts: { cwd: string; env: Record<string, string> },
-) => { pid: number | undefined; stdout: AsyncIterable<string>; kill(signal?: string): void; killed: boolean }
+) => {
+  pid: number | undefined
+  stdout: AsyncIterable<string>
+  exited: Promise<number>
+  kill(signal?: string): void
+}
 
 const defaultSpawn: SpawnFn = (argv, opts) => {
   const child: ChildProcess = spawn(argv[0] ?? 'claude', argv.slice(1), {
     cwd: opts.cwd,
     env: opts.env,
-    stdio: ['pipe', 'pipe', 'ignore'],
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  child.stderr?.on('data', (chunk: Buffer) => {
+    const line = chunk.toString().trim()
+    if (line !== '') console.error(`[engine:stderr] ${line}`)
   })
   const emptyLineStream = (async function* () {})()
+  const exited = new Promise<number>((resolve) => {
+    child.once('exit', (code, signal) => {
+      resolve(code ?? (signal ? 128 + 15 : 0))
+    })
+  })
   return {
     pid: child.pid,
     stdout: child.stdout ? createInterface({ input: child.stdout }) : emptyLineStream,
+    exited,
     kill: (signal: string = 'SIGTERM') => {
       child.kill(signal as NodeJS.Signals)
     },
-    killed: false,
   }
 }
 
@@ -88,7 +103,8 @@ export class ClaudeAdapter implements EngineAdapter {
 
   async launch(spec: LaunchSpec): Promise<AttemptHandle> {
     const spawnFn = this.deps.spawnFn ?? defaultSpawn
-    const sessionId = spec.resume?.session_id ?? spec.brief.attempt_id
+    // Claude's --session-id must be a UUID; mint one per launch (resume keeps its own).
+    const sessionId = spec.resume?.session_id ?? randomUUID()
     const argv = buildClaudeArgv({
       prompt: spec.brief.objective,
       sessionId,
@@ -132,7 +148,7 @@ export class ClaudeAdapter implements EngineAdapter {
     for await (const line of launch.proc.stdout) {
       raw.push(line)
     }
-    const exitCode = this.exiting.get(handle.attempt_id) ?? 0
+    const exitCode = await launch.proc.exited
     const bodies: EngineEventBody[] = parseClaudeStream(raw, { exitCode })
     let seq = 1
     for (const body of bodies) {

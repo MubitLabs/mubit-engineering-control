@@ -20,6 +20,7 @@ export type ToolName =
   | 'cancel_task'
   | 'report'
   | 'handback'
+  | 'confirm'
 
 /** Plan §6: the meta agent's ten platform tools — its only write channel. */
 export const META_AGENT_TOOLS: readonly ToolName[] = [
@@ -42,6 +43,7 @@ export const SPECIALIST_TOOLS: readonly ToolName[] = [
   'request_confirmation',
   'handback',
   'read',
+  'confirm',
 ]
 
 export function toolsForRole(role: AgentRole): ToolName[] {
@@ -212,6 +214,18 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
       required: ['kind', 'summary'],
     },
   },
+  confirm: {
+    description:
+      'Bridge one engine permission request to the platform; answers allow/deny per policy or card',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tool_name: { type: 'string' },
+        tool_input: { type: 'object' },
+      },
+      required: ['tool_name', 'tool_input'],
+    },
+  },
   handback: {
     description: 'Hand a follow-up back to the meta agent once, naming the message and the reason',
     inputSchema: {
@@ -223,5 +237,23 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
       required: ['message_id', 'reason'],
       additionalProperties: false,
     },
+  },
+}
+
+/**
+ * The Claude Code permission-prompt tool (plan §9): Claude calls it as
+ * `mcp__mec__confirm` when `--permission-prompt-tool` names it; the response uses
+ * Claude's {behavior, updatedInput?} shape. Codex/OpenCode adapters call the
+ * bridge in-process instead (§3).
+ */
+TOOL_SPECS.confirm = {
+  description: 'Bridge one engine permission request to the platform; answers allow/deny per policy or card',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      tool_name: { type: 'string' },
+      tool_input: { type: 'object' },
+    },
+    required: ['tool_name', 'tool_input'],
   },
 }

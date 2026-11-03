@@ -467,12 +467,21 @@ export async function followTask(tx: Tx, attempt: AttemptRow, to: AttemptState):
     })
     if (retryable) await refreshReadiness(tx, { id: attempt.deliveryId, projectId: attempt.projectId })
   } else if (to === 'quota_wait' || to === 'auth_required') {
+    const [where] = await tx<{ runner: string | null; owner: string | null }[]>`
+      select r.name as runner, u.login as owner from attempts a
+      left join runners r on r.id = a.runner_id
+      left join execution_profiles p on p.id = a.profile_id
+      left join users u on u.id = coalesce(p.owner_id, r.owner_id)
+      where a.id = ${attempt.id}
+    `
+    const on = where?.runner ? ` on ${where.runner}` : ''
+    const who = where?.owner ? `${where.owner} signs` : 'The account owner signs'
     const blocker: Blocker = {
       kind: to === 'quota_wait' ? 'quota' : 'auth',
       detail:
         to === 'quota_wait'
-          ? 'Agent quota exhausted; work preserved'
-          : 'Agent sign-in required; work preserved',
+          ? `Agent usage limit reached${on}; the work is kept. Resume once the limit resets, or abandon and start on another account`
+          : `Agent sign-in expired${on}. ${who} in again there, then Resume; the work is kept`,
       refs: [attempt.id],
     }
     await tx`update tasks set blocker = ${tx.json(blocker as never)}, updated_at = now() where id = ${task.id}`

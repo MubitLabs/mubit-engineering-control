@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router'
 import { api } from '../api/client'
-import { useProjectEvents } from '../api/events'
+import { useLiveEvents } from '../api/events'
 import type { Approval, Project } from '../api/types'
 import { useMe } from '../features/auth/useMe'
 
@@ -21,6 +21,7 @@ export function Layout() {
     refetchInterval: 30_000,
   })
   const pending = inbox.data?.approvals.length ?? 0
+  useLiveEvents(projects.data ? projects.data.projects.map((p) => p.id).join(',') : null)
   const { pathname } = useLocation()
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on every route change
   useEffect(() => {
@@ -75,9 +76,6 @@ export function Layout() {
           </button>
         </div>
       </aside>
-      {projects.data?.projects.map((p) => (
-        <LiveProject key={p.id} projectId={p.id} />
-      ))}
       <main className="main">
         <Outlet />
       </main>
@@ -86,10 +84,6 @@ export function Layout() {
 }
 
 /** Keeps every visible project's data fresh (inbox, badge, open pages) from its live event stream. */
-function LiveProject({ projectId }: { projectId: string }) {
-  useProjectEvents(projectId, undefined, { fromNow: true })
-  return null
-}
 
 /** Breadcrumb link to a project by name, from the sidebar's cached project list. */
 export function ProjectCrumb({ projectId }: { projectId: string | undefined }) {

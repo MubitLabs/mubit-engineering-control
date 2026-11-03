@@ -116,4 +116,94 @@ export function registerEvents(app: FastifyInstance, deps: { sql: Sql; bus: Even
     res.on('error', close)
     await flush()
   })
+
+  /**
+   * One live stream for every project the user can see, so a browser tab holds one connection
+   * rather than one per project. The SSE id is a per-project cursor list, so a reconnect resumes
+   * each project exactly where it stopped; projects joined later start at their live edge.
+   */
+  app.get('/api/events/live', async (req, reply) => {
+    const actor = await requireActor(sql, req)
+    const projects = actor.isAdmin
+      ? await sql<{ id: string }[]>`select id from projects`
+      : await sql<{ id: string }[]>`select project_id as id from memberships where user_id = ${actor.userId}`
+    const resume = parseCursors(req.headers['last-event-id'])
+    const cursors = new Map<string, number>()
+    for (const p of projects)
+      cursors.set(p.id, resume.get(p.id) ?? (await streamHead(sql, projectStream(p.id))))
+
+    reply.hijack()
+    const res = reply.raw
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    })
+    res.write('retry: 2000\n\n')
+
+    let closed = false
+    const id = () => [...cursors].map(([project, seq]) => `${project}.${seq}`).join(',')
+    const pumps = [...cursors.keys()].map((projectId) => {
+      const stream = projectStream(projectId)
+      let running = false
+      let again = false
+      const flush = async () => {
+        if (running) {
+          again = true
+          return
+        }
+        running = true
+        try {
+          do {
+            again = false
+            let batch: StoredEvent[]
+            do {
+              batch = await readStream(sql, stream, cursors.get(projectId)!, BATCH)
+              if (closed) return
+              for (const e of batch) {
+                cursors.set(projectId, e.seq)
+                res.write(`id: ${id()}\ndata: ${JSON.stringify(e)}\n\n`)
+              }
+            } while (batch.length === BATCH)
+          } while (again && !closed)
+        } catch (err) {
+          req.log.warn({ err }, 'live sse flush failed')
+        } finally {
+          running = false
+        }
+      }
+      return { flush, unsubscribe: bus.subscribe(stream, () => void flush()) }
+    })
+    const keepalive = setInterval(() => {
+      res.write(': keepalive\n\n')
+      for (const p of pumps) void p.flush()
+    }, KEEPALIVE_MS)
+    const close = () => {
+      if (closed) return
+      closed = true
+      clearInterval(keepalive)
+      for (const p of pumps) p.unsubscribe()
+      open.delete(end)
+    }
+    const end = () => {
+      close()
+      res.end()
+    }
+    open.add(end)
+    req.raw.on('close', close)
+    res.on('error', close)
+    await Promise.all(pumps.map((p) => p.flush()))
+  })
+}
+
+/** "projectId.seq,projectId.seq" from a Last-Event-ID header; anything malformed is ignored. */
+function parseCursors(header: string | string[] | undefined): Map<string, number> {
+  const out = new Map<string, number>()
+  if (typeof header !== 'string') return out
+  for (const part of header.split(',')) {
+    const m = /^([0-9a-f-]{36})\.(\d+)$/i.exec(part.trim())
+    if (m) out.set(m[1]!.toLowerCase(), Number(m[2]))
+  }
+  return out
 }

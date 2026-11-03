@@ -9,7 +9,8 @@ afterEach(async () => {
 
 interface SseEvent {
   id: number
-  data: { seq: number; type: string }
+  rawId: string
+  data: { seq: number; type: string; projectId: string }
 }
 
 /** Minimal SSE reader: collects events until `count` arrive, then aborts the connection. */
@@ -17,7 +18,7 @@ async function readEvents(
   url: string,
   cookie: string,
   count: number,
-  lastEventId?: number,
+  lastEventId?: number | string,
 ): Promise<SseEvent[]> {
   const controller = new AbortController()
   const headers: Record<string, string> = { cookie }
@@ -38,9 +39,9 @@ async function readEvents(
       while (idx !== -1) {
         const block = buffer.slice(0, idx)
         buffer = buffer.slice(idx + 2)
-        const id = /^id: (\d+)$/m.exec(block)
+        const id = /^id: (.+)$/m.exec(block)
         const data = /^data: (.*)$/m.exec(block)
-        if (id && data) events.push({ id: Number(id[1]), data: JSON.parse(data[1]!) })
+        if (id && data) events.push({ id: Number(id[1]), rawId: id[1]!, data: JSON.parse(data[1]!) })
         idx = buffer.indexOf('\n\n')
       }
     }
@@ -105,6 +106,30 @@ describe('project event stream (SSE)', () => {
     const started = Date.now()
     await t.app.close()
     expect(Date.now() - started).toBeLessThan(2_000)
+  })
+
+  it('streams every visible project on one connection and resumes each where it stopped', async () => {
+    t = await createTestApp()
+    const s = await seedProject(t)
+    const other = (await s.admin.post('/api/projects', { slug: 'other', name: 'Other' })).json().project
+    const address = await t.app.listen({ host: '127.0.0.1', port: 0 })
+    const live = `${address}/api/events/live`
+    const addViewer = (projectId: string, login: string) =>
+      s.admin.post(`/api/projects/${projectId}/members`, { login, role: 'viewer' })
+
+    // mia is a member of core only: other's events never reach her.
+    const mia = readEvents(live, s.member.cookie, 1)
+    await new Promise((r) => setTimeout(r, 200))
+    await addViewer(other.id, 'ann')
+    await addViewer(s.project.id, 'bob')
+    const [first] = await mia
+    expect(first!.data).toMatchObject({ type: 'project.member_set', projectId: s.project.id })
+
+    // Events while disconnected are replayed from the composite cursor, without the earlier one.
+    await addViewer(s.project.id, 'cid')
+    await addViewer(other.id, 'dee')
+    const resumed = await readEvents(live, s.member.cookie, 1, first!.rawId)
+    expect(resumed.map((e) => e.data.seq)).toEqual([first!.data.seq + 1])
   })
 
   it('refuses non-members', async () => {

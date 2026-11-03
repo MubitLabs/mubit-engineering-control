@@ -25,6 +25,8 @@ export function DeliveryPage() {
     queryFn: () => api.get<DeliveryDetail>(`/api/deliveries/${deliveryId}`),
   })
   const me = useMe()
+  const role = projectId ? me.data?.projectRoles[projectId] : undefined
+  const canEdit = role === 'owner' || role === 'member'
   useTitle(q.data?.delivery.title)
   if (!q.data) return q.error ? <ErrorBox error={q.error} /> : <Loading />
   const { delivery, revisions, tasks, approvals, repository, owner, dependencies } = q.data
@@ -132,13 +134,14 @@ export function DeliveryPage() {
               key={current.id}
               revision={current}
               ownerId={delivery.ownerId}
+              canEdit={canEdit}
               deliveryId={delivery.id}
               checks={repository.validationProfile.checks.map((c) => c.name)}
             />
           )}
         </div>
         <div className="stack">
-          {delivery.state === 'planning' && <Coordinator deliveryId={delivery.id} />}
+          {delivery.state === 'planning' && canEdit && <Coordinator deliveryId={delivery.id} />}
           {(delivery.integrationSha || q.data.pullRequests.length > 0) && (
             <Panel title="Integration">
               <div className="stack small">
@@ -346,11 +349,12 @@ function RevisionEditor(props: {
   ownerId: string
   deliveryId: string
   checks: string[]
+  canEdit: boolean
 }) {
   const { revision } = props
   const me = useMe()
   const qc = useQueryClient()
-  const editable = revision.state === 'draft' || revision.state === 'proposed'
+  const editable = props.canEdit && (revision.state === 'draft' || revision.state === 'proposed')
   const [plan, setPlan] = useState(revision.planMarkdown)
   const [spec, setSpec] = useState(() => toSpecText(revision))
   const [conflict, setConflict] = useState<PlanRevision | null>(null)
@@ -424,7 +428,7 @@ function RevisionEditor(props: {
               Save
             </button>
           )}
-          {revision.state === 'draft' && (
+          {revision.state === 'draft' && props.canEdit && (
             <button type="button" className="btn small" disabled={dirty} onClick={() => start(submit)}>
               Submit for approval
             </button>
@@ -444,7 +448,12 @@ function RevisionEditor(props: {
               <button type="button" className="btn small" onClick={() => setOpen(!open)}>
                 {open ? 'Hide plan' : 'Show plan'}
               </button>
-              <button type="button" className="btn small" onClick={() => start(newRevision)}>
+              <button
+                type="button"
+                className="btn small"
+                hidden={!props.canEdit}
+                onClick={() => start(newRevision)}
+              >
                 New revision
               </button>
             </>

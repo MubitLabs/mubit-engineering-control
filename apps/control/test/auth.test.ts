@@ -119,6 +119,27 @@ describe('GitHub OAuth', () => {
     expect(users.map((u) => u.login)).toEqual(['E1daru'])
   })
 
+  it('returns to the page the user asked for, and only to a path on this site', async () => {
+    t = await createTestApp({ github: fakeGithub({ admin: true }) })
+    const land = async (next: string) => {
+      const start = await t!.app.inject({
+        method: 'GET',
+        url: `/auth/github/login?next=${encodeURIComponent(next)}`,
+      })
+      const cookie = start.cookies.map((c) => `${c.name}=${c.value}`).join('; ')
+      const state = start.cookies.find((c) => c.name === 'mec_oauth_state')!.value
+      const res = await t!.app.inject({
+        method: 'GET',
+        url: `/auth/github/callback?code=admin&state=${state}`,
+        headers: { cookie },
+      })
+      return res.headers.location
+    }
+    expect(await land('/projects/p1/tasks/t1?x=1')).toBe('/projects/p1/tasks/t1?x=1')
+    for (const evil of ['//evil.example', 'https://evil.example', '/\\evil.example', 'javascript:alert(1)'])
+      expect(await land(evil)).toBe('/')
+  })
+
   it('rejects a callback whose state does not match the cookie', async () => {
     t = await createTestApp({ github: fakeGithub({ admin: true }) })
     await t.app.inject({ method: 'GET', url: '/auth/github/login' })

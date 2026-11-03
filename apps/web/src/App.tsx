@@ -1,8 +1,8 @@
-import { Navigate, Route, Routes } from 'react-router'
+import { Navigate, Route, Routes, useLocation } from 'react-router'
 import { Layout } from './components/Layout'
 import { Loading } from './components/ui'
 import { AccountsPage } from './features/accounts/AccountsPage'
-import { LoginPage } from './features/auth/LoginPage'
+import { LoginPage, nextPath } from './features/auth/LoginPage'
 import { useMe } from './features/auth/useMe'
 import { DeliveryPage } from './features/deliveries/DeliveryPage'
 import { FleetPage } from './features/fleet/FleetPage'
@@ -13,13 +13,19 @@ import { TaskPage } from './features/tasks/TaskPage'
 
 export function App() {
   const me = useMe()
+  const location = useLocation()
   if (me.isLoading) return <Loading />
   const signedIn = !!me.data
+  const here = `${location.pathname}${location.search}`
+  const toLogin = here === '/' ? '/login' : `/login?next=${encodeURIComponent(here)}`
 
   return (
     <Routes>
-      <Route path="/login" element={signedIn ? <Navigate to="/" replace /> : <LoginPage />} />
-      <Route element={signedIn ? <Layout /> : <Navigate to="/login" replace />}>
+      <Route
+        path="/login"
+        element={signedIn ? <Navigate to={nextPath(location.search)} replace /> : <LoginPage />}
+      />
+      <Route element={signedIn ? <Layout /> : <Navigate to={toLogin} replace />}>
         <Route index element={<ProjectsPage />} />
         <Route path="inbox" element={<InboxPage />} />
         <Route path="fleet" element={<FleetPage />} />

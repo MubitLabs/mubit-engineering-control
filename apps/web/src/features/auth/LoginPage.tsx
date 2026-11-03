@@ -31,7 +31,11 @@ export function LoginPage() {
         {!config.data ? null : config.data.authMode === 'dev' ? (
           <DevLogin />
         ) : (
-          <a className="btn primary" href="/auth/github/login" style={{ textAlign: 'center' }}>
+          <a
+            className="btn primary"
+            href={`/auth/github/login?next=${encodeURIComponent(nextPath(`?${params}`))}`}
+            style={{ textAlign: 'center' }}
+          >
             Sign in with GitHub
           </a>
         )}
@@ -53,7 +57,7 @@ function DevLogin() {
         try {
           await api.post('/auth/dev/login', { login })
           await qc.invalidateQueries({ queryKey: ['me'] })
-          navigate('/')
+          navigate(nextPath(location.search))
         } catch (err) {
           setError(err)
         }
@@ -70,4 +74,10 @@ function DevLogin() {
       </button>
     </form>
   )
+}
+
+/** The page to return to after sign-in; only paths on this site. */
+export function nextPath(search: string): string {
+  const next = new URLSearchParams(search).get('next')
+  return next && /^\/(?![/\\])/.test(next) ? next : '/'
 }

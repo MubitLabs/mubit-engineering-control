@@ -134,10 +134,35 @@ const ANTHROPIC_MODELS_URL = 'https://api.anthropic.com/v1/models'
 const VALIDATE_TIMEOUT_MS = 15_000
 
 /**
- * §5.4/§5.7: the anthropic key shape — contracts' `SECRET_PATTERNS[0]`. The gate a pasted
- * key must pass before MEC writes anything anywhere.
+ * §5.4/§5.7: the key shapes the courier accepts, one per provider. Contracts'
+ * `SECRET_PATTERNS` stays the single source (anthropic / zai / google); the gate a
+ * pasted key must pass for ITS provider before MEC writes anything anywhere.
+ * GLM/Gemini keys are pattern-gated in v0 — their live zero-token probes arrive with
+ * the R2.2 OpenCode wiring (R1.5 proved the keystore custody once, per provider kind).
  */
-const ANTHROPIC_KEY_PATTERN = SECRET_PATTERNS[0]?.pattern
+const providerPattern = (name: string): RegExp | undefined =>
+  SECRET_PATTERNS.find((entry) => entry.name === name)?.pattern
+
+const API_KEY_PROVIDERS = {
+  'anthropic-api': {
+    engine: 'claude',
+    kind: 'claude-api',
+    pattern: providerPattern('anthropic'),
+    home: claudeHome,
+  },
+  'glm-api': {
+    engine: 'opencode',
+    kind: 'opencode-glm',
+    pattern: providerPattern('zai'),
+    home: opencodeHome,
+  },
+  'gemini-api': {
+    engine: 'opencode',
+    kind: 'opencode-gemini',
+    pattern: providerPattern('google'),
+    home: opencodeHome,
+  },
+} as const
 
 /** §21.3 wizard: how long one local engine probe may run before it counts as missing. */
 const PROBE_TIMEOUT_MS = 5_000
@@ -651,14 +676,20 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       reply.code(400).send({ error: 'label is required' })
       return
     }
-    if (body.provider !== 'anthropic-api') {
-      reply.code(400).send({ error: "provider must be 'anthropic-api' (v0)" })
+    const providerName = typeof body.provider === 'string' ? body.provider : ''
+    const provider = (
+      API_KEY_PROVIDERS as Record<string, (typeof API_KEY_PROVIDERS)['anthropic-api'] | undefined>
+    )[providerName]
+    if (provider === undefined) {
+      reply.code(400).send({
+        error: "provider must be one of 'anthropic-api' | 'glm-api' | 'gemini-api'",
+      })
       return
     }
     // A pasted key may carry clipboard whitespace; the pattern gate runs on the trimmed form.
     const key = typeof body.key === 'string' ? body.key.trim() : ''
-    if (key === '' || ANTHROPIC_KEY_PATTERN === undefined || !ANTHROPIC_KEY_PATTERN.test(key)) {
-      reply.code(400).send({ error: 'key does not match the anthropic key pattern' })
+    if (key === '' || provider.pattern === undefined || !provider.pattern.test(key)) {
+      reply.code(400).send({ error: `key does not match the ${providerName} key pattern` })
       return
     }
 
@@ -672,7 +703,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     // is written into it. An escaping label dies here, before any file exists.
     let home: ReturnType<typeof claudeHome>
     try {
-      home = claudeHome(keystoreRoot, label)
+      home = provider.home(keystoreRoot, label)
     } catch (error) {
       reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid slot label' })
       return
@@ -681,7 +712,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     const keystore = new SlotKeystore(home.homeDir)
     let fingerprint: { provider: string; last4: string; hash: string }
     try {
-      fingerprint = keystore.store('anthropic-api', key)
+      fingerprint = keystore.store(providerName, key)
     } catch (error) {
       // The only expected cause is a key file left behind by a doc-less slot (§5.7: rotation
       // replaces, store never clobbers); anything else is a genuine IO failure.
@@ -697,9 +728,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       store.slots.save({
         id,
         label,
-        engine: 'claude',
-        kind: 'claude-api',
-        provider: 'anthropic-api',
+        engine: provider.engine,
+        kind: provider.kind,
+        provider: providerName,
         home: home.homeDir,
         fingerprint,
         state: 'login_pending',
@@ -710,7 +741,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         store,
         `slot:${label}`,
         'slot_created',
-        { slotId: id, label, kind: 'claude-api', provider: 'anthropic-api', fingerprint, at },
+        { slotId: id, label, kind: provider.kind, provider: providerName, fingerprint, at },
         at,
       )
     })

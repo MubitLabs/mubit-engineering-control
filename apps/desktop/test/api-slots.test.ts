@@ -268,3 +268,90 @@ describe('slots api-key routes (§5.4/§5.7/§5.8)', () => {
     expect(readFileSync(keyFileOf(ctx), 'utf8')).toBe(KEY)
   })
 })
+
+describe('slots api-key courier: GLM and Gemini providers (R2.2 seam)', () => {
+  /** 32 hex chars + '.' + 16 alnum — the contracts' `zai` shape. */
+  const GLM_KEY = `${'a3f1c9d2'.repeat(4)}.Abcdef0123456789`
+  /** 'AIza' + 35 word chars — the contracts' `google` shape. */
+  const GEMINI_KEY = `AIza${'Sy9aQwerty4Mec7Key2Fixture5Zero0987'}`
+
+  it('couriers a GLM key into the OPENCODE home with kind opencode-glm', async () => {
+    const ctx = makeServer()
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/slots/api-key',
+      payload: { label: 'glm-1', provider: 'glm-api', key: GLM_KEY },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.body).not.toContain(GLM_KEY)
+    expect(ctx.store.slots.get('slot_glm-1')).toMatchObject({
+      engine: 'opencode',
+      kind: 'opencode-glm',
+      provider: 'glm-api',
+      state: 'login_pending',
+    })
+    // The key lives at <root>/engines/opencode/<slot>/keys/glm-api.key, 0600 — and only there.
+    const file = join(ctx.enginesRoot, 'engines', 'opencode', 'glm-1', 'keys', 'glm-api.key')
+    expect(readFileSync(file, 'utf8')).toBe(GLM_KEY)
+    expect(statSync(file).mode & 0o777).toBe(0o600)
+    expect(allDocsJson(ctx)).not.toContain(GLM_KEY)
+    expect(allEventsJson(ctx)).not.toContain(GLM_KEY)
+  })
+
+  it('couriers a Gemini key into the OPENCODE home with kind opencode-gemini', async () => {
+    const ctx = makeServer()
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/slots/api-key',
+      payload: { label: 'gem-1', provider: 'gemini-api', key: GEMINI_KEY },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.body).not.toContain(GEMINI_KEY)
+    expect(ctx.store.slots.get('slot_gem-1')).toMatchObject({
+      engine: 'opencode',
+      kind: 'opencode-gemini',
+      provider: 'gemini-api',
+    })
+    const file = join(ctx.enginesRoot, 'engines', 'opencode', 'gem-1', 'keys', 'gemini-api.key')
+    expect(readFileSync(file, 'utf8')).toBe(GEMINI_KEY)
+    expect(allDocsJson(ctx)).not.toContain(GEMINI_KEY)
+  })
+
+  it('the provider gate is provider-specific: a right-shaped key under the wrong provider is 400, writing nothing', async () => {
+    const ctx = makeServer()
+    const wrongProvider = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/slots/api-key',
+      payload: { label: 'w1', provider: 'anthropic-api', key: GLM_KEY },
+    })
+    expect(wrongProvider.statusCode).toBe(400)
+    const wrongShape = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/slots/api-key',
+      payload: { label: 'w2', provider: 'gemini-api', key: KEY },
+    })
+    expect(wrongShape.statusCode).toBe(400)
+    const unknown = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/slots/api-key',
+      payload: { label: 'w3', provider: 'openrouter-api', key: KEY },
+    })
+    expect(unknown.statusCode).toBe(400)
+    expect(ctx.store.slots.list()).toHaveLength(0)
+    expect(existsSync(join(ctx.enginesRoot, 'engines'))).toBe(false)
+  })
+
+  it('validate is honest about its v0 boundary: a glm slot is 400, not a fake probe', async () => {
+    const ctx = makeServer()
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/api/slots/api-key',
+      payload: { label: 'glm-1', provider: 'glm-api', key: GLM_KEY },
+    })
+    const res = await ctx.app.inject({ method: 'POST', url: '/api/slots/slot_glm-1/validate' })
+    expect(res.statusCode).toBe(400)
+    expect(res.json()).toMatchObject({
+      error: expect.stringContaining("only 'claude-api' slots validate in v0"),
+    })
+  })
+})

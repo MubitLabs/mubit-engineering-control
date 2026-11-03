@@ -210,11 +210,16 @@ export const api = {
    * The §5.7 courier: provider → masked key → slot keystore. The key is sent exactly once
    * and the receipt carries only the fingerprint — the key is never echoed back.
    */
-  addApiKey(label: string, key: string): Promise<AddApiKeyResult> {
+  /** The provider kinds the courier accepts (server's API_KEY_PROVIDERS table). */
+  addApiKey(
+    label: string,
+    key: string,
+    provider: 'anthropic-api' | 'glm-api' | 'gemini-api' = 'anthropic-api',
+  ): Promise<AddApiKeyResult> {
     return request<AddApiKeyResult>('/api/slots/api-key', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ label, provider: 'anthropic-api', key }),
+      body: JSON.stringify({ label, provider, key }),
     })
   },
 

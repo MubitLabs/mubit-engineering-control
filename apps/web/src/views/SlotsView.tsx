@@ -53,6 +53,7 @@ function SetupBanner({ hasSlot, hasRepository }: { hasSlot: boolean; hasReposito
 export function AddApiKeyCard({ onAdded }: { onAdded: () => void }) {
   const [label, setLabel] = useState('')
   const [key, setKey] = useState('')
+  const [provider, setProvider] = useState<'anthropic-api' | 'glm-api' | 'gemini-api'>('anthropic-api')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
 
@@ -62,16 +63,20 @@ export function AddApiKeyCard({ onAdded }: { onAdded: () => void }) {
     setBusy(true)
     setNote(null)
     try {
-      await api.addApiKey(trimmedLabel, key)
+      await api.addApiKey(trimmedLabel, key, provider)
       setKey('')
       setLabel('')
-      setNote('key stored — validate it below')
+      setNote(
+        provider === 'anthropic-api'
+          ? 'key stored — validate it below'
+          : 'key stored (pattern-checked); live validation arrives with the OpenCode wiring',
+      )
       onAdded()
     } catch (error) {
       if (error instanceof HttpError) {
         setNote(
           error.status === 400
-            ? 'rejected: not an Anthropic-shaped key'
+            ? 'rejected: the key does not match the selected provider’s shape'
             : error.status === 409
               ? 'a slot with that label already exists'
               : `failed (HTTP ${error.status})`,
@@ -82,14 +87,14 @@ export function AddApiKeyCard({ onAdded }: { onAdded: () => void }) {
     } finally {
       setBusy(false)
     }
-  }, [label, key, onAdded])
+  }, [label, key, provider, onAdded])
 
   return (
     <Card>
       <h3 className="card-title">Add API key</h3>
       <p className="card-detail">
-        Anthropic key → slot keystore (0600, inside the slot home). Stored nowhere else; the database keeps
-        only a fingerprint.
+        Provider key → slot keystore (0600, inside the slot home). Stored nowhere else; the database keeps
+        only a fingerprint. This form is the ONLY door for keys — never paste one in chat.
       </p>
       <form
         className="key-form"
@@ -98,6 +103,15 @@ export function AddApiKeyCard({ onAdded }: { onAdded: () => void }) {
           void add()
         }}
       >
+        <select
+          aria-label="Provider"
+          onChange={(event) => setProvider(event.target.value as typeof provider)}
+          value={provider}
+        >
+          <option value="anthropic-api">Anthropic (Claude API)</option>
+          <option value="glm-api">GLM Coding Plan (z.ai)</option>
+          <option value="gemini-api">Google Gemini</option>
+        </select>
         <input
           aria-label="Slot label"
           onChange={(event) => setLabel(event.target.value)}
@@ -108,7 +122,9 @@ export function AddApiKeyCard({ onAdded }: { onAdded: () => void }) {
           aria-label="API key"
           autoComplete="off"
           onChange={(event) => setKey(event.target.value)}
-          placeholder="sk-ant-…"
+          placeholder={
+            provider === 'anthropic-api' ? 'sk-ant-…' : provider === 'glm-api' ? '32 hex chars.…' : 'AIza…'
+          }
           type="password"
           value={key}
         />

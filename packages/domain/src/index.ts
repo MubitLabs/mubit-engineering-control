@@ -42,3 +42,5 @@ export {
 } from './states'
 export type { BasePolicy, GraphIssue, GraphIssueKind, RoledTaskNode, TaskNode } from './task-graph'
 export { normalisePath, pathsOverlap, validateGraph } from './task-graph'
+export type { BuiltinRole, ContextPolicy, RoleDef, RoleIssue, SlotClassPreference } from './registry'
+export { BUILTIN_ROLE_NAMES, BUILTIN_ROSTER, compileAdHocRole, RESERVED_NAME_PREFIXES } from './registry'

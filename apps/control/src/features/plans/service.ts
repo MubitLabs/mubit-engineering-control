@@ -284,7 +284,9 @@ export async function submitRevision(
       warnings: validation.warnings.length,
       tasks: rev.tasks.slice(0, 50).map((t) => ({ key: t.key, title: t.title, dependsOn: t.dependsOn })),
       impact: impact ?? undefined,
-      consequence: `Approving freezes this revision and starts its ${rev.tasks.length} task(s) on agent accounts offered to the project. Later changes need a new revision.`,
+      consequence: impact
+        ? 'Approving replaces the approved revision: changed tasks stop and start again, removed tasks are cancelled, unchanged ones carry on, new ones start.'
+        : `Approving freezes this revision and starts its ${rev.tasks.length} task(s) on agent accounts offered to the project. Later changes need a new revision.`,
     },
     requestedBy: actor,
     allowedDeciderIds: defaultDeciders('plan', { deliveryOwnerId: delivery.ownerId }),
@@ -410,7 +412,25 @@ export async function materializeTasks(tx: Tx, delivery: DeliveryRow, rev: PlanR
         { kind: 'system' },
       )
     }
-    await tx`update tasks set state = 'cancelled', updated_at = now() where id = ${old.id}`
+    await tx`update tasks set state = 'cancelled', blocker = null, updated_at = now() where id = ${old.id}`
+    // Its open decisions (a pending review, a question) no longer apply to anything.
+    const withdrawn = await tx<{ id: string }[]>`
+      update approvals set status = 'stale', resolved_at = now(),
+        answer = ${tx.json({ reason: `task superseded by plan revision ${rev.number}` } as never)}
+      where task_id = ${old.id} and status = 'pending'
+      returning id
+    `
+    for (const a of withdrawn) {
+      await appendEvent(tx, {
+        stream: projectStream(delivery.projectId),
+        type: 'approval.withdrawn',
+        projectId: delivery.projectId,
+        deliveryId: delivery.id,
+        taskId: old.id,
+        actor: { kind: 'system' },
+        payload: { approvalId: a.id, reason: 'superseded' },
+      })
+    }
     await appendEvent(tx, {
       stream: projectStream(delivery.projectId),
       type: 'task.state_changed',

@@ -179,6 +179,32 @@ describe('coordinator', () => {
 })
 
 describe('revising an approved plan', () => {
+  it('withdraws the pending review of a task the new revision replaces', async () => {
+    const { delivery, tasks } = await approvedDelivery(s, [task('API')])
+    await s.admin.post(`/api/tasks/${tasks.API!.id}/attempts`, {
+      runnerId: runner.config.runnerId,
+      script: [],
+    })
+    const review = await waitFor(async () => {
+      const [a] = await t.db
+        .sql`select id from approvals where task_id = ${tasks.API!.id} and kind = 'result' and status = 'pending'`
+      return a
+    }, 15_000)
+
+    const next = (await s.admin.post(`/api/deliveries/${delivery.id}/plans`, {})).json().revision
+    const changed = next.tasks.map((x: { objective: string }) => ({ ...x, objective: 'A different API' }))
+    const saved = (
+      await s.admin.patch(`/api/plans/${next.id}`, { expectedVersion: next.version, tasks: changed })
+    ).json().revision
+    await s.admin.post(`/api/plans/${next.id}/submit`, { expectedVersion: saved.version })
+    await s.admin.post(`/api/plans/${next.id}/approve`, { expectedVersion: saved.version })
+
+    const [old] = await t.db.sql`select status from approvals where id = ${review.id}`
+    expect(old!.status).toBe('stale')
+    const res = await s.admin.post(`/api/approvals/${review.id}/resolve`, { decision: { kind: 'approve' } })
+    expect(res.statusCode).toBe(409)
+  })
+
   it('carries unchanged tasks over, replaces changed ones and records the impact', async () => {
     const { delivery, tasks } = await approvedDelivery(s, [
       task('API'),

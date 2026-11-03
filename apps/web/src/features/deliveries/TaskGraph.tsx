@@ -1,6 +1,7 @@
 import dagre from 'dagre'
 import { useMemo } from 'react'
 import { Link } from 'react-router'
+import { taskStatus } from '../../components/ui'
 
 export interface GraphNode {
   key: string
@@ -96,7 +97,7 @@ export function TaskGraph(props: { nodes: GraphNode[]; edges: [string, string][]
                   textAnchor="end"
                   style={{ textTransform: 'uppercase' }}
                 >
-                  {n.state.replace(/_/g, ' ')}
+                  {taskStatus(n.state).replace(/_/g, ' ')}
                 </text>
               )}
             </g>

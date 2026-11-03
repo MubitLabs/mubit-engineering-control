@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router'
 import { api } from '../../api/client'
 import type { Approval, Task } from '../../api/types'
 import { ProjectCrumb, useTitle } from '../../components/Layout'
-import { Empty, ErrorBox, Loading, Panel, Short, Status, Time } from '../../components/ui'
+import { Empty, ErrorBox, Loading, Panel, Short, Status, Time, taskStatus } from '../../components/ui'
 import type { ProfileView } from '../accounts/AccountsPage'
 import { useMe } from '../auth/useMe'
 import { DecisionCard } from '../inbox/InboxPage'
@@ -73,7 +73,7 @@ export function TaskPage() {
             task
           </div>
           <h1>
-            <code>{task.key}</code> {task.title} <Status value={task.state} />
+            <code>{task.key}</code> {task.title} <Status value={taskStatus(task.state)} />
           </h1>
           {task.blocker && <div className="muted small">waiting: {task.blocker.detail}</div>}
           {task.repairContext && (

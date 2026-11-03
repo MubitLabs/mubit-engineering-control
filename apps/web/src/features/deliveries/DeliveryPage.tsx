@@ -4,7 +4,16 @@ import { Link, useParams } from 'react-router'
 import { ApiError, api } from '../../api/client'
 import type { DeliveryDetail, PlanRevision } from '../../api/types'
 import { ProjectCrumb, useTitle } from '../../components/Layout'
-import { decisionStatus, Empty, ErrorBox, Loading, Panel, Status, Time } from '../../components/ui'
+import {
+  decisionStatus,
+  Empty,
+  ErrorBox,
+  Loading,
+  Panel,
+  Status,
+  Time,
+  taskStatus,
+} from '../../components/ui'
 import type { ProfileView } from '../accounts/AccountsPage'
 import { useMe } from '../auth/useMe'
 import { TaskGraph } from './TaskGraph'
@@ -97,7 +106,7 @@ export function DeliveryPage() {
                       </td>
                       <td>{t.title}</td>
                       <td>
-                        <Status value={t.state} />
+                        <Status value={taskStatus(t.state)} />
                       </td>
                       <td className="muted small">{t.blocker?.detail ?? ''}</td>
                     </tr>

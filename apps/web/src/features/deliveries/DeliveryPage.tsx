@@ -63,6 +63,17 @@ export function DeliveryPage() {
           </div>
           <h1>
             {delivery.title} <Status value={delivery.state} />
+            {q.data.pullRequests[0] && (
+              <a
+                className="small"
+                style={{ marginLeft: 8 }}
+                href={q.data.pullRequests[0].url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                PR #{q.data.pullRequests[0].number}
+              </a>
+            )}
           </h1>
           <div className="muted small">
             {repository.name} @ {delivery.baseRef}
@@ -150,6 +161,12 @@ export function DeliveryPage() {
                   </div>
                 ))}
                 {q.data.nextStep && <div className="notice">{q.data.nextStep}</div>}
+                {delivery.state === 'awaiting_merge' && (
+                  <div className="notice">
+                    Waiting for the pull request to be reviewed and merged on GitHub. This delivery records
+                    "merged" only when GitHub reports it (checked every 30 seconds).
+                  </div>
+                )}
                 {delivery.state === 'integrating' &&
                   delivery.integrationSha &&
                   delivery.integrationPushedSha !== delivery.integrationSha &&

@@ -553,3 +553,7 @@ label.field {
     order: -1;
   }
 }
+
+.table td code {
+  white-space: nowrap;
+}

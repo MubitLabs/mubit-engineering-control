@@ -127,6 +127,32 @@ export function registerDeliveries(
     return { revision }
   })
 
+  app.post<{ Params: { deliveryId: string } }>(
+    '/api/deliveries/:deliveryId/push-integration',
+    async (req) => {
+      const actor = await requireActor(sql, req)
+      const delivery = await loadDelivery(sql, req.params.deliveryId)
+      authorize(actor, 'approve_plan', {
+        kind: 'delivery',
+        projectId: delivery.projectId,
+        ownerId: delivery.ownerId,
+      })
+      await sql.begin(async (tx) => {
+        await app.services.integrator.retryPush(tx, delivery.id)
+        await audit(
+          tx,
+          actor.userId,
+          'delivery.push_integration',
+          'delivery',
+          delivery.id,
+          delivery.projectId,
+          {},
+        )
+      })
+      return { ok: true }
+    },
+  )
+
   app.post<{ Params: { deliveryId: string } }>('/api/deliveries/:deliveryId/plans', async (req, reply) => {
     const actor = await requireActor(sql, req)
     const body = parse(z.object({ fromRevisionId: z.uuid().optional() }), req.body ?? {})

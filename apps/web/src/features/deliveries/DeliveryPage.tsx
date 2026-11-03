@@ -15,6 +15,7 @@ export function DeliveryPage() {
     queryKey: ['delivery', deliveryId],
     queryFn: () => api.get<DeliveryDetail>(`/api/deliveries/${deliveryId}`),
   })
+  const me = useMe()
   useTitle(q.data?.delivery.title)
   if (!q.data) return q.error ? <ErrorBox error={q.error} /> : <Loading />
   const { delivery, revisions, tasks, approvals, repository, owner, dependencies } = q.data
@@ -138,6 +139,10 @@ export function DeliveryPage() {
                   </div>
                 ))}
                 {q.data.nextStep && <div className="notice">{q.data.nextStep}</div>}
+                {delivery.state === 'integrating' &&
+                  delivery.integrationSha &&
+                  delivery.integrationPushedSha !== delivery.integrationSha &&
+                  me.data?.user.id === delivery.ownerId && <PushAgain deliveryId={delivery.id} />}
                 {q.data.pullRequests.map((pr) => (
                   <div key={pr.id} className="row">
                     <a href={pr.url} target="_blank" rel="noreferrer">
@@ -521,4 +526,20 @@ function exampleSpec(checks: string[]): string {
 
 function toSpecText(r: PlanRevision): string {
   return JSON.stringify({ requirements: r.requirements, tasks: r.tasks }, null, 2)
+}
+
+function PushAgain({ deliveryId }: { deliveryId: string }) {
+  const qc = useQueryClient()
+  const push = useMutation({
+    mutationFn: () => api.post(`/api/deliveries/${deliveryId}/push-integration`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery', deliveryId] }),
+  })
+  return (
+    <div>
+      <button type="button" className="btn small" disabled={push.isPending} onClick={() => push.mutate()}>
+        Push again
+      </button>
+      <ErrorBox error={push.error} />
+    </div>
+  )
 }

@@ -3,6 +3,7 @@ import { ACTIVE_ATTEMPT_STATES, deliveryMachine } from '@mec/domain'
 import type { FastifyBaseLogger } from 'fastify'
 import type { Config } from '../../config'
 import type { Sql, Tx } from '../../db/sql'
+import { conflict } from '../../http/errors'
 import { claimAttempt } from '../attempts/service'
 import type { DeliveryRow } from '../plans/service'
 import type { RunnerRegistry } from '../runners/registry'
@@ -26,7 +27,7 @@ export function pullRequestWait(
 ): string | null {
   if (delivery.state !== 'integrating' || !delivery.integrationSha || opts.hasPullRequest) return null
   if (delivery.integrationPushedSha !== delivery.integrationSha)
-    return 'The integration branch was not pushed: the runner pushes branches only when MEC_GIT_TOKEN (or MEC_PUSH_BRANCHES=true) is set in its runner.env.'
+    return 'The integration branch was not pushed. Runners push only with MEC_GIT_TOKEN (or MEC_PUSH_BRANCHES=true) in runner.env; fix that or the network, restart the runner, then push again.'
   if (!opts.github) return 'The branch is pushed. Opening the pull request needs GITHUB_TOKEN in control.env.'
   if (!opts.github.supports(opts.cloneUrl))
     return 'The branch is pushed. Pull requests are opened only for github.com repositories.'
@@ -127,16 +128,62 @@ export class Integrator {
     `
     const runnerId = source?.runnerId
     if (!runnerId || !this.registry.get(runnerId)) return
+    await this.startRun(tx, delivery, runnerId, next.id, `Integrate ${next.key}`, [
+      { taskId: next.id, taskKey: next.key, sha: next.acceptedSha!, branch: source.branch },
+    ])
+  }
 
+  /**
+   * Pushes an integration commit whose earlier push failed or was not configured: a run with
+   * nothing to merge, on the runner that holds the commit, re-checks it and pushes it.
+   */
+  async retryPush(tx: Tx, deliveryId: string): Promise<void> {
+    await tx`select pg_advisory_xact_lock(hashtext(${`mec.integration:${deliveryId}`}))`
+    const [busy] = await tx`
+      select 1 from attempts a join tasks t on t.id = a.task_id
+      where t.delivery_id = ${deliveryId} and t.kind = 'integration'
+        and a.state = any(${tx.array([...ACTIVE_ATTEMPT_STATES])})
+    `
+    if (busy) throw conflict('integration_busy', 'An integration run is already in progress')
+    const [delivery] = await tx<
+      (DeliveryRow & { integrationSha: string | null; integrationPushedSha: string | null })[]
+    >`select * from deliveries where id = ${deliveryId} for update`
+    if (
+      !delivery?.integrationSha ||
+      delivery.state !== 'integrating' ||
+      delivery.integrationPushedSha === delivery.integrationSha
+    )
+      throw conflict('nothing_to_push', 'There is no unpushed integration commit')
+    const [source] = await tx<{ runnerId: string }[]>`
+      select a.runner_id from attempts a join tasks t on t.id = a.task_id
+      where t.delivery_id = ${deliveryId} and t.kind = 'integration' and a.head_sha = ${delivery.integrationSha}
+      order by a.created_at desc limit 1
+    `
+    if (!source || !this.registry.get(source.runnerId))
+      throw conflict('runner_offline', 'The runner that holds the integration commit is not connected')
+    const [latest] = await tx<{ id: string }[]>`
+      select id from tasks where delivery_id = ${deliveryId} and kind = 'work' order by created_at desc limit 1
+    `
+    await this.startRun(tx, delivery, source.runnerId, latest!.id, 'Push integration branch', [])
+  }
+
+  private async startRun(
+    tx: Tx,
+    delivery: DeliveryRow,
+    runnerId: string,
+    revisionFrom: string,
+    title: string,
+    merges: { taskId: string; taskKey: string; sha: string; branch: string | null }[],
+  ): Promise<void> {
     const [{ n }] = (await tx`
-      select count(*)::int as n from tasks where delivery_id = ${deliveryId} and kind = 'integration'
+      select count(*)::int as n from tasks where delivery_id = ${delivery.id} and kind = 'integration'
     `) as unknown as [{ n: number }]
     const [task] = await tx<{ id: string }[]>`
       insert into tasks (delivery_id, plan_revision_id, key, title, spec, state, owner_id, kind)
-      select ${deliveryId}, plan_revision_id, ${`mec-int-${n + 1}`}, ${`Integrate ${next.key}`},
-             ${tx.json(TaskSpec.parse({ key: 'integration', title: 'Integration', objective: `Integrate ${next.key}`, maxAttempts: 1 }) as never)},
+      select ${delivery.id}, plan_revision_id, ${`mec-int-${n + 1}`}, ${title},
+             ${tx.json(TaskSpec.parse({ key: 'integration', title: 'Integration', objective: title, maxAttempts: 1 }) as never)},
              'ready', ${delivery.ownerId}, 'integration'
-      from tasks where id = ${next.id}
+      from tasks where id = ${revisionFrom}
       returning id
     `
     await claimAttempt(tx, {
@@ -144,11 +191,7 @@ export class Integrator {
       runnerId,
       agentKind: 'none',
       kind: 'integration',
-      inputs: {
-        integration: {
-          merges: [{ taskId: next.id, taskKey: next.key, sha: next.acceptedSha!, branch: source.branch }],
-        },
-      },
+      inputs: { integration: { merges } },
       actor: { kind: 'system', id: 'integrator' },
       leaseMs: this.config.scheduling.leaseTtlMs,
     })

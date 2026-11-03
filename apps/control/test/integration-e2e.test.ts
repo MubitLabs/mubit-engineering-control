@@ -234,6 +234,46 @@ describe('integration', () => {
     ).toBe('merged')
   })
 
+  it('retries an integration push on request, then opens the PR', async () => {
+    const git = (runner as unknown as { workspaces: { settings: { push: boolean } } }).workspaces.settings
+    git.push = false
+    const { delivery, tasks } = await approvedDelivery(s, [task('T1')])
+    await runTask(tasks.T1!.id, [write('src/t1/a.txt', 'one')])
+    await review(tasks.T1!.id, { kind: 'approve' })
+    await integrate(tasks.T1!.id)
+    await waitFor(async () => {
+      await t.app.services.integrator.tick()
+      return (
+        (await t.db.sql`select state from deliveries where id = ${delivery.id}`)[0]!.state === 'integrating'
+      )
+    })
+    const detail = (await s.admin.get(`/api/deliveries/${delivery.id}`)).json()
+    expect(detail.nextStep).toMatch(/not pushed/)
+    expect(pulls).toHaveLength(0)
+
+    git.push = true
+    expect((await s.member.post(`/api/deliveries/${delivery.id}/push-integration`)).statusCode).toBe(403)
+    expect((await s.admin.post(`/api/deliveries/${delivery.id}/push-integration`)).statusCode).toBe(200)
+    expect((await s.admin.post(`/api/deliveries/${delivery.id}/push-integration`)).statusCode).toBe(409)
+    await waitFor(
+      async () => {
+        const [d] = await t.db
+          .sql`select integration_sha, integration_pushed_sha from deliveries where id = ${delivery.id}`
+        return d!.integrationPushedSha === d!.integrationSha
+      },
+      20_000,
+      'pushed',
+    )
+    await waitFor(async () => {
+      await t.app.services.integrator.tick()
+      return (
+        (await t.db.sql`select state from deliveries where id = ${delivery.id}`)[0]!.state ===
+        'awaiting_merge'
+      )
+    })
+    expect(pulls).toHaveLength(1)
+  })
+
   it('a dependent task starts from the integration commit that contains its prerequisite', async () => {
     const { delivery, tasks } = await approvedDelivery(s, [
       task('T1'),

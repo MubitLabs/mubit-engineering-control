@@ -4,6 +4,8 @@ A local meta-agent orchestration app: connect your coding agents (Claude Code, C
 
 - **The spec**: [`docs/plan/PLAN_v4.1_local_meta_agent.md`](docs/plan/PLAN_v4.1_local_meta_agent.md) — every behaviour question is answered from it
 - **The interfaces**: [`docs/handoff/CONTRACTS.md`](docs/handoff/CONTRACTS.md) (implementation tagged `contracts-v0`) — `packages/contracts` is the shared seam
+- **User guide**: [`docs/guide.md`](docs/guide.md) · **Reference** (CLI, HTTP API, policy, fixtures): [`docs/reference.md`](docs/reference.md) · **Changelog**: [`docs/CHANGELOG.md`](docs/CHANGELOG.md)
+- **Contributing**: [`CONTRIBUTING.md`](CONTRIBUTING.md) — licence, layout, dev loop, fixtures, engines, review rules
 - **Build log**: [`docs/log/`](docs/log/) · **Setup guide for agents**: [`SETUP.md`](SETUP.md)
 - **v1 reference**: branch `version-1` (the company-platform predecessor; the domain rules, journal protocol and Claude adapter were ported from it)
 

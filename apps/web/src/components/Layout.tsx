@@ -1,10 +1,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router'
 import { api } from '../api/client'
 import { useLiveEvents } from '../api/events'
 import type { Approval, Project } from '../api/types'
 import { useMe } from '../features/auth/useMe'
+import { useDecisionNotifications } from '../features/inbox/notifications'
 
 export function Layout() {
   const me = useMe()
@@ -21,6 +22,8 @@ export function Layout() {
     refetchInterval: 30_000,
   })
   const pending = inbox.data?.approvals.length ?? 0
+  const openInbox = useCallback(() => navigate('/inbox'), [navigate])
+  useDecisionNotifications(inbox.data?.approvals, openInbox)
   useLiveEvents(projects.data ? projects.data.projects.map((p) => p.id).join(',') : null)
   const { pathname } = useLocation()
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on every route change

@@ -5,6 +5,7 @@ import { api } from '../../api/client'
 import type { Approval } from '../../api/types'
 import { useTitle } from '../../components/Layout'
 import { decisionStatus, Empty, ErrorBox, Panel, Status, Time } from '../../components/ui'
+import { useNotificationSetting } from './notifications'
 
 /**
  * Decision inbox (PDF §12): the exact question or operation, its evidence, and plain choices.
@@ -12,6 +13,7 @@ import { decisionStatus, Empty, ErrorBox, Panel, Status, Time } from '../../comp
  */
 export function InboxPage() {
   const [scope, setScope] = useState<'pending' | 'all'>('pending')
+  const notify = useNotificationSetting()
   useTitle('Inbox')
   const q = useQuery({
     queryKey: ['approvals', 'mine', scope],
@@ -23,6 +25,16 @@ export function InboxPage() {
       <div className="page-head">
         <h1>Decision inbox</h1>
         <div className="row">
+          {notify.supported && !notify.denied && (
+            <button
+              type="button"
+              className="btn small"
+              onClick={() => void notify.set(!notify.on)}
+              title="Desktop notifications when a decision arrives while this tab is in the background"
+            >
+              {notify.on ? 'Notifications on' : 'Notify me'}
+            </button>
+          )}
           <button
             type="button"
             className={`btn small ${scope === 'pending' ? 'primary' : ''}`}

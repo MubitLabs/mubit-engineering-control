@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { Link } from 'react-router'
 import { api } from '../../api/client'
 import { useTitle } from '../../components/Layout'
 import { Empty, ErrorBox, Panel, Status, Time } from '../../components/ui'
@@ -283,6 +284,9 @@ interface FleetStatus {
     attempts: {
       attemptId: string
       state: string
+      taskId: string | null
+      projectId: string | null
+      taskKey: string | null
       acknowledged: boolean
       stopped: boolean
       runnerReachable: boolean
@@ -349,6 +353,19 @@ function Dispatch() {
             {d.latestStop.summary.total} confirmed stopped
             {d.latestStop.summary.unreachable > 0 && (
               <span className="status err"> {d.latestStop.summary.unreachable} unreachable</span>
+            )}
+            {d.latestStop.attempts.some((a) => a.state === 'interrupted') && (
+              <div className="faint" style={{ marginTop: 4 }}>
+                Interrupted attempts stay interrupted after dispatch resumes; resume each from its task:{' '}
+                {d.latestStop.attempts
+                  .filter((a) => a.state === 'interrupted' && a.taskId && a.projectId)
+                  .map((a, i) => (
+                    <span key={a.attemptId}>
+                      {i > 0 && ', '}
+                      <Link to={`/projects/${a.projectId}/tasks/${a.taskId}`}>{a.taskKey}</Link>
+                    </span>
+                  ))}
+              </div>
             )}
           </div>
         )}

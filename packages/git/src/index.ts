@@ -1,5 +1,14 @@
+export type {
+  CompleteMidMergeOptions,
+  CompleteMidMergeResult,
+  PrepareMidMergeRepairOptions,
+  PrepareMidMergeRepairResult,
+} from './conflict'
+export { completeMidMerge, prepareMidMergeRepair } from './conflict'
 export type { GitOptions, GitResult } from './exec'
 export { GitError, git, gitLines } from './exec'
+export type { MergeIntoIntegrationOptions, MergeIntoIntegrationResult } from './merge'
+export { isMidMerge, mergeIntoIntegration } from './merge'
 export type { EnsureResult } from './repos'
 export { RepoCache } from './repos'
 export type { DiffSummary, WorktreeAddOptions } from './worktrees'

@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
+import { Link, useParams } from 'react-router'
 import { api } from '../../api/client'
 import { Status } from '../../components/ui'
 
@@ -31,6 +32,7 @@ interface AttemptDetail {
 
 /** Evidence for review (PDF §15): exact SHAs, the change, and each check against the tested commit. */
 export function AttemptResult({ attemptId }: { attemptId: string }) {
+  const { projectId } = useParams()
   const q = useQuery({
     queryKey: ['attempt', attemptId, 'detail'],
     queryFn: () => api.get<AttemptDetail>(`/api/attempts/${attemptId}`),
@@ -103,6 +105,17 @@ export function AttemptResult({ attemptId }: { attemptId: string }) {
               {c.logTail && <pre className="panel panel-body faint">{c.logTail}</pre>}
             </details>
           ))}
+          {checks.some(misconfigured) && (
+            <div className="notice small">
+              {checks
+                .filter(misconfigured)
+                .map((c) => c.name)
+                .join(', ')}{' '}
+              failed before testing anything (the command or a file it needs was not found). That is usually
+              the check command, not the change: fix it in the project's{' '}
+              <Link to={`/projects/${projectId}`}>repository settings</Link>, then retry.
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -157,4 +170,12 @@ function lineClass(line: string): string | undefined {
   if (line.startsWith('+')) return 'add'
   if (line.startsWith('-')) return 'del'
   return undefined
+}
+
+const NOT_STARTED =
+  /command not found|ENOENT|Cannot find module|ERR_MODULE_NOT_FOUND|No such file or directory|Missing script|not recognized as an internal/i
+
+/** A failed check whose log says the command itself could not run. */
+function misconfigured(c: { status: string; logTail: string | null }): boolean {
+  return c.status !== 'passed' && NOT_STARTED.test(c.logTail ?? '')
 }

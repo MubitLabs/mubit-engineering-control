@@ -234,13 +234,23 @@ function NewDelivery({ projectId, repositories }: { projectId: string; repositor
         </div>
         <label className="field">
           Implementation plan (markdown)
-          <textarea rows={6} value={planMarkdown} onChange={(e) => setPlan(e.target.value)} />
+          <textarea
+            rows={6}
+            value={planMarkdown}
+            onChange={(e) => setPlan(e.target.value)}
+            placeholder={
+              '# What and why\n\nWhat should be true when this is done, constraints, files to avoid…'
+            }
+          />
         </label>
         <ErrorBox error={create.error} />
-        <div>
-          <button className="btn primary" type="submit" disabled={!title || create.isPending}>
+        <div className="row">
+          <button className="btn primary" type="submit" disabled={!title.trim() || create.isPending}>
             Create delivery
           </button>
+          <span className="faint small">
+            Starts a draft plan. Next you write the tasks, or let the coordinator propose them, and approve.
+          </span>
         </div>
       </form>
     </Panel>

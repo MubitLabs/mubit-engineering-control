@@ -475,6 +475,7 @@ function RevisionEditor(props: {
         </div>
       ) : (
         <div className="form">
+          <ErrorBox error={save.error ?? submit.error ?? approve.error ?? newRevision.error} />
           {conflict && (
             <div className="error-box">
               Someone else saved version {conflict.version}. Their text:
@@ -532,7 +533,6 @@ function RevisionEditor(props: {
               ))}
             </div>
           )}
-          <ErrorBox error={save.error ?? submit.error ?? approve.error ?? newRevision.error} />
         </div>
       )}
     </Panel>

@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, lstatSync } from 'node:fs'
+import { lstatSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -10,9 +10,29 @@ import { scanSourceForViolations } from '../src/compliance'
  */
 const REPO_ROOT = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 
-const SRC_DIRS = ['packages/contracts', 'packages/domain', 'packages/effects', 'packages/engines', 'packages/git', 'packages/integration', 'packages/mec-tools', 'packages/meta', 'packages/policy', 'packages/prompts', 'packages/runtime', 'packages/scorecards', 'packages/slots', 'packages/store', 'apps/desktop', 'apps/web/src']
+const SRC_DIRS = [
+  'packages/contracts',
+  'packages/domain',
+  'packages/effects',
+  'packages/engines',
+  'packages/git',
+  'packages/integration',
+  'packages/mec-tools',
+  'packages/meta',
+  'packages/policy',
+  'packages/prompts',
+  'packages/runtime',
+  'packages/scorecards',
+  'packages/slots',
+  'packages/store',
+  'apps/desktop',
+  'apps/web/src',
+]
 
-function listSourceFiles(dir: string, acc: { path: string; text: string }[] = []): { path: string; text: string }[] {
+function listSourceFiles(
+  dir: string,
+  acc: { path: string; text: string }[] = [],
+): { path: string; text: string }[] {
   let entries: string[]
   try {
     entries = readdirSync(dir)

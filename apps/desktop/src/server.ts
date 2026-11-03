@@ -31,6 +31,16 @@ export type ServerDeps = {
   now?: () => Date
   /** §5.6 login terminal cards; a default manager is built when absent. */
   loginCards?: LoginCardManager
+  /** Present in the composed app: the chat route delegates message+work+plan+launch to it. */
+  metaAgent?: {
+    onUserMessage(input: { messageId: string; text: string; referencesWorkItem?: string }): Promise<{
+      acknowledged: string
+      workItemId?: string
+      tasksCreated: number
+      launchesEnqueued: string[]
+      escalated: boolean
+    }>
+  }
 }
 
 /**
@@ -153,7 +163,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       typeof body.referencesWorkItem === 'string' && body.referencesWorkItem !== ''
         ? body.referencesWorkItem
         : undefined
-    const header = request.headers['idempotency-key']
+    // Clients send `x-idempotency-key` (the web api module); the bare form is accepted too.
+    const header = request.headers['x-idempotency-key'] ?? request.headers['idempotency-key']
     const headerText = Array.isArray(header) ? header[0] : header
     const idempotencyKey = typeof headerText === 'string' && headerText !== '' ? headerText : undefined
 
@@ -171,6 +182,32 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 
     const messageId = freshId('msg_')
     const at = now().toISOString()
+
+    // Composed path: the meta-agent service owns message persistence, routing, the ack,
+    // the plan and the launch enqueues (§6). The route only adds the idempotency key.
+    if (deps.metaAgent !== undefined) {
+      const outcome = await deps.metaAgent.onUserMessage({ messageId, text, referencesWorkItem })
+      if (idempotencyKey !== undefined) {
+        store.atomic(() => {
+          const doc = store.messages.get(messageId)
+          if (doc !== undefined) store.messages.save({ ...doc, idempotencyKey })
+        })
+      }
+      return {
+        messageId,
+        ...(outcome.workItemId !== undefined && { workItemId: outcome.workItemId }),
+        routing:
+          outcome.workItemId === undefined
+            ? 'conversation'
+            : outcome.tasksCreated > 0
+              ? 'new_work'
+              : 'attach',
+        acknowledged: outcome.acknowledged,
+        tasksCreated: outcome.tasksCreated,
+        launchesEnqueued: outcome.launchesEnqueued.length,
+      }
+    }
+
     return store.atomic(() => {
       const message: StoreDoc = {
         id: messageId,

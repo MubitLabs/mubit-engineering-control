@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { LaunchSpec } from '@mec/contracts'
 import { BridgeImpl, MecToolsServer } from '@mec/mec-tools'
+import { fakeBrain, MetaAgentService } from '@mec/meta'
 import { loadPolicy } from '@mec/policy'
 import type { EffectHandler, HealthClaim, Json } from '@mec/store'
 import { DirLock, HealthBoardImpl, MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
@@ -93,6 +94,34 @@ export async function startServer(opts: { dataDir: string; policyText?: string }
     effects: store.effects,
     health,
     policyText: opts.policyText ?? DEFAULT_POLICY_TEXT,
+    // §6 composed path: the meta-agent executor owns chat turns. Under MEC_FAKE_ENGINE=1
+    // the brain is the scripted fake (a two-task plan); the real brain is the Claude
+    // adapter on the meta agent's slot with the platform tool set (next composition step).
+    ...(process.env.MEC_FAKE_ENGINE === '1' && {
+      metaAgent: new MetaAgentService({
+        store,
+        effects: store.effects,
+        brain: fakeBrain({
+          ack: 'On it: I will split this into implementation and review tasks.',
+          plan: {
+            tasks: [
+              {
+                taskId: 'implement',
+                objective: 'Implement the request from the originating message.',
+                dependsOn: [],
+                role: 'implementer',
+              },
+              {
+                taskId: 'review',
+                objective: 'Review the implementation against the request.',
+                dependsOn: ['implement'],
+                role: 'code_reviewer',
+              },
+            ],
+          },
+        }),
+      }),
+    }),
   })
   await app.listen({ port: 0, host: '127.0.0.1' })
   const address = app.server.address()

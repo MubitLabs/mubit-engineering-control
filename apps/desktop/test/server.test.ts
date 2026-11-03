@@ -127,8 +127,8 @@ describe('buildServer', () => {
 
   it('replays the same answer for a repeated idempotency key', async () => {
     const { store, app } = makeServer()
-    const first = await postMessage(track(app), { text: 'ship it' }, { 'idempotency-key': 'k1' })
-    const replay = await postMessage(app, { text: 'ship it' }, { 'idempotency-key': 'k1' })
+    const first = await postMessage(track(app), { text: 'ship it' }, { 'x-idempotency-key': 'k1' })
+    const replay = await postMessage(app, { text: 'ship it' }, { 'x-idempotency-key': 'k1' })
 
     expect(replay.messageId).toBe(first.messageId)
     expect(replay.workItemId).toBe(first.workItemId)

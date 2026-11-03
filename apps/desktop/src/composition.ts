@@ -13,6 +13,7 @@ import type { LaunchSpec } from '@mec/contracts'
 import { BridgeImpl, MecToolsServer } from '@mec/mec-tools'
 import { fakeBrain, MetaAgentService } from '@mec/meta'
 import { loadPolicy } from '@mec/policy'
+import { parkFromEvents } from '@mec/runtime'
 import type { EffectHandler, HealthClaim, Json } from '@mec/store'
 import { DirLock, HealthBoardImpl, MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import { FakeEngine } from '@mec/testkit'
@@ -41,6 +42,10 @@ export interface RunningServer {
   url: string
   port: number
   close: () => Promise<void>
+  /** §26 Pause: stops new passes; running turns finish; resume shifts waiting deadlines. */
+  pause: () => void
+  resume: () => void
+  isPaused: () => boolean
 }
 
 export async function startServer(opts: { dataDir: string; policyText?: string }): Promise<RunningServer> {
@@ -56,7 +61,28 @@ export async function startServer(opts: { dataDir: string; policyText?: string }
 
   registerEffectHandlers(store, health)
 
+  // §26 Pause: no launch, deliver, relay or outbound message runs while paused; jobs that
+  // were mid-handler finish (the pass simply stops starting new ones). On resume, waiting
+  // deadlines shift by the pause length so nothing fires late-but-eagerly.
+  let paused = false
+  let pausedAt: number | undefined
+  const pauseControl = {
+    pause(): void {
+      paused = true
+      pausedAt = Date.now()
+    },
+    resume(): void {
+      if (!paused) return
+      paused = false
+      const shift = Date.now() - (pausedAt ?? Date.now())
+      if (shift > 0) store.effects.shiftWaiting?.(shift)
+    },
+    isPaused(): boolean {
+      return paused
+    },
+  }
   const queueTimer = setInterval(() => {
+    if (paused) return
     void store.effects.run().catch(() => {})
   }, PASS_INTERVAL_MS)
   queueTimer.unref()
@@ -146,7 +172,14 @@ export async function startServer(opts: { dataDir: string; policyText?: string }
     db.close()
     lock.release()
   }
-  return { url: `http://127.0.0.1:${address.port}`, port: address.port, close }
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    port: address.port,
+    close,
+    pause: pauseControl.pause,
+    resume: pauseControl.resume,
+    isPaused: pauseControl.isPaused,
+  }
 }
 
 const EFFECT_KINDS = ['launch', 'deliver', 'relay', 'note', 'reply', 'external', 'probe'] as const
@@ -212,7 +245,14 @@ async function runFakeLaunch(store: SqliteStore, payload: Json): Promise<void> {
   })
 
   const stream = `attempt:${attemptId}`
-  let state: 'queued' | 'running' | 'succeeded' | 'checks_failed' = 'queued'
+  let state:
+    | 'queued'
+    | 'running'
+    | 'succeeded'
+    | 'checks_failed'
+    | 'quota_wait'
+    | 'auth_required'
+    | 'provider_down' = 'queued'
   let terminal: string | undefined
   let exitCode: number | undefined
   const saveAttempt = (): void => {
@@ -245,6 +285,16 @@ async function runFakeLaunch(store: SqliteStore, payload: Json): Promise<void> {
       terminal = event.terminal_reason
       state = event.terminal_reason === 'completed' ? 'succeeded' : 'checks_failed'
     }
+  }
+  // §26 Quota park (composition half): a rejected rate limit or a quota/auth error class
+  // parks the attempt with its workspace preserved — the state the scheduler re-checks
+  // before replacing anything (parkFromEvents is the same classifier the real adapter feeds).
+  const park = parkFromEvents(
+    store.events.read(stream).map((e) => e.body as { type?: string } & Record<string, unknown> as never),
+  )
+  if (park.park) {
+    state = park.state
+    terminal = park.state
   }
   saveAttempt()
 }

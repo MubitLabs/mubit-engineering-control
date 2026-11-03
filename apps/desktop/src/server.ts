@@ -14,11 +14,13 @@ import { Socket } from 'node:net'
 import { extname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Effects, HealthBoard, HealthName, Json, Store, StoreDoc } from '@mec/contracts'
+import { matchesSecret } from '@mec/contracts'
 import { WORK_ITEM_TERMINAL, type WorkItemState } from '@mec/domain'
 import type { LiveWork } from '@mec/meta'
 import { routeMessage } from '@mec/meta'
 import type { ConfirmationRecord } from '@mec/policy'
 import { resolveConfirmation } from '@mec/policy'
+import { redact } from '@mec/slots'
 import Fastify, { type FastifyInstance } from 'fastify'
 import type { HealthSnapshot, PartEntry } from './health'
 import { type CardEvent, LoginCardManager } from './login-cards'
@@ -157,6 +159,30 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     const text = typeof body.text === 'string' ? body.text.trim() : ''
     if (text === '') {
       reply.code(400).send({ error: 'text is required' })
+      return
+    }
+    // §26 Secrets-in-chat: a key-shaped message is stored REDACTED and answered with the
+    // Slots pointer — the key never becomes durable, and the user learns the right door.
+    if (matchesSecret(text)) {
+      const redacted = redact(text, [], [])
+      const messageId = freshId('msg_')
+      store.atomic(() => {
+        store.messages.save({
+          id: messageId,
+          text: redacted,
+          createdAt: now().toISOString(),
+          updatedAt: now().toISOString(),
+          routing: 'conversation',
+          secretGuard: true,
+        })
+      })
+      reply.code(200).send({
+        messageId,
+        routing: 'conversation',
+        secretGuard: true,
+        message:
+          'That looked like an API key — it was redacted before storage. Add keys in the Slots panel (mec slot add) instead.',
+      })
       return
     }
     const referencesWorkItem =

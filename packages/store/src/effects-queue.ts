@@ -101,6 +101,15 @@ export class EffectsQueue implements Effects {
     this.health = opts?.health
   }
 
+  /** §26 Pause: every pending/waiting job's deadline moves later by ms. */
+  shiftWaiting(ms: number): void {
+    this.db
+      .prepare(
+        `UPDATE effects SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', julianday(next_run_at) + (? / 86400000.0)) WHERE state IN ('pending', 'waiting')`,
+      )
+      .run(ms)
+  }
+
   /**
    * Joins the caller's transaction when one is open (§7: enqueue happens inside the command's
    * transaction) and autocommits otherwise. Coalescing: one row per kind+key, the payload is

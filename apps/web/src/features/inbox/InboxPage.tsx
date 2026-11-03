@@ -74,6 +74,7 @@ export function DecisionCard({ approval, onTaskPage = false }: { approval: Appro
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['approvals'] })
       if (approval.deliveryId) qc.invalidateQueries({ queryKey: ['delivery', approval.deliveryId] })
+      if (approval.taskId) qc.invalidateQueries({ queryKey: ['task', approval.taskId] })
     },
   })
   const detail = approval.detail as {

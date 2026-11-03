@@ -73,7 +73,9 @@ export function DeliveryPage() {
             )}
           </Panel>
           <Panel title="Tasks" flush>
-            {work.length === 0 ? (
+            {work.length === 0 && current && current.tasks.length > 0 ? (
+              <ProposedTasks revision={current} />
+            ) : work.length === 0 ? (
               <Empty>Tasks appear here once a plan revision is approved.</Empty>
             ) : (
               <table className="table">
@@ -541,5 +543,48 @@ function PushAgain({ deliveryId }: { deliveryId: string }) {
       </button>
       <ErrorBox error={push.error} />
     </div>
+  )
+}
+
+/** The revision's tasks as a reviewer reads them before approving; nothing runs until then. */
+function ProposedTasks({ revision }: { revision: PlanRevision }) {
+  return (
+    <>
+      <div className="small faint" style={{ padding: '8px 12px 0' }}>
+        Revision #{revision.number} proposes these tasks. Nothing runs until the revision is approved.
+      </div>
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Key</th>
+            <th>Task</th>
+            <th>Needs</th>
+            <th>Checks</th>
+          </tr>
+        </thead>
+        <tbody>
+          {revision.tasks.map((t) => (
+            <tr key={t.key}>
+              <td>
+                <code>{t.key}</code>
+              </td>
+              <td>
+                <div>{t.title}</div>
+                <div className="muted small" style={{ whiteSpace: 'pre-wrap' }}>
+                  {t.objective}
+                </div>
+                {t.ownedPaths.length > 0 && (
+                  <div className="faint small">changes {t.ownedPaths.join(', ')}</div>
+                )}
+              </td>
+              <td className="small">{t.dependsOn.join(', ') || <span className="faint">—</span>}</td>
+              <td className="small">
+                {t.acceptanceChecks.join(', ') || <span className="status warn">none</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
   )
 }

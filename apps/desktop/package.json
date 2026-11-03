@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mec/contracts": "workspace:*"
+    "@mec/contracts": "workspace:*",
+    "fastify": "^5.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0"

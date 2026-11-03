@@ -41,5 +41,7 @@ export function errorMessage(error: unknown): string {
     const validation = details?.validation?.errors?.map((e) => `• ${e.message}`).join('\n')
     return validation ? `${error.message}\n${validation}` : error.message
   }
+  // fetch() rejects with a TypeError when the server cannot be reached at all.
+  if (error instanceof TypeError) return 'Could not reach the server. Check your connection and try again.'
   return error instanceof Error ? error.message : String(error)
 }

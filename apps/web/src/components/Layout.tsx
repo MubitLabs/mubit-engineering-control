@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router'
 import { api } from '../api/client'
 import { useLiveEvents } from '../api/events'
@@ -24,7 +24,17 @@ export function Layout() {
   const pending = inbox.data?.approvals.length ?? 0
   const openInbox = useCallback(() => navigate('/inbox'), [navigate])
   useDecisionNotifications(inbox.data?.approvals, openInbox)
-  useLiveEvents(projects.data ? projects.data.projects.map((p) => p.id).join(',') : null)
+  const live = useLiveEvents(projects.data ? projects.data.projects.map((p) => p.id).join(',') : null)
+  const [offline, setOffline] = useState(false)
+  // A blip during a deploy or reconnect is normal; only say so if it lasts.
+  useEffect(() => {
+    if (live.connected) {
+      setOffline(false)
+      return
+    }
+    const t = setTimeout(() => setOffline(true), 4_000)
+    return () => clearTimeout(t)
+  }, [live.connected])
   const { pathname } = useLocation()
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on every route change
   useEffect(() => {
@@ -80,6 +90,12 @@ export function Layout() {
         </div>
       </aside>
       <main className="main">
+        {offline && (
+          <div className="error-box" style={{ marginBottom: 12 }}>
+            Lost the connection to the server; retrying. Pages may be out of date and changes may fail until
+            it is back.
+          </div>
+        )}
         <Outlet />
       </main>
     </div>

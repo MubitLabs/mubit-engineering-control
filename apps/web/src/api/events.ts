@@ -51,15 +51,28 @@ function invalidateFor(qc: QueryClient, event: StoredEvent, projectId: string | 
  * One connection for every project the user can see, keeping the inbox and open pages current.
  * `scope` changes (projects joined or created) reopen it; the server resumes from Last-Event-ID.
  */
-export function useLiveEvents(scope: string | null) {
+export function useLiveEvents(scope: string | null): { connected: boolean } {
   const qc = useQueryClient()
+  const [connected, setConnected] = useState(true)
   useEffect(() => {
     if (scope === null) return
     const source = new EventSource('/api/events/live')
+    let lost = false
+    source.onopen = () => {
+      setConnected(true)
+      // Anything may have changed while the stream was down.
+      if (lost) qc.invalidateQueries()
+      lost = false
+    }
+    source.onerror = () => {
+      lost = true
+      setConnected(false)
+    }
     source.onmessage = (msg) => {
       const event = JSON.parse(msg.data) as StoredEvent
       invalidateFor(qc, event, event.projectId)
     }
     return () => source.close()
   }, [scope, qc])
+  return { connected }
 }

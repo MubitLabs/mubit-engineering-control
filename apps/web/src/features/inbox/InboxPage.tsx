@@ -52,6 +52,7 @@ export function InboxPage() {
           </button>
         </div>
       </div>
+      <ErrorBox error={q.error} />
       {q.data?.approvals.length === 0 && (
         <Panel>
           <Empty>Nothing needs your decision.</Empty>

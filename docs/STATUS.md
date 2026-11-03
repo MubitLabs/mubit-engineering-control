@@ -31,3 +31,26 @@ Written by the R0 audit reviewer (3 Nov 2026), on a cold clone (`mec-audit-r0`, 
 - **Open §26 rows** (no evidence at all): slot failover, crash-between-delivered/read (receipt ladder), secrets-in-chat, hold, pause. Plus the composition-level gaps now relabelled in `docs/fault-suite.md` (park-on-rejected wiring, journal pre-append redaction wiring, drift→degraded wiring, stage projection wiring, slot failover orchestration).
 - **Packaging beyond the dev bundle**: `npx` distribution, prebuild matrix, first-run wizard, `mec slot` CLI surface — not started; `apps/desktop/dist/mec.mjs` is a dev bundle only. The unbundled source entry (`node bin/mec.js` without `dist/`) cannot run under stock Node resolution (extensionless TS imports) — the bundle is the working path.
 - **Known route bug**: `/api/inbox/:id/resolve` drops `expectedInputSha` (see VERIFIED §6; issue filed).
+
+---
+
+## Update — 3 Nov evening (single operator; R1 completion + R2 wave, commits `9ba065f`..`d824e54`)
+
+The audit above is unchanged as a record. What moved since, against its own three buckets:
+
+**ABSENT → real (with evidence in this repo):**
+- **H1** (real-binary canary): `apps/desktop/test/h1.real.test.ts` — real Claude attempt, live rate_limit journal, sandbox denies `~/.ssh`, `mcp__mec__confirm` round-trip, checks on head SHA.
+- **H3** (the §23 flow on a real repo): `MubitLabs/mec-sandbox` PR #2 merged behind three user-approved cards, GitHub-confirmed (main `6bd0e35`); record in `docs/log/HANDSHAKES.md`.
+- **node-pty**: real `node-pty@1.1.0` drives login cards (R1.3); the §21.7 pin question resolved to it (DECISIONS).
+- **Real meta agent**: R1.4 RealClaudeBrain — tool-mediated turns over the in-process MCP server (`MEC_META_SLOT`).
+- **R1.5 API-key slots**: courier + keystore custody proven against real SQLite.
+- **R1.6**: the §26 composition rows closed — 35/38 proven (`docs/fault-suite.md`).
+- **R2.1**: Codex 0.148.0 on a real ChatGPT login (`~/.mec/engines/codex/codex-1`) — smoke/permission/auth_expired fixtures now REAL recordings; gated canary `MEC_REAL_CODEX=1` green. Protocol deltas vs the plan's 0.166 row in `docs/engines.md`.
+- **R2.4/R2.5/R2.8**: `mec slot` CLI + internal tarball (`pack:internal`, never publishes); first-run wizard (`#/wizard`, argv-only repository validation); user guide + reference + CONTRIBUTING.
+- **R2.7 security review** (`docs/security/threat-model.md`, all controls cited to grep-verified tests) — and its two High gaps CLOSED same day (§22 origin-rejection + `x-mec-client` hook, secrets-in-chat route test; issues #7/#8). `pnpm audit --prod` clean. Honest residual: the compliance guard is a tripwire, not a boundary (issue #6, three planted evasions).
+
+**ON FAKES → honest where they remain:**
+- OpenCode fixtures still synthetic **while R2.2 runs** (real GLM Coding Plan + Gemini slots exist, keys live-verified against both providers' models endpoints — never seen by the operator agent; intake is now a structure check, not a format oracle — the 3 Nov courier lesson).
+- Codex `rate_limit_rejected` fixture synthetic by necessity (window exhaustion not forceable cheaply); meta notes say so.
+
+**Still open:** R1.11 (the owner's week of daily use — repo not yet chosen), H4/H5, Linux §26 rows (second machine), `docs/guide.md`'s troubleshoot row for `expectedInputSha` corrected in `docs/fault-suite.md` (the bug was fixed in R1.6-era server work and re-tested at `server.test.ts` "audit #5").

@@ -28,6 +28,7 @@
     "@mec/runtime": "workspace:*",
     "@mec/engines": "workspace:*",
     "@mec/git": "workspace:*",
+    "@mec/integration": "workspace:*",
     "@mec/slots": "workspace:*",
     "node-pty": "^1.1.0"
   },

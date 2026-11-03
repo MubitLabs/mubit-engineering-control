@@ -38,6 +38,9 @@ importers:
       '@mec/git':
         specifier: workspace:*
         version: link:../../packages/git
+      '@mec/integration':
+        specifier: workspace:*
+        version: link:../../packages/integration
       '@mec/mec-tools':
         specifier: workspace:*
         version: link:../../packages/mec-tools

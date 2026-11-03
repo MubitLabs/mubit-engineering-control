@@ -25,6 +25,15 @@ import { claudeHome, redact, SlotKeystore } from '@mec/slots'
 import Fastify, { type FastifyInstance } from 'fastify'
 import type { HealthSnapshot, PartEntry } from './health'
 import { type CardEvent, LoginCardManager } from './login-cards'
+import {
+  createPrBehindCard,
+  defaultGhRun,
+  type GhRun,
+  mergeBehindCard,
+  openMergeCard,
+  type ReleaseDeps,
+  resolvePrCreate,
+} from './release'
 
 export type ServerDeps = {
   store: Store
@@ -47,6 +56,14 @@ export type ServerDeps = {
    * into the request headers — never into the store, events or logs.
    */
   validateFetch?: typeof globalThis.fetch
+  /**
+   * §14/R1.7: the release agent's gh runner — argv-only through the user's own `gh`
+   * (default `defaultGhRun`); tests inject a recording fake so no route ever touches a
+   * real repository.
+   */
+  ghRun?: GhRun
+  /** The store release cards and prflow docs live in; defaults to the composed store. */
+  repoStore?: Store
   /** Present in the composed app: the chat route delegates message+work+plan+launch to it. */
   metaAgent?: {
     onUserMessage(input: { messageId: string; text: string; referencesWorkItem?: string }): Promise<{
@@ -204,6 +221,14 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // §5.4 where slot homes (and only they) hold keys; §5.8 transport for the zero-token probe.
   const keystoreRoot = deps.keystoreRoot ?? DEFAULT_KEYSTORE_ROOT
   const validateFetch = deps.validateFetch ?? globalThis.fetch
+  // §14/R1.7: the release agent's gh leg — cards settle in the same store the inbox reads
+  // (a test may inject either seam); every gh call is argv-only, bodies by stdin.
+  const releaseDeps: ReleaseDeps = {
+    run: deps.ghRun ?? defaultGhRun,
+    store: deps.repoStore ?? store,
+    effects: deps.effects,
+    now,
+  }
   const app = Fastify({ logger: false })
 
   app.get('/healthz', async () => ({ ok: true }))
@@ -680,6 +705,128 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       }
     }),
   )
+
+  // §14/R1.7 — the release agent's GitHub leg. `pr_create` and `pr_merge` are
+  // always-confirm classes (§13): the create routes only OPEN cards (nothing leaves the
+  // machine unresolved); the resolve routes re-check existence, pending status and class
+  // before anything runs, settle the card, and only then call the user's gh.
+  app.post('/api/release/pr', async (request, reply) => {
+    const body = (request.body ?? {}) as { repo?: unknown; branch?: unknown; title?: unknown; body?: unknown }
+    const repo = typeof body.repo === 'string' ? body.repo.trim() : ''
+    const branch = typeof body.branch === 'string' ? body.branch.trim() : ''
+    const title = typeof body.title === 'string' ? body.title.trim() : ''
+    const prBody = typeof body.body === 'string' ? body.body : ''
+    if (repo === '' || branch === '' || title === '') {
+      reply.code(400).send({ error: 'repo, branch and title are required' })
+      return
+    }
+    return createPrBehindCard(releaseDeps, { repo, branch, title, body: prBody })
+  })
+
+  app.post('/api/release/pr/:confirmationId/resolve', async (request, reply) => {
+    const id = String((request.params as { confirmationId?: string }).confirmationId ?? '')
+    const body = (request.body ?? {}) as { answer?: unknown }
+    if (body.answer !== 'approve' && body.answer !== 'deny') {
+      reply.code(400).send({ error: "answer must be 'approve' or 'deny'" })
+      return
+    }
+    const doc = releaseDeps.store.confirmations.get(id)
+    if (doc === undefined) {
+      reply.code(404).send({ error: 'confirmation not found' })
+      return
+    }
+    if (doc.cls !== 'pr_create') {
+      reply.code(400).send({ error: `confirmation is class '${String(doc.cls)}', not pr_create` })
+      return
+    }
+    if (doc.status !== 'pending') {
+      reply.code(409).send({ error: 'already_handled', status: doc.status })
+      return
+    }
+    try {
+      return await resolvePrCreate(releaseDeps, { confirmationId: id, answer: body.answer })
+    } catch (error) {
+      // Two answers racing: the CAS already picked the winner (§13) — this is a 409.
+      if (error instanceof Error && error.message.startsWith('already_handled')) {
+        reply.code(409).send({ error: 'already_handled', status: doc.status })
+        return
+      }
+      throw error
+    }
+  })
+
+  app.post('/api/release/merge', async (request, reply) => {
+    const body = (request.body ?? {}) as {
+      repo?: unknown
+      prNumber?: unknown
+      confirmationId?: unknown
+    }
+    const repo = typeof body.repo === 'string' ? body.repo.trim() : ''
+    const prNumber =
+      typeof body.prNumber === 'number' && Number.isInteger(body.prNumber) && body.prNumber > 0
+        ? body.prNumber
+        : undefined
+    if (repo === '' || prNumber === undefined) {
+      reply.code(400).send({ error: 'repo and a positive integer prNumber are required' })
+      return
+    }
+    // Optional link back to the pr_create card that opened this PR; it is only recorded.
+    const originConfirmationId =
+      typeof body.confirmationId === 'string' && body.confirmationId !== '' ? body.confirmationId : undefined
+    if (
+      originConfirmationId !== undefined &&
+      releaseDeps.store.confirmations.get(originConfirmationId) === undefined
+    ) {
+      reply.code(404).send({ error: 'confirmation not found' })
+      return
+    }
+    return openMergeCard(releaseDeps, {
+      repo,
+      prNumber,
+      ...(originConfirmationId !== undefined && { originConfirmationId }),
+    })
+  })
+
+  app.post('/api/release/merge/:confirmationId/resolve', async (request, reply) => {
+    const id = String((request.params as { confirmationId?: string }).confirmationId ?? '')
+    const body = (request.body ?? {}) as { answer?: unknown }
+    if (body.answer !== 'approve' && body.answer !== 'deny') {
+      reply.code(400).send({ error: "answer must be 'approve' or 'deny'" })
+      return
+    }
+    const doc = releaseDeps.store.confirmations.get(id)
+    if (doc === undefined) {
+      reply.code(404).send({ error: 'confirmation not found' })
+      return
+    }
+    if (doc.cls !== 'pr_merge') {
+      reply.code(400).send({ error: `confirmation is class '${String(doc.cls)}', not pr_merge` })
+      return
+    }
+    if (doc.status !== 'pending') {
+      reply.code(409).send({ error: 'already_handled', status: doc.status })
+      return
+    }
+    const payload = doc.payload as { repo?: unknown; prNumber?: unknown } | undefined
+    if (payload === undefined || typeof payload.repo !== 'string' || typeof payload.prNumber !== 'number') {
+      reply.code(400).send({ error: 'confirmation carries no merge payload' })
+      return
+    }
+    try {
+      return await mergeBehindCard(releaseDeps, {
+        confirmationId: id,
+        repo: payload.repo,
+        prNumber: payload.prNumber,
+        answer: body.answer,
+      })
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('already_handled')) {
+        reply.code(409).send({ error: 'already_handled', status: doc.status })
+        return
+      }
+      throw error
+    }
+  })
 
   app.get('/api/events', (request, reply) => {
     const query = (request.query ?? {}) as { stream?: string; after?: string }

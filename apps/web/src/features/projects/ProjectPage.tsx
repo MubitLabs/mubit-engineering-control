@@ -455,7 +455,15 @@ function PauseButton({ projectId, paused }: { projectId: string; paused: boolean
     },
   })
   return (
-    <button type="button" className="btn small" onClick={() => toggle.mutate()} disabled={toggle.isPending}>
+    <button
+      type="button"
+      className="btn small"
+      onClick={() => toggle.mutate()}
+      disabled={toggle.isPending}
+      title={
+        paused ? 'Let the scheduler start attempts again' : 'No new attempts start; running ones carry on'
+      }
+    >
       {paused ? 'Resume dispatch' : 'Pause dispatch'}
     </button>
   )

@@ -306,7 +306,18 @@ function Dispatch() {
             Resume dispatch
           </button>
         ) : (
-          <button type="button" className="btn small danger" onClick={() => stop.mutate()}>
+          <button
+            type="button"
+            className="btn small danger"
+            onClick={() => {
+              if (
+                window.confirm(
+                  `Stop the fleet? ${d.load.total} running attempt(s) are interrupted and nothing new starts until dispatch is resumed.`,
+                )
+              )
+                stop.mutate()
+            }}
+          >
             Stop fleet
           </button>
         )

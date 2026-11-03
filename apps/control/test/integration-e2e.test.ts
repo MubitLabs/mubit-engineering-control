@@ -237,6 +237,8 @@ describe('integration', () => {
     expect(pulls[0]).toMatchObject({ head: branch, base: 'main', title: 'Audit log' })
     expect(pulls[0]!.body).toContain(`### Checks on \`${String(d!.integrationSha).slice(0, 12)}\``)
     expect(pulls[0]!.body).toContain('**T1** Task T1')
+    expect(pulls[0]!.body).toContain(`/projects/${s.project.id}/deliveries/${delivery.id})`)
+    expect(pulls[0]!.body).toMatch(/result: Review T1: .* — accepted by admin/)
 
     await t.app.services.integrator.pollPulls()
     expect((await t.db.sql`select state from deliveries where id = ${delivery.id}`)[0]!.state).toBe(

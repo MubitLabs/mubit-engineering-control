@@ -230,7 +230,7 @@ export class Integrator {
       head,
       base: delivery.baseRef,
       title: delivery.title,
-      body: await pullRequestBody(tx, delivery, delivery.integrationSha),
+      body: await pullRequestBody(tx, delivery, delivery.integrationSha, this.config.publicUrl),
     })
     await tx`
       insert into pull_requests (delivery_id, number, url, head_branch, head_sha, base_ref)
@@ -301,7 +301,12 @@ export class Integrator {
 }
 
 /** A clear change description: requirements, tasks, checks on the exact SHA, decisions (PDF §15). */
-export async function pullRequestBody(tx: Tx, delivery: DeliveryRow, sha: string): Promise<string> {
+export async function pullRequestBody(
+  tx: Tx,
+  delivery: DeliveryRow,
+  sha: string,
+  publicUrl: string,
+): Promise<string> {
   const [rev] = await tx<
     { number: number; requirements: { id: string; text: string }[]; tasks: TaskSpecType[] }[]
   >`
@@ -337,6 +342,8 @@ export async function pullRequestBody(tx: Tx, delivery: DeliveryRow, sha: string
   return [
     `Delivery **${delivery.title}**, plan revision ${rev?.number ?? '?'}, integrated at \`${sha.slice(0, 12)}\`.`,
     '',
+    `[Open the delivery in Mubit Engineering Control](${publicUrl}/projects/${delivery.projectId}/deliveries/${delivery.id}) for each task's diff, checks and transcript.`,
+    '',
     '### Requirements',
     ...(rev?.requirements ?? []).map((r) => `- **${r.id}** ${r.text} — ${covers(r.id) || 'not covered'}`),
     '',
@@ -351,7 +358,7 @@ export async function pullRequestBody(tx: Tx, delivery: DeliveryRow, sha: string
     '### Decisions',
     ...decisions.map(
       (d) =>
-        `- ${d.kind}: ${d.title} — ${d.status}${d.login ? ` by ${d.login}` : ''}${d.answer?.answer ? ` (“${d.answer.answer.slice(0, 200)}”)` : ''}`,
+        `- ${d.kind}: ${d.title} — ${d.kind === 'result' ? (d.status === 'approved' ? 'accepted' : d.status === 'rejected' ? 'sent back' : d.status) : d.status}${d.login ? ` by ${d.login}` : ''}${d.answer?.answer ? ` (“${d.answer.answer.slice(0, 200)}”)` : ''}`,
     ),
     '',
     '_Prepared by Mubit Engineering Control. Repository branch protection and human review still apply._',

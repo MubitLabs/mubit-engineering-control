@@ -366,11 +366,20 @@ function RevisionEditor(props: {
   const [spec, setSpec] = useState(() => toSpecText(revision))
   const [conflict, setConflict] = useState<PlanRevision | null>(null)
   const [open, setOpen] = useState(editable)
-
-  useEffect(() => {
-    setPlan(revision.planMarkdown)
-    setSpec(toSpecText(revision))
+  // The version the local text was loaded from; saves are checked against it, not the latest.
+  const [base, setBase] = useState(revision)
+  const load = (r: PlanRevision) => {
+    setPlan(r.planMarkdown)
+    setSpec(toSpecText(r))
+    setBase(r)
     setConflict(null)
+  }
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: react only to a newer revision arriving
+  useEffect(() => {
+    const unsaved = plan !== base.planMarkdown || spec !== toSpecText(base)
+    if (!unsaved) load(revision)
+    else if (revision.version !== base.version) setConflict(revision)
   }, [revision])
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['delivery', props.deliveryId] })
@@ -382,14 +391,17 @@ function RevisionEditor(props: {
       } catch (e) {
         throw new Error(`Requirements and tasks are not valid JSON: ${(e as Error).message}`)
       }
-      return api.patch(`/api/plans/${revision.id}`, {
-        expectedVersion: revision.version,
+      return api.patch<{ revision: PlanRevision }>(`/api/plans/${revision.id}`, {
+        expectedVersion: base.version,
         planMarkdown: plan,
         requirements: parsed.requirements,
         tasks: parsed.tasks,
       })
     },
-    onSuccess: refresh,
+    onSuccess: ({ revision: saved }) => {
+      setBase(saved)
+      refresh()
+    },
     onError: (e) => {
       if (e instanceof ApiError && e.code === 'version_conflict') {
         setConflict((e.details as { current: PlanRevision }).current)
@@ -408,7 +420,7 @@ function RevisionEditor(props: {
     mutationFn: () => api.post(`/api/deliveries/${props.deliveryId}/plans`, {}),
     onSuccess: refresh,
   })
-  const dirty = plan !== revision.planMarkdown || spec !== toSpecText(revision)
+  const dirty = plan !== base.planMarkdown || spec !== toSpecText(base)
   const start = (m: { mutate: () => void }) => {
     for (const other of [save, submit, approve, newRevision]) other.reset()
     m.mutate()
@@ -478,10 +490,11 @@ function RevisionEditor(props: {
           <ErrorBox error={save.error ?? submit.error ?? approve.error ?? newRevision.error} />
           {conflict && (
             <div className="error-box">
-              Someone else saved version {conflict.version}. Their text:
+              Someone else saved version {conflict.version} while you were editing. Your changes are kept
+              below; saving now would be refused. Their text:
               <pre className="muted">{conflict.planMarkdown}</pre>
-              <button type="button" className="btn small" onClick={refresh}>
-                Load their version
+              <button type="button" className="btn small" onClick={() => load(conflict)}>
+                Discard mine and load theirs
               </button>
             </div>
           )}

@@ -29,3 +29,7 @@ Each gate's demo, recorded when it runs (implementation plan Appendix B). Honest
 - stage D: worktree commit + acceptance check **passed on the head SHA**
 
 Fixed on the way: adapter mints a UUID session id; `--input-format stream-json` dropped for one-shot `-p` (it waits on stdin); settings/mcp paths flow via `brief.env`; engine stderr surfaced; MCP config URL already carries `/mcp`; mec-tools answers the MCP `initialize` handshake. Learnings recorded in docs/engines.md.
+
+## R1.4 — the real meta brain — 3 November 2026
+
+**PASSED** (gated real-engine test, dedicated slot): a real meta-agent turn made tool-mediated decisions — `mcp__mec__acknowledge` + `mcp__mec__propose_plan` round-tripped through the live mec-tools server, the plan validateGraph-clean, the ack a real sentence. Two real-integration fixes on the way: (1) `--permission-prompts none` BLOCKS MCP tool calls with no bridge — the brain now pre-approves `mcp__mec__*` via `--allowedTools` (they are its only permitted tools, validated server-side); (2) model nondeterminism (plain-text turns) is handled by §6's bounded repair: one corrective retry when zero platform tool calls happened. Also learned: a same-process `execSync` freezes the tools server (event loop) — probes must spawn async. The composed path now uses RealClaudeBrain when MEC_META_SLOT is set (fake only under MEC_FAKE_ENGINE=1).

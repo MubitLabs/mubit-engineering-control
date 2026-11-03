@@ -115,6 +115,7 @@ export class ClaudeAdapter implements EngineAdapter {
       maxTurns: spec.brief.budget.turns,
       model: undefined,
       resumeSessionId: spec.resume?.session_id,
+      allowedTools: (spec.brief.env.MEC_ALLOWED_TOOLS as string | undefined)?.split(',').filter(Boolean),
     })
     const proc = spawnFn(argv, { cwd: spec.cwd, env: spec.env })
     const handle: AttemptHandle = {

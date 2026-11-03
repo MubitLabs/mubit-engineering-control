@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { LaunchSpec } from '@mec/contracts'
 import { BridgeImpl, MecToolsServer } from '@mec/mec-tools'
-import { fakeBrain, MetaAgentService } from '@mec/meta'
+import { fakeBrain, MetaAgentService, RealClaudeBrain } from '@mec/meta'
 import { loadPolicy } from '@mec/policy'
 import { parkFromEvents } from '@mec/runtime'
 import type { EffectHandler, HealthClaim, Json } from '@mec/store'
@@ -120,9 +120,9 @@ export async function startServer(opts: { dataDir: string; policyText?: string }
     effects: store.effects,
     health,
     policyText: opts.policyText ?? DEFAULT_POLICY_TEXT,
-    // §6 composed path: the meta-agent executor owns chat turns. Under MEC_FAKE_ENGINE=1
-    // the brain is the scripted fake (a two-task plan); the real brain is the Claude
-    // adapter on the meta agent's slot with the platform tool set (next composition step).
+    // §6 composed path: the meta-agent executor owns chat turns. MEC_FAKE_ENGINE=1 uses the
+    // scripted fake; otherwise the REAL brain (R1.4): the meta agent on a dedicated Claude
+    // slot (MEC_META_SLOT) through the platform tools.
     ...(process.env.MEC_FAKE_ENGINE === '1' && {
       metaAgent: new MetaAgentService({
         store,
@@ -148,6 +148,17 @@ export async function startServer(opts: { dataDir: string; policyText?: string }
         }),
       }),
     }),
+    ...(process.env.MEC_FAKE_ENGINE !== '1' &&
+      process.env.MEC_META_SLOT !== undefined && {
+        metaAgent: new MetaAgentService({
+          store,
+          effects: store.effects,
+          brain: new RealClaudeBrain({
+            slotDir: process.env.MEC_META_SLOT,
+            toolsSecret: randomBytes(24).toString('hex'),
+          }).asBrain(),
+        }),
+      }),
   })
   await app.listen({ port: 0, host: '127.0.0.1' })
   const address = app.server.address()

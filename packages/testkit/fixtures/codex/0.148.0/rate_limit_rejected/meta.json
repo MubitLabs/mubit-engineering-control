@@ -1,0 +1,17 @@
+{
+  "engine": "codex",
+  "engine_version": "0.148.0",
+  "scenario": "rate_limit_rejected",
+  "recorded_at": "2026-11-03T17:12:41.000Z",
+  "recorded_by": "fake",
+  "redacted": true,
+  "expected": {
+    "reports": [],
+    "permission_requests": 0,
+    "rate_limits": [
+      "five_hour"
+    ],
+    "exit": "api_error"
+  },
+  "notes": "synthesised from the documented app-server protocol"
+}

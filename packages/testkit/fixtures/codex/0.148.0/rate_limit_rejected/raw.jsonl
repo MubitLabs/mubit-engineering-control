@@ -1,0 +1,5 @@
+{"method":"thread/started","params":{"threadId":"th_rate_01"}}
+{"method":"turn/started","params":{"threadId":"th_rate_01"}}
+{"method":"account/rateLimits/updated","params":{"threadId":"th_rate_01","primary":{"usedPercent":100,"windowDurationMins":300,"resetsAt":1793674400}}}
+{"method":"error","params":{"threadId":"th_rate_01","message":"usage limit reached: You've hit the ChatGPT plan's five-hour limit."}}
+{"method":"turn/completed","params":{"threadId":"th_rate_01","status":"failed"}}

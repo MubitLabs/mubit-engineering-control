@@ -1,0 +1,5 @@
+{"type": "session_started", "session_id": "th_perm_01", "engine": "codex", "engine_version": "0.148.0"}
+{"type": "permission_request", "request_id": "req_01", "operation": {"kind": "shell", "summary": "npm test", "command": ["npm", "test"]}, "evidence": {"raw": {"threadId": "th_perm_01", "id": "req_01", "command": ["npm", "test"], "cwd": "/wt/audit-view"}, "worktree": "/unknown"}}
+{"type": "permission_result", "request_id": "req_01", "decision": "allow"}
+{"type": "usage", "input_tokens": 2480, "output_tokens": 210, "cache_read": 12020, "cost_usd": 0.046}
+{"type": "exit", "code": 0, "terminal_reason": "completed"}

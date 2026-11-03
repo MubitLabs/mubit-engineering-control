@@ -1,0 +1,4 @@
+{"method":"thread/started","params":{"threadId":"th_smoke_01"}}
+{"method":"turn/started","params":{"threadId":"th_smoke_01"}}
+{"method":"thread/tokenUsage/updated","params":{"threadId":"th_smoke_01","inputTokens":1200,"outputTokens":80,"cachedTokens":9000,"costUSD":0.04}}
+{"method":"turn/completed","params":{"threadId":"th_smoke_01","status":"completed"}}

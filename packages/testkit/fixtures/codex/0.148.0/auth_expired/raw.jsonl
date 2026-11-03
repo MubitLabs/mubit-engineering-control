@@ -1,0 +1,4 @@
+{"method":"thread/started","params":{"threadId":"th_auth_01"}}
+{"method":"turn/started","params":{"threadId":"th_auth_01"}}
+{"method":"error","params":{"threadId":"th_auth_01","message":"Not logged in: run `codex login` to sign in."}}
+{"method":"turn/completed","params":{"threadId":"th_auth_01","status":"failed"}}

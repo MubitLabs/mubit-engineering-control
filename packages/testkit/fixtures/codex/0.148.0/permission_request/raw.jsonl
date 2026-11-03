@@ -1,0 +1,6 @@
+{"method":"thread/started","params":{"threadId":"th_perm_01"}}
+{"method":"turn/started","params":{"threadId":"th_perm_01"}}
+{"method":"item/commandExecution/requestApproval","params":{"threadId":"th_perm_01","id":"req_01","command":["npm","test"],"cwd":"/wt/audit-view"}}
+{"result":{"id":"req_01","decision":"accept"}}
+{"method":"thread/tokenUsage/updated","params":{"threadId":"th_perm_01","inputTokens":2480,"outputTokens":210,"cachedTokens":12020,"costUSD":0.046}}
+{"method":"turn/completed","params":{"threadId":"th_perm_01","status":"completed"}}

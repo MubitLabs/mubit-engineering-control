@@ -1,0 +1,15 @@
+{
+  "engine": "codex",
+  "engine_version": "0.148.0",
+  "scenario": "permission_request",
+  "recorded_at": "2026-11-03T17:13:19.000Z",
+  "recorded_by": "fake",
+  "redacted": true,
+  "expected": {
+    "reports": [],
+    "permission_requests": 1,
+    "rate_limits": [],
+    "exit": "completed"
+  },
+  "notes": "synthesised from the documented app-server protocol"
+}

@@ -19,3 +19,21 @@ export {
   type OpenCodeEventParser,
   parseOpenCodeEvents,
 } from './opencode/protocol'
+
+// Codex app-server (plan §9): one `codex app-server` per slot, one thread per attempt.
+export {
+  CODEX_PERMISSION_DEADLINE_MS,
+  CodexAdapter,
+  type CodexAdapterDeps,
+  type CodexLoginStatus,
+  type CodexNotifications,
+  type CodexPost,
+  type CodexVersionProbe,
+} from './codex/adapter'
+export {
+  CODEX_ENGINE_VERSION,
+  classifyCodexError,
+  createCodexEventParser,
+  type CodexEventParser,
+  parseCodexEvents,
+} from './codex/protocol'

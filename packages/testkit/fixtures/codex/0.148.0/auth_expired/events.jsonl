@@ -1,0 +1,3 @@
+{"type": "session_started", "session_id": "th_auth_01", "engine": "codex", "engine_version": "0.148.0"}
+{"type": "error", "class": "auth", "detail": "Not logged in: run `codex login` to sign in.", "raw": {"threadId": "th_auth_01", "message": "Not logged in: run `codex login` to sign in."}}
+{"type": "exit", "code": 1, "terminal_reason": "api_error"}

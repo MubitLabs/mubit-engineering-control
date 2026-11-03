@@ -2,14 +2,17 @@
   "engine": "codex",
   "engine_version": "0.148.0",
   "scenario": "smoke",
-  "recorded_at": "2026-11-03T17:12:00.000Z",
-  "recorded_by": "fake",
+  "recorded_at": "2026-11-03T21:11:36.000Z",
+  "recorded_by": "real",
   "redacted": true,
   "expected": {
     "reports": [],
     "permission_requests": 0,
-    "rate_limits": [],
+    "rate_limits": [
+      "five_hour",
+      "seven_day"
+    ],
     "exit": "completed"
   },
-  "notes": "synthesised from the documented app-server protocol"
+  "notes": "real turn against the logged-in codex-1 slot (sandbox read-only, approvalPolicy never); prompt: \"Reply with exactly: CODEX-H1-OK\"; model gpt-5.6-sol; raw.jsonl holds the server responses and notifications exactly as sent, including the initialize/thread-start responses"
 }

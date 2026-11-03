@@ -1,4 +1,6 @@
-{"type": "session_started", "session_id": "th_rate_01", "engine": "codex", "engine_version": "0.148.0"}
-{"type": "rate_limit", "window": "five_hour", "status": "rejected", "utilization": 1, "resets_at": "2026-11-03T02:53:20.000Z", "raw": {"threadId": "th_rate_01", "primary": {"usedPercent": 100, "windowDurationMins": 300, "resetsAt": 1793674400}}}
-{"type": "error", "class": "quota", "detail": "usage limit reached: You've hit the ChatGPT plan's five-hour limit.", "raw": {"threadId": "th_rate_01", "message": "usage limit reached: You've hit the ChatGPT plan's five-hour limit."}}
-{"type": "exit", "code": 1, "terminal_reason": "api_error"}
+{"type":"session_started","session_id":"0196c0de-synthetic-but-uuidv7-shaped-0001","engine":"codex","engine_version":"0.148.0"}
+{"type":"rate_limit","window":"five_hour","status":"rejected","utilization":1,"resets_at":"2026-11-03T02:53:20.000Z","raw":{"slot":"primary","usedPercent":100,"windowDurationMins":300}}
+{"type":"rate_limit","window":"seven_day","status":"allowed","utilization":0.16,"resets_at":"2026-11-10T02:53:20.000Z","raw":{"slot":"secondary","usedPercent":16,"windowDurationMins":10080}}
+{"type":"error","class":"quota","detail":"You've hit your plan's usage limit","raw":{"message":"You've hit your plan's usage limit","codexErrorInfo":{"usageLimitReached":{"window":"FiveHours"}},"additionalDetails":null}}
+{"type":"error","class":"quota","detail":"You've hit your plan's usage limit","raw":{"message":"You've hit your plan's usage limit","codexErrorInfo":null,"additionalDetails":null}}
+{"type":"exit","code":1,"terminal_reason":"api_error"}

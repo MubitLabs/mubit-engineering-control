@@ -2,14 +2,17 @@
   "engine": "codex",
   "engine_version": "0.148.0",
   "scenario": "permission_request",
-  "recorded_at": "2026-11-03T17:13:19.000Z",
-  "recorded_by": "fake",
+  "recorded_at": "2026-11-03T21:12:09.478Z",
+  "recorded_by": "real",
   "redacted": true,
   "expected": {
     "reports": [],
     "permission_requests": 1,
-    "rate_limits": [],
+    "rate_limits": [
+      "five_hour",
+      "seven_day"
+    ],
     "exit": "completed"
   },
-  "notes": "synthesised from the documented app-server protocol"
+  "notes": "real round-trip: read-only sandbox + approvalPolicy on-request; the touch outside the writable roots surfaces as the server REQUEST item/commandExecution/requestApproval (request id at the TOP level, command a single shell-line string), answered {\"decision\":\"accept\"} — the client answer line is recorded in raw.jsonl right after the request, before serverRequest/resolved"
 }

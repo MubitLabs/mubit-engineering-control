@@ -1,3 +1,6 @@
-{"type": "session_started", "session_id": "th_smoke_01", "engine": "codex", "engine_version": "0.148.0"}
-{"type": "usage", "input_tokens": 1200, "output_tokens": 80, "cache_read": 9000, "cost_usd": 0.04}
-{"type": "exit", "code": 0, "terminal_reason": "completed"}
+{"type":"session_started","session_id":"01a1a340-dbd8-7c41-b78b-184c1f9cd052","engine":"codex","engine_version":"0.148.0"}
+{"type":"message","role":"assistant","text":"CODEX-H1-OK"}
+{"type":"usage","input_tokens":21809,"output_tokens":10,"cache_read":11136,"cache_write":0}
+{"type":"rate_limit","window":"five_hour","status":"allowed","utilization":0,"resets_at":"2026-11-04T02:11:42.000Z","raw":{"slot":"primary","usedPercent":0,"windowDurationMins":300}}
+{"type":"rate_limit","window":"seven_day","status":"allowed","utilization":0.16,"resets_at":"2026-11-10T14:25:37.000Z","raw":{"slot":"secondary","usedPercent":16,"windowDurationMins":10080}}
+{"type":"exit","code":0,"terminal_reason":"completed"}

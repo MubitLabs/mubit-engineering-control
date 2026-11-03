@@ -1,3 +1,6 @@
-{"type": "session_started", "session_id": "th_auth_01", "engine": "codex", "engine_version": "0.148.0"}
-{"type": "error", "class": "auth", "detail": "Not logged in: run `codex login` to sign in.", "raw": {"threadId": "th_auth_01", "message": "Not logged in: run `codex login` to sign in."}}
-{"type": "exit", "code": 1, "terminal_reason": "api_error"}
+{"type":"session_started","session_id":"01a1a341-77fd-7f30-8245-bf4b1160a924","engine":"codex","engine_version":"0.148.0"}
+{"type":"error","class":"auth","detail":"Reconnecting... 2/5","raw":{"message":"Reconnecting... 2/5","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":401}},"additionalDetails":"unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: wss://api.openai.com/v1/responses, cf-ray: a54e606509714140-LHR"}}
+{"type":"error","class":"auth","detail":"Reconnecting... 3/5","raw":{"message":"Reconnecting... 3/5","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":401}},"additionalDetails":"unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: wss://api.openai.com/v1/responses, cf-ray: a54e6068b99b9b16-LHR"}}
+{"type":"error","class":"auth","detail":"Reconnecting... 4/5","raw":{"message":"Reconnecting... 4/5","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":401}},"additionalDetails":"unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: wss://api.openai.com/v1/responses, cf-ray: a54e606ebeedecdb-LHR"}}
+{"type":"error","class":"auth","detail":"Reconnecting... 5/5","raw":{"message":"Reconnecting... 5/5","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":401}},"additionalDetails":"unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: wss://api.openai.com/v1/responses, cf-ray: a54e6079ed6dccb5-LHR"}}
+{"type":"exit","code":137,"terminal_reason":"crashed"}

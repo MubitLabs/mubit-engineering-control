@@ -1,30 +1,47 @@
 import type { EngineEventBody, ErrorClass, OperationKind, TerminalReason, Window } from '@mec/contracts'
 
 /**
- * Codex app-server JSON-RPC notifications → normalised EngineEvent bodies (plan §9; CONTRACTS §1).
+ * Codex app-server JSON-RPC → normalised EngineEvent bodies (plan §9; CONTRACTS §1).
  *
- * One `codex app-server` process per slot speaks JSON-RPC over stdio; every notification is one
- * line `{"method": "...", "params": {...}}`. Every rule below is proven by the synthetic fixtures
- * in packages/testkit/fixtures/codex/0.148.0 (CONTRACTS §9, recorded_by: 'fake') — synthesised
- * from the documented app-server protocol, never from a real `codex` binary:
- * - `thread/started` (or the first notification carrying `params.threadId`) → session_started
- *   (`session_id` is the threadId `thread/resume` needs)
- * - `item/commandExecution|fileChange|permissions/requestApproval` → permission_request; the
- *   method picks the operation kind (command→shell, file change→edit, anything else→other)
- * - `item/tool/requestUserInput` → permission_request kind 'other' (a question, not an operation)
- * - the approval answer the adapter sent — a line `{"result": {"id": ..., "decision": ...}}` —
- *   → permission_result (accept/acceptForSession→allow, decline/cancel→deny)
- * - `account/rateLimits/updated` and `/read` → rate_limit; `windowDurationMins` names the window
- *   (~300→five_hour, ~10080→seven_day), `resetsAt` arrives in unix seconds, and `usedPercent`
- *   picks the status (>=100 rejected, >=80 warning, else allowed)
- * - `thread/tokenUsage/updated` → usage with the cumulative tokens/cost the params carry; an
- *   event with no reading is skipped — missing stays unknown, not 0
- * - `turn/completed` is the turn end → exit: status `completed`→{0, completed},
- *   `interrupted`→aborted, anything else→{1, api_error}; an error seen earlier in the turn makes
- *   the exit `{code: 1, terminal_reason: 'api_error'}` whatever the status says. A stream that
- *   ends without `turn/completed` is a dead server: the runtime emits exit itself (CONTRACTS §1
- *   crash rule).
- * - a notification with method `error` (or `params.error`) → error via `classifyCodexError`.
+ * One `codex app-server` process per slot speaks JSON-RPC over stdio; every message is one
+ * line. Three line kinds flow from the server: responses (`{id, result|error}`, no `method`),
+ * notifications (`{method, params}`, no `id`) and server→client REQUESTS
+ * (`{method, id, params}` — the approval asks), which the client answers with a response
+ * carrying the SAME id. Every rule below is proven by the recordings in
+ * packages/testkit/fixtures/codex/0.148.0 — `smoke`, `permission_request` and `auth_expired`
+ * are real (recorded against the logged-in slot and an empty CODEX_HOME, 3 Nov 2026);
+ * `rate_limit_rejected` stays a corrected synthesis (real rejection needs window exhaustion).
+ * Shapes verified against `codex app-server generate-ts` for 0.148.0 and the live stream:
+ * - `thread/started` carries the whole thread object: `params.thread.id` is the session id
+ *   (`thread/resume` needs it) and `params.thread.cliVersion` is the engine version.
+ * - `item/completed` with `params.item.type === 'agentMessage'` → assistant `message`
+ *   (deltas `item/agentMessage/delta` stay raw-only); `commandExecution` items → `tool_call`
+ *   with the item's `exitCode`/`aggregatedOutput`/`durationMs`; `userMessage` echoes are skipped.
+ * - approvals arrive as REQUESTS, not notifications: `item/commandExecution|fileChange|
+ *   permissions/requestApproval` with the request id at the TOP level (`params.id` does not
+ *   exist). `command` is a single shell line string, not argv; `fileChange` params carry no
+ *   paths, only `reason` and an optional `grantRoot`.
+ * - the client's recorded answer line `{"jsonrpc":"2.0","id":…,"result":{"decision":…}}` →
+ *   permission_result (accept, acceptForSession → allow; decline, cancel → deny).
+ * - `item/tool/requestUserInput` (a question, `questions[].question`) → permission_request
+ *   kind 'other'; its answer is `{answers: {}}`, NOT a decision.
+ * - `account/rateLimits/updated` carries `params.rateLimits` with `primary` AND `secondary`
+ *   windows; one `rate_limit` event is emitted per window (`windowDurationMins` ~300 →
+ *   five_hour, ~10080 → seven_day; `resetsAt` in unix seconds; `usedPercent` picks the status).
+ * - `thread/tokenUsage/updated` carries cumulative tokens under `params.tokenUsage.total`
+ *   (`inputTokens`, `cachedInputTokens`, `cacheWriteInputTokens`, `outputTokens`); ChatGPT
+ *   subscriptions report no cost, so `cost_usd` stays undefined.
+ * - `error` notifications carry `params.error` = `{message, codexErrorInfo, additionalDetails}`;
+ *   an expired login surfaces as `message: "Reconnecting… N/5"` with
+ *   `codexErrorInfo.responseStreamDisconnected.httpStatusCode === 401` — classification reads
+ *   all three fields, the message alone says nothing about auth.
+ * - `turn/completed` carries the whole turn: `params.turn.status` ∈ completed | interrupted |
+ *   failed | inProgress (plus `turn.error` when failed) → exit completed→{0, completed},
+ *   interrupted→{0, aborted}, anything else→{1, api_error}. An error notification does NOT
+ *   override a later completed turn (reconnects recover).
+ * - a stream that ENDS without `turn/completed` never exits on its own (an auth-expired
+ *   server retries 401s forever): `finish(exitCode?)` synthesises the exit itself —
+ *   ≥128 (a signal) → `crashed`, otherwise `{1, api_error}` (CONTRACTS §1 crash rule).
  */
 
 /** The app-server protocol revision the adapter and its fixtures were written against. */
@@ -34,13 +51,23 @@ type AnyRecord = Record<string, unknown>
 
 const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback)
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
+const clone = (v: unknown) => JSON.parse(JSON.stringify(v)) as never
 
-/** Error text → ErrorClass, from the documented failure shapes of the app-server and its API. */
+/** Error text → ErrorClass, from the real failure shapes recorded in the fixtures. */
 export function classifyCodexError(text: string): ErrorClass {
   const v = text.toLowerCase()
-  if (v.includes('usage limit') || v.includes('rate')) return 'quota'
-  if (v.includes('login') || v.includes('auth')) return 'auth'
-  if (v.includes('overloaded') || v.includes('5xx') || v.includes('stream error') || v.includes('timeout')) {
+  if (v.includes('401') || v.includes('unauthorized') || v.includes('login') || v.includes('auth')) {
+    return 'auth'
+  }
+  if (v.includes('usage limit') || v.includes('rate limit') || v.includes('429')) return 'quota'
+  if (
+    v.includes('overloaded') ||
+    v.includes('5xx') ||
+    v.includes('stream error') ||
+    v.includes('stream disconnected') ||
+    v.includes('timeout') ||
+    v.includes('unavailable')
+  ) {
     return 'provider_down'
   }
   return 'unknown'
@@ -60,9 +87,16 @@ function isoFromUnixSeconds(seconds: unknown): string | undefined {
   return new Date(n * 1000).toISOString()
 }
 
-/** The documented approval methods → operation shape (plan §9 permission-bridge column). */
-function permissionRequestOf(method: string, params: AnyRecord): EngineEventBody | undefined {
-  const requestId = str(params.id)
+/**
+ * The documented approval REQUESTS → operation shape (plan §9 permission-bridge column).
+ * The request id sits at the top level of the JSON-RPC request line, not inside params.
+ */
+function permissionRequestOf(
+  method: string,
+  id: unknown,
+  params: AnyRecord,
+): { body: EngineEventBody; requestId: string } | undefined {
+  const requestId = id === undefined ? '' : String(id)
   if (!requestId) return undefined
   let kind: OperationKind
   let summary: string
@@ -70,21 +104,36 @@ function permissionRequestOf(method: string, params: AnyRecord): EngineEventBody
   let paths: string[] | undefined
   if (method === 'item/commandExecution/requestApproval') {
     kind = 'shell'
-    command = Array.isArray(params.command) ? params.command.map(String) : undefined
-    summary = command ? command.join(' ') : 'command approval request'
+    const line = str(params.command)
+    command = line ? [line] : undefined // a single shell line, not parsed argv
+    summary = line || str(params.reason) || 'command approval request'
   } else if (method === 'item/fileChange/requestApproval') {
     kind = 'edit'
-    paths = Array.isArray(params.paths) ? params.paths.map(String) : undefined
-    summary = paths && paths.length > 0 ? `edit ${paths.join(' ')}` : 'file change approval request'
+    const root = str(params.grantRoot)
+    paths = root ? [root] : undefined
+    summary = str(params.reason) || (root ? `edit under ${root}` : 'file change approval request')
   } else if (method === 'item/permissions/requestApproval') {
     kind = 'other'
-    summary = str(params.summary) || str(params.reason) || 'permission approval request'
+    summary = str(params.reason) || 'permission approval request'
   } else if (method === 'item/tool/requestUserInput') {
     kind = 'other' // a question for the user, not an operation on the worktree
-    summary = str(params.summary) || str(params.question) || 'user input request'
+    const questions = Array.isArray(params.questions) ? (params.questions as AnyRecord[]) : []
+    summary = str(questions[0]?.question) || str(questions[0]?.header) || 'user input request'
+    return { body: permissionBody(requestId, kind, summary, undefined, undefined, params), requestId }
   } else {
     return undefined
   }
+  return { body: permissionBody(requestId, kind, summary, command, paths, params), requestId }
+}
+
+function permissionBody(
+  requestId: string,
+  kind: OperationKind,
+  summary: string,
+  command: string[] | undefined,
+  paths: string[] | undefined,
+  params: AnyRecord,
+): EngineEventBody {
   return {
     type: 'permission_request',
     request_id: requestId,
@@ -95,7 +144,7 @@ function permissionRequestOf(method: string, params: AnyRecord): EngineEventBody
       paths,
     },
     evidence: {
-      raw: JSON.parse(JSON.stringify(params)) as never,
+      raw: clone(params),
       worktree: '/unknown', // notifications carry no cwd; the adapter states the worktree it owns
     },
   }
@@ -104,90 +153,114 @@ function permissionRequestOf(method: string, params: AnyRecord): EngineEventBody
 function mapCodexNotification(
   method: string,
   params: AnyRecord,
-  state: { started: boolean; sawError: boolean },
+  state: { started: boolean; exited: boolean },
 ): EngineEventBody[] {
   const events: EngineEventBody[] = []
 
-  if (!state.started && (method === 'thread/started' || str(params.threadId) !== '')) {
-    const threadId = str(params.threadId) || str(params.id)
+  if (!state.started && method === 'thread/started') {
+    const thread = (params.thread ?? {}) as AnyRecord
+    const threadId = str(thread.id)
     if (threadId) {
       events.push({
         type: 'session_started',
         session_id: threadId,
         engine: 'codex',
-        engine_version: str(params.version) || CODEX_ENGINE_VERSION,
-        model: str(params.model) || undefined,
+        engine_version: str(thread.cliVersion) || CODEX_ENGINE_VERSION,
       })
       state.started = true
     }
   }
 
-  const approval = permissionRequestOf(method, params)
-  if (approval) {
-    events.push(approval)
+  if (method === 'item/completed') {
+    const item = (params.item ?? {}) as AnyRecord
+    const itemType = str(item.type)
+    if (itemType === 'agentMessage') {
+      events.push({ type: 'message', role: 'assistant', text: str(item.text) })
+    } else if (itemType === 'commandExecution') {
+      const exitCode = num(item.exitCode)
+      events.push({
+        type: 'tool_call',
+        tool: 'commandExecution',
+        input: clone({ command: item.command, cwd: item.cwd }) as never,
+        output: item.aggregatedOutput === null ? undefined : clone(item.aggregatedOutput),
+        ok: exitCode === undefined ? undefined : exitCode === 0,
+        duration_ms: num(item.durationMs),
+      })
+    }
     return events
   }
 
   if (method === 'account/rateLimits/updated' || method === 'account/rateLimits/read') {
-    const primary = ((params.primary ?? {}) as AnyRecord) ?? {}
-    const usedPercent = num(primary.usedPercent)
-    events.push({
-      type: 'rate_limit',
-      window: windowFromDurationMins(num(primary.windowDurationMins)),
-      status:
-        usedPercent === undefined
-          ? 'allowed'
-          : usedPercent >= 100
-            ? 'rejected'
-            : usedPercent >= 80
-              ? 'warning'
-              : 'allowed',
-      utilization: usedPercent === undefined ? undefined : Math.min(usedPercent / 100, 1),
-      resets_at: isoFromUnixSeconds(primary.resetsAt) ?? 'unknown',
-      raw: JSON.parse(JSON.stringify(params)) as never,
-    })
+    const snapshot = (params.rateLimits ?? params) as AnyRecord // read responses unwrap one level
+    for (const slot of ['primary', 'secondary'] as const) {
+      const window = (snapshot[slot] ?? null) as AnyRecord | null
+      if (window === null) continue
+      const usedPercent = num(window.usedPercent)
+      events.push({
+        type: 'rate_limit',
+        window: windowFromDurationMins(num(window.windowDurationMins)),
+        status:
+          usedPercent === undefined
+            ? 'allowed'
+            : usedPercent >= 100
+              ? 'rejected'
+              : usedPercent >= 80
+                ? 'warning'
+                : 'allowed',
+        utilization: usedPercent === undefined ? undefined : Math.min(usedPercent / 100, 1),
+        resets_at: isoFromUnixSeconds(window.resetsAt) ?? 'unknown',
+        raw: clone({ slot, usedPercent, windowDurationMins: window.windowDurationMins }),
+      })
+    }
     return events
   }
 
   if (method === 'thread/tokenUsage/updated') {
-    const input = num(params.inputTokens)
-    const output = num(params.outputTokens)
-    const cached = num(params.cachedTokens)
-    const cost = num(params.costUSD)
-    if (input === undefined && output === undefined && cached === undefined && cost === undefined) {
-      return events // no reading yet: unknown stays unknown, never 0 (CONTRACTS §0)
-    }
+    const usage = ((params.tokenUsage ?? {}) as AnyRecord).total as AnyRecord | undefined
+    if (usage === undefined) return events
     events.push({
       type: 'usage',
-      input_tokens: input ?? 0,
-      output_tokens: output ?? 0,
-      cache_read: cached,
-      cost_usd: cost,
+      input_tokens: num(usage.inputTokens) ?? 0,
+      output_tokens: num(usage.outputTokens) ?? 0,
+      cache_read: num(usage.cachedInputTokens),
+      cache_write: num(usage.cacheWriteInputTokens),
+      // ChatGPT subscriptions report tokens only; cost stays unknown, never 0 (CONTRACTS §0)
     })
     return events
   }
 
-  if (method === 'error' || params.error !== undefined) {
+  // NB: `mcpServer/startupStatus/updated` carries `error: null` in flight — only a
+  // truthy params.error (or the `error` method itself) is an error.
+  if (method === 'error' || (params.error !== null && params.error !== undefined)) {
     const err = (params.error ?? params) as AnyRecord
     const message = str(err.message)
-    state.sawError = true
+    const details = str(err.additionalDetails)
+    const info = err.codexErrorInfo === undefined ? '' : JSON.stringify(err.codexErrorInfo)
     events.push({
       type: 'error',
-      class: classifyCodexError(message),
-      detail: message || 'codex reported an error',
-      raw: JSON.parse(JSON.stringify(err)) as never,
+      class: classifyCodexError(`${message} ${details} ${info}`),
+      detail: message || details || 'codex reported an error',
+      raw: clone(err),
     })
     return events
   }
 
   if (method === 'turn/completed') {
-    const status = str(params.status)
+    const turn = (params.turn ?? {}) as AnyRecord
+    const status = str(turn.status)
+    if (turn.error !== null && turn.error !== undefined) {
+      const err = turn.error as AnyRecord
+      const message = str(err.message)
+      events.push({
+        type: 'error',
+        class: classifyCodexError(`${message} ${str(err.additionalDetails)}`),
+        detail: message || 'turn failed',
+        raw: clone(err),
+      })
+    }
     let code: number
     let reason: TerminalReason
-    if (state.sawError) {
-      code = 1
-      reason = 'api_error' // the turn completed only nominally; the error owns the outcome
-    } else if (status === 'completed') {
+    if (status === 'completed') {
       code = 0
       reason = 'completed'
     } else if (status === 'interrupted') {
@@ -198,17 +271,31 @@ function mapCodexNotification(
       reason = 'api_error'
     }
     events.push({ type: 'exit', code, terminal_reason: reason })
+    state.exited = true
     return events
   }
 
-  return events // turn/started, item/* progress and friends stay in the raw stream and the journal
+  return events // turn/started, deltas, item/started and friends stay in the raw stream and the journal
 }
 
 /** Incremental form the adapter uses: push raw stdio lines, get completed bodies back. */
-export type CodexEventParser = { push(line: string): EngineEventBody[] }
+export type CodexEventParser = {
+  push(line: string): EngineEventBody[]
+  /**
+   * End of stream. A turn that never saw `turn/completed` (a killed or endlessly-retrying
+   * server) gets its exit synthesised here: ≥128 is a signal → `crashed`, else `api_error`.
+   */
+  finish(exitCode?: number): EngineEventBody[]
+  /** The id of the currently active turn, from `turn/started` (turn/steer and turn/interrupt need it). */
+  activeTurnId(): string | undefined
+  /** The native JSON-RPC request behind a permission_request id (id type + method), for answering. */
+  nativeRequest(requestId: string): { id: string | number; method: string } | undefined
+}
 
 export function createCodexEventParser(): CodexEventParser {
-  const state = { started: false, sawError: false }
+  const state = { started: false, exited: false }
+  const nativeRequests = new Map<string, { id: string | number; method: string }>()
+  let turnId: string | undefined
   return {
     push(line: string): EngineEventBody[] {
       const trimmed = line.trim()
@@ -222,32 +309,72 @@ export function createCodexEventParser(): CodexEventParser {
       if (parsed === null || typeof parsed !== 'object') return []
       const record = parsed as AnyRecord
 
-      // The approval answer the adapter sent: {"result": {"id": ..., "decision": "accept"|"…"}}.
-      const result = record.result
-      if (result !== null && typeof result === 'object') {
-        const id = str((result as AnyRecord).id)
-        const decision = str((result as AnyRecord).decision)
-        if (!id || !decision) return [] // a response to thread/start and friends: nothing to normalise
-        return [
-          {
-            type: 'permission_result',
-            request_id: id,
-            decision: decision.startsWith('accept') ? 'allow' : 'deny', // accept, acceptForSession → allow
-          },
-        ]
+      const method = str(record.method)
+
+      // The client's recorded answer to an approval request:
+      // {"jsonrpc":"2.0","id":…,"result":{"decision":"accept"|…}} — server responses to
+      // client requests never carry result.decision, so the two cannot collide.
+      if (method === '' && record.result !== null && typeof record.result === 'object') {
+        const decision = str((record.result as AnyRecord).decision)
+        if (decision !== '') {
+          const requestId = record.id === undefined ? '' : String(record.id)
+          if (!requestId) return []
+          return [
+            {
+              type: 'permission_result',
+              request_id: requestId,
+              decision: decision.startsWith('accept') ? 'allow' : 'deny',
+            },
+          ]
+        }
+        return [] // a response to initialize/thread/start and friends: nothing to normalise
+      }
+      if (method === '') return []
+
+      // A server→client REQUEST (approval asks): the id rides at the top level.
+      if (record.id !== undefined) {
+        const approval = permissionRequestOf(method, record.id, (record.params ?? {}) as AnyRecord)
+        if (approval) {
+          nativeRequests.set(approval.requestId, { id: record.id as string | number, method })
+          return [approval.body]
+        }
+        return []
       }
 
-      const method = str(record.method)
-      if (method === '') return []
+      if (method === 'turn/started') {
+        const turn = (((record.params ?? {}) as AnyRecord).turn ?? {}) as AnyRecord
+        turnId = str(turn.id) || turnId
+      }
       return mapCodexNotification(method, (record.params ?? {}) as AnyRecord, state)
+    },
+    finish(exitCode?: number): EngineEventBody[] {
+      if (state.exited) return []
+      const code = exitCode ?? 1
+      return [
+        {
+          type: 'exit',
+          code,
+          terminal_reason: code >= 128 ? 'crashed' : 'api_error',
+        },
+      ]
+    },
+    activeTurnId(): string | undefined {
+      return turnId
+    },
+    nativeRequest(requestId: string): { id: string | number; method: string } | undefined {
+      return nativeRequests.get(requestId)
     },
   }
 }
 
-/** Batch form the conformance suite uses: raw notification lines in, normalised bodies out. */
-export function parseCodexEvents(rawLines: readonly string[]): EngineEventBody[] {
+/** Batch form the conformance suite uses: raw stream lines in, normalised bodies out. */
+export function parseCodexEvents(
+  rawLines: readonly string[],
+  opts: { exitCode?: number } = {},
+): EngineEventBody[] {
   const parser = createCodexEventParser()
   const events: EngineEventBody[] = []
   for (const line of rawLines) events.push(...parser.push(line))
+  events.push(...parser.finish(opts.exitCode))
   return events
 }

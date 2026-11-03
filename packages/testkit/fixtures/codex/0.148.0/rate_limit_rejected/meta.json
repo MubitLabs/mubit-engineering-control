@@ -2,16 +2,17 @@
   "engine": "codex",
   "engine_version": "0.148.0",
   "scenario": "rate_limit_rejected",
-  "recorded_at": "2026-11-03T17:12:41.000Z",
+  "recorded_at": "2026-11-03T21:30:00.000Z",
   "recorded_by": "fake",
   "redacted": true,
   "expected": {
     "reports": [],
     "permission_requests": 0,
     "rate_limits": [
-      "five_hour"
+      "five_hour",
+      "seven_day"
     ],
     "exit": "api_error"
   },
-  "notes": "synthesised from the documented app-server protocol"
+  "notes": "synthetic: real rejection requires window exhaustion; every shape corrected to the real 0.148.0 protocol (thread/started object, rateLimits.primary/secondary nesting, error envelope, turn/completed status failed) so only the payload values are invented"
 }

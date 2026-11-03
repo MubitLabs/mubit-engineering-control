@@ -1,4 +1,19 @@
 
+## Codex 0.148.0 canary learnings (real app-server, 3 Nov 2026)
+
+Recorded against the logged-in `codex-1` slot (`CODEX_HOME=~/.mec/engines/codex/codex-1`, "Logged in using ChatGPT"); protocol cross-checked with `codex app-server generate-ts` (ships with the binary — the cheapest source of truth, zero quota). Fixtures: `smoke`, `permission_request`, `auth_expired` are real recordings; `rate_limit_rejected` stays synthetic.
+
+- **Handshake**: `initialize {clientInfo:{name,title,version}, capabilities:{experimentalApi,requestAttestation}}` → `{userAgent, codexHome, platformFamily, platformOs}`; then the client NOTIFICATION `initialized` (no id) before anything else. `thread/start {cwd, sandbox, approvalPolicy}` → `{thread:{id,…}, model, …}`.
+- **The plan's 0.166 description is wrong for turns on 0.148.0**: `turn/start` takes `{threadId, input:[{type:'text', text, text_elements:[]}]}` — not `{prompt}`; `turn/steer` needs `{threadId, input, expectedTurnId}` and `turn/interrupt` needs `{threadId, turnId}`. The turn id exists only in the `turn/started` notification (`params.turn.id`), so a steer/interrupt before events are drained is impossible — the adapter refuses with a clear error.
+- **Approvals are server→client REQUESTS, not notifications**: the request id rides at the TOP level (`params.id` does not exist; the observed id was the number `0`). `item/commandExecution/requestApproval` params: `{threadId, turnId, itemId, startedAtMs, environmentId, reason, command, cwd, commandActions, proposedExecpolicyAmendment, availableDecisions}` — `command` is ONE shell-line string (`"/bin/zsh -lc 'touch approved.txt'"`), not argv. The answer is the JSON-RPC response `{"jsonrpc":"2.0","id":<same id and type>,"result":{"decision":"accept"}}`; `item/tool/requestUserInput` is answered `{"answers":{}}` — it has no decision vocabulary.
+- **A read-only sandbox + `approvalPolicy: on-request` escalates writes** (the observed `touch`), while plain reads (`ls`) run in-sandbox without asking. `fileChange` approvals carry no paths — only `reason` and an optional `grantRoot`.
+- **`turn/completed`** carries the whole turn: `params.turn.status` ∈ completed|interrupted|failed (+ `turn.error` when failed) — not a flat `status`.
+- **`thread/tokenUsage/updated`** nests cumulative tokens under `params.tokenUsage.total` (`inputTokens`, `cachedInputTokens`, `cacheWriteInputTokens`, `outputTokens`); ChatGPT subscriptions report NO cost — `cost_usd` stays undefined, never 0.
+- **`account/rateLimits/updated`** carries `params.rateLimits.{primary,secondary}` (300/10080 `windowDurationMins`; `resetsAt` unix seconds) — one event per window. Live slot readings at canary time: five_hour 0–1%, seven_day 16%, `planType: "team"`, credits enabled.
+- **Auth expiry (empty CODEX_HOME) never ends the turn**: 401s arrive as `error` notifications `{error:{message:"Reconnecting… N/5", codexErrorInfo:{responseStreamDisconnected:{httpStatusCode:401}}, additionalDetails:"unexpected status 401 Unauthorized …"}, willRetry:true}` — the message alone says nothing about auth, classification must read `codexErrorInfo`/`additionalDetails` (401/unauthorized → auth). No `turn/completed` ever comes; the server retries forever, so the runtime must kill it and the exit is the CONTRACTS §1 crash-rule synthesis.
+- **`mcpServer/startupStatus/updated` carries `error: null` in flight** — parsers must not mistake a null error field for an error notification.
+- **The app-server never exits on its own** after a turn; consumers must stop draining at the `exit` event (or kill the process). Model on the slot: `gpt-5.6-sol`; `thread.cliVersion` is a reliable per-thread engine version.
+
 ## H1 canary learnings (Claude Code 2.1.317, 3 Nov 2026)
 
 - `--session-id` requires a UUID (attempt ids like `att_1` are rejected with "Invalid session ID").

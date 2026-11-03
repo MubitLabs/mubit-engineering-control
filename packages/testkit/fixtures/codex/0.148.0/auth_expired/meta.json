@@ -2,14 +2,14 @@
   "engine": "codex",
   "engine_version": "0.148.0",
   "scenario": "auth_expired",
-  "recorded_at": "2026-11-03T17:13:52.000Z",
-  "recorded_by": "fake",
+  "recorded_at": "2026-11-03T21:12:23.000Z",
+  "recorded_by": "real",
   "redacted": true,
   "expected": {
     "reports": [],
     "permission_requests": 0,
     "rate_limits": [],
-    "exit": "api_error"
+    "exit": "crashed"
   },
-  "notes": "synthesised from the documented app-server protocol"
+  "notes": "empty CODEX_HOME (no login): the 401s surface as error notifications \"Reconnecting… N/5\" with codexErrorInfo.responseStreamDisconnected.httpStatusCode=401, willRetry=true and additionalDetails carrying the wss URL — NO turn/completed ever arrives (the server retries forever), so the recorder SIGKILLed it after 240s and the exit is the synthesised crash (code 137), CONTRACTS §1 crash rule; auth health comes from the error events, not the exit"
 }

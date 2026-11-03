@@ -1,5 +1,5 @@
-{"method":"thread/started","params":{"threadId":"th_rate_01"}}
-{"method":"turn/started","params":{"threadId":"th_rate_01"}}
-{"method":"account/rateLimits/updated","params":{"threadId":"th_rate_01","primary":{"usedPercent":100,"windowDurationMins":300,"resetsAt":1793674400}}}
-{"method":"error","params":{"threadId":"th_rate_01","message":"usage limit reached: You've hit the ChatGPT plan's five-hour limit."}}
-{"method":"turn/completed","params":{"threadId":"th_rate_01","status":"failed"}}
+{"method":"thread/started","params":{"thread":{"id":"0196c0de-synthetic-but-uuidv7-shaped-0001","cliVersion":"0.148.0"}}}
+{"method":"turn/started","params":{"threadId":"0196c0de-synthetic-but-uuidv7-shaped-0001","turn":{"id":"0196c0de-synthetic-turn-0001","items":[],"itemsView":"notLoaded","status":"inProgress"}}}
+{"method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"codex","limitName":null,"primary":{"usedPercent":100,"windowDurationMins":300,"resetsAt":1793674400},"secondary":{"usedPercent":16,"windowDurationMins":10080,"resetsAt":1794279200},"planType":"team"}}}
+{"method":"error","params":{"error":{"message":"You've hit your plan's usage limit","codexErrorInfo":{"usageLimitReached":{"window":"FiveHours"}},"additionalDetails":null},"willRetry":false,"threadId":"0196c0de-synthetic-but-uuidv7-shaped-0001","turnId":"0196c0de-synthetic-turn-0001"}}
+{"method":"turn/completed","params":{"threadId":"0196c0de-synthetic-but-uuidv7-shaped-0001","turn":{"id":"0196c0de-synthetic-turn-0001","items":[],"itemsView":"notLoaded","status":"failed","error":{"message":"You've hit your plan's usage limit","codexErrorInfo":null,"additionalDetails":null}}}}

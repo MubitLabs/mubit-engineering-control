@@ -33,3 +33,14 @@ Fixed on the way: adapter mints a UUID session id; `--input-format stream-json` 
 ## R1.4 — the real meta brain — 3 November 2026
 
 **PASSED** (gated real-engine test, dedicated slot): a real meta-agent turn made tool-mediated decisions — `mcp__mec__acknowledge` + `mcp__mec__propose_plan` round-tripped through the live mec-tools server, the plan validateGraph-clean, the ack a real sentence. Two real-integration fixes on the way: (1) `--permission-prompts none` BLOCKS MCP tool calls with no bridge — the brain now pre-approves `mcp__mec__*` via `--allowedTools` (they are its only permitted tools, validated server-side); (2) model nondeterminism (plain-text turns) is handled by §6's bounded repair: one corrective retry when zero platform tool calls happened. Also learned: a same-process `execSync` freezes the tools server (event loop) — probes must spawn async. The composed path now uses RealClaudeBrain when MEC_META_SLOT is set (fake only under MEC_FAKE_ENGINE=1).
+
+## H3 — the §23 flow on a real GitHub repository — 3 November 2026
+
+**PASSED** (`MubitLabs/mec-sandbox`, private, branch protection strict + admin-enforced, CI on the self-hosted runners). The full chain, live:
+1. A real Claude implementer wrote `farewell.js` + tests on a worktree pinned to base `111e2a4`; acceptance checks passed on head `f9af3a6`.
+2. Integration merged `--no-ff` → `d54355a`; checks passed on the exact merge SHA. Nothing had left the machine.
+3. **Card 1 (push)** — user approved → branch pushed (API-verified).
+4. **Card 2 (pr_create)** — user approved → PR #2 opened with the §14 body; CI green twice (9s).
+5. **Card 3 (pr_merge)** — user approved → merged; MEC reported `merged` only after GitHub's state said `MERGED` (20:57:41Z). main advanced to `6bd0e35` with the full provenance chain.
+
+Real bugs the run caught in the release module (all fixed, unit tests green): `gh repo view` takes the repo positionally (not `-R`); gh reports check states UPPERCASE (`SUCCESS` vs `success`); the PR body must travel by stdin (`--body-file -`) or gh hangs. Sandbox lesson recorded in docs/engines.md: the protection context must match the reported check name exactly (`check`, not `ci / check`).

@@ -196,7 +196,8 @@ export async function pushIntegrationBranch(
   integrationBranch: string,
   execGit: GitExec = defaultGitExec,
 ): Promise<{ pushed: true } | { pushed: false; error: string }> {
-  const viewed = await run(['repo', 'view', '-R', repo, '--json', 'url', '--jq', '.url'])
+  // gh repo view takes the repository as a POSITIONAL argument (-R is not a repo-view flag).
+  const viewed = await run(['repo', 'view', repo, '--json', 'url', '--jq', '.url'])
   const repoUrl = viewed.code === 0 ? viewed.stdout.trim() : ''
   if (repoUrl === '') {
     return { pushed: false, error: `gh repo view failed for ${repo}: ${viewed.stderr.trim()}` }
@@ -501,9 +502,12 @@ export async function mergeBehindCard(
   ])
   if (checked.code !== 0) return { merged: false, reason: 'ci_unreadable' }
   const checks = parseJson<CheckRow[]>(checked.stdout) ?? []
-  const ciGreen = checks.length > 0 && checks.every((check) => check.state === 'success')
+  // gh reports check states UPPERCASE ("SUCCESS"/"PENDING"/"FAILURE") in this version;
+  // accept either case (the fake-gh unit tests used lowercase — keep both honest).
+  const normalise = (state: string): string => state.toUpperCase()
+  const ciGreen = checks.length > 0 && checks.every((check) => normalise(check.state) === 'SUCCESS')
   if (!ciGreen) {
-    const reason = checks.some((check) => check.state !== 'pending' && check.state !== 'success')
+    const reason = checks.some((check) => normalise(check.state) !== 'PENDING' && normalise(check.state) !== 'SUCCESS')
       ? 'ci_failed'
       : 'ci_pending'
     deps.store.atomic(() => {

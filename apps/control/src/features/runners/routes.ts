@@ -24,7 +24,14 @@ export function registerRunnerRoutes(
     const actor = await requireActor(sql, req)
     if (!actor.isAdmin) throw forbidden('Only admins can enrol runners')
     const body = parse(
-      z.object({ ownerLogin: z.string().optional(), label: z.string().min(1).max(100) }),
+      z.object({
+        ownerLogin: z.string().optional(),
+        label: z.string().min(1).max(100),
+        name: z
+          .string()
+          .regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/, 'letters, digits, dot, dash and underscore')
+          .optional(),
+      }),
       req.body,
     )
     const [owner] = body.ownerLogin
@@ -47,7 +54,7 @@ export function registerRunnerRoutes(
     return reply.status(201).send({
       invite: { ...invite, owner: owner.login, label: body.label },
       token,
-      command: `node apps/runner/dist/main.js enrol --url ${config.publicUrl} --invite ${token} --name <runner-name>`,
+      command: `node apps/runner/dist/main.js enrol --url ${config.publicUrl} --invite ${token}${body.name ? ` --name ${body.name}` : ''}`,
     })
   })
 
@@ -95,6 +102,27 @@ export function registerRunnerRoutes(
       order by r.name
     `
     return { runners: runners.map((r) => ({ ...r, connected: registry.get(r.id as string) !== undefined })) }
+  })
+
+  /** Asks a connected runner to re-check its agents now (e.g. right after signing an agent in). */
+  app.post<{ Params: { runnerId: string } }>('/api/runners/:runnerId/probe', async (req) => {
+    const actor = await requireActor(sql, req)
+    const runner = await loadRunner(sql, req.params.runnerId)
+    if (!actor.isAdmin && runner.ownerId !== actor.userId)
+      throw forbidden('Only the owner or an admin can probe a runner')
+    const conn = registry.get(runner.id)
+    if (!conn) throw new HttpError(409, 'runner_offline', 'The runner is not connected')
+    conn.send({
+      type: 'command',
+      command: {
+        commandId: `probe:${randomBytes(8).toString('hex')}`,
+        type: 'probe',
+        attemptId: null,
+        generation: null,
+        payload: {},
+      },
+    })
+    return { ok: true }
   })
 
   app.post<{ Params: { runnerId: string } }>('/api/runners/:runnerId/drain', async (req) => {

@@ -1,9 +1,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { NavLink, Outlet, useNavigate, useParams } from 'react-router'
+import { useCallback, useEffect, useState } from 'react'
+import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router'
 import { api } from '../api/client'
-import { useProjectEvents } from '../api/events'
+import { useLiveEvents } from '../api/events'
 import type { Approval, Project } from '../api/types'
 import { useMe } from '../features/auth/useMe'
+import { useDecisionNotifications } from '../features/inbox/notifications'
 
 export function Layout() {
   const me = useMe()
@@ -20,6 +22,24 @@ export function Layout() {
     refetchInterval: 30_000,
   })
   const pending = inbox.data?.approvals.length ?? 0
+  const openInbox = useCallback(() => navigate('/inbox'), [navigate])
+  useDecisionNotifications(inbox.data?.approvals, openInbox)
+  const live = useLiveEvents(projects.data ? projects.data.projects.map((p) => p.id).join(',') : null)
+  const [offline, setOffline] = useState(false)
+  // A blip during a deploy or reconnect is normal; only say so if it lasts.
+  useEffect(() => {
+    if (live.connected) {
+      setOffline(false)
+      return
+    }
+    const t = setTimeout(() => setOffline(true), 4_000)
+    return () => clearTimeout(t)
+  }, [live.connected])
+  const { pathname } = useLocation()
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on every route change
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [pathname])
 
   return (
     <div className="shell">
@@ -69,10 +89,13 @@ export function Layout() {
           </button>
         </div>
       </aside>
-      {projects.data?.projects.map((p) => (
-        <LiveProject key={p.id} projectId={p.id} />
-      ))}
       <main className="main">
+        {offline && (
+          <div className="error-box" style={{ marginBottom: 12 }}>
+            Lost the connection to the server; retrying. Pages may be out of date and changes may fail until
+            it is back.
+          </div>
+        )}
         <Outlet />
       </main>
     </div>
@@ -80,7 +103,26 @@ export function Layout() {
 }
 
 /** Keeps every visible project's data fresh (inbox, badge, open pages) from its live event stream. */
-function LiveProject({ projectId }: { projectId: string }) {
-  useProjectEvents(projectId, undefined, { fromNow: true })
-  return null
+
+/** Breadcrumb link to a project by name, from the sidebar's cached project list. */
+export function ProjectCrumb({ projectId }: { projectId: string | undefined }) {
+  const projects = useQuery({
+    queryKey: ['projects'],
+    queryFn: () => api.get<{ projects: Project[] }>('/api/projects'),
+  })
+  const name = projects.data?.projects.find((p) => p.id === projectId)?.name ?? 'project'
+  return <Link to={`/projects/${projectId}`}>{name}</Link>
+}
+
+/** Sets the tab title, prefixed with the number of decisions waiting for you. */
+export function useTitle(title: string | undefined) {
+  const inbox = useQuery({
+    queryKey: ['approvals', 'mine'],
+    queryFn: () => api.get<{ approvals: Approval[] }>('/api/approvals'),
+    refetchInterval: 30_000,
+  })
+  const pending = inbox.data?.approvals.length ?? 0
+  useEffect(() => {
+    document.title = `${pending ? `(${pending}) ` : ''}${title ? `${title} · ` : ''}MEC`
+  }, [pending, title])
 }

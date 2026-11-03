@@ -38,7 +38,7 @@ export function dependencyBlocker(
   const need = policy === 'integration' ? 'integrated' : 'accepted'
   return {
     kind: 'dependency',
-    detail: `Waiting for ${waiting.map((w) => `${w.key} (${w.state})`).join(', ')} to be ${need}`,
+    detail: `Waiting for ${waiting.map((w) => w.key).join(', ')} to be ${need}`,
     refs: waiting.map((w) => w.key),
   }
 }

@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createTestApp, sampleRequirements, sampleTasks, seedProject, type TestApp } from './helpers/app'
+import {
+  createTestApp,
+  enrolRunner,
+  sampleRequirements,
+  sampleTasks,
+  seedProject,
+  type TestApp,
+} from './helpers/app'
 
 let t: TestApp
 let s: Awaited<ReturnType<typeof seedProject>>
@@ -54,6 +61,26 @@ describe('projects and permissions', () => {
       const res = await s.admin.post(`/api/projects/${s.project.id}/repositories`, { name: 'r', cloneUrl })
       expect(res.statusCode).toBe(400)
     }
+  })
+
+  it("lets project owners change a repository's setup, checks and branch, and no one else", async () => {
+    const url = `/api/projects/${s.project.id}/repositories/${s.repo.id}`
+    const validationProfile = {
+      bootstrap: [{ name: 'install', argv: ['npm', 'ci'] }],
+      checks: [{ name: 'test', argv: ['npm', 'test'], timeoutSec: 120 }],
+    }
+    expect((await s.member.patch(url, { validationProfile })).statusCode).toBe(403)
+    const res = await s.admin.patch(url, { validationProfile, defaultBranch: 'develop' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().repository).toMatchObject({
+      defaultBranch: 'develop',
+      validationProfile: {
+        bootstrap: [{ name: 'install', argv: ['npm', 'ci'], timeoutSec: 600 }],
+        checks: [{ name: 'test', argv: ['npm', 'test'], timeoutSec: 120 }],
+      },
+    })
+    const missing = `/api/projects/${s.project.id}/repositories/00000000-0000-0000-0000-000000000000`
+    expect((await s.admin.patch(missing, { defaultBranch: 'x' })).statusCode).toBe(404)
   })
 
   it('does not let viewers create deliveries', async () => {
@@ -186,5 +213,53 @@ describe('approval integrity', () => {
     expect(after!.status).toBe('expired')
     const [revision] = await t.db.sql`select state from plan_revisions where id = ${rev.id}`
     expect(revision!.state).toBe('proposed')
+  })
+})
+
+describe('setup checklist', () => {
+  it('reports which first-run steps are done over the projects a user can see', async () => {
+    const steps = async (c: typeof s.admin) => (await c.get('/api/setup')).json()
+    expect(await steps(s.admin)).toEqual({
+      projectId: s.project.id,
+      steps: { project: true, repository: true, runner: false, profile: false, delivery: false },
+    })
+    const outsider = await t.login('zed')
+    expect((await steps(outsider)).steps).toEqual({
+      project: false,
+      repository: false,
+      runner: false,
+      profile: false,
+      delivery: false,
+    })
+
+    await s.admin.post('/api/deliveries', newDelivery('key-setup'))
+    const runner = await enrolRunner(s.admin, t.app)
+    await t.db.sql`update runners set status = 'online' where id = ${runner.runnerId}`
+    expect((await steps(s.member)).steps).toMatchObject({ runner: true, delivery: true })
+    expect((await steps(outsider)).steps.delivery).toBe(false)
+  })
+})
+
+describe('project members', () => {
+  it('lets owners remove members but never the last owner', async () => {
+    const members = async () =>
+      (await s.admin.get(`/api/projects/${s.project.id}`)).json().members as {
+        id: string
+        login: string
+        role: string
+      }[]
+    const mia = (await members()).find((m) => m.login === 'mia')!
+    const admin = (await members()).find((m) => m.login === 'admin')!
+    expect((await s.member.post(`/api/projects/${s.project.id}/members/${admin.id}/remove`)).statusCode).toBe(
+      403,
+    )
+    expect((await s.admin.post(`/api/projects/${s.project.id}/members/${admin.id}/remove`)).statusCode).toBe(
+      409,
+    )
+    expect((await s.admin.post(`/api/projects/${s.project.id}/members/${mia.id}/remove`)).statusCode).toBe(
+      200,
+    )
+    expect((await members()).map((m) => m.login)).toEqual(['admin', 'vic'])
+    expect((await s.member.get(`/api/projects/${s.project.id}`)).statusCode).toBe(403)
   })
 })

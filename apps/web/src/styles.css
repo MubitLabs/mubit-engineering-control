@@ -39,6 +39,13 @@ a {
 a:hover {
   color: var(--accent);
 }
+.main a:not(.btn):not(svg a) {
+  text-decoration: underline dotted var(--faint);
+  text-underline-offset: 3px;
+}
+.main a:not(.btn):not(svg a):hover {
+  text-decoration-color: var(--accent);
+}
 
 h1,
 h2,
@@ -115,6 +122,7 @@ pre {
   color: var(--muted);
   display: flex;
   justify-content: space-between;
+  gap: 6px;
 }
 .nav a.active {
   color: var(--text);
@@ -365,6 +373,47 @@ label.field {
 .feed-type {
   color: var(--accent);
 }
+.checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.checklist li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+}
+.checklist li.done {
+  color: var(--faint);
+}
+.checklist li.next {
+  background: var(--accent-soft);
+}
+.check-mark {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  font-size: 11px;
+}
+.checklist li.done .check-mark {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.checklist li.next .check-mark {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .dot {
   display: inline-block;
   width: 7px;
@@ -385,4 +434,126 @@ label.field {
 .login-card {
   width: 360px;
   padding: 28px;
+}
+
+.graph-scroll {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+/* A styled scrollbar is always drawn, so a wide graph visibly continues. */
+.graph-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+.graph-scroll::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+.graph-scroll::-webkit-scrollbar-track {
+  background: var(--panel-2);
+}
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline dotted var(--faint);
+  text-underline-offset: 3px;
+}
+.linklike:hover {
+  color: var(--accent);
+}
+.diff {
+  margin: 0;
+  max-height: 600px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.45;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 0;
+}
+.diff > div {
+  padding: 0 10px;
+  white-space: pre;
+}
+.diff .add {
+  color: var(--ok);
+  background: rgba(70, 183, 91, 0.08);
+}
+.diff .del {
+  color: var(--err);
+  background: rgba(239, 91, 84, 0.08);
+}
+.diff .hunk {
+  color: var(--info);
+}
+.diff .meta {
+  color: var(--faint);
+}
+.diff .file {
+  color: var(--text);
+  font-weight: 600;
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+/* ── Narrow screens: answering decisions from a phone ───────────────────── */
+@media (max-width: 760px) {
+  .shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .sidebar {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+    padding: 10px 16px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .nav-label {
+    display: none;
+  }
+  .sidebar-foot {
+    margin-top: 0;
+    margin-left: auto;
+    flex-direction: row;
+    align-items: center;
+  }
+  .main {
+    padding: 16px 16px 40px;
+  }
+  .grid-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .page-head {
+    flex-wrap: wrap;
+  }
+  .panel {
+    overflow-x: auto;
+  }
+  .row > .field,
+  .row > input:not([type="checkbox"]),
+  .row > textarea {
+    min-width: 100%;
+  }
+  .row > input:not([type="checkbox"]),
+  .row > textarea {
+    order: -1;
+  }
+}
+
+.table td code {
+  white-space: nowrap;
 }

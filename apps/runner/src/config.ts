@@ -27,8 +27,32 @@ export interface RunnerConfig {
   git?: { token: string | null; authorName: string; authorEmail: string; push: boolean }
 }
 
+export const DEFAULT_CONFIG_FILE = path.join(os.homedir(), '.config', 'mec', 'runner.env')
+
+export class RunnerConfigError extends Error {}
+
+/** KEY=VALUE lines from a runner.env file; variables already set in `env` win. */
+export function withEnvFile(env: NodeJS.ProcessEnv, text: string): NodeJS.ProcessEnv {
+  const merged = { ...env }
+  for (const line of text.split('\n')) {
+    const m = /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)=(.*)$/.exec(line)
+    if (!m || merged[m[1]!] !== undefined) continue
+    merged[m[1]!] = m[2]!.trim().replace(/^(['"])(.*)\1$/, '$2')
+  }
+  return merged
+}
+
 export function loadRunnerConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
-  const e = Env.parse(env)
+  const parsed = Env.safeParse(env)
+  if (!parsed.success) {
+    const vars = [...new Set(parsed.error.issues.map((i) => String(i.path[0])))]
+    const enrolment = ['MEC_CONTROL_URL', 'MEC_RUNNER_ID', 'MEC_RUNNER_TOKEN']
+    const hint = vars.some((v) => enrolment.includes(v) && env[v] === undefined)
+      ? 'This runner is not enrolled yet. Create an invitation on the Fleet page and run the enrol command it shows.'
+      : 'Check these settings in the runner.env file or the environment.'
+    throw new RunnerConfigError(`Missing or invalid settings: ${vars.join(', ')}.\n${hint}`)
+  }
+  const e = parsed.data
   return {
     controlUrl: e.MEC_CONTROL_URL.replace(/\/+$/, ''),
     runnerId: e.MEC_RUNNER_ID,

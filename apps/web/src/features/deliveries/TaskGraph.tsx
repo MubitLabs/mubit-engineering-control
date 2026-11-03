@@ -1,6 +1,7 @@
 import dagre from 'dagre'
 import { useMemo } from 'react'
 import { Link } from 'react-router'
+import { taskStatus } from '../../components/ui'
 
 export interface GraphNode {
   key: string
@@ -39,7 +40,10 @@ export function TaskGraph(props: { nodes: GraphNode[]; edges: [string, string][]
   const width = Math.max(graph.width ?? 0, 200)
   const height = Math.max(graph.height ?? 0, 60)
   return (
-    <div style={{ overflowX: 'auto' }}>
+    <div className="graph-scroll">
+      {width > 620 && (
+        <div className="faint small">Wider than the panel: scroll sideways to see all of it.</div>
+      )}
       <svg width={width} height={height} role="img" aria-label="Task dependency graph">
         <title>Task dependency graph</title>
         <defs>
@@ -96,7 +100,7 @@ export function TaskGraph(props: { nodes: GraphNode[]; edges: [string, string][]
                   textAnchor="end"
                   style={{ textTransform: 'uppercase' }}
                 >
-                  {n.state.replace(/_/g, ' ')}
+                  {taskStatus(n.state).replace(/_/g, ' ')}
                 </text>
               )}
             </g>

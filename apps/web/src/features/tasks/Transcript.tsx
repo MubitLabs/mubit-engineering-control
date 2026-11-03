@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../../api/client'
 import { Empty } from '../../components/ui'
 
@@ -19,25 +19,62 @@ export function Transcript({ attemptId }: { attemptId: string }) {
     queryKey: ['attempt', attemptId, 'events'],
     queryFn: () => api.get<{ events: AttemptEvent[] }>(`/api/attempts/${attemptId}/events`),
   })
-  const end = useRef<HTMLDivElement>(null)
-  const count = q.data?.events.length ?? 0
+  const [everything, setEverything] = useState(false)
+  const feed = useRef<HTMLDivElement>(null)
+  const events = q.data?.events ?? []
+  const shown = everything ? events : events.filter((e) => !isBookkeeping(e))
+  // Follow new events inside the feed only; scrollIntoView would also scroll the page.
   useEffect(() => {
-    if (count > 0) end.current?.scrollIntoView({ block: 'nearest' })
-  }, [count])
+    const el = feed.current
+    if (el && shown.length > 0) el.scrollTop = el.scrollHeight
+  }, [shown.length])
 
   if (!q.data) return null
-  if (q.data.events.length === 0) return <Empty>No events yet.</Empty>
+  if (events.length === 0) return <Empty>No events yet.</Empty>
+  const hidden = events.length - shown.length
   return (
-    <div className="feed" style={{ maxHeight: 520 }}>
-      {q.data.events.map((e) => (
-        <div className="feed-row" key={e.id}>
-          <span className="faint">{e.sourceSequence ?? '·'}</span>
-          <Line event={e} />
-        </div>
-      ))}
-      <div ref={end} />
+    <div>
+      <div className="spread small faint" style={{ padding: '4px 12px' }}>
+        <span>{everything ? 'all events' : 'agent, decisions and checks'}</span>
+        {(hidden > 0 || everything) && (
+          <button type="button" className="linklike" onClick={() => setEverything(!everything)}>
+            {everything ? 'hide bookkeeping' : `show ${hidden} bookkeeping events`}
+          </button>
+        )}
+      </div>
+      <div className="feed" ref={feed} style={{ maxHeight: 520 }}>
+        {shown.map((e) => (
+          <div className="feed-row" key={e.id}>
+            <span className="faint">{e.sourceSequence ?? '·'}</span>
+            <Line event={e} />
+          </div>
+        ))}
+      </div>
     </div>
   )
+}
+
+const BOOKKEEPING = new Set([
+  'attempt.created',
+  'attempt.preparing',
+  'attempt.started',
+  'attempt.input_resolved',
+  'attempt.message_requested',
+  'attempt.interrupt_requested',
+  'attempt.checks_started',
+  'decision.received',
+  'agent.log',
+])
+
+/** Lease, workspace and delivery plumbing: useful when debugging, noise when reviewing. */
+function isBookkeeping(e: AttemptEvent): boolean {
+  if (e.type === 'workspace.push_failed') return false
+  if (BOOKKEEPING.has(e.type) || e.type.startsWith('workspace.') || e.type.startsWith('command.')) return true
+  if (e.type === 'attempt.state_changed') {
+    const to = String(e.payload.to)
+    return ['leased', 'preparing', 'running', 'checking', 'work_complete'].includes(to)
+  }
+  return false
 }
 
 function Line({ event: e }: { event: AttemptEvent }) {

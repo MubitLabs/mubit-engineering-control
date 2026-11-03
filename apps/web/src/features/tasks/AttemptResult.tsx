@@ -1,4 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
+import { Link, useParams } from 'react-router'
 import { api } from '../../api/client'
 import { Status } from '../../components/ui'
 
@@ -30,6 +32,7 @@ interface AttemptDetail {
 
 /** Evidence for review (PDF §15): exact SHAs, the change, and each check against the tested commit. */
 export function AttemptResult({ attemptId }: { attemptId: string }) {
+  const { projectId } = useParams()
   const q = useQuery({
     queryKey: ['attempt', attemptId, 'detail'],
     queryFn: () => api.get<AttemptDetail>(`/api/attempts/${attemptId}`),
@@ -74,6 +77,14 @@ export function AttemptResult({ attemptId }: { attemptId: string }) {
               </span>
             </div>
           ))}
+          {attempt.diff.patchArtifactId && (
+            <Patch
+              artifactId={attempt.diff.patchArtifactId}
+              startOpen={
+                attempt.diff.fileCount <= 20 && attempt.diff.insertions + attempt.diff.deletions <= 600
+              }
+            />
+          )}
         </div>
       )}
       {checks.length > 0 && (
@@ -94,8 +105,77 @@ export function AttemptResult({ attemptId }: { attemptId: string }) {
               {c.logTail && <pre className="panel panel-body faint">{c.logTail}</pre>}
             </details>
           ))}
+          {checks.some(misconfigured) && (
+            <div className="notice small">
+              {checks
+                .filter(misconfigured)
+                .map((c) => c.name)
+                .join(', ')}{' '}
+              failed before testing anything (the command or a file it needs was not found). That is usually
+              the check command, not the change: fix it in the project's{' '}
+              <Link to={`/projects/${projectId}`}>repository settings</Link>, then retry.
+            </div>
+          )}
         </div>
       )}
     </div>
   )
+}
+
+const MAX_LINES = 3000
+
+/** The attempt's patch inline, coloured by line kind; patches are immutable artifacts. */
+function Patch({ artifactId, startOpen }: { artifactId: string; startOpen: boolean }) {
+  const [open, setOpen] = useState(startOpen)
+  const patch = useQuery({
+    queryKey: ['artifact', artifactId],
+    queryFn: async () => {
+      const res = await fetch(`/api/artifacts/${artifactId}`)
+      if (!res.ok) throw new Error(`patch unavailable (${res.status})`)
+      return res.text()
+    },
+    enabled: open,
+    staleTime: Number.POSITIVE_INFINITY,
+  })
+  const lines = patch.data?.split('\n') ?? []
+  return (
+    <div className="stack" style={{ gap: 4, marginTop: 6 }}>
+      <div>
+        <button type="button" className="btn small" onClick={() => setOpen(!open)}>
+          {open ? 'Hide diff' : 'Show diff'}
+        </button>
+      </div>
+      {open && patch.error && <div className="error-box">{(patch.error as Error).message}</div>}
+      {open && patch.data !== undefined && (
+        <pre className="diff">
+          {lines.slice(0, MAX_LINES).map((line, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: patch lines have no identity beyond position
+            <div key={i} className={lineClass(line)}>
+              {line || ' '}
+            </div>
+          ))}
+          {lines.length > MAX_LINES && (
+            <div className="faint">… {lines.length - MAX_LINES} more lines in the full patch</div>
+          )}
+        </pre>
+      )}
+    </div>
+  )
+}
+
+function lineClass(line: string): string | undefined {
+  if (line.startsWith('diff --git')) return 'file'
+  if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('index ')) return 'meta'
+  if (line.startsWith('@@')) return 'hunk'
+  if (line.startsWith('+')) return 'add'
+  if (line.startsWith('-')) return 'del'
+  return undefined
+}
+
+const NOT_STARTED =
+  /command not found|ENOENT|Cannot find module|ERR_MODULE_NOT_FOUND|No such file or directory|Missing script|not recognized as an internal/i
+
+/** A failed check whose log says the command itself could not run. */
+function misconfigured(c: { status: string; logTail: string | null }): boolean {
+  return c.status !== 'passed' && NOT_STARTED.test(c.logTail ?? '')
 }

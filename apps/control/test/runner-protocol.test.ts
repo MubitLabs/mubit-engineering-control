@@ -36,7 +36,8 @@ const attemptRow = async (id: string) => (await t.db.sql`select * from attempts 
 
 describe('enrolment', () => {
   it('exchanges a single-use invitation for a device token', async () => {
-    const invite = (await s.admin.post('/api/runners/invites', { label: 'box' })).json()
+    const invite = (await s.admin.post('/api/runners/invites', { label: 'box', name: 'box' })).json()
+    expect(invite.command).toMatch(/ enrol --url \S+ --invite mec_inv_\S+ --name box$/)
     const body = { inviteToken: invite.token, name: 'box', hostname: 'h', os: 'linux', arch: 'x64' }
     const first = await t.app.inject({ method: 'POST', url: '/api/runners/enrol', payload: body })
     expect(first.statusCode).toBe(201)
@@ -68,6 +69,19 @@ describe('enrolment', () => {
       async () =>
         (await t.db.sql`select status from runners where id = ${runner!.runnerId}`)[0]!.status === 'offline',
     )
+  })
+
+  it("sends a probe to a connected runner on its owner's request", async () => {
+    runner = await connectedRunner()
+    expect((await s.member.post(`/api/runners/${runner.runnerId}/probe`)).statusCode).toBe(403)
+    expect((await s.admin.post(`/api/runners/${runner.runnerId}/probe`)).statusCode).toBe(200)
+    await waitFor(() => runner!.commands.some((c) => c.type === 'probe' && c.attemptId === null))
+    await runner.close()
+    await waitFor(
+      async () =>
+        (await t.db.sql`select status from runners where id = ${runner!.runnerId}`)[0]!.status === 'offline',
+    )
+    expect((await s.admin.post(`/api/runners/${runner.runnerId}/probe`)).statusCode).toBe(409)
   })
 
   it('revoking a runner closes its connection and refuses reconnects', async () => {

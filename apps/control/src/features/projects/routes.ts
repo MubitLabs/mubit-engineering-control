@@ -1,4 +1,4 @@
-import { AddMember, CreateProject, CreateRepository } from '@mec/contracts'
+import { AddMember, CreateProject, CreateRepository, UpdateRepository } from '@mec/contracts'
 import type { FastifyInstance } from 'fastify'
 import type { Config } from '../../config'
 import { isUniqueViolation, type Sql } from '../../db/sql'
@@ -103,6 +103,38 @@ export function registerProjects(app: FastifyInstance, deps: { sql: Sql; config:
     return reply.status(201).send({ member })
   })
 
+  app.post<{ Params: { projectId: string; userId: string } }>(
+    '/api/projects/:projectId/members/:userId/remove',
+    async (req) => {
+      const actor = await requireActor(sql, req)
+      const project = await loadProject(sql, req.params.projectId)
+      authorize(actor, 'manage_project', { kind: 'project', projectId: project.id })
+      if (!/^[0-9a-f-]{36}$/i.test(req.params.userId)) throw notFound('Member')
+      await sql.begin(async (tx) => {
+        const owners = await tx<{ userId: string; role: string; login: string }[]>`
+          select m.user_id, m.role, u.login from memberships m join users u on u.id = m.user_id
+          where m.project_id = ${project.id} for update of m
+        `
+        const member = owners.find((m) => m.userId === req.params.userId)
+        if (!member) throw notFound('Member')
+        if (member.role === 'owner' && owners.filter((m) => m.role === 'owner').length === 1)
+          throw conflict('last_owner', 'A project needs at least one owner; make someone else an owner first')
+        await tx`delete from memberships where project_id = ${project.id} and user_id = ${member.userId}`
+        await appendEvent(tx, {
+          stream: projectStream(project.id),
+          type: 'project.member_removed',
+          projectId: project.id,
+          actor: { kind: 'user', id: actor.userId },
+          payload: { login: member.login },
+        })
+        await audit(tx, actor.userId, 'project.member_remove', 'project', project.id, project.id, {
+          login: member.login,
+        })
+      })
+      return { ok: true }
+    },
+  )
+
   app.post<{ Params: { projectId: string } }>('/api/projects/:projectId/repositories', async (req, reply) => {
     const actor = await requireActor(sql, req)
     const project = await loadProject(sql, req.params.projectId)
@@ -135,6 +167,44 @@ export function registerProjects(app: FastifyInstance, deps: { sql: Sql; config:
       throw e
     }
   })
+
+  /** Changes apply to attempts started afterwards; running attempts keep the profile they started with. */
+  app.patch<{ Params: { projectId: string; repositoryId: string } }>(
+    '/api/projects/:projectId/repositories/:repositoryId',
+    async (req) => {
+      const actor = await requireActor(sql, req)
+      const project = await loadProject(sql, req.params.projectId)
+      authorize(actor, 'manage_project', { kind: 'project', projectId: project.id })
+      const body = parse(UpdateRepository, req.body)
+      if (!/^[0-9a-f-]{36}$/i.test(req.params.repositoryId)) throw notFound('Repository')
+      const set: Record<string, unknown> = {}
+      if (body.defaultBranch) set.defaultBranch = body.defaultBranch
+      if (body.validationProfile) set.validationProfile = sql.json(body.validationProfile as never)
+      const repository = await sql.begin(async (tx) => {
+        const [r] = Object.keys(set).length
+          ? await tx`
+              update repositories set ${tx(set)}
+              where id = ${req.params.repositoryId} and project_id = ${project.id}
+              returning id, name, clone_url, default_branch, validation_profile, created_at
+            `
+          : await tx`
+              select id, name, clone_url, default_branch, validation_profile, created_at from repositories
+              where id = ${req.params.repositoryId} and project_id = ${project.id}
+            `
+        if (!r) throw notFound('Repository')
+        await appendEvent(tx, {
+          stream: projectStream(project.id),
+          type: 'repository.updated',
+          projectId: project.id,
+          actor: { kind: 'user', id: actor.userId },
+          payload: { name: r.name },
+        })
+        await audit(tx, actor.userId, 'repository.update', 'repository', r.id, project.id, body)
+        return r
+      })
+      return { repository }
+    },
+  )
 }
 
 export async function loadProject(sql: Sql, projectId: string): Promise<ProjectRow> {

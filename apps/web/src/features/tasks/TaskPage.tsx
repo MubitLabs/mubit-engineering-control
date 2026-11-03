@@ -3,7 +3,8 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { api } from '../../api/client'
 import type { Approval, Task } from '../../api/types'
-import { Empty, ErrorBox, Loading, Panel, Short, Status, Time } from '../../components/ui'
+import { ProjectCrumb, useTitle } from '../../components/Layout'
+import { Empty, ErrorBox, Loading, Panel, Short, Status, Time, taskStatus } from '../../components/ui'
 import type { ProfileView } from '../accounts/AccountsPage'
 import { useMe } from '../auth/useMe'
 import { DecisionCard } from '../inbox/InboxPage'
@@ -56,6 +57,7 @@ export function TaskPage() {
     queryFn: () => api.get<TaskDetail>(`/api/tasks/${taskId}`),
   })
   const [selected, setSelected] = useState<string | null>(null)
+  useTitle(q.data && `${q.data.task.key} · ${q.data.task.title}`)
   if (!q.data) return q.error ? <ErrorBox error={q.error} /> : <Loading />
   const { task, attempts, dependencies, approvals, canPrompt } = q.data
   const attempt = attempts.find((a) => a.id === selected) ?? attempts[0]
@@ -66,12 +68,12 @@ export function TaskPage() {
       <div className="page-head">
         <div>
           <div className="crumbs">
-            <Link to={`/projects/${projectId}`}>project</Link> /{' '}
+            <ProjectCrumb projectId={projectId} /> /{' '}
             <Link to={`/projects/${projectId}/deliveries/${task.deliveryId}`}>{task.deliveryTitle}</Link> /
             task
           </div>
           <h1>
-            <code>{task.key}</code> {task.title} <Status value={task.state} />
+            <code>{task.key}</code> {task.title} <Status value={taskStatus(task.state)} />
           </h1>
           {task.blocker && <div className="muted small">waiting: {task.blocker.detail}</div>}
           {task.repairContext && (
@@ -85,13 +87,18 @@ export function TaskPage() {
       <div className="grid-2">
         <div className="stack">
           {pending.map((a) => (
-            <DecisionCard key={a.id} approval={a} />
+            <DecisionCard key={a.id} approval={a} onTaskPage />
           ))}
           {attempt ? (
-            <AttemptPanel attempt={attempt} canPrompt={canPrompt} />
+            <div id="attempt">
+              <AttemptPanel attempt={attempt} canPrompt={canPrompt} />
+            </div>
           ) : (
             <Panel title="Attempts">
-              <Empty>No attempts yet.</Empty>
+              <Empty>
+                No attempts yet.{' '}
+                {task.state === 'ready' && !task.blocker && 'The scheduler starts one when a runner is free.'}
+              </Empty>
             </Panel>
           )}
         </div>
@@ -125,31 +132,34 @@ export function TaskPage() {
                 </div>
               )}
               <div className="faint">
-                attempts used {task.attemptsUsed} / {task.spec.maxAttempts}
+                attempts used {task.attemptsUsed} · budget {task.spec.maxAttempts}
               </div>
             </div>
           </Panel>
-          {canPrompt && task.state === 'ready' && <StartAttempt taskId={task.id} />}
-          <Panel title="Attempts" flush>
-            <table className="table">
-              <tbody>
-                {attempts.map((a) => (
-                  <tr key={a.id} className="clickable" onClick={() => setSelected(a.id)}>
-                    <td>#{a.number}</td>
-                    <td>
-                      <Status value={a.state} />
-                    </td>
-                    <td className="small muted">
-                      {a.agentKind} · {a.runnerName ?? '—'} · g{a.generation}
-                    </td>
-                    <td>
-                      <Time value={a.createdAt} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Panel>
+          {canPrompt && task.state === 'ready' && task.kind === 'work' && <StartAttempt taskId={task.id} />}
+          {canPrompt && task.state === 'failed' && task.kind === 'work' && <RetryTask taskId={task.id} />}
+          {attempts.length > 0 && (
+            <Panel title="Attempts" flush>
+              <table className="table">
+                <tbody>
+                  {attempts.map((a) => (
+                    <tr key={a.id} className="clickable" onClick={() => setSelected(a.id)}>
+                      <td>#{a.number}</td>
+                      <td>
+                        <Status value={a.state} />
+                      </td>
+                      <td className="small muted">
+                        {a.agentKind} · {a.runnerName ?? '—'} · g{a.generation}
+                      </td>
+                      <td>
+                        <Time value={a.createdAt} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Panel>
+          )}
         </div>
       </div>
     </div>
@@ -166,12 +176,19 @@ function AttemptPanel({ attempt, canPrompt }: { attempt: AttemptView; canPrompt:
       api.post(`/api/attempts/${attempt.id}/${action}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['task'] }),
   })
-  const button = (action: Parameters<typeof control.mutate>[0], label: string, tone = '') => (
+  const button = (
+    action: Parameters<typeof control.mutate>[0],
+    label: string,
+    tone = '',
+    confirm?: string,
+  ) => (
     <button
       type="button"
       className={`btn small ${tone}`}
       disabled={control.isPending}
-      onClick={() => control.mutate(action)}
+      onClick={() => {
+        if (!confirm || window.confirm(confirm)) control.mutate(action)
+      }}
     >
       {label}
     </button>
@@ -192,16 +209,33 @@ function AttemptPanel({ attempt, canPrompt }: { attempt: AttemptView; canPrompt:
           {canPrompt && LIVE.has(attempt.state) && !stalled && (
             <>
               {button('interrupt', 'Interrupt')}
-              {button('cancel', 'Cancel', 'danger')}
+              {button(
+                'cancel',
+                'Cancel',
+                'danger',
+                'Cancel this attempt? The agent is stopped and its work is not reviewed.',
+              )}
             </>
           )}
           {canPrompt && PARKED.has(attempt.state) && (
             <>
               {button('resume', 'Resume', 'primary')}
-              {button('abandon', 'Abandon', 'danger')}
+              {button(
+                'abandon',
+                'Abandon',
+                'danger',
+                'Abandon this attempt? It cannot be resumed; the task can start a fresh attempt.',
+              )}
             </>
           )}
-          {stalled && me.data?.user.isAdmin && button('confirm-stopped', 'Confirm process stopped')}
+          {stalled &&
+            me.data?.user.isAdmin &&
+            button(
+              'confirm-stopped',
+              'Confirm process stopped',
+              '',
+              'Only confirm if you know the agent process on that machine is no longer running.',
+            )}
         </>
       }
       flush
@@ -250,7 +284,7 @@ function StartAttempt({ taskId }: { taskId: string }) {
             <option value="">fake agent (scripted)</option>
             {profiles.data?.profiles.map((p) => (
               <option key={p.id} value={p.id} disabled={p.authState === 'required'}>
-                {p.label} — {p.agentKind} on {p.runnerName} ({p.ownerLogin})
+                {p.label.includes(p.runnerName) ? p.label : `${p.label} on ${p.runnerName}`} ({p.ownerLogin})
                 {p.authState === 'required' ? ' · sign-in required' : ''}
               </option>
             ))}
@@ -284,6 +318,36 @@ function StartAttempt({ taskId }: { taskId: string }) {
             onClick={() => start.mutate()}
           >
             Start attempt
+          </button>
+        </div>
+      </div>
+    </Panel>
+  )
+}
+
+function RetryTask({ taskId }: { taskId: string }) {
+  const qc = useQueryClient()
+  const retry = useMutation({
+    mutationFn: () => api.post(`/api/tasks/${taskId}/retry`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['task', taskId] }),
+  })
+  return (
+    <Panel title="Retry">
+      <div className="form small">
+        <div className="muted">
+          Every attempt in the budget failed. Check the failed checks first: if a check command itself is
+          wrong, fix it on the project page. Retrying lets you start another attempt, which repairs from the
+          last failures.
+        </div>
+        <ErrorBox error={retry.error} />
+        <div>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={retry.isPending}
+            onClick={() => retry.mutate()}
+          >
+            Retry task
           </button>
         </div>
       </div>

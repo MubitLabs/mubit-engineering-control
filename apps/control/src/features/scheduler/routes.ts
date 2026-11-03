@@ -284,9 +284,10 @@ async function stopStatus(sql: Sql, registry: RunnerRegistry, stopId: string) {
   >`select id, created_at, reason, attempts from fleet_stops where id = ${stopId}`
   const ids = stop!.attempts.map((a) => a.attemptId)
   const states = ids.length
-    ? await sql<
-        { id: string; state: string }[]
-      >`select id, state from attempts where id = any(${sql.array(ids)}::uuid[])`
+    ? await sql<{ id: string; state: string; taskId: string; projectId: string; taskKey: string }[]>`
+        select a.id, a.state, a.task_id, a.project_id, t.key as task_key
+        from attempts a join tasks t on t.id = a.task_id where a.id = any(${sql.array(ids)}::uuid[])
+      `
     : []
   const acks = ids.length
     ? await sql<{ key: string; deliveredAt: Date | null }[]>`
@@ -295,12 +296,16 @@ async function stopStatus(sql: Sql, registry: RunnerRegistry, stopId: string) {
       `
     : []
   const attempts = stop!.attempts.map((e) => {
-    const state = states.find((s) => s.id === e.attemptId)?.state ?? 'unknown'
+    const row = states.find((s) => s.id === e.attemptId)
+    const state = row?.state ?? 'unknown'
     const acknowledged = acks.find((a) => a.key === e.commandId)?.deliveredAt != null
     const stopped = !ACTIVE_ATTEMPT_STATES.includes(state as never) || state === 'stalled'
     return {
       ...e,
       state,
+      taskId: row?.taskId ?? null,
+      projectId: row?.projectId ?? null,
+      taskKey: row?.taskKey ?? null,
       acknowledged,
       stopped: stopped && state !== 'stalled',
       runnerReachable: registry.get(e.runnerId) !== undefined,

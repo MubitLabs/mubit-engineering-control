@@ -1,7 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { Link } from 'react-router'
 import { api } from '../../api/client'
+import { useTitle } from '../../components/Layout'
 import { Empty, ErrorBox, Panel, Status, Time } from '../../components/ui'
+import { useMe } from '../auth/useMe'
 
 interface RunnerView {
   id: string
@@ -23,6 +26,8 @@ interface RunnerView {
 
 /** Fleet and accounts (PDF §12): owner, agent, runner, authentication, capacity. */
 export function FleetPage() {
+  useTitle('Fleet')
+  const isAdmin = useMe().data?.user.isAdmin ?? false
   const qc = useQueryClient()
   const runners = useQuery({
     queryKey: ['fleet'],
@@ -45,7 +50,11 @@ export function FleetPage() {
       </div>
       <Panel title="Runners" flush>
         {runners.data?.runners.length === 0 ? (
-          <Empty>No runners enrolled. Create an invitation below.</Empty>
+          <Empty>
+            {isAdmin
+              ? 'No runners enrolled. Create an invitation below.'
+              : 'You have no runners. An admin can create an enrolment invitation for you.'}
+          </Empty>
         ) : (
           <table className="table">
             <thead>
@@ -84,8 +93,14 @@ export function FleetPage() {
                     ))}
                   </td>
                   <td className="small muted">
-                    {r.capacity.maxAttempts ?? '?'} attempts · {r.capacity.cpus ?? '?'} cpu ·{' '}
-                    {Math.round((r.capacity.memoryMb ?? 0) / 1024)} GB
+                    {r.capacity.maxAttempts === undefined ? (
+                      <span className="faint">not connected yet</span>
+                    ) : (
+                      <>
+                        {r.capacity.maxAttempts} attempts · {r.capacity.cpus ?? '?'} cpu ·{' '}
+                        {Math.round((r.capacity.memoryMb ?? 0) / 1024)} GB
+                      </>
+                    )}
                   </td>
                   <td>{r.activeAttempts}</td>
                   <td>
@@ -94,10 +109,30 @@ export function FleetPage() {
                   <td>
                     {!r.revokedAt && (
                       <div className="row">
-                        <button type="button" className="btn small" onClick={() => drain.mutate(r)}>
+                        <button
+                          type="button"
+                          className="btn small"
+                          onClick={() => drain.mutate(r)}
+                          title={
+                            r.draining
+                              ? 'Let this runner take new attempts again'
+                              : 'Finish running attempts here but start no new ones, e.g. before maintenance'
+                          }
+                        >
                           {r.draining ? 'Undrain' : 'Drain'}
                         </button>
-                        <button type="button" className="btn small danger" onClick={() => revoke.mutate(r)}>
+                        <button
+                          type="button"
+                          className="btn small danger"
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                `Revoke ${r.name}? It is disconnected and must be enrolled again.`,
+                              )
+                            )
+                              revoke.mutate(r)
+                          }}
+                        >
                           Revoke
                         </button>
                       </div>
@@ -110,56 +145,130 @@ export function FleetPage() {
         )}
         <ErrorBox error={drain.error ?? revoke.error} />
       </Panel>
-      <Dispatch />
-      <Invite />
+      {isAdmin && <Dispatch />}
+      {isAdmin && <Invite runners={runners.data?.runners ?? []} />}
     </div>
   )
 }
 
-function Invite() {
+function runnerName(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, '-')
+    .replace(/^[^a-z0-9]+/, '')
+    .slice(0, 64)
+    .replace(/-+$/, '')
+}
+
+function Invite({ runners }: { runners: RunnerView[] }) {
   const [label, setLabel] = useState('')
   const [ownerLogin, setOwner] = useState('')
+  const [customName, setName] = useState<string | null>(null)
+  const name = customName ?? runnerName(label)
   const create = useMutation({
     mutationFn: () =>
-      api.post<{ token: string; command: string; invite: { expiresAt: string; owner: string } }>(
-        '/api/runners/invites',
-        { label, ownerLogin: ownerLogin || undefined },
-      ),
+      api.post<{
+        token: string
+        command: string
+        invite: { expiresAt: string; owner: string; label: string }
+      }>('/api/runners/invites', { label, name: name || undefined, ownerLogin: ownerLogin || undefined }),
   })
+  const [known, setKnown] = useState<Set<string>>(new Set())
+  const issued = create.data
+  const enrolled = issued && runners.find((r) => r.name === name && !known.has(r.id))
+  const taken = !issued && runners.some((r) => r.name === name)
   return (
     <Panel title="Enrol a runner">
       <form
         className="form"
         onSubmit={(e) => {
           e.preventDefault()
+          setKnown(new Set(runners.map((r) => r.id)))
           create.mutate()
         }}
       >
         <div className="row" style={{ alignItems: 'flex-end' }}>
           <label className="field" style={{ flex: 1 }}>
             Label
-            <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="max's droplet" />
+            <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Max's laptop" />
+          </label>
+          <label className="field" style={{ flex: 1 }}>
+            Runner name
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="maxs-laptop" />
           </label>
           <label className="field" style={{ flex: 1 }}>
             Employee (GitHub login, default you)
             <input value={ownerLogin} onChange={(e) => setOwner(e.target.value)} />
           </label>
-          <button type="submit" className="btn primary" disabled={!label || create.isPending}>
+          <button type="submit" className="btn primary" disabled={!label || taken || create.isPending}>
             Create invitation
           </button>
         </div>
+        {taken && <div className="error-box">A runner named {name} already exists. Choose another name.</div>}
         <ErrorBox error={create.error} />
-        {create.data && (
-          <div className="notice">
+        {issued && enrolled && (
+          <div className="notice stack">
             <div>
-              Single-use invitation for {create.data.invite.owner}, valid until{' '}
-              {new Date(create.data.invite.expiresAt).toLocaleTimeString()}. Run on the employee's machine:
+              <Status value={enrolled.status} /> {enrolled.name} is enrolled for {enrolled.ownerLogin}.{' '}
+              {enrolled.status === 'online'
+                ? 'Next, its owner offers the agent account to projects on the Accounts page.'
+                : 'Start it on that machine and it comes online here:'}
             </div>
-            <pre className="panel panel-body small">{create.data.command}</pre>
+            {enrolled.status !== 'online' && <Step command="node apps/runner/dist/main.js" />}
+          </div>
+        )}
+        {issued && !enrolled && (
+          <div className="notice stack">
+            <div>
+              Single-use invitation for {issued.invite.owner}, valid until{' '}
+              {new Date(issued.invite.expiresAt).toLocaleTimeString()}. On that machine, with Node 22+, git
+              and the agent CLI signed in:
+            </div>
+            <Step
+              n={1}
+              text="In a checkout of this repository, build the runner:"
+              command="pnpm install && pnpm build"
+            />
+            <Step n={2} text="Enrol it (writes ~/.config/mec/runner.env):" command={issued.command} />
+            <Step n={3} text="Start it:" command="node apps/runner/dist/main.js" />
+            <div className="faint small">This page notices when the runner enrols.</div>
           </div>
         )}
       </form>
     </Panel>
+  )
+}
+
+function Step({ n, text, command }: { n?: number; text?: string; command: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <div>
+      {text && (
+        <div>
+          {n}. {text}
+        </div>
+      )}
+      <div className="row" style={{ alignItems: 'stretch' }}>
+        <pre
+          className="panel panel-body small"
+          style={{ flex: 1, margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
+        >
+          {command}
+        </pre>
+        <button
+          type="button"
+          className="btn small"
+          onClick={() =>
+            navigator.clipboard.writeText(command).then(
+              () => setCopied(true),
+              () => setCopied(false),
+            )
+          }
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -175,6 +284,9 @@ interface FleetStatus {
     attempts: {
       attemptId: string
       state: string
+      taskId: string | null
+      projectId: string | null
+      taskKey: string | null
       acknowledged: boolean
       stopped: boolean
       runnerReachable: boolean
@@ -213,7 +325,18 @@ function Dispatch() {
             Resume dispatch
           </button>
         ) : (
-          <button type="button" className="btn small danger" onClick={() => stop.mutate()}>
+          <button
+            type="button"
+            className="btn small danger"
+            onClick={() => {
+              if (
+                window.confirm(
+                  `Stop the fleet? ${d.load.total} running attempt(s) are interrupted and nothing new starts until dispatch is resumed.`,
+                )
+              )
+                stop.mutate()
+            }}
+          >
             Stop fleet
           </button>
         )
@@ -230,6 +353,19 @@ function Dispatch() {
             {d.latestStop.summary.total} confirmed stopped
             {d.latestStop.summary.unreachable > 0 && (
               <span className="status err"> {d.latestStop.summary.unreachable} unreachable</span>
+            )}
+            {d.latestStop.attempts.some((a) => a.state === 'interrupted') && (
+              <div className="faint" style={{ marginTop: 4 }}>
+                Interrupted attempts stay interrupted after dispatch resumes; resume each from its task:{' '}
+                {d.latestStop.attempts
+                  .filter((a) => a.state === 'interrupted' && a.taskId && a.projectId)
+                  .map((a, i) => (
+                    <span key={a.attemptId}>
+                      {i > 0 && ', '}
+                      <Link to={`/projects/${a.projectId}/tasks/${a.taskId}`}>{a.taskKey}</Link>
+                    </span>
+                  ))}
+              </div>
             )}
           </div>
         )}

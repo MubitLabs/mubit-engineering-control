@@ -365,6 +365,14 @@ export async function applyLifecycle(
 }
 
 /** Task consequences of an attempt reaching a terminal or parked state. */
+/** Whether a coordinator run's revision left draft, i.e. a valid graph was submitted for approval. */
+async function proposedGraph(tx: Tx, taskId: string): Promise<boolean> {
+  const [row] = await tx<{ state: string }[]>`
+    select r.state from tasks t join plan_revisions r on r.id = t.plan_revision_id where t.id = ${taskId}
+  `
+  return !!row && row.state !== 'draft'
+}
+
 export async function followTask(tx: Tx, attempt: AttemptRow, to: AttemptState): Promise<void> {
   const [task] = await tx<TaskRow[]>`select * from tasks where id = ${attempt.taskId} for update`
   if (task?.state !== 'active') return
@@ -377,6 +385,25 @@ export async function followTask(tx: Tx, attempt: AttemptRow, to: AttemptState):
   }
   if (task.kind !== 'work') {
     // A coordinator run is reviewed through the plan approval, not as a task result.
+    if (to === 'succeeded' && task.kind === 'planning' && !(await proposedGraph(tx, task.id))) {
+      await transition(tx, {
+        table: 'tasks',
+        machine: taskMachine,
+        id: task.id,
+        from: 'active',
+        event: 'attempt_failed_final',
+        set: {
+          blocker: tx.json({
+            kind: 'decision',
+            detail:
+              'The coordinator finished without proposing a valid task graph; run it again or write the tasks yourself',
+            refs: [],
+          } as never),
+        },
+        ...ctx,
+      })
+      return
+    }
     if (to === 'succeeded') {
       await transition(tx, {
         table: 'tasks',
@@ -418,7 +445,8 @@ export async function followTask(tx: Tx, attempt: AttemptRow, to: AttemptState):
     await requestReview(tx, task, attempt)
   } else if (to === 'checks_failed' || to === 'failed' || to === 'cancelled') {
     const retryable = task.attemptsUsed < (task.spec.maxAttempts ?? 2)
-    if (retryable && to === 'checks_failed') await setRepairFromChecks(tx, task, attempt)
+    // Recorded even when the budget is used, so a manual retry still starts from the failures.
+    if (to === 'checks_failed') await setRepairFromChecks(tx, task, attempt)
     await transition(tx, {
       table: 'tasks',
       machine: taskMachine,
@@ -430,7 +458,8 @@ export async function followTask(tx: Tx, attempt: AttemptRow, to: AttemptState):
           ? null
           : tx.json({
               kind: 'decision',
-              detail: 'All attempts used; a person must retry or cancel',
+              detail:
+                'All attempts used. Fix the cause, then retry; or drop the task in a new plan revision.',
               refs: [],
             } as never),
       },
@@ -438,12 +467,21 @@ export async function followTask(tx: Tx, attempt: AttemptRow, to: AttemptState):
     })
     if (retryable) await refreshReadiness(tx, { id: attempt.deliveryId, projectId: attempt.projectId })
   } else if (to === 'quota_wait' || to === 'auth_required') {
+    const [where] = await tx<{ runner: string | null; owner: string | null }[]>`
+      select r.name as runner, u.login as owner from attempts a
+      left join runners r on r.id = a.runner_id
+      left join execution_profiles p on p.id = a.profile_id
+      left join users u on u.id = coalesce(p.owner_id, r.owner_id)
+      where a.id = ${attempt.id}
+    `
+    const on = where?.runner ? ` on ${where.runner}` : ''
+    const who = where?.owner ? `${where.owner} signs` : 'The account owner signs'
     const blocker: Blocker = {
       kind: to === 'quota_wait' ? 'quota' : 'auth',
       detail:
         to === 'quota_wait'
-          ? 'Agent quota exhausted; work preserved'
-          : 'Agent sign-in required; work preserved',
+          ? `Agent usage limit reached${on}; the work is kept. Resume once the limit resets, or abandon and start on another account`
+          : `Agent sign-in expired${on}. ${who} in again there, then Resume; the work is kept`,
       refs: [attempt.id],
     }
     await tx`update tasks set blocker = ${tx.json(blocker as never)}, updated_at = now() where id = ${task.id}`
@@ -544,7 +582,9 @@ async function requestReview(tx: Tx, task: TaskRow, attempt: AttemptRow): Promis
       files: ctx.diff?.fileCount ?? 0,
       checksPassed: passed.map((p) => p.name),
       consequence:
-        'Accepting queues this exact commit for integration; sending back starts a repair attempt with your notes.',
+        task.attemptsUsed >= (task.spec.maxAttempts ?? 2)
+          ? 'Accepting queues this exact commit for integration. This was the last attempt in the budget: sending back keeps your notes, and someone starts the repair attempt from the task page.'
+          : 'Accepting queues this exact commit for integration; sending back starts a repair attempt with your notes.',
     },
     requestedBy: { kind: 'system' },
     allowedDeciderIds: [ctx.ownerId],

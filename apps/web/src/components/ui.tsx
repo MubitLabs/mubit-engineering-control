@@ -14,6 +14,8 @@ const TONES: Record<string, string> = {
   draft: 'neutral',
   proposed: 'warn',
   rejected: 'err',
+  sent_back: 'warn',
+  planned: 'neutral',
   superseded: 'neutral',
   // task
   ready: 'info',
@@ -52,6 +54,17 @@ const TONES: Record<string, string> = {
   closed: 'neutral',
   repair: 'warn',
   error: 'err',
+}
+
+/** A task in "approved" is planned work waiting its turn, not an accepted result. */
+export function taskStatus(state: string): string {
+  return state === 'approved' ? 'planned' : state
+}
+
+/** Reviews read as accepted / sent back rather than approved / rejected. */
+export function decisionStatus(a: { kind: string; status: string }): string {
+  if (a.kind !== 'result') return a.status
+  return a.status === 'approved' ? 'accepted' : a.status === 'rejected' ? 'sent_back' : a.status
 }
 
 export function Status({ value }: { value: string | null | undefined }) {

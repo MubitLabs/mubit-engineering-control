@@ -7,6 +7,8 @@ import { authorize, requireActor } from '../../http/actor'
 import { conflict, notFound, parse } from '../../http/errors'
 import { type ApprovalHookMap, resolveApproval } from '../approvals/service'
 import { audit } from '../audit'
+import type { GitHubApi } from '../integration/github'
+import { pullRequestWait } from '../integration/integrator'
 import {
   type DeliveryRow,
   insertRevision,
@@ -20,8 +22,11 @@ import {
 } from '../plans/service'
 import { loadProject } from '../projects/routes'
 
-export function registerDeliveries(app: FastifyInstance, deps: { sql: Sql; hooks: ApprovalHookMap }) {
-  const { sql, hooks } = deps
+export function registerDeliveries(
+  app: FastifyInstance,
+  deps: { sql: Sql; hooks: ApprovalHookMap; github: GitHubApi | null },
+) {
+  const { sql, hooks, github } = deps
 
   app.get<{ Params: { projectId: string } }>('/api/projects/:projectId/deliveries', async (req) => {
     const actor = await requireActor(sql, req)
@@ -103,7 +108,15 @@ export function registerDeliveries(app: FastifyInstance, deps: { sql: Sql; hooks
         sql`select id, name, clone_url, default_branch, validation_profile from repositories where id = ${delivery.repositoryId}`,
         sql`select * from pull_requests where delivery_id = ${delivery.id} order by created_at desc`,
       ])
-    return { delivery, owner, repository, revisions, tasks, dependencies, approvals, pullRequests }
+    const nextStep = pullRequestWait(
+      delivery as DeliveryRow & { integrationSha: string | null; integrationPushedSha: string | null },
+      {
+        hasPullRequest: pullRequests.length > 0,
+        github,
+        cloneUrl: repository?.cloneUrl as string,
+      },
+    )
+    return { delivery, owner, repository, revisions, tasks, dependencies, approvals, pullRequests, nextStep }
   })
 
   app.get<{ Params: { revisionId: string } }>('/api/plans/:revisionId', async (req) => {
@@ -113,6 +126,32 @@ export function registerDeliveries(app: FastifyInstance, deps: { sql: Sql; hooks
     authorize(actor, 'observe', { kind: 'project', projectId: delivery.projectId })
     return { revision }
   })
+
+  app.post<{ Params: { deliveryId: string } }>(
+    '/api/deliveries/:deliveryId/push-integration',
+    async (req) => {
+      const actor = await requireActor(sql, req)
+      const delivery = await loadDelivery(sql, req.params.deliveryId)
+      authorize(actor, 'approve_plan', {
+        kind: 'delivery',
+        projectId: delivery.projectId,
+        ownerId: delivery.ownerId,
+      })
+      await sql.begin(async (tx) => {
+        await app.services.integrator.retryPush(tx, delivery.id)
+        await audit(
+          tx,
+          actor.userId,
+          'delivery.push_integration',
+          'delivery',
+          delivery.id,
+          delivery.projectId,
+          {},
+        )
+      })
+      return { ok: true }
+    },
+  )
 
   app.post<{ Params: { deliveryId: string } }>('/api/deliveries/:deliveryId/plans', async (req, reply) => {
     const actor = await requireActor(sql, req)

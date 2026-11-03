@@ -150,7 +150,7 @@ export async function resolveApproval(
     if (!check.ok) {
       switch (check.error.code) {
         case 'not_pending':
-          throw conflict('already_resolved', `This request was already ${approval.status}`, { approval })
+          throw conflict('already_resolved', alreadyResolved(approval.kind, approval.status), { approval })
         case 'not_authorised':
           throw forbidden('You are not an authorised decider for this request')
         case 'invalid_decision':
@@ -219,4 +219,17 @@ async function closeOne(tx: Tx, approval: ApprovalRow, status: 'expired' | 'stal
     actor: { kind: 'system' },
     payload: { approvalId: approval.id, kind: approval.kind, status, reason },
   })
+}
+
+/** Reviews read as accepted / sent back, as they do in the inbox. */
+function alreadyResolved(kind: string, status: string): string {
+  const word =
+    kind === 'result' && status === 'approved'
+      ? 'accepted'
+      : kind === 'result' && status === 'rejected'
+        ? 'sent back'
+        : status === 'stale'
+          ? 'withdrawn because what it was about changed'
+          : status
+  return `Someone already decided this: it was ${word}. The page has been refreshed.`
 }

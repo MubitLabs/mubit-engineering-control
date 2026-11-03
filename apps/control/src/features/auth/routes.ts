@@ -9,6 +9,12 @@ import type { GithubOAuth } from './github'
 import { createSession, deleteSession, lookupSession, SESSION_COOKIE, upsertUser } from './sessions'
 
 const STATE_COOKIE = 'mec_oauth_state'
+const NEXT_COOKIE = 'mec_oauth_next'
+
+/** Where to land after sign-in: a path on this site only, never another origin. */
+export function safeNext(value: unknown): string {
+  return typeof value === 'string' && value.length <= 500 && /^\/(?![/\\])[^\s\\]*$/.test(value) ? value : '/'
+}
 
 export function registerAuth(
   app: FastifyInstance,
@@ -44,16 +50,12 @@ export function registerAuth(
     })
   }
 
-  app.get('/auth/github/login', async (_req, reply) => {
+  app.get('/auth/github/login', async (req, reply) => {
     if (!github) return reply.redirect('/login?error=not_configured')
     const state = randomBytes(16).toString('base64url')
-    reply.setCookie(STATE_COOKIE, state, {
-      httpOnly: true,
-      secure,
-      sameSite: 'lax',
-      path: '/auth',
-      maxAge: 600,
-    })
+    const cookie = { httpOnly: true, secure, sameSite: 'lax' as const, path: '/auth', maxAge: 600 }
+    reply.setCookie(STATE_COOKIE, state, cookie)
+    reply.setCookie(NEXT_COOKIE, safeNext((req.query as { next?: unknown }).next), cookie)
     return reply.redirect(github.authorizeUrl(state, redirectUri))
   })
 
@@ -61,7 +63,9 @@ export function registerAuth(
     if (!github) throw new HttpError(404, 'not_found', 'GitHub login is not configured')
     const q = parse(z.object({ code: z.string().min(1), state: z.string().min(1) }), req.query)
     const expected = req.cookies[STATE_COOKIE]
+    const next = safeNext(req.cookies[NEXT_COOKIE])
     reply.clearCookie(STATE_COOKIE, { path: '/auth' })
+    reply.clearCookie(NEXT_COOKIE, { path: '/auth' })
     if (!expected || expected !== q.state)
       throw new HttpError(400, 'bad_state', 'Login expired, please try again')
 
@@ -77,7 +81,7 @@ export function registerAuth(
     }
     const user = await upsertUser(sql, identity, config.adminLogins)
     await startSession(reply, user.id)
-    return reply.redirect('/')
+    return reply.redirect(next)
   })
 
   if (config.authMode === 'dev') {

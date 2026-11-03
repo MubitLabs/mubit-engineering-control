@@ -1,4 +1,5 @@
 import { AgentKind, FakeStep } from '@mec/contracts'
+import { taskMachine } from '@mec/domain'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { Config } from '../../config'
@@ -6,6 +7,8 @@ import type { Sql } from '../../db/sql'
 import { authorize, type RequestActor, requireActor } from '../../http/actor'
 import { conflict, notFound, parse } from '../../http/errors'
 import type { RunnerRegistry } from '../runners/registry'
+import { dispatchPaused } from '../scheduler/capacity'
+import { transition } from '../state'
 import { claimAttempt, commandAttempt, loadAttempt, type TaskRow } from './service'
 
 const StartAttempt = z.object({
@@ -55,6 +58,17 @@ export function registerAttemptRoutes(
       `,
       sql`select * from approvals where task_id = ${task.id} order by created_at desc`,
     ])
+    if (task.state === 'ready' && !task.blocker) {
+      const [project] = await sql<
+        { pausedAt: Date | null }[]
+      >`select paused_at from projects where id = ${task.projectId}`
+      const detail = project?.pausedAt
+        ? 'Dispatch is paused for this project; resume it on the project page.'
+        : (await dispatchPaused(sql))
+          ? 'Dispatch is stopped for the whole fleet; an admin resumes it on the Fleet page.'
+          : null
+      if (detail) task.blocker = { kind: 'policy', detail, refs: [] }
+    }
     return {
       task,
       attempts,
@@ -62,6 +76,35 @@ export function registerAttemptRoutes(
       approvals,
       canPrompt: canPrompt(actor, task),
     }
+  })
+
+  /** A failed task goes back to ready; the next attempt is started by hand and repairs from the failures. */
+  app.post<{ Params: { taskId: string } }>('/api/tasks/:taskId/retry', async (req) => {
+    const actor = await requireActor(sql, req)
+    const task = await loadTask(req.params.taskId)
+    authorize(actor, 'prompt', attemptResource(task))
+    await sql.begin((tx) =>
+      transition(tx, {
+        table: 'tasks',
+        machine: taskMachine,
+        id: task.id,
+        from: 'failed',
+        event: 'retry',
+        set: {
+          blocker: tx.json({
+            kind: 'decision',
+            detail: 'Retried; start an attempt to continue',
+            refs: [],
+          } as never),
+        },
+        projectId: task.projectId,
+        deliveryId: task.deliveryId,
+        taskId: task.id,
+        actor: { kind: 'user', id: actor.userId },
+        payload: {},
+      }),
+    )
+    return { ok: true }
   })
 
   /** Manual start or retry (PDF §24: POST /tasks/:id/attempts). The scheduler uses the same claim. */

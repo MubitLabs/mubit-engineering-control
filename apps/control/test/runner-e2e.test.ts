@@ -137,6 +137,17 @@ describe('runner end to end with the fake agent', () => {
     await waitFor(async () => (await state(attemptId)) === 'interrupted', 10_000, 'interrupted')
   })
 
+  it('parks an attempt whose agent sign-in expired and says who must sign in where', async () => {
+    await startRunner()
+    const { taskId, attemptId } = await start([{ say: 'working' }, { exit: 'auth' }])
+    await waitFor(async () => (await state(attemptId)) === 'auth_required', 10_000, 'auth_required')
+    const [task] = await t.db.sql`select blocker from tasks where id = ${taskId}`
+    expect(task!.blocker).toMatchObject({ kind: 'auth' })
+    expect(task!.blocker.detail).toMatch(
+      /sign-in expired on runner-1\. admin signs in again there, then Resume/,
+    )
+  })
+
   it('fails the attempt and frees the task for a retry when the agent fails', async () => {
     await startRunner()
     const { taskId, attemptId } = await start([{ say: 'trying' }, { fail: 'compile error' }])

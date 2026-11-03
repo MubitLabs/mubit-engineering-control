@@ -7,6 +7,7 @@ import { ChatView } from './views/ChatView'
 import { InboxView } from './views/InboxView'
 import { SettingsView } from './views/SettingsView'
 import { SlotsView } from './views/SlotsView'
+import { WizardView } from './views/WizardView'
 import { WorkView } from './views/WorkView'
 
 const NAV: ReadonlyArray<{ route: Route; label: string }> = [
@@ -14,6 +15,7 @@ const NAV: ReadonlyArray<{ route: Route; label: string }> = [
   { route: 'inbox', label: 'Inbox' },
   { route: 'work', label: 'Work' },
   { route: 'slots', label: 'Slots' },
+  { route: 'wizard', label: 'Setup' },
   { route: 'settings', label: 'Settings' },
 ]
 
@@ -22,6 +24,7 @@ const VIEWS: Record<Route, ComponentType> = {
   inbox: InboxView,
   work: WorkView,
   slots: SlotsView,
+  wizard: WizardView,
   settings: SettingsView,
 }
 

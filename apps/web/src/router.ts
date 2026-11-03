@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 
-export type Route = 'chat' | 'inbox' | 'work' | 'slots' | 'settings'
+export type Route = 'chat' | 'inbox' | 'work' | 'slots' | 'wizard' | 'settings'
 
-const ROUTES: ReadonlySet<string> = new Set(['chat', 'inbox', 'work', 'slots', 'settings'])
+const ROUTES: ReadonlySet<string> = new Set(['chat', 'inbox', 'work', 'slots', 'wizard', 'settings'])
 
 /** '#/chat' -> 'chat'; anything unrecognized falls back to 'chat'. */
 export function parseHash(hash: string): Route {

@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import { api, HttpError, type PartEntry, type SlotEntry, type StatusSnapshot } from '../api'
 import { Badge, type BadgeState, Button, Card, EmptyState } from '../components/ui'
+import { routeToHash } from '../router'
 import { usePolling } from '../usePolling'
 
 const SLOT_PREFIX = 'slot:'
@@ -33,7 +34,12 @@ function SetupBanner({ hasSlot, hasRepository }: { hasSlot: boolean; hasReposito
     <Card className="setup-banner">
       <h3 className="card-title">waiting for setup</h3>
       <p className="card-detail">the workbench still needs {missing.join(' and ')}</p>
-      <p className="mono">mec slot add</p>
+      <div className="card-actions">
+        <Button onClick={() => (window.location.hash = routeToHash('wizard'))} variant="primary">
+          Run setup
+        </Button>
+        <span className="mono slot-detail">or: mec slot add</span>
+      </div>
     </Card>
   )
 }
@@ -41,9 +47,10 @@ function SetupBanner({ hasSlot, hasRepository }: { hasSlot: boolean; hasReposito
 /**
  * §5.7 courier form — provider → key (masked, never echoed) → Add. The ONLY way a key
  * enters MEC: it goes to the slot keystore and the field is cleared the moment the
- * courier accepts it, so the key never lingers in component state either.
+ * courier accepts it, so the key never lingers in component state either. Exported
+ * for the wizard's step 2 — one form, one shape, wherever a key is pasted.
  */
-function AddApiKeyCard({ onAdded }: { onAdded: () => void }) {
+export function AddApiKeyCard({ onAdded }: { onAdded: () => void }) {
   const [label, setLabel] = useState('')
   const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)

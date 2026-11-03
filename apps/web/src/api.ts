@@ -56,6 +56,37 @@ export type AddApiKeyResult = { id: string; fingerprint: { provider: string; las
 /** POST /api/slots/:id/validate — the §5.8 zero-token probe verdict. */
 export type ValidateSlotResult = { ok: boolean; reason?: 'key_rejected' | 'provider_unreachable' }
 
+/** GET /api/wizard/engines — §21.3 step 1: one row per engine the setup flow knows. */
+export type EngineName = 'claude' | 'codex' | 'opencode'
+export type EngineStatus = { engine: EngineName; installed: boolean; version?: string }
+
+/**
+ * GET /api/wizard/existing-logins — §21.3 step 2: what the engine's own status command
+ * reports in its DEFAULT home. null where v0 does not probe (codex/opencode) or the
+ * binary is missing — unknown, never "signed out".
+ */
+export type ExistingLogin = { engine: EngineName; loggedIn: boolean; email?: string; plan?: string }
+export type ExistingLogins = Record<EngineName, ExistingLogin | null>
+
+/** POST /api/slots/link — the §5.3 slot-0 receipt: the default home, linked, no key involved. */
+export type LinkedSlotResult = {
+  id: string
+  label: string
+  engine: string
+  kind: string
+  state: string
+  home: string
+}
+
+/** GET/POST /api/repositories — a registered repository (§14): where work lands. */
+export type RepositoryEntry = {
+  id: string
+  url: string
+  bootstrap: string[]
+  checks: Array<{ name: string; cmd: string }>
+  trust: boolean
+}
+
 export type ResolveAnswer = 'approve' | 'deny'
 export type ResolveResult = { status: string }
 
@@ -63,12 +94,19 @@ export type ResolveResult = { status: string }
 export class HttpError extends Error {
   readonly path: string
   readonly status: number
+  /** The server's own `{error}` text when it sent one — the exact 400 reason, shown inline. */
+  readonly reason?: string
 
-  constructor(path: string, status: number) {
-    super(`${path} failed with HTTP ${status}`)
+  constructor(path: string, status: number, reason?: string) {
+    super(
+      reason === undefined
+        ? `${path} failed with HTTP ${status}`
+        : `${path} failed with HTTP ${status}: ${reason}`,
+    )
     this.name = 'HttpError'
     this.path = path
     this.status = status
+    this.reason = reason
   }
 }
 
@@ -93,8 +131,22 @@ export function newIdempotencyKey(): string {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init)
-  if (!response.ok) throw new HttpError(path, response.status)
+  if (!response.ok) throw new HttpError(path, response.status, await errorOf(response))
   return (await response.json()) as T
+}
+
+/** The body's `error` text when the server sent one; never throws. */
+async function errorOf(response: Response): Promise<string | undefined> {
+  try {
+    const body: unknown = await response.json()
+    if (typeof body === 'object' && body !== null) {
+      const error = (body as { error?: unknown }).error
+      if (typeof error === 'string' && error !== '') return error
+    }
+  } catch {
+    // A non-JSON error body carries no reason worth showing.
+  }
+  return undefined
 }
 
 export const api = {
@@ -173,9 +225,108 @@ export const api = {
       method: 'POST',
     })
   },
+
+  /** §21.3 step 1: which engines are installed, and which versions. */
+  wizardEngines(): Promise<EngineStatus[]> {
+    return request<EngineStatus[]>('/api/wizard/engines')
+  },
+
+  /** §21.3 step 2: existing logins in each engine's DEFAULT home (claude-only in v0). */
+  wizardExistingLogins(): Promise<ExistingLogins> {
+    return request<ExistingLogins>('/api/wizard/existing-logins')
+  },
+
+  /** §5.3 slot 0: link the engine's existing default-home login as a slot (no key involved). */
+  linkSlot(engine: string, label: string): Promise<LinkedSlotResult> {
+    return request<LinkedSlotResult>('/api/slots/link', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ engine, label }),
+    })
+  },
+
+  /**
+   * §5.6 terminal card: starts the vendor's own login command in a dedicated slot home
+   * (the server resolves the label to a home — the browser never composes slot paths).
+   */
+  startLogin(engine: string, label: string): Promise<{ id: string; busy: boolean }> {
+    return request<{ id: string; busy: boolean }>('/api/slots/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ engine, label }),
+    })
+  },
+
+  /** §14/§21.3 step 3: register the repository work lands in (path or credential-free https). */
+  addRepository(input: {
+    urlOrPath: string
+    bootstrapCmds: string[]
+    checkCmds: Array<{ name: string; cmd: string }>
+    trusted: boolean
+  }): Promise<RepositoryEntry> {
+    return request<RepositoryEntry>('/api/repositories', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+  },
+
+  repositories(): Promise<RepositoryEntry[]> {
+    return request<RepositoryEntry[]>('/api/repositories')
+  },
+
+  /** §21.3 step 4: the slot the meta agent runs on; last write wins. */
+  setMetaSlot(slotId: string): Promise<{ id: string; slotId: string }> {
+    return request<{ id: string; slotId: string }>('/api/wizard/meta-slot', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ slotId }),
+    })
+  },
+
+  metaSlot(): Promise<{ slotId: string | null }> {
+    return request<{ slotId: string | null }>('/api/wizard/meta-slot')
+  },
 }
 
 export type ServerEvent = { seq: number } & Record<string, unknown>
+
+/** §5.6 card events — output and URLs flow live; exit/timeout end the card. */
+export type LoginCardEvent =
+  | { kind: 'output'; data: string }
+  | { kind: 'exit'; code: number }
+  | { kind: 'timeout' }
+  | { kind: 'url'; url: string }
+
+/**
+ * Subscribes to the live login card (`GET /api/slots/login/current`, §5.6). The stream
+ * is live-only — no backlog, no persistence — so this attaches right after starting a
+ * card; the terminal event closes the source so it never reconnects into a 404.
+ * Frames that are not JSON, or lack a string `kind`, are dropped. Returns a disposer.
+ */
+export function subscribeLoginCard(onEvent: (event: LoginCardEvent) => void): () => void {
+  const source = new EventSource('/api/slots/login/current')
+  let done = false
+  source.onmessage = (message) => {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(message.data)
+    } catch {
+      return
+    }
+    const kind =
+      typeof parsed === 'object' && parsed !== null ? (parsed as { kind?: unknown }).kind : undefined
+    if (!done && typeof kind === 'string') onEvent(parsed as LoginCardEvent)
+    if (kind === 'exit' || kind === 'timeout') {
+      done = true
+      source.close()
+    }
+  }
+  return () => {
+    done = true
+    source.close()
+  }
+}
 
 /**
  * Subscribes to the server's SSE feed (`GET /api/events?stream=&after=`).

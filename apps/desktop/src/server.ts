@@ -8,6 +8,7 @@
  * HTTP to those seams and back. `composition.ts` builds the real deps (SQLite, health
  * writer, mec-tools); tests inject `MemoryRepositories` and a fake board.
  */
+import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { Socket } from 'node:net'
@@ -21,7 +22,16 @@ import type { LiveWork } from '@mec/meta'
 import { routeMessage } from '@mec/meta'
 import type { ConfirmationRecord } from '@mec/policy'
 import { resolveConfirmation } from '@mec/policy'
-import { claudeHome, redact, SlotKeystore } from '@mec/slots'
+import {
+  claudeHome,
+  codexHome,
+  linkedDefault,
+  opencodeHome,
+  type ProbeRun,
+  probeClaudeSlot,
+  redact,
+  SlotKeystore,
+} from '@mec/slots'
 import Fastify, { type FastifyInstance } from 'fastify'
 import type { HealthSnapshot, PartEntry } from './health'
 import { type CardEvent, LoginCardManager } from './login-cards'
@@ -62,6 +72,13 @@ export type ServerDeps = {
    * real repository.
    */
   ghRun?: GhRun
+  /**
+   * §21.3 first-run wizard probes (each engine's `--version`, `claude auth status`)
+   * run through this seam — the default is execFile with a 5s cap that NEVER throws
+   * (a probe that cannot run reports a missing engine, not a server error); tests
+   * inject a fake so no route ever runs a real engine binary.
+   */
+  probeCmd?: ProbeCmd
   /** The store release cards and prflow docs live in; defaults to the composed store. */
   repoStore?: Store
   /** Present in the composed app: the chat route delegates message+work+plan+launch to it. */
@@ -121,6 +138,63 @@ const VALIDATE_TIMEOUT_MS = 15_000
  * key must pass before MEC writes anything anywhere.
  */
 const ANTHROPIC_KEY_PATTERN = SECRET_PATTERNS[0]?.pattern
+
+/** §21.3 wizard: how long one local engine probe may run before it counts as missing. */
+const PROBE_TIMEOUT_MS = 5_000
+
+/** §21.3 wizard: the engines the setup flow knows, and the binary each one is probed with. */
+const WIZARD_ENGINES = [
+  { engine: 'claude', cmd: 'claude' },
+  { engine: 'codex', cmd: 'codex' },
+  { engine: 'opencode', cmd: 'opencode' },
+] as const
+
+/**
+ * §14/§21.3 argv discipline for repository bootstrap/check commands: they run as argv
+ * later, never through a shell, so anything that could become shell syntax is rejected
+ * at registration — the exact characters listed in the plan's rule.
+ */
+const SHELL_METACHARS = /[;&|<>`$]/
+
+/** The settings doc holding the meta agent's slot choice (§21.3 step 4). */
+const META_SLOT_ID = 'settings/meta-slot'
+
+/** GET /api/repositories lists exactly the docs POST /api/repositories registered. */
+const REPOSITORY_PREFIX = 'repo_'
+
+/** A slot label becomes a doc id and a stream name — one safe path segment, like `slotDir`. */
+const SLOT_LABEL = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+
+/**
+ * §21.3 wizard probe seam: one local command, argv-only, never a shell. The default
+ * resolves on every failure (ENOENT, non-zero exit, timeout kill) instead of throwing;
+ * a spawn failure arrives as code -1, a command-not-found conventionally as 127.
+ */
+export type ProbeCmd = (
+  cmd: string,
+  args: readonly string[],
+  opts?: { env?: NodeJS.ProcessEnv },
+) => Promise<{ code: number; stdout: string; stderr: string }>
+
+export const defaultProbeCmd: ProbeCmd = (cmd, args, opts) =>
+  new Promise((resolve) => {
+    execFile(
+      cmd,
+      args,
+      {
+        timeout: PROBE_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+        ...(opts?.env !== undefined && { env: opts.env }),
+      },
+      (error, stdout, stderr) => {
+        resolve({
+          code: error === null ? 0 : typeof error.code === 'number' ? error.code : -1,
+          stdout: String(stdout ?? ''),
+          stderr: String(stderr ?? ''),
+        })
+      },
+    )
+  })
 
 /**
  * The claude-api slot doc kept in the store's slots repo: {id, label, engine, kind,
@@ -220,6 +294,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   const loginCards = deps.loginCards ?? new LoginCardManager()
   // §5.4 where slot homes (and only they) hold keys; §5.8 transport for the zero-token probe.
   const keystoreRoot = deps.keystoreRoot ?? DEFAULT_KEYSTORE_ROOT
+  // §21.3 wizard probes: local, capped, never throwing; tests inject fixtures.
+  const probeCmd = deps.probeCmd ?? defaultProbeCmd
   const validateFetch = deps.validateFetch ?? globalThis.fetch
   // §14/R1.7: the release agent's gh leg — cards settle in the same store the inbox reads
   // (a test may inject either seam); every gh call is argv-only, bodies by stdin.
@@ -429,13 +505,29 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   )
 
   app.post('/api/slots/login', async (request, reply) => {
-    const body = (request.body ?? {}) as { engine?: unknown; slotHome?: unknown }
+    const body = (request.body ?? {}) as { engine?: unknown; slotHome?: unknown; label?: unknown }
     const { engine } = body
     if (engine !== 'claude' && engine !== 'codex' && engine !== 'opencode') {
       reply.code(400).send({ error: "engine must be 'claude', 'codex' or 'opencode'" })
       return
     }
-    const slotHome = typeof body.slotHome === 'string' ? body.slotHome.trim() : ''
+    let slotHome = typeof body.slotHome === 'string' ? body.slotHome.trim() : ''
+    if (slotHome === '' && typeof body.label === 'string' && body.label.trim() !== '') {
+      // §21.3 wizard's dedicated-slot path: the client names the slot, the server resolves
+      // the home under the keystore root — the browser never composes slot paths.
+      const label = body.label.trim()
+      try {
+        slotHome =
+          engine === 'claude'
+            ? claudeHome(keystoreRoot, label).homeDir
+            : engine === 'codex'
+              ? codexHome(keystoreRoot, label).homeDir
+              : opencodeHome(keystoreRoot, label).homeDir
+      } catch (error) {
+        reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid slot label' })
+        return
+      }
+    }
     if (slotHome === '') {
       reply.code(400).send({ error: 'slotHome is required' })
       return
@@ -706,6 +798,243 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     }),
   )
 
+  // ─── §21.3 first-run wizard ────────────────────────────────────────────────────
+  // The four setup steps against real local state: detect engines → existing logins
+  // in each engine's default home → link existing / dedicated slot / paste a key →
+  // register a repository → choose the meta agent's slot. Every probe is local and
+  // read-only; the target is five minutes with one engine, ten with four configs.
+
+  app.get('/api/wizard/engines', async () =>
+    Promise.all(
+      WIZARD_ENGINES.map(async ({ engine, cmd }) => {
+        const result = await probeCmd(cmd, ['--version'])
+        // Exit 0 with a speakable first line = installed; anything else (ENOENT,
+        // non-zero exit, empty stdout, a timeout kill) is honestly "not installed".
+        const version = result.code === 0 ? (result.stdout.trim().split('\n')[0]?.trim() ?? '') : ''
+        return { engine, installed: version !== '', ...(version !== '' && { version }) }
+      }),
+    ),
+  )
+
+  // §21.3 step 2 + §5.3 slot-0: what lives in each engine's DEFAULT home. Claude only
+  // in v0, probed with `claude auth status` and CLAUDE_CONFIG_DIR deleted from the
+  // environment — the default home is "the variable unset", never "the variable pointed
+  // at ~/.claude" (issue #92252). codex/opencode answer null until their adapters land.
+  app.get('/api/wizard/existing-logins', async () => {
+    const env: Record<string, string> = {}
+    for (const [name, value] of Object.entries(process.env)) {
+      if (value !== undefined) env[name] = value
+    }
+    delete env.CLAUDE_CONFIG_DIR
+    // A probe that cannot run at all (binary missing) is null — unknown, not "signed
+    // out"; probeClaudeSlot's own §5.8 parse decides everything answerable.
+    const run: ProbeRun = async (cmd, args, runEnv) => {
+      const result = await probeCmd(cmd, args, { env: runEnv })
+      if (result.code === -1 || result.code === 127) throw new Error('engine missing')
+      return result
+    }
+    const probed = await probeClaudeSlot(run, env)
+    const claude =
+      probed.state !== 'healthy' && probed.reason === 'engine_missing'
+        ? null
+        : {
+            engine: 'claude',
+            loggedIn: probed.state === 'healthy',
+            ...(probed.identity?.email !== undefined && { email: probed.identity.email }),
+            ...(probed.identity?.plan !== undefined && { plan: probed.identity.plan }),
+          }
+    return { claude, codex: null, opencode: null }
+  })
+
+  // §5.3 slot 0 ("link existing"): a slot doc referencing the engine's DEFAULT home.
+  // For Claude that means the variable stays UNSET (issue #92252) — the doc records
+  // `linkedDefault: true` with an empty env so the launcher never points
+  // CLAUDE_CONFIG_DIR anywhere. The login itself is the vendor's, already in place,
+  // so the slot is born past `home_ready`'s directory step and waiting on its probe.
+  app.post('/api/slots/link', async (request, reply) => {
+    const body = (request.body ?? {}) as { engine?: unknown; label?: unknown }
+    const { engine } = body
+    if (engine !== 'claude' && engine !== 'codex' && engine !== 'opencode') {
+      reply.code(400).send({ error: "engine must be 'claude', 'codex' or 'opencode'" })
+      return
+    }
+    const label = typeof body.label === 'string' ? body.label.trim() : ''
+    if (label === '') {
+      reply.code(400).send({ error: 'label is required' })
+      return
+    }
+    if (label === '..' || !SLOT_LABEL.test(label)) {
+      reply.code(400).send({ error: 'invalid slot label: expected a single path segment' })
+      return
+    }
+    const linked = linkedDefault(engine)
+    if (linked === null) {
+      reply.code(400).send({ error: "linking an existing login is 'claude'-only in v0" })
+      return
+    }
+    const id = `slot_${label}`
+    if (store.slots.get(id) !== undefined) {
+      reply.code(409).send({ error: 'a slot with that label already exists — retire it first' })
+      return
+    }
+    const at = now().toISOString()
+    store.atomic(() => {
+      store.slots.save({
+        id,
+        label,
+        engine: linked.engine,
+        kind: 'claude-sub',
+        provider: 'anthropic',
+        home: linked.homeDir,
+        linkedDefault: true,
+        env: linked.env,
+        state: 'home_ready',
+        createdAt: at,
+        updatedAt: at,
+      })
+      appendEvent(
+        store,
+        `slot:${label}`,
+        'slot_created',
+        { slotId: id, label, kind: 'claude-sub', linkedDefault: true, home: linked.homeDir, at },
+        at,
+      )
+    })
+    return {
+      id,
+      label,
+      engine: linked.engine,
+      kind: 'claude-sub',
+      state: 'home_ready',
+      home: linked.homeDir,
+    }
+  })
+
+  // §14/§21.3 repository registration: an existing local path or a credential-free
+  // https URL, bootstrap/check commands as plain argv strings, and the trust flag §22
+  // requires before repository-resident configuration is honoured at all.
+  app.post('/api/repositories', async (request, reply) => {
+    const body = (request.body ?? {}) as {
+      urlOrPath?: unknown
+      bootstrapCmds?: unknown
+      checkCmds?: unknown
+      trusted?: unknown
+    }
+    const urlOrPath = typeof body.urlOrPath === 'string' ? body.urlOrPath.trim() : ''
+    if (urlOrPath === '') {
+      reply.code(400).send({ error: 'urlOrPath is required' })
+      return
+    }
+    if (typeof body.trusted !== 'boolean') {
+      reply.code(400).send({ error: 'trusted must be a boolean' })
+      return
+    }
+    const trusted: boolean = body.trusted
+    let bootstrap: string[]
+    let checks: Array<{ name: string; cmd: string }>
+    try {
+      bootstrap = argvArrayOf(body.bootstrapCmds, 'bootstrapCmds')
+      checks = checkArrayOf(body.checkCmds)
+    } catch (error) {
+      reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid repository payload' })
+      return
+    }
+    if (isRemoteUrl(urlOrPath)) {
+      if (!urlOrPath.toLowerCase().startsWith('https://')) {
+        reply.code(400).send({ error: 'only https:// URLs are accepted (or a local path)' })
+        return
+      }
+      let parsed: URL
+      try {
+        parsed = new URL(urlOrPath)
+      } catch {
+        reply.code(400).send({ error: 'urlOrPath is not a valid https URL' })
+        return
+      }
+      if (parsed.username !== '' || parsed.password !== '') {
+        reply.code(400).send({ error: 'https URL must not carry credentials (user:pass@host)' })
+        return
+      }
+    } else if (!existsSync(urlOrPath)) {
+      reply.code(400).send({ error: `path does not exist: ${urlOrPath}` })
+      return
+    }
+
+    const id = freshId('repo_')
+    const at = now().toISOString()
+    store.atomic(() => {
+      store.engines.save({
+        id,
+        url: urlOrPath,
+        bootstrap,
+        checks,
+        trust: trusted,
+        createdAt: at,
+        updatedAt: at,
+      })
+      // §21.2 has_repository looks for the settings/repositories marker by id; every
+      // registration appends to it, so the flag flips on the first repository.
+      const marker = store.engines.get(SETTINGS_REPOSITORIES_ID)
+      const previous =
+        marker !== undefined && Array.isArray(marker.repositories)
+          ? marker.repositories.filter((entry): entry is string => typeof entry === 'string')
+          : []
+      store.engines.save({
+        id: SETTINGS_REPOSITORIES_ID,
+        repositories: [...previous, id],
+        updatedAt: at,
+      })
+      appendEvent(
+        store,
+        'repositories',
+        'repository_registered',
+        { repositoryId: id, url: urlOrPath, at },
+        at,
+      )
+    })
+    return { id, url: urlOrPath, bootstrap, checks, trust: trusted }
+  })
+
+  // The registered repositories (§14) — exactly the docs POST wrote, in registration order.
+  app.get('/api/repositories', async () =>
+    store.engines
+      .list()
+      .filter((doc) => typeof doc.id === 'string' && doc.id.startsWith(REPOSITORY_PREFIX))
+      .map((doc) => ({
+        id: String(doc.id),
+        url: String(doc.url ?? ''),
+        bootstrap: Array.isArray(doc.bootstrap) ? doc.bootstrap : [],
+        checks: Array.isArray(doc.checks) ? doc.checks : [],
+        trust: doc.trust === true,
+      })),
+  )
+
+  // §21.3 step 4: the slot that runs the meta agent (§6). One settings doc, last write
+  // wins, and it must point at a real slot doc so the choice can never dangle.
+  app.post('/api/wizard/meta-slot', async (request, reply) => {
+    const body = (request.body ?? {}) as { slotId?: unknown }
+    const slotId = typeof body.slotId === 'string' ? body.slotId.trim() : ''
+    if (slotId === '') {
+      reply.code(400).send({ error: 'slotId is required' })
+      return
+    }
+    if (store.slots.get(slotId) === undefined) {
+      reply.code(400).send({ error: `no slot '${slotId}' — link or add one first` })
+      return
+    }
+    const at = now().toISOString()
+    store.atomic(() => {
+      store.engines.save({ id: META_SLOT_ID, slotId, updatedAt: at })
+      appendEvent(store, 'wizard', 'meta_slot_chosen', { slotId, at }, at)
+    })
+    return { id: META_SLOT_ID, slotId }
+  })
+
+  app.get('/api/wizard/meta-slot', async () => {
+    const doc = store.engines.get(META_SLOT_ID)
+    return { slotId: doc !== undefined && typeof doc.slotId === 'string' ? doc.slotId : null }
+  })
+
   // §14/R1.7 — the release agent's GitHub leg. `pr_create` and `pr_merge` are
   // always-confirm classes (§13): the create routes only OPEN cards (nothing leaves the
   // machine unresolved); the resolve routes re-check existence, pending status and class
@@ -907,4 +1236,56 @@ function decodePath(path: string): string {
   } catch {
     return '/'
   }
+}
+
+/** A repository-validation failure the /api/repositories route answers as 400. */
+class InvalidRepository extends Error {}
+
+/**
+ * §14/§21.3: bootstrap commands arrive as one argv string each — plain text, no shell
+ * metacharacters, because they are executed as argv later and never through a shell.
+ */
+function argvArrayOf(input: unknown, field: string): string[] {
+  if (!Array.isArray(input)) {
+    throw new InvalidRepository(`${field} must be an array of command strings`)
+  }
+  return input.map((cmd, index) => {
+    if (typeof cmd !== 'string' || cmd.trim() === '') {
+      throw new InvalidRepository(`${field}[${index}] must be a non-empty string`)
+    }
+    if (SHELL_METACHARS.test(cmd)) {
+      throw new InvalidRepository(`${field}[${index}] must be a plain argv string (no ; & | < > \u0060 $)`)
+    }
+    return cmd.trim()
+  })
+}
+
+/** §14 check profiles: named commands, each held to the same argv discipline. */
+function checkArrayOf(input: unknown): Array<{ name: string; cmd: string }> {
+  if (!Array.isArray(input)) {
+    throw new InvalidRepository('checkCmds must be an array of {name, cmd}')
+  }
+  return input.map((entry, index) => {
+    if (typeof entry !== 'object' || entry === null) {
+      throw new InvalidRepository(`checkCmds[${index}] must be an object with name and cmd`)
+    }
+    const { name, cmd } = entry as { name?: unknown; cmd?: unknown }
+    if (typeof name !== 'string' || name.trim() === '') {
+      throw new InvalidRepository(`checkCmds[${index}].name must be a non-empty string`)
+    }
+    if (typeof cmd !== 'string' || cmd.trim() === '') {
+      throw new InvalidRepository(`checkCmds[${index}].cmd must be a non-empty string`)
+    }
+    if (SHELL_METACHARS.test(cmd)) {
+      throw new InvalidRepository(
+        `checkCmds[${index}].cmd must be a plain argv string (no ; & | < > \u0060 $)`,
+      )
+    }
+    return { name: name.trim(), cmd: cmd.trim() }
+  })
+}
+
+/** Distinguishes `scheme://…` remotes from local paths — §14 accepts paths and https only. */
+function isRemoteUrl(urlOrPath: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(urlOrPath)
 }

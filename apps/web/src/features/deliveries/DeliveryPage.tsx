@@ -109,6 +109,7 @@ export function DeliveryPage() {
               revision={current}
               ownerId={delivery.ownerId}
               deliveryId={delivery.id}
+              checks={repository.validationProfile.checks.map((c) => c.name)}
             />
           )}
         </div>
@@ -305,7 +306,12 @@ function Coordinator({ deliveryId }: { deliveryId: string }) {
 }
 
 /** Plan text and task list with optimistic version checks: a conflict shows the newer text. */
-function RevisionEditor(props: { revision: PlanRevision; ownerId: string; deliveryId: string }) {
+function RevisionEditor(props: {
+  revision: PlanRevision
+  ownerId: string
+  deliveryId: string
+  checks: string[]
+}) {
   const { revision } = props
   const me = useMe()
   const qc = useQueryClient()
@@ -324,7 +330,12 @@ function RevisionEditor(props: { revision: PlanRevision; ownerId: string; delive
   const refresh = () => qc.invalidateQueries({ queryKey: ['delivery', props.deliveryId] })
   const save = useMutation({
     mutationFn: () => {
-      const parsed = JSON.parse(spec) as { requirements: unknown; tasks: unknown }
+      let parsed: { requirements: unknown; tasks: unknown }
+      try {
+        parsed = JSON.parse(spec)
+      } catch (e) {
+        throw new Error(`Requirements and tasks are not valid JSON: ${(e as Error).message}`)
+      }
       return api.patch(`/api/plans/${revision.id}`, {
         expectedVersion: revision.version,
         planMarkdown: plan,
@@ -427,9 +438,29 @@ function RevisionEditor(props: { revision: PlanRevision; ownerId: string; delive
             <textarea rows={8} value={plan} readOnly={!editable} onChange={(e) => setPlan(e.target.value)} />
           </label>
           <label className="field">
-            Requirements and tasks (JSON)
+            <span className="spread">
+              <span>Requirements and tasks (JSON)</span>
+              {editable && revision.tasks.length === 0 && (
+                <button
+                  type="button"
+                  className="btn small"
+                  onClick={() => setSpec(exampleSpec(props.checks))}
+                >
+                  Insert example
+                </button>
+              )}
+            </span>
             <textarea rows={12} value={spec} readOnly={!editable} onChange={(e) => setSpec(e.target.value)} />
           </label>
+          {editable && (
+            <div className="faint small">
+              Each task needs a <code>key</code>, <code>title</code> and <code>objective</code>.{' '}
+              <code>acceptanceChecks</code> names the repository checks that must pass (
+              {props.checks.join(', ') || 'none registered'}), <code>dependsOn</code> lists task keys that
+              must be integrated first, <code>requirementIds</code> ties tasks to requirements and{' '}
+              <code>ownedPaths</code> marks files a task expects to change.
+            </div>
+          )}
           {revision.impactSummary && (
             <div className="notice small">
               <strong>Impact on the approved plan</strong>
@@ -454,6 +485,35 @@ function RevisionEditor(props: { revision: PlanRevision; ownerId: string; delive
         </div>
       )}
     </Panel>
+  )
+}
+
+function exampleSpec(checks: string[]): string {
+  const acceptanceChecks = checks.slice(0, 2)
+  return JSON.stringify(
+    {
+      requirements: [{ id: 'R1', text: 'What must be true when the delivery is done' }],
+      tasks: [
+        {
+          key: 'first',
+          title: 'A small, independently reviewable change',
+          objective: 'What the agent should do, in a few sentences.',
+          requirementIds: ['R1'],
+          acceptanceChecks,
+          ownedPaths: ['src/'],
+        },
+        {
+          key: 'second',
+          title: 'Work that builds on the first task',
+          objective: 'Starts from the integrated result of "first".',
+          requirementIds: ['R1'],
+          acceptanceChecks,
+          dependsOn: ['first'],
+        },
+      ],
+    },
+    null,
+    2,
   )
 }
 

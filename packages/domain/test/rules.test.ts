@@ -134,7 +134,7 @@ describe('dependency blockers', () => {
     ])
     expect(b).toEqual({
       kind: 'dependency',
-      detail: 'Waiting for T2 (active) to be integrated',
+      detail: 'Waiting for T2 to be integrated',
       refs: ['T2'],
     })
     expect(dependencyBlocker('integration', [{ key: 'T1', state: 'integrated' }])).toBeNull()

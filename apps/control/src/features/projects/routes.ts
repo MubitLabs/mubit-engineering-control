@@ -103,6 +103,38 @@ export function registerProjects(app: FastifyInstance, deps: { sql: Sql; config:
     return reply.status(201).send({ member })
   })
 
+  app.post<{ Params: { projectId: string; userId: string } }>(
+    '/api/projects/:projectId/members/:userId/remove',
+    async (req) => {
+      const actor = await requireActor(sql, req)
+      const project = await loadProject(sql, req.params.projectId)
+      authorize(actor, 'manage_project', { kind: 'project', projectId: project.id })
+      if (!/^[0-9a-f-]{36}$/i.test(req.params.userId)) throw notFound('Member')
+      await sql.begin(async (tx) => {
+        const owners = await tx<{ userId: string; role: string; login: string }[]>`
+          select m.user_id, m.role, u.login from memberships m join users u on u.id = m.user_id
+          where m.project_id = ${project.id} for update of m
+        `
+        const member = owners.find((m) => m.userId === req.params.userId)
+        if (!member) throw notFound('Member')
+        if (member.role === 'owner' && owners.filter((m) => m.role === 'owner').length === 1)
+          throw conflict('last_owner', 'A project needs at least one owner; make someone else an owner first')
+        await tx`delete from memberships where project_id = ${project.id} and user_id = ${member.userId}`
+        await appendEvent(tx, {
+          stream: projectStream(project.id),
+          type: 'project.member_removed',
+          projectId: project.id,
+          actor: { kind: 'user', id: actor.userId },
+          payload: { login: member.login },
+        })
+        await audit(tx, actor.userId, 'project.member_remove', 'project', project.id, project.id, {
+          login: member.login,
+        })
+      })
+      return { ok: true }
+    },
+  )
+
   app.post<{ Params: { projectId: string } }>('/api/projects/:projectId/repositories', async (req, reply) => {
     const actor = await requireActor(sql, req)
     const project = await loadProject(sql, req.params.projectId)

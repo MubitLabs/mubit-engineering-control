@@ -239,3 +239,27 @@ describe('setup checklist', () => {
     expect((await steps(outsider)).steps.delivery).toBe(false)
   })
 })
+
+describe('project members', () => {
+  it('lets owners remove members but never the last owner', async () => {
+    const members = async () =>
+      (await s.admin.get(`/api/projects/${s.project.id}`)).json().members as {
+        id: string
+        login: string
+        role: string
+      }[]
+    const mia = (await members()).find((m) => m.login === 'mia')!
+    const admin = (await members()).find((m) => m.login === 'admin')!
+    expect((await s.member.post(`/api/projects/${s.project.id}/members/${admin.id}/remove`)).statusCode).toBe(
+      403,
+    )
+    expect((await s.admin.post(`/api/projects/${s.project.id}/members/${admin.id}/remove`)).statusCode).toBe(
+      409,
+    )
+    expect((await s.admin.post(`/api/projects/${s.project.id}/members/${mia.id}/remove`)).statusCode).toBe(
+      200,
+    )
+    expect((await members()).map((m) => m.login)).toEqual(['admin', 'vic'])
+    expect((await s.member.get(`/api/projects/${s.project.id}`)).statusCode).toBe(403)
+  })
+})

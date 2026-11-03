@@ -33,6 +33,11 @@ export function ProjectPage() {
   })
   const canWrite = detail.data?.role === 'owner' || detail.data?.role === 'member'
   const isOwner = detail.data?.role === 'owner'
+  const qc = useQueryClient()
+  const removeMember = useMutation({
+    mutationFn: (userId: string) => api.post(`/api/projects/${projectId}/members/${userId}/remove`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['project', projectId] }),
+  })
 
   if (detail.error)
     return (
@@ -134,10 +139,26 @@ export function ProjectPage() {
                   <tr key={m.id}>
                     <td>{m.login}</td>
                     <td className="muted">{m.role}</td>
+                    {isOwner && (
+                      <td style={{ textAlign: 'right' }}>
+                        <button
+                          type="button"
+                          className="btn small"
+                          disabled={removeMember.isPending}
+                          onClick={() => {
+                            if (window.confirm(`Remove ${m.login} from this project?`))
+                              removeMember.mutate(m.id)
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
+            <ErrorBox error={removeMember.error} />
             {isOwner && <AddMember projectId={projectId!} />}
           </Panel>
         </div>

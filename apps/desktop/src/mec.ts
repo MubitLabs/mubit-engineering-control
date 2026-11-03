@@ -124,7 +124,7 @@ export function buildUpdateReport(io: CliIo): string {
 function defaultReadVersion(): string {
   try {
     const pkg = JSON.parse(
-      readFileSync(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf8'),
+      readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'),
     ) as {
       version?: unknown
     }

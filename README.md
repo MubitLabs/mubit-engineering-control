@@ -85,6 +85,8 @@ A machine that cannot build native modules gets the §21.7 refusal (exit 3) with
 | `packages/policy` | Policy doc, confirmation classes, CAS resolve (expiry is never consent) |
 | `packages/prompts` | Prompt bundles: layers, provenance, pinned revisions, upgrade diffs |
 | `packages/integration` | Integration queue planning, PR flow state machine, yield-to-duplicate |
+| `packages/failover` | Slot failover orchestration across attempts (handoffs between slots) |
+| `packages/scorecards` | The §24 scorecards: daily-use evidence, zero-lost-work accounting |
 | `packages/git` | Clone cache, worktrees, merges, mid-merge conflict repair |
 | `packages/testkit` | MemoryRepositories, FakeEngine, and the fixture library (`fixtures/` — real recorded engine streams) |
 | `apps/desktop` | The `mec` launcher (serve + status/stop/restart/doctor/slot/update), backup/restore/retention, the server |

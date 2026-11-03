@@ -3,8 +3,9 @@
 One operator ships this repo now (the two-stream era ended 3 Nov; see docs/log/week1.md). The
 ownership map below survives as the file-organization convention.
 
-Stream A (core and workflow) areas: packages/domain, packages/effects, packages/mec-tools,
-packages/policy, packages/prompts, the store (packages/store), apps/web shell/chat/inbox/work views.
+Stream A (core and workflow) areas: packages/domain, the effects queue (packages/store),
+packages/mec-tools, packages/policy, packages/prompts, the store (packages/store),
+apps/web shell/chat/inbox/work views.
 Stream B (engines, slots, runtime) areas: packages/runtime, packages/engines, packages/slots,
 packages/git, apps/desktop, the apps/web Slots view, terminal cards, wizard, and every file under
 packages/testkit/fixtures.

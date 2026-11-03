@@ -287,11 +287,11 @@ describe('slots api-key courier: GLM and Gemini providers (R2.2 seam)', () => {
     expect(ctx.store.slots.get('slot_glm-1')).toMatchObject({
       engine: 'opencode',
       kind: 'opencode-glm',
-      provider: 'glm-api',
+      provider: 'zai-coding-plan',
       state: 'login_pending',
     })
     // The key lives at <root>/engines/opencode/<slot>/keys/glm-api.key, 0600 — and only there.
-    const file = join(ctx.enginesRoot, 'engines', 'opencode', 'glm-1', 'keys', 'glm-api.key')
+    const file = join(ctx.enginesRoot, 'engines', 'opencode', 'glm-1', 'keys', 'zai-coding-plan.key')
     expect(readFileSync(file, 'utf8')).toBe(GLM_KEY)
     expect(statSync(file).mode & 0o777).toBe(0o600)
     expect(allDocsJson(ctx)).not.toContain(GLM_KEY)
@@ -310,9 +310,9 @@ describe('slots api-key courier: GLM and Gemini providers (R2.2 seam)', () => {
     expect(ctx.store.slots.get('slot_gem-1')).toMatchObject({
       engine: 'opencode',
       kind: 'opencode-gemini',
-      provider: 'gemini-api',
+      provider: 'google-gemini',
     })
-    const file = join(ctx.enginesRoot, 'engines', 'opencode', 'gem-1', 'keys', 'gemini-api.key')
+    const file = join(ctx.enginesRoot, 'engines', 'opencode', 'gem-1', 'keys', 'google-gemini.key')
     expect(readFileSync(file, 'utf8')).toBe(GEMINI_KEY)
     expect(allDocsJson(ctx)).not.toContain(GEMINI_KEY)
   })
@@ -367,7 +367,7 @@ describe('courier intake: structure, not format-oracle (the 3 Nov lesson)', () =
     })
     expect(res.statusCode).toBe(200)
     expect(
-      readFileSync(join(ctx.enginesRoot, 'engines', 'opencode', 'glm-2', 'keys', 'glm-api.key'), 'utf8'),
+      readFileSync(join(ctx.enginesRoot, 'engines', 'opencode', 'glm-2', 'keys', 'zai-coding-plan.key'), 'utf8'),
     ).toBe(drifted)
   })
 
@@ -381,7 +381,7 @@ describe('courier intake: structure, not format-oracle (the 3 Nov lesson)', () =
     })
     expect(res.statusCode).toBe(200)
     expect(
-      readFileSync(join(ctx.enginesRoot, 'engines', 'opencode', 'gem-2', 'keys', 'gemini-api.key'), 'utf8'),
+      readFileSync(join(ctx.enginesRoot, 'engines', 'opencode', 'gem-2', 'keys', 'google-gemini.key'), 'utf8'),
     ).toBe(aqKey)
   })
 

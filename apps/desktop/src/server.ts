@@ -15,7 +15,7 @@ import { Socket } from 'node:net'
 import { homedir } from 'node:os'
 import { extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { Effects, HealthBoard, HealthName, Json, Store, StoreDoc } from '@mec/contracts'
+import type { Effects, HealthBoard, HealthName, Json, ProviderId, Store, StoreDoc } from '@mec/contracts'
 import { matchesSecret } from '@mec/contracts'
 import { WORK_ITEM_TERMINAL, type WorkItemState } from '@mec/domain'
 import type { LiveWork } from '@mec/meta'
@@ -165,13 +165,25 @@ function intakeDiagnostic(key: string): string {
   return `${key.length} chars, ${segments} dot-segment(s), ends ${last4}`
 }
 
-const API_KEY_PROVIDERS = {
+const API_KEY_PROVIDERS: Record<
+  string,
+  {
+    readonly engine: 'claude' | 'codex' | 'opencode'
+    readonly kind: string
+    readonly pattern: RegExp | undefined
+    readonly home: (root: string, slot: string) => ReturnType<typeof claudeHome>
+    readonly shape: string
+    /** The canonical keystore/ProviderId (§5.4) — the file name and fingerprint provider. */
+    readonly keystoreId: ProviderId
+  }
+> = {
   'anthropic-api': {
     engine: 'claude',
     kind: 'claude-api',
     pattern: INTAKE_PATTERNS['anthropic-api'],
     home: claudeHome,
     shape: "'sk-ant-…' (anthropic)",
+    keystoreId: 'anthropic-api',
   },
   'glm-api': {
     engine: 'opencode',
@@ -179,6 +191,7 @@ const API_KEY_PROVIDERS = {
     pattern: INTAKE_PATTERNS['glm-api'],
     home: opencodeHome,
     shape: "'<id>.<secret>' — two dot-separated segments (z.ai)",
+    keystoreId: 'zai-coding-plan',
   },
   'gemini-api': {
     engine: 'opencode',
@@ -186,8 +199,9 @@ const API_KEY_PROVIDERS = {
     pattern: INTAKE_PATTERNS['gemini-api'],
     home: opencodeHome,
     shape: "'AIza…' or 'AQ.Ab…' (Google)",
+    keystoreId: 'google-gemini',
   },
-} as const
+}
 
 /** §21.3 wizard: how long one local engine probe may run before it counts as missing. */
 const PROBE_TIMEOUT_MS = 5_000
@@ -702,9 +716,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       return
     }
     const providerName = typeof body.provider === 'string' ? body.provider : ''
-    const provider = (
-      API_KEY_PROVIDERS as Record<string, (typeof API_KEY_PROVIDERS)['anthropic-api'] | undefined>
-    )[providerName]
+    const provider = API_KEY_PROVIDERS[providerName]
     if (provider === undefined) {
       reply.code(400).send({
         error: "provider must be one of 'anthropic-api' | 'glm-api' | 'gemini-api'",
@@ -739,7 +751,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     const keystore = new SlotKeystore(home.homeDir)
     let fingerprint: { provider: string; last4: string; hash: string }
     try {
-      fingerprint = keystore.store(providerName, key)
+      fingerprint = keystore.store(provider.keystoreId, key)
     } catch (error) {
       // The only expected cause is a key file left behind by a doc-less slot (§5.7: rotation
       // replaces, store never clobbers); anything else is a genuine IO failure.
@@ -757,7 +769,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         label,
         engine: provider.engine,
         kind: provider.kind,
-        provider: providerName,
+        provider: provider.keystoreId,
         home: home.homeDir,
         fingerprint,
         state: 'login_pending',
@@ -768,7 +780,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         store,
         `slot:${label}`,
         'slot_created',
-        { slotId: id, label, kind: provider.kind, provider: providerName, fingerprint, at },
+        { slotId: id, label, kind: provider.kind, provider: provider.keystoreId, fingerprint, at },
         at,
       )
     })

@@ -157,7 +157,13 @@ importers:
       '@mec/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@mec/domain':
+        specifier: workspace:*
+        version: link:../domain
     devDependencies:
+      '@mec/testkit':
+        specifier: workspace:*
+        version: link:../testkit
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.5

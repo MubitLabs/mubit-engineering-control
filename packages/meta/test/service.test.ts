@@ -1,0 +1,340 @@
+import { MemoryRepositories } from '@mec/testkit'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { MetaDecision } from '../src'
+import { fakeBrain, MetaAgentService } from '../src'
+
+/**
+ * The meta-agent runtime over MemoryRepositories: its effects queue throws unless
+ * enqueue runs inside `atomic` and coalesces re-enqueues to one row per kind + key, so a
+ * green suite is itself the proof that every enqueue in the service is transactional.
+ */
+
+const NOW = () => '2026-11-03T12:00:00.000Z'
+
+const ACK = 'On it: the audit-log work, in two tasks, tests green.'
+
+const twoTaskPlan: MetaDecision = {
+  ack: ACK,
+  plan: {
+    tasks: [
+      { taskId: 'task_view', objective: 'Add the audit-log view', dependsOn: [], role: 'implementer' },
+      {
+        taskId: 'task_tests',
+        objective: 'Cover the view with tests',
+        dependsOn: ['task_view'],
+        role: 'test_author',
+      },
+    ],
+  },
+}
+
+const ghostDepPlan: MetaDecision = {
+  ack: 'On it',
+  plan: {
+    tasks: [
+      {
+        taskId: 'task_ghost',
+        objective: 'Depends on a ghost',
+        dependsOn: ['task_missing'],
+        role: 'implementer',
+      },
+    ],
+  },
+}
+
+const rig = (decision: MetaDecision, store = new MemoryRepositories()) => {
+  const service = new MetaAgentService({
+    store,
+    effects: store.effects,
+    brain: fakeBrain(decision),
+    now: NOW,
+  })
+  return { service, store }
+}
+
+const seedWork = (store: MemoryRepositories, id: string, state: string): void => {
+  store.atomic(() => {
+    store.workItems.save({
+      id,
+      state,
+      createdAt: '2026-11-03T10:00:00.000Z',
+      updatedAt: '2026-11-03T10:00:00.000Z',
+    })
+  })
+}
+
+describe('MetaAgentService (plan §6/§12)', () => {
+  beforeEach(() => {
+    process.env.MEC_FAKE_ENGINE = '1'
+  })
+  afterEach(() => {
+    delete process.env.MEC_FAKE_ENGINE
+  })
+
+  it('new work: creates the work item executing, acks once, tasks ready, one launch enqueued', async () => {
+    const { service, store } = rig(twoTaskPlan)
+    const outcome = await service.onUserMessage({ messageId: 'msg_1', text: 'Add audit-log viewing' })
+    const { workItemId } = outcome
+
+    expect(workItemId).toMatch(/^wi_/)
+    expect(outcome).toEqual({
+      acknowledged: ACK,
+      workItemId,
+      tasksCreated: 2,
+      launchesEnqueued: ['att_1'],
+      escalated: false,
+    })
+
+    const work = store.workItems.get(workItemId!)
+    expect(work?.state).toBe('executing')
+    expect(work?.originMessageId).toBe('msg_1')
+    // planning_started then execution_started, gap-free on the work stream.
+    const workEvents = store.events.read(`work:${workItemId!}`)
+    expect(workEvents.map((event) => event.type)).toEqual(['planning_started', 'execution_started'])
+
+    expect(store.tasks.get('task_view')).toMatchObject({ workItemId, status: 'ready' })
+    expect(store.tasks.get('task_tests')).toMatchObject({
+      workItemId,
+      status: 'ready',
+      dependsOn: ['task_view'],
+      role: 'test_author',
+    })
+
+    // The ack is a receipt on the message doc, recorded exactly once.
+    expect(store.messages.get('msg_1')?.ackText).toBe(ACK)
+
+    // The launch is a queued attempt doc plus one launch effect keyed att_1:1.
+    expect(store.attempts.get('att_1')).toMatchObject({
+      taskId: 'task_view',
+      workItemId: outcome.workItemId,
+      slotId: 'fake-slot',
+      state: 'queued',
+      generation: 1,
+    })
+    const effects = store.snapshot().effects
+    expect(effects).toHaveLength(1)
+    expect(effects[0]).toMatchObject({ kind: 'launch', key: 'att_1:1' })
+    expect(effects[0]?.payload).toMatchObject({ attempt_id: 'att_1', task_id: 'task_view' })
+    expect(store.events.read('attempt:att_1').map((event) => event.type)).toEqual(['attempt_queued'])
+  })
+
+  it('a dependency holds its task back: only the dependency-free task is launched', async () => {
+    const { service, store } = rig(twoTaskPlan)
+    const outcome = await service.onUserMessage({ messageId: 'msg_1', text: 'Add audit-log viewing' })
+    // task_tests depends on task_view, which is merely ready — never integrated — so the
+    // dispatch plan launches one task and defers the other on its dependency.
+    expect(outcome.launchesEnqueued).toEqual(['att_1'])
+    expect(store.attempts.list()).toHaveLength(1)
+    expect(store.attempts.list()[0]?.taskId).toBe('task_view')
+    expect(store.tasks.get('task_tests')?.status).toBe('ready')
+  })
+
+  it('attach: a message referencing live work acks as a note — no new work item, no launches', async () => {
+    const { service, store } = rig(twoTaskPlan)
+    seedWork(store, 'wi_live', 'executing')
+    const outcome = await service.onUserMessage({
+      messageId: 'msg_1',
+      text: 'Also cover the export button',
+      referencesWorkItem: 'wi_live',
+    })
+
+    expect(outcome.workItemId).toBe('wi_live')
+    expect(outcome.tasksCreated).toBe(0)
+    expect(outcome.launchesEnqueued).toEqual([])
+    expect(store.workItems.list()).toHaveLength(1)
+    expect(store.tasks.list()).toHaveLength(0)
+    expect(store.snapshot().effects).toHaveLength(0)
+    expect(store.messages.get('msg_1')?.routing).toBe('attach')
+    expect(store.events.read('work:wi_live').map((event) => event.type)).toEqual(['message_attached'])
+  })
+
+  it('conversation: a reference-less message with live work present acks as context only', async () => {
+    const { service, store } = rig(twoTaskPlan)
+    seedWork(store, 'wi_live', 'executing')
+    const outcome = await service.onUserMessage({
+      messageId: 'msg_1',
+      text: 'By the way, the demo is Friday',
+    })
+
+    expect(outcome.workItemId).toBeUndefined()
+    expect(outcome.tasksCreated).toBe(0)
+    expect(store.workItems.list()).toHaveLength(1)
+    expect(store.tasks.list()).toHaveLength(0)
+    expect(store.snapshot().effects).toHaveLength(0)
+    expect(store.messages.get('msg_1')?.routing).toBe('conversation')
+    expect(outcome.acknowledged).toContain('wi_live')
+  })
+
+  it('a reference to a stopped work item is refused, never attached or resumed', async () => {
+    const { service, store } = rig(twoTaskPlan)
+    seedWork(store, 'wi_old', 'stopped')
+    const outcome = await service.onUserMessage({
+      messageId: 'msg_1',
+      text: 'Pick that back up',
+      referencesWorkItem: 'wi_old',
+    })
+
+    expect(outcome.acknowledged).toContain('stopped')
+    expect(outcome.workItemId).toBeUndefined()
+    expect(store.workItems.list()).toHaveLength(1)
+    expect(store.tasks.list()).toHaveLength(0)
+    expect(store.snapshot().effects).toHaveLength(0)
+    expect(store.messages.get('msg_1')?.routing).toBe('stopped_refused')
+    expect(store.events.read('work:wi_old')).toHaveLength(0)
+  })
+
+  it('duplicate message: replays the same ack and adds no second work item, task or attempt', async () => {
+    const { service, store } = rig(twoTaskPlan)
+    const first = await service.onUserMessage({ messageId: 'msg_1', text: 'Add audit-log viewing' })
+    const second = await service.onUserMessage({ messageId: 'msg_1', text: 'Add audit-log viewing' })
+
+    expect(second).toEqual(first)
+    expect(store.workItems.list()).toHaveLength(1)
+    expect(store.tasks.list()).toHaveLength(2)
+    expect(store.attempts.list()).toHaveLength(1)
+  })
+
+  it('the replay re-enqueues launches under their original keys: one coalesced row, proving the atomic enqueue', async () => {
+    const { service, store } = rig(twoTaskPlan)
+    await service.onUserMessage({ messageId: 'msg_1', text: 'Add audit-log viewing' })
+    await service.onUserMessage({ messageId: 'msg_1', text: 'Add audit-log viewing' })
+
+    // Same kind + key twice (first turn, then the replay) — the queue keeps one row, and
+    // MemoryEffects only accepts enqueue inside Store.atomic, so a row at all means both
+    // enqueues ran in a transaction.
+    const effects = store.snapshot().effects
+    expect(effects).toHaveLength(1)
+    expect(effects[0]?.key).toBe('att_1:1')
+    expect(effects[0]?.attempts).toBe(0)
+  })
+
+  it('brain failure: ack says it could not start, the work item is stopped with an error event, nothing throws', async () => {
+    const store = new MemoryRepositories()
+    const exploding = async (): Promise<MetaDecision> => {
+      throw new Error('engine offline')
+    }
+    const service = new MetaAgentService({ store, effects: store.effects, brain: exploding, now: NOW })
+    const outcome = await service.onUserMessage({ messageId: 'msg_1', text: 'Add audit-log viewing' })
+
+    expect(outcome.acknowledged).toBe('I could not start that')
+    expect(outcome.tasksCreated).toBe(0)
+    expect(outcome.launchesEnqueued).toEqual([])
+    const work = store.workItems.get(outcome.workItemId!)
+    expect(work?.state).toBe('stopped')
+    const events = store.events.read(`work:${outcome.workItemId!}`)
+    expect(events.map((event) => event.type)).toEqual([
+      'planning_started',
+      'meta_agent_error',
+      'work_stopped',
+    ])
+    expect(events[1]?.body).toMatchObject({ error: 'engine offline' })
+    expect(store.tasks.list()).toHaveLength(0)
+    expect(store.snapshot().effects).toHaveLength(0)
+  })
+
+  it('invalid plan: the ack carries the first issue, no tasks are created, the work item is stopped', async () => {
+    const { service, store } = rig(ghostDepPlan)
+    const outcome = await service.onUserMessage({ messageId: 'msg_1', text: 'Add audit-log viewing' })
+
+    expect(outcome.acknowledged).toContain("depends on 'task_missing'")
+    expect(outcome.escalated).toBe(false)
+    expect(store.tasks.list()).toHaveLength(0)
+    expect(store.snapshot().effects).toHaveLength(0)
+    expect(store.workItems.get(outcome.workItemId!)?.state).toBe('stopped')
+    expect(store.events.read(`work:${outcome.workItemId!}`).map((event) => event.type)).toEqual([
+      'planning_started',
+      'plan_rejected',
+      'work_stopped',
+    ])
+  })
+
+  it('four consecutive invalid plans escalate; a valid plan resets the streak', async () => {
+    const store = new MemoryRepositories()
+    const decisions = [
+      ghostDepPlan,
+      ghostDepPlan,
+      ghostDepPlan,
+      ghostDepPlan,
+      twoTaskPlan,
+      ghostDepPlan,
+      ghostDepPlan,
+      ghostDepPlan,
+      ghostDepPlan,
+    ]
+    let calls = 0
+    const brain = async (): Promise<MetaDecision> => decisions[Math.min(calls++, decisions.length - 1)]!
+    const service = new MetaAgentService({ store, effects: store.effects, brain, now: NOW })
+
+    // Each rejected turn stops its work item, so every retry routes as new work again.
+    for (let turn = 1; turn <= 3; turn++) {
+      const outcome = await service.onUserMessage({ messageId: `msg_bad_${turn}`, text: 'again' })
+      expect(outcome.escalated).toBe(false)
+    }
+    const fourth = await service.onUserMessage({ messageId: 'msg_bad_4', text: 'again' })
+    expect(fourth.escalated).toBe(true)
+    expect(fourth.acknowledged).toContain('Four plans in a row were invalid')
+    expect(store.workItems.list().every((doc) => doc.state === 'stopped')).toBe(true)
+
+    // A valid plan both works and resets the streak…
+    const accepted = await service.onUserMessage({ messageId: 'msg_good', text: 'proper work' })
+    expect(accepted.escalated).toBe(false)
+    expect(accepted.tasksCreated).toBe(2)
+    expect(store.workItems.get(accepted.workItemId!)?.state).toBe('executing')
+
+    // …while it runs, further reference-less messages are conversation, so stop it first
+    // (§12: a stopped item never counts as live) and the streak must build from zero.
+    const acceptedDoc = store.workItems.get(accepted.workItemId!)!
+    acceptedDoc.state = 'stopped'
+    store.atomic(() => {
+      store.workItems.save(acceptedDoc)
+    })
+
+    // …so the next escalation needs four fresh invalids, not three.
+    for (let turn = 1; turn <= 3; turn++) {
+      const outcome = await service.onUserMessage({ messageId: `msg_worse_${turn}`, text: 'again' })
+      expect(outcome.escalated).toBe(false)
+    }
+    const fourthAgain = await service.onUserMessage({ messageId: 'msg_worse_4', text: 'again' })
+    expect(fourthAgain.escalated).toBe(true)
+  })
+
+  it('without MEC_FAKE_ENGINE there is no slot: tasks are created but nothing launches', async () => {
+    delete process.env.MEC_FAKE_ENGINE
+    const { service, store } = rig(twoTaskPlan)
+    const outcome = await service.onUserMessage({ messageId: 'msg_1', text: 'Add audit-log viewing' })
+
+    expect(outcome.tasksCreated).toBe(2)
+    expect(outcome.launchesEnqueued).toEqual([])
+    expect(store.attempts.list()).toHaveLength(0)
+    expect(store.snapshot().effects).toHaveLength(0)
+    expect(store.tasks.list()).toHaveLength(2)
+    expect(store.workItems.get(outcome.workItemId!)?.state).toBe('executing')
+  })
+
+  it('an ack-only decision (no plan) records the ack and leaves the work item planning', async () => {
+    const { service, store } = rig({ ack: 'Which repository is this work for?' })
+    const outcome = await service.onUserMessage({ messageId: 'msg_1', text: 'Add audit-log viewing' })
+
+    expect(outcome.acknowledged).toBe('Which repository is this work for?')
+    expect(outcome.tasksCreated).toBe(0)
+    expect(outcome.launchesEnqueued).toEqual([])
+    expect(store.workItems.get(outcome.workItemId!)?.state).toBe('planning')
+    expect(store.tasks.list()).toHaveLength(0)
+    expect(store.messages.get('msg_1')?.ackText).toBe('Which repository is this work for?')
+  })
+
+  it('an unknown role in the plan is rejected with the registry issue in the ack', async () => {
+    const unknownRole: MetaDecision = {
+      ack: 'On it',
+      plan: {
+        tasks: [{ taskId: 'task_x', objective: 'Do things', dependsOn: [], role: 'wizard' }],
+      },
+    }
+    const { service, store } = rig(unknownRole)
+    const outcome = await service.onUserMessage({ messageId: 'msg_1', text: 'Add audit-log viewing' })
+
+    expect(outcome.acknowledged).toContain("names role 'wizard'")
+    expect(store.tasks.list()).toHaveLength(0)
+    expect(store.workItems.get(outcome.workItemId!)?.state).toBe('stopped')
+  })
+})

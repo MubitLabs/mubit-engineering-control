@@ -28,7 +28,8 @@
     "@mec/runtime": "workspace:*",
     "@mec/engines": "workspace:*",
     "@mec/git": "workspace:*",
-    "@mec/slots": "workspace:*"
+    "@mec/slots": "workspace:*",
+    "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "@mec/testkit": "workspace:*",

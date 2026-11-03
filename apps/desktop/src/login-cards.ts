@@ -147,7 +147,7 @@ export class LoginCardManager {
     // Spawn before anything is registered: a failed spawn (missing binary,
     // missing pty) is a caller-visible error, not a card event — nothing ran,
     // so nothing can be reported.
-    const proc = (this.opts.ptySpawn ?? unavailablePtySpawn)(
+    const proc = (this.opts.ptySpawn ?? nodePtySpawn)(
       engine.cmd,
       engine.args,
       env,
@@ -247,10 +247,44 @@ export class LoginCardManager {
  * as of 3 Nov 2026). Fails loudly and before any card is registered, so a
  * missing pty can never look like a silent login failure.
  */
-function unavailablePtySpawn(): PtyProcess {
-  throw new Error(
-    'pty unavailable: node-pty-prebuilt-multiarch@^1.0.0-beta is not published yet (§21.7); inject ptySpawn into LoginCardManager',
-  )
+/**
+ * The real pty: node-pty 1.1.x (plan §21.7 primary pin). The native module builds via
+ * node-gyp when no prebuild matches the platform — the postinstall allowlist in the root
+ * package.json covers it; a machine without a build toolchain fails LOUDLY here, never
+ * silently (the login card shows the error).
+ */
+export function nodePtySpawn(
+  cmd: string,
+  args: string[],
+  env: Record<string, string>,
+  cwd: string,
+): PtyProcess {
+  // Deferred require: a missing/broken native module must surface at card start, not import.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const pty = require('node-pty') as {
+    spawn: (
+      c: string,
+      a: string[],
+      o: { name: string; cwd: string; env: Record<string, string> },
+    ) => {
+      onData(cb: (d: string) => void): void
+      onExit(cb: (e: { exitCode: number }) => void): void
+      write(data: string): void
+      kill(signal?: string): void
+    }
+  }
+  const proc = pty.spawn(cmd, args, { name: 'xterm-256color', cwd, env })
+  let exited: (code: number) => void
+  const exitCode = new Promise<number>((resolve) => {
+    exited = resolve
+  })
+  proc.onExit(({ exitCode: code }) => exited(code))
+  return {
+    write: (data) => proc.write(data),
+    kill: () => proc.kill(),
+    onData: (cb) => proc.onData(cb),
+    exitCode,
+  }
 }
 
 /** Creates the slot home's directories exactly like `@mec/slots` homes do (§5.3). */

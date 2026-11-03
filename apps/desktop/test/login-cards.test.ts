@@ -304,3 +304,29 @@ describe('login card routes (§5.6)', () => {
     expect(after.statusCode).toBe(404)
   })
 })
+
+
+describe('the real node-pty (R1.3)', () => {
+  it('drives a real interactive shell through the seam (no vendor command)', async () => {
+    const { nodePtySpawn } = await import('../src/login-cards')
+    const proc = nodePtySpawn('/bin/sh', ['-i'], { TERM: 'xterm' } as Record<string, string>, tmpdir())
+    let out = ''
+    proc.onData((d) => {
+      out += d
+    })
+    proc.write('echo PTY-SEAM-OK\n')
+    await new Promise<void>((resolve) => {
+      const deadline = Date.now() + 15000
+      const timer = setInterval(() => {
+        if (out.includes('PTY-SEAM-OK') || Date.now() > deadline) {
+          clearInterval(timer)
+          resolve()
+        }
+      }, 50)
+    })
+    proc.write('exit 0\n')
+    const code = await proc.exitCode
+    expect(out).toContain('PTY-SEAM-OK')
+    expect(code).toBe(0)
+  }, 30000)
+})

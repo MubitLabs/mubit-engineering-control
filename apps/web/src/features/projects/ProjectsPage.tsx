@@ -3,10 +3,12 @@ import { type ReactNode, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { api } from '../../api/client'
 import type { Project, Setup } from '../../api/types'
+import { useTitle } from '../../components/Layout'
 import { Empty, ErrorBox, Panel, Status, Time } from '../../components/ui'
 import { useMe } from '../auth/useMe'
 
 export function ProjectsPage() {
+  useTitle('Projects')
   const me = useMe()
   const isAdmin = me.data?.user.isAdmin ?? false
   const projects = useQuery({

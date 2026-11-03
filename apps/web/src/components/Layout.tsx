@@ -100,3 +100,16 @@ export function ProjectCrumb({ projectId }: { projectId: string | undefined }) {
   const name = projects.data?.projects.find((p) => p.id === projectId)?.name ?? 'project'
   return <Link to={`/projects/${projectId}`}>{name}</Link>
 }
+
+/** Sets the tab title, prefixed with the number of decisions waiting for you. */
+export function useTitle(title: string | undefined) {
+  const inbox = useQuery({
+    queryKey: ['approvals', 'mine'],
+    queryFn: () => api.get<{ approvals: Approval[] }>('/api/approvals'),
+    refetchInterval: 30_000,
+  })
+  const pending = inbox.data?.approvals.length ?? 0
+  useEffect(() => {
+    document.title = `${pending ? `(${pending}) ` : ''}${title ? `${title} · ` : ''}MEC`
+  }, [pending, title])
+}

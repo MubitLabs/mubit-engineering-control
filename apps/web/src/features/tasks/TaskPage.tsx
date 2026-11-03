@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { api } from '../../api/client'
 import type { Approval, Task } from '../../api/types'
-import { ProjectCrumb } from '../../components/Layout'
+import { ProjectCrumb, useTitle } from '../../components/Layout'
 import { Empty, ErrorBox, Loading, Panel, Short, Status, Time } from '../../components/ui'
 import type { ProfileView } from '../accounts/AccountsPage'
 import { useMe } from '../auth/useMe'
@@ -57,6 +57,7 @@ export function TaskPage() {
     queryFn: () => api.get<TaskDetail>(`/api/tasks/${taskId}`),
   })
   const [selected, setSelected] = useState<string | null>(null)
+  useTitle(q.data && `${q.data.task.key} · ${q.data.task.title}`)
   if (!q.data) return q.error ? <ErrorBox error={q.error} /> : <Loading />
   const { task, attempts, dependencies, approvals, canPrompt } = q.data
   const attempt = attempts.find((a) => a.id === selected) ?? attempts[0]

@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import { api } from '../../api/client'
 import type { Approval } from '../../api/types'
+import { useTitle } from '../../components/Layout'
 import { decisionStatus, Empty, ErrorBox, Panel, Status, Time } from '../../components/ui'
 
 /**
@@ -11,6 +12,7 @@ import { decisionStatus, Empty, ErrorBox, Panel, Status, Time } from '../../comp
  */
 export function InboxPage() {
   const [scope, setScope] = useState<'pending' | 'all'>('pending')
+  useTitle('Inbox')
   const q = useQuery({
     queryKey: ['approvals', 'mine', scope],
     queryFn: () => api.get<{ approvals: Approval[] }>(`/api/approvals?status=${scope}`),

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { ApiError, api } from '../../api/client'
 import type { DeliveryDetail, PlanRevision } from '../../api/types'
-import { ProjectCrumb } from '../../components/Layout'
+import { ProjectCrumb, useTitle } from '../../components/Layout'
 import { decisionStatus, Empty, ErrorBox, Loading, Panel, Status, Time } from '../../components/ui'
 import type { ProfileView } from '../accounts/AccountsPage'
 import { useMe } from '../auth/useMe'
@@ -15,6 +15,7 @@ export function DeliveryPage() {
     queryKey: ['delivery', deliveryId],
     queryFn: () => api.get<DeliveryDetail>(`/api/deliveries/${deliveryId}`),
   })
+  useTitle(q.data?.delivery.title)
   if (!q.data) return q.error ? <ErrorBox error={q.error} /> : <Loading />
   const { delivery, revisions, tasks, approvals, repository, owner, dependencies } = q.data
   const current = revisions[0]

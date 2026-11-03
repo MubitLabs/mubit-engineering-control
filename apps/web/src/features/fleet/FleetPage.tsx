@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../../api/client'
+import { useTitle } from '../../components/Layout'
 import { Empty, ErrorBox, Panel, Status, Time } from '../../components/ui'
 
 interface RunnerView {
@@ -23,6 +24,7 @@ interface RunnerView {
 
 /** Fleet and accounts (PDF §12): owner, agent, runner, authentication, capacity. */
 export function FleetPage() {
+  useTitle('Fleet')
   const qc = useQueryClient()
   const runners = useQuery({
     queryKey: ['fleet'],

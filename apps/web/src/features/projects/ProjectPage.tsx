@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams } from 'react-router'
 import { api } from '../../api/client'
 import { useProjectEvents } from '../../api/events'
 import type { Delivery, Member, Project, ProjectRole, Repository, StoredEvent } from '../../api/types'
+import { useTitle } from '../../components/Layout'
 import { Empty, ErrorBox, Panel, Status, Time } from '../../components/ui'
 import { formatCommandLines, parseCommandLines } from './commands'
 
@@ -18,11 +19,14 @@ interface ProjectDetail {
 export function ProjectPage() {
   const { projectId } = useParams()
   const [feed, setFeed] = useState<StoredEvent[]>([])
-  const { connected } = useProjectEvents(projectId, (e) => setFeed((f) => [e, ...f].slice(0, 200)))
   const detail = useQuery({
     queryKey: ['project', projectId],
     queryFn: () => api.get<ProjectDetail>(`/api/projects/${projectId}`),
   })
+  useTitle(detail.data?.project.name)
+  const { connected } = useProjectEvents(detail.error ? undefined : projectId, (e) =>
+    setFeed((f) => [e, ...f].slice(0, 200)),
+  )
   const deliveries = useQuery({
     queryKey: ['project', projectId, 'deliveries'],
     queryFn: () => api.get<{ deliveries: Delivery[] }>(`/api/projects/${projectId}/deliveries`),
@@ -30,6 +34,13 @@ export function ProjectPage() {
   const canWrite = detail.data?.role === 'owner' || detail.data?.role === 'member'
   const isOwner = detail.data?.role === 'owner'
 
+  if (detail.error)
+    return (
+      <div className="stack">
+        <ErrorBox error={detail.error} />
+        <Link to="/">Back to projects</Link>
+      </div>
+    )
   return (
     <div className="stack">
       <div className="page-head">

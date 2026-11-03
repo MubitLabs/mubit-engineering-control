@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Fragment, useState } from 'react'
 import { api } from '../../api/client'
 import type { Project } from '../../api/types'
+import { useTitle } from '../../components/Layout'
 import { Empty, ErrorBox, Panel, Status } from '../../components/ui'
 import { useMe } from '../auth/useMe'
 
@@ -38,6 +39,7 @@ interface RunnerView {
  * runner; only the label and health are shown here.
  */
 export function AccountsPage() {
+  useTitle('Accounts')
   const me = useMe()
   const qc = useQueryClient()
   const profiles = useQuery({

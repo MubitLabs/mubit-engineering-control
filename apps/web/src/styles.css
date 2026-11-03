@@ -440,6 +440,7 @@ label.field {
 @media (max-width: 760px) {
   .shell {
     grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
   }
   .sidebar {
     position: static;

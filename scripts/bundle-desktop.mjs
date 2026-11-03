@@ -20,10 +20,10 @@ import { build } from 'esbuild'
 const root = fileURLToPath(new URL('..', import.meta.url))
 const entry = fileURLToPath(new URL('../apps/desktop/src/serve.ts', import.meta.url))
 const outfile = fileURLToPath(new URL('../apps/desktop/dist/mec.mjs', import.meta.url))
+const cliEntry = fileURLToPath(new URL('../apps/desktop/src/mec.ts', import.meta.url))
+const cliOutfile = fileURLToPath(new URL('../apps/desktop/dist/mec-cli.mjs', import.meta.url))
 
-await build({
-  entryPoints: [entry],
-  outfile,
+const common = {
   format: 'esm',
   platform: 'node',
   target: 'node22',
@@ -34,7 +34,12 @@ await build({
   },
   minify: false,
   sourcemap: true,
-})
+}
+
+await build({ ...common, entryPoints: [entry], outfile })
+await build({ ...common, entryPoints: [cliEntry], outfile: cliOutfile })
 
 const { size } = statSync(outfile)
 console.log(`bundled ${relative(root, outfile)} (${size} bytes)`)
+const cliSize = statSync(cliOutfile).size
+console.log(`bundled ${relative(root, cliOutfile)} (${cliSize} bytes)`)

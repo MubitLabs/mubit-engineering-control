@@ -149,7 +149,8 @@ function defaultGitRemote(): string | null {
   }
 }
 
-async function main(): Promise<void> {
+/** §21.1 entry for the `mec <command>` dispatch: exports for bin/mec.js and the bundle. */
+export async function cliMain(): Promise<void> {
   const home = join(homedir(), '.mec')
   const snapshotPath = join(home, 'health.json')
   process.exitCode = await runCli(process.argv.slice(2), {
@@ -168,6 +169,10 @@ async function main(): Promise<void> {
   })
 }
 
-if (process.argv[1]?.endsWith('mec.ts') || process.argv[1]?.endsWith('mec.js')) {
+async function main(): Promise<void> {
+  await cliMain()
+}
+
+if (process.argv[1]?.endsWith('mec.ts') || process.argv[1]?.endsWith('mec-cli.mjs')) {
   await main()
 }

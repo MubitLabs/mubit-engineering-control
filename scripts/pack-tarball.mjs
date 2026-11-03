@@ -92,9 +92,9 @@ See docs/known-limits.md in the repository for the native-module rule and v0 lim
 `,
 )
 
-// Apache-2.0 per DECISIONS #1. No LICENSE file lives in the repo yet, so the artifact
-// carries a stub pointer; drop the standard text next to this script's source to have it
-// copied verbatim instead.
+// Apache-2.0 per DECISIONS #1. The repository root carries the full text (LICENSE) and
+// NOTICE.md; the artifact copies both verbatim. The stub fallbacks remain for a tree
+// that somehow lost them.
 const repoLicense = [join(root, 'LICENSE'), join(root, 'LICENSE.txt'), join(root, 'LICENSE.md')].find((p) => {
   try {
     return statSync(p).isFile()
@@ -118,9 +118,19 @@ any redistribution outside the company; this stub is a pointer, not the license 
   )
 }
 
-writeFileSync(
-  join(staging, 'NOTICE.md'),
-  `mubit-engineering-control
+const repoNotice = [join(root, 'NOTICE.md'), join(root, 'NOTICE')].find((p) => {
+  try {
+    return statSync(p).isFile()
+  } catch {
+    return false
+  }
+})
+if (repoNotice) {
+  copyFileSync(repoNotice, join(staging, 'NOTICE.md'))
+} else {
+  writeFileSync(
+    join(staging, 'NOTICE.md'),
+    `mubit-engineering-control
 Copyright 2026 Mubit Engineering. Licensed under the Apache License, Version 2.0.
 
 Third-party packages this artifact depends on or bundles:
@@ -134,7 +144,8 @@ Third-party packages this artifact depends on or bundles:
 | zod | MIT | inlined into dist/mec.mjs by esbuild |
 | @biomejs/biome | MIT | development only — not distributed |
 `,
-)
+  )
+}
 
 // 3. Tar the staged tree (entries at the archive root, no wrapper dir).
 const entries = ['LICENSE', 'NOTICE.md', 'README.md', 'bin', 'dist', 'package.json']

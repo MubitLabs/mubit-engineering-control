@@ -33,8 +33,16 @@ function isNativeLoadFailure(error) {
 }
 
 try {
-  const { serveMain } = await import(entry)
-  await serveMain(process.env.MEC_DATA_DIR ?? join(homedir(), '.mec'))
+  // §21.1 dispatch: no arguments → the guarded server; `mec <command>` → the CLI
+  // (status/stop/restart/doctor/slot/update), which never starts a second server.
+  const args = process.argv.slice(2)
+  if (args.length > 0) {
+    const { cliMain } = await import(hasBundle ? '../dist/mec-cli.mjs' : '../src/mec.ts')
+    await cliMain()
+  } else {
+    const { serveMain } = await import(entry)
+    await serveMain(process.env.MEC_DATA_DIR ?? join(homedir(), '.mec'))
+  }
 } catch (error) {
   if (isNativeLoadFailure(error)) {
     console.error(

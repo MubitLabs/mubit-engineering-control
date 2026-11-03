@@ -26,10 +26,34 @@ importers:
       '@mec/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@mec/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@mec/mec-tools':
+        specifier: workspace:*
+        version: link:../../packages/mec-tools
+      '@mec/meta':
+        specifier: workspace:*
+        version: link:../../packages/meta
+      '@mec/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
+      '@mec/store':
+        specifier: workspace:*
+        version: link:../../packages/store
+      better-sqlite3:
+        specifier: ^12.0.0
+        version: 12.11.1
       fastify:
         specifier: ^5.0.0
         version: 5.12.8
     devDependencies:
+      '@mec/testkit':
+        specifier: workspace:*
+        version: link:../../packages/testkit
+      '@types/better-sqlite3':
+        specifier: ^7.6.0
+        version: 7.6.13
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.5
@@ -95,6 +119,16 @@ importers:
         specifier: ^22.0.0
         version: 22.20.5
 
+  packages/integration:
+    dependencies:
+      '@mec/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+
   packages/mec-tools:
     dependencies:
       '@mec/contracts':
@@ -136,6 +170,19 @@ importers:
         version: 22.20.5
 
   packages/runtime:
+    dependencies:
+      '@mec/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@mec/slots':
+        specifier: workspace:*
+        version: link:../slots
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+
+  packages/scorecards:
     dependencies:
       '@mec/contracts':
         specifier: workspace:*

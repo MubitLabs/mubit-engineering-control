@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mec/contracts": "workspace:*"
+    "@mec/contracts": "workspace:*",
+    "@mec/slots": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0"

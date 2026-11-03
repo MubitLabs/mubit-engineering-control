@@ -5,6 +5,7 @@ import { api } from '../../api/client'
 import type { Approval } from '../../api/types'
 import { useTitle } from '../../components/Layout'
 import { decisionStatus, Empty, ErrorBox, Panel, Status, Time } from '../../components/ui'
+import { useMe } from '../auth/useMe'
 import { useNotificationSetting } from './notifications'
 
 /**
@@ -88,7 +89,10 @@ export function DecisionCard({ approval, onTaskPage = false }: { approval: Appro
     warnings?: number
     impact?: string
   }
+  const me = useMe()
+  const canDecide = !!me.data && approval.allowedDeciderIds.includes(me.data.user.id)
   const pending = approval.status === 'pending'
+  const decidable = pending && canDecide
 
   return (
     <Panel
@@ -161,7 +165,7 @@ export function DecisionCard({ approval, onTaskPage = false }: { approval: Appro
             {String(approval.answer.answer ?? approval.answer.reason ?? '')}
           </div>
         )}
-        {pending && approval.kind === 'question' && (
+        {decidable && approval.kind === 'question' && (
           <div className="form">
             {detail.options && (
               <div className="row">
@@ -222,7 +226,16 @@ export function DecisionCard({ approval, onTaskPage = false }: { approval: Appro
             )}
           </div>
         )}
-        {pending && approval.kind !== 'question' && (
+        {pending && !canDecide && (
+          <div className="faint small">
+            Waiting for{' '}
+            {approval.kind === 'plan' || approval.kind === 'result'
+              ? 'the delivery owner'
+              : "the task's owner or the agent account's owner"}{' '}
+            to decide.
+          </div>
+        )}
+        {decidable && approval.kind !== 'question' && (
           <div className="row">
             <button
               type="button"

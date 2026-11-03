@@ -122,6 +122,7 @@ pre {
   color: var(--muted);
   display: flex;
   justify-content: space-between;
+  gap: 6px;
 }
 .nav a.active {
   color: var(--text);
@@ -433,4 +434,56 @@ label.field {
 .login-card {
   width: 360px;
   padding: 28px;
+}
+
+/* ── Narrow screens: answering decisions from a phone ───────────────────── */
+@media (max-width: 760px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+  .sidebar {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+    padding: 10px 16px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .nav-label {
+    display: none;
+  }
+  .sidebar-foot {
+    margin-top: 0;
+    margin-left: auto;
+    flex-direction: row;
+    align-items: center;
+  }
+  .main {
+    padding: 16px 16px 40px;
+  }
+  .grid-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .page-head {
+    flex-wrap: wrap;
+  }
+  .panel {
+    overflow-x: auto;
+  }
+  .row > .field,
+  .row > input:not([type="checkbox"]),
+  .row > textarea {
+    min-width: 100%;
+  }
+  .row > input:not([type="checkbox"]),
+  .row > textarea {
+    order: -1;
+  }
 }

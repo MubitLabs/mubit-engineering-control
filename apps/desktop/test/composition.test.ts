@@ -1,6 +1,8 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
+import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
 import { startServer } from '../src/composition'
 
@@ -52,4 +54,28 @@ describe('startServer', () => {
     const second = await startServer({ dataDir })
     await second.close()
   }, 12_000)
+})
+
+describe('§26 restart reconciliation and capability drift (composition)', () => {
+  it('running attempts reconcile to stalled with a recovery event on restart', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mec-recon-'))
+    const db = new Database(join(dir, 'mec.db'))
+    migrate(db, MIGRATIONS_v1)
+    const store = new SqliteStore(db)
+    const at = new Date().toISOString()
+    store.atomic(() => {
+      store.attempts.save({ id: 'att_stuck', state: 'running', generation: 1, updatedAt: at })
+      const stream = 'attempt:att_stuck'
+      store.events.append(stream, { stream, seq: 1, at, type: 'session_started', body: {} })
+    })
+    // simulate restart: a NEW server reconciling the old store
+    const { startServer } = await import('../src/composition')
+    const server = await startServer({ dataDir: dir })
+    const attempt = store.attempts.get('att_stuck')
+    expect(attempt?.state).toBe('stalled')
+    const events = store.events.read('attempt:att_stuck')
+    expect(events.some((e) => e.type === 'attempt.reconciled')).toBe(true)
+    await server.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
 })

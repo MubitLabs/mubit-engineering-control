@@ -61,6 +61,16 @@ export async function startServer(opts: { dataDir: string; policyText?: string }
 
   registerEffectHandlers(store, health)
 
+  // §26 Restart mid-attempt: a previous process's attempts stuck in 'running' reconcile to
+  // 'stalled' with a recovery note — one live attempt per task, no duplicate dispatch (the
+  // journal owns deeper replay; this is the state the scheduler re-checks before replacing).
+  reconcileRunningAttempts(store)
+  // §26 Capability drift: probe the configured engine slot at startup; a binary that lost a
+  // required flag degrades the slot to engine_unsupported BEFORE any attempt starts.
+  if (process.env.MEC_PROBE_SLOT !== undefined && process.env.MEC_PROBE_SLOT !== '') {
+    await probeSlotAtStartup(store, health, process.env.MEC_PROBE_SLOT)
+  }
+
   // §26 Pause: no launch, deliver, relay or outbound message runs while paused; jobs that
   // were mid-handler finish (the pass simply stops starting new ones). On resume, waiting
   // deadlines shift by the pause length so nothing fires late-but-eagerly.
@@ -194,6 +204,85 @@ export async function startServer(opts: { dataDir: string; policyText?: string }
 }
 
 const EFFECT_KINDS = ['launch', 'deliver', 'relay', 'note', 'reply', 'external', 'probe'] as const
+
+/**
+ * §26 Capability drift: a startup probe degrades the slot before any attempt starts. The
+ * probe is the vendor's own --version/--help/auth status (§5.8); MEC_PROBE_SLOT is a
+ * dedicated CLAUDE_CONFIG_DIR home.
+ */
+async function probeSlotAtStartup(
+  store: SqliteStore,
+  health: HealthBoardImpl,
+  slotDir: string,
+): Promise<void> {
+  const claim = health.claim('engine:claude')
+  claim.starting()
+  try {
+    const engines = await import('@mec/engines')
+    const { checkDrift } = await import('@mec/runtime')
+    const { execFile } = await import('node:child_process')
+    const env = { ...process.env, CLAUDE_CONFIG_DIR: slotDir }
+    const run = (cmd: string, args: readonly string[]) =>
+      new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+        execFile(cmd, args, { env }, (error, stdout, stderr) => {
+          resolve({ code: error ? 1 : 0, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') })
+        })
+      })
+    const { capabilities } = await engines.probeClaude(run)
+    const drift = checkDrift(capabilities, [
+      ...engines.REQUIRED_FLAGS,
+      '--restricted',
+      '--permission-prompt-tool',
+    ])
+    const existing = store.slots.list().find((doc) => String(doc.id) === 'slot_claude_probe')
+    const at = new Date().toISOString()
+    store.atomic(() => {
+      store.slots.save({
+        ...(existing ?? {
+          id: 'slot_claude_probe',
+          label: 'startup probe',
+          engine: 'claude',
+          kind: 'claude-sub',
+        }),
+        engine_version: capabilities.engine_version,
+        state: drift.degraded ? 'degraded' : 'healthy',
+        ...(drift.degraded && { state_reason: 'engine_unsupported', drift_detail: drift.detail }),
+        updatedAt: at,
+      })
+    })
+    if (drift.degraded) {
+      claim.error(`engine_unsupported: ${drift.detail}`)
+    } else {
+      claim.ready(capabilities.engine_version)
+    }
+  } catch (error) {
+    claim.error(`probe failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+/**
+ * Reconciles a previous process's in-flight attempts (§26 Restart mid-attempt): running →
+ * stalled with a recovery note; the scheduler re-checks before any replacement starts.
+ */
+function reconcileRunningAttempts(store: SqliteStore): void {
+  const at = new Date().toISOString()
+  store.atomic(() => {
+    for (const attempt of store.attempts.list({ state: 'running' })) {
+      store.attempts.save({ ...attempt, state: 'stalled', updatedAt: at })
+      const stream = `attempt:${String(attempt.id)}`
+      const seq = (store.events.read(stream).at(-1)?.seq ?? 0) + 1
+      store.events.append(stream, {
+        stream,
+        seq,
+        at,
+        type: 'attempt.reconciled',
+        body: {
+          note: 'host restarted: check the worktree, git history and outbox before repeating any outside action',
+        },
+      })
+    }
+  })
+}
 
 function registerEffectHandlers(store: SqliteStore, health: HealthBoardImpl): void {
   for (const kind of EFFECT_KINDS) {

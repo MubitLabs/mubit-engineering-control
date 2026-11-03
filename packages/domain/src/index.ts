@@ -4,6 +4,8 @@ export type { Caps } from './caps'
 export { DEFAULT_CAPS, withinGlobalCaps, withinPerSlotCaps, withinPerWorkItemCaps } from './caps'
 export type { PlanImpact, PlanTaskLike } from './impact'
 export { computeImpact } from './impact'
+export type { ActiveAttempt, DispatchPlan, SchedulableTask, SlotView } from './scheduling'
+export { planDispatches } from './scheduling'
 export type {
   AttemptEvent,
   AttemptState,

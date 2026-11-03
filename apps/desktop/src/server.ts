@@ -281,6 +281,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         answer: body.answer,
         // The card's own hash is the expected one: the user answered what they saw.
         expectedOperationHash: typeof pending.operationHash === 'string' ? pending.operationHash : '',
+        // A repo-bound confirmation binds to the SHA on the card; the record's own value is
+        // what the card rendered (audit #5 — absent, every bound resolution went stale).
+        expectedInputSha: typeof pending.inputSha === 'string' ? pending.inputSha : undefined,
       })
       store.atomic(() => {
         store.confirmations.save(outcome as unknown as StoreDoc)

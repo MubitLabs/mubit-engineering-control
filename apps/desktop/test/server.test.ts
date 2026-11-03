@@ -272,3 +272,23 @@ describe('buildServer', () => {
     expect(res.statusCode).toBe(400)
   })
 })
+
+describe('inbox resolve binds to the card input (audit #5)', () => {
+  it('approves a repo-bound confirmation carrying an inputSha', async () => {
+    const { app, store } = makeServer()
+    store.atomic(() => {
+      store.confirmations.save({
+        id: 'conf_bound_1',
+        cls: 'pr_merge',
+        operationHash: 'op-hash',
+        inputSha: '0123456789abcdef0123456789abcdef01234567',
+        status: 'pending',
+        createdAt: '2026-11-03T10:00:00.000Z',
+        expiresAt: '2999-01-01T00:00:00.000Z',
+      })
+    })
+    const res = await app.inject({ method: 'POST', url: '/api/inbox/conf_bound_1/resolve', payload: { answer: 'approve' } })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ id: 'conf_bound_1', status: 'approved' })
+  })
+})

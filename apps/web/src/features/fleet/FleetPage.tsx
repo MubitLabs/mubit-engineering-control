@@ -108,7 +108,16 @@ export function FleetPage() {
                   <td>
                     {!r.revokedAt && (
                       <div className="row">
-                        <button type="button" className="btn small" onClick={() => drain.mutate(r)}>
+                        <button
+                          type="button"
+                          className="btn small"
+                          onClick={() => drain.mutate(r)}
+                          title={
+                            r.draining
+                              ? 'Let this runner take new attempts again'
+                              : 'Finish running attempts here but start no new ones, e.g. before maintenance'
+                          }
+                        >
                           {r.draining ? 'Undrain' : 'Drain'}
                         </button>
                         <button

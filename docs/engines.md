@@ -14,3 +14,7 @@
 - `gh pr checks --json` reports states UPPERCASE (SUCCESS/PENDING/FAILURE).
 - `gh pr create --body-file -` reads the body from stdin — a runner that does not close stdin hangs until timeout.
 - Branch protection: the required context must equal the check-run name EXACTLY (this workflow reports `check`; requiring `ci / check` silently blocks every merge with "base branch policy prohibits the merge"). `gh pr view --json mergeStateStatus` is the ground truth (CLEAN vs BLOCKED).
+
+## Codex slot (R2.1)
+
+- `~/.mec/engines/codex/codex-1` — logged in 3 Nov 21:06 via the vendor's browser flow ("Logged in using ChatGPT", `codex login status` exit 0). `auth.json` at 0600 in the home; MEC never reads it (compliance guard). The R2.1 agent is reconciling the adapter + recording real fixtures against this slot.

@@ -1,14 +1,43 @@
-# MEC v4.1 hand-off kit
+# MEC — Mubit Engineering Control v4.1
 
-Unzip at the root of the new repository.
+A local meta-agent orchestration app: connect your coding agents (Claude Code, Codex, OpenCode), talk to one meta agent, and it plans, spawns specialists, runs the delivery loop (worktrees → checks → review → integration → PR), interrupting you only for guardrail confirmations. Fully local: SQLite, no cloud, credentials never leave the machine.
 
-- `CLAUDE.md` — the ten-line rule sheet both Claude Code instances load on every session
-- `docs/plan/PLAN_v4.1_local_meta_agent.md` — the spec
-- `docs/plan/PLAN_v4.1_parallel_split.md` — why the work is split the way it is (rationale only)
-- `docs/handoff/KICKOFF.md` — pre-flight, the three-day contracts procedure, rules, handshakes, prompts to paste
-- `docs/handoff/CONTRACTS.md` — the `packages/contracts` v0 spec
-- `docs/handoff/STREAM_A.md` — brief for Stream A (core and workflow)
-- `docs/handoff/STREAM_B.md` — brief for Stream B (engines, slots and runtime)
+- **The spec**: [`docs/plan/PLAN_v4.1_local_meta_agent.md`](docs/plan/PLAN_v4.1_local_meta_agent.md) — every behaviour question is answered from it
+- **The interfaces**: [`docs/handoff/CONTRACTS.md`](docs/handoff/CONTRACTS.md) (implementation tagged `contracts-v0`) — `packages/contracts` is the shared seam
+- **Build log**: [`docs/log/`](docs/log/) · **Setup guide for agents**: [`SETUP.md`](SETUP.md)
+- **v1 reference**: branch `version-1` (the company-platform predecessor; the domain rules, journal protocol and Claude adapter were ported from it)
 
-Start: Instance A creates the monorepo skeleton and opens the contracts PR; Instance B runs the machine pre-flight
-in STREAM_B.md §3 and reviews that PR. The first messages for each instance are in KICKOFF.md §5.
+## Layout
+
+| Package | What it is |
+| --- | --- |
+| `packages/contracts` | The frozen v0 seam: events, briefs, reports, bridge, adapters, slots, store/effects, errors, fixtures |
+| `packages/domain` | State machines, task-graph validation, impact, caps, blockers, scheduler planning, specialist registry |
+| `packages/store` | SQLite store (WAL, nested-rollback atomic, gap-free event log) + effects queue + health board |
+| `packages/runtime` | Supervisor, agent environment (§5.12), journal (fsync/ack/replay), shims+gitconfig, checks, isolation settings |
+| `packages/engines` | Claude adapter (conformance-proven on real recordings) + Codex + OpenCode |
+| `packages/slots` | Credential homes, keystore courier, slot lifecycle, probes, compliance guard, redaction |
+| `packages/mec-tools` | The MCP server agents talk to (tokens, role-fenced tools, permission bridge) |
+| `packages/meta` | Wake/note classifier, routing, escalation, acknowledgements, hand-back |
+| `packages/policy` | Policy doc, confirmation classes, CAS resolve (expiry is never consent) |
+| `packages/prompts` | Prompt bundles: layers, provenance, pinned revisions, upgrade diffs |
+| `packages/integration` | Integration queue planning, PR flow state machine, yield-to-duplicate |
+| `packages/git` | Clone cache, worktrees, merges, mid-merge conflict repair |
+| `packages/testkit` | MemoryRepositories, MemoryCoreForEngines, FakeEngine, and the fixture library (`fixtures/` — real recorded engine streams) |
+| `apps/desktop` | The `mec` launcher (status/stop/restart/doctor), backup/restore/retention, the server |
+| `apps/web` | The workbench: chat, inbox, work view, slots, settings |
+
+## Development
+
+```bash
+pnpm install
+pnpm check        # typecheck + lint + both test suites
+pnpm test:a       # core-side suite
+pnpm test:b       # engine/runtime-side suite
+```
+
+CI runs on the org's self-hosted runners (`mubit-any` label).
+
+## Rules that survive context compaction
+
+See `CLAUDE.md` at the root. The two that matter most: never read a vendor OAuth store or write a credential anywhere; when behaviour is unclear, cite the plan section and ask — never guess.

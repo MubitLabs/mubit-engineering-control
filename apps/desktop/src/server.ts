@@ -23,11 +23,13 @@ import { routeMessage } from '@mec/meta'
 import type { ConfirmationRecord } from '@mec/policy'
 import { resolveConfirmation } from '@mec/policy'
 import {
+  API_KEY_PROBE_TARGETS,
   claudeHome,
   codexHome,
   linkedDefault,
   opencodeHome,
   type ProbeRun,
+  probeApiKeySlot,
   probeClaudeSlot,
   redact,
   SlotKeystore,
@@ -130,7 +132,6 @@ function freshId(prefix: string): string {
 const DEFAULT_KEYSTORE_ROOT = join(homedir(), '.mec')
 
 /** §5.8 zero-token validity probe for Anthropic API keys: GET /v1/models costs no tokens. */
-const ANTHROPIC_MODELS_URL = 'https://api.anthropic.com/v1/models'
 const VALIDATE_TIMEOUT_MS = 15_000
 
 /**
@@ -788,10 +789,13 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     return { id, fingerprint: { provider: fingerprint.provider, last4: fingerprint.last4 } }
   })
 
-  // §5.8 zero-token validity probe: GET /v1/models with the key read STRAIGHT from the
-  // keystore file (§5.4 read path #2). 200 → healthy; 401 → degraded/key_rejected; a network
-  // failure is provider_unreachable and changes nothing — an unreachable provider says
-  // nothing about the key. 15s cap via AbortController.
+  // §5.8 zero-token validity probe, dispatched per provider (R2.2): GET the
+  // provider's own models endpoint with the key read STRAIGHT from the keystore
+  // file (§5.4 read path #2) — anthropic (x-api-key), z.ai coding plan (Bearer,
+  // the endpoint that bills Coding Plan quota), Google Gemini (x-goog-api-key).
+  // 200 → healthy; 401 → degraded/key_rejected; a network failure is
+  // provider_unreachable and changes nothing — an unreachable provider says
+  // nothing about the key. 15s cap inside probeApiKeySlot.
   app.post('/api/slots/:id/validate', async (request, reply) => {
     const id = String((request.params as { id?: string }).id ?? '')
     const doc = slotDocOf(store, id)
@@ -799,8 +803,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       reply.code(404).send({ error: 'slot not found' })
       return
     }
-    if (doc.kind !== 'claude-api' || doc.provider !== 'anthropic-api') {
-      reply.code(400).send({ error: "only 'claude-api' slots validate in v0" })
+    const probeTarget = API_KEY_PROBE_TARGETS[doc.provider as keyof typeof API_KEY_PROBE_TARGETS]
+    if (probeTarget === undefined) {
+      reply.code(400).send({ error: `slots with provider '${doc.provider}' do not validate in v0` })
       return
     }
     if (doc.state === 'retired') {
@@ -813,26 +818,15 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       return
     }
 
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), VALIDATE_TIMEOUT_MS)
-    timer.unref()
-    let outcome: { ok: true } | { ok: false; reason: 'key_rejected' | 'provider_unreachable' }
-    try {
-      const res = await validateFetch(ANTHROPIC_MODELS_URL, {
-        headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-        signal: controller.signal,
-      })
-      if (res.ok) outcome = { ok: true }
-      else if (res.status === 401) outcome = { ok: false, reason: 'key_rejected' }
-      else outcome = { ok: false, reason: 'provider_unreachable' }
-    } catch {
-      outcome = { ok: false, reason: 'provider_unreachable' }
-    } finally {
-      clearTimeout(timer)
-    }
+    const outcome = await probeApiKeySlot(
+      validateFetch,
+      doc.provider as keyof typeof API_KEY_PROBE_TARGETS,
+      key,
+      VALIDATE_TIMEOUT_MS,
+    )
 
     const at = now().toISOString()
-    if (outcome.ok) {
+    if (outcome === 'healthy') {
       store.atomic(() => {
         const next: StoreDoc = { ...doc, state: 'healthy', last_probe_at: at, updatedAt: at }
         delete next.state_reason
@@ -841,13 +835,13 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
           store,
           `slot:${doc.label}`,
           'slot_healthy',
-          { slotId: id, probe: 'anthropic:/v1/models', at },
+          { slotId: id, probe: probeTarget.label, at },
           at,
         )
       })
       return { ok: true }
     }
-    if (outcome.reason === 'key_rejected') {
+    if (outcome === 'key_rejected') {
       store.atomic(() => {
         store.slots.save({
           ...doc,

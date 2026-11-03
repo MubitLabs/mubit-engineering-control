@@ -65,6 +65,62 @@ export async function probeEngineVersion(
   return first === undefined || first === '' ? 'engine_missing' : first
 }
 
+/**
+ * §5.8 zero-token validity probes for API-key slots (R2.2): one GET against the
+ * provider's own models endpoint — no generation, no quota. The run function is
+ * injectable (production: the global fetch with an AbortController timeout;
+ * tests: a stub). Contract, same for every provider: 200 → healthy; 401/403 →
+ * key_rejected; anything else (network error, 5xx, timeout) → provider_unreachable
+ * — an unreachable provider says nothing about the key (§5.8).
+ */
+export type ApiKeyProbeOutcome = 'healthy' | 'key_rejected' | 'provider_unreachable'
+
+/** The keystore provider ids (§5.4) and their zero-token probe targets. */
+export const API_KEY_PROBE_TARGETS: Record<
+  'anthropic-api' | 'zai-coding-plan' | 'google-gemini',
+  { url: string; headers: (key: string) => Record<string, string>; label: string }
+> = {
+  'anthropic-api': {
+    url: 'https://api.anthropic.com/v1/models',
+    headers: (key) => ({ 'x-api-key': key, 'anthropic-version': '2023-06-01' }),
+    label: 'anthropic:/v1/models',
+  },
+  'zai-coding-plan': {
+    // The CODING endpoint — the one that bills the Coding Plan quota (R2.2).
+    url: 'https://api.z.ai/api/coding/paas/v4/models',
+    headers: (key) => ({ authorization: `Bearer ${key}` }),
+    label: 'zai-coding:/coding/paas/v4/models',
+  },
+  'google-gemini': {
+    url: 'https://generativelanguage.googleapis.com/v1beta/models',
+    headers: (key) => ({ 'x-goog-api-key': key }),
+    label: 'google-gemini:/v1beta/models',
+  },
+}
+
+export async function probeApiKeySlot(
+  fetchImpl: typeof globalThis.fetch,
+  provider: keyof typeof API_KEY_PROBE_TARGETS,
+  key: string,
+  timeoutMs = 15_000,
+): Promise<ApiKeyProbeOutcome> {
+  const target = API_KEY_PROBE_TARGETS[provider]
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  timer.unref()
+  try {
+    const res = await fetchImpl(target.url, { headers: target.headers(key), signal: controller.signal })
+    if (res.ok) return 'healthy'
+    // 401/403 is the only verdict about the KEY; other statuses (429, 5xx, …)
+    // say nothing the §5.8 contract can bank on.
+    return res.status === 401 || res.status === 403 ? 'key_rejected' : 'provider_unreachable'
+  } catch {
+    return 'provider_unreachable'
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /** JSON.parse with a one-retry brace slice, so a leading banner line does not defeat the probe. */
 function parseJson(stdout: string): Record<string, unknown> | undefined {
   const text = stdout.trim()

@@ -2,7 +2,7 @@
   "engine": "opencode",
   "engine_version": "2.2.5",
   "scenario": "permission_request",
-  "recorded_at": "2026-11-03T16:41:31.000Z",
+  "recorded_at": "2026-11-03T22:25:00.000Z",
   "recorded_by": "fake",
   "redacted": true,
   "expected": {
@@ -11,5 +11,5 @@
     "rate_limits": [],
     "exit": "completed"
   },
-  "notes": "synthesised from the documented V2 server API"
+  "notes": "SYNTHETIC in the real 2.2.5 envelope, shapes taken from the LIVE recordings (permission.asked action 'shell' with resources/save/source.tool from the free-model probe; session.tool.* from the real smoke capture); 2.2.5 sends NO reply-echo event \u2014 the adapter synthesises permission_result after its own reply post; the real round trip runs in packages/engines/test/opencode.real.test.ts"
 }

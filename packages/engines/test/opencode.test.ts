@@ -9,15 +9,18 @@ import { classifyOpencodeError, OPENCODE_ENGINE_VERSION, parseOpenCodeEvents } f
 
 /**
  * CONTRACTS §9 conformance, engine side: the adapter's SSE parser, run over each
- * synthetic raw stream, must yield exactly the fixture's normalised events. The
- * fixtures are recorded_by 'fake' — synthesised from the documented V2 server API
- * (plan §9), never from a real `opencode` binary.
+ * fixture raw stream, must yield exactly the fixture's normalised events.
+ * smoke and auth_expired are recorded_by 'real' — captured from a live
+ * `opencode serve --stdio` 2.2.5 (R2.2, slot glm-2 on the z.ai Coding Plan);
+ * rate_limit_rejected and permission_request stay synthetic in the real envelope
+ * (see each meta.json). NOW matches the fixtures' recorded_at second so
+ * rate-limit `resets_at` arithmetic reproduces exactly.
  */
 const ROOT = fileURLToPath(new URL('../../testkit/fixtures/opencode/2.2.5', import.meta.url))
-const NOW = '2026-11-03T15:18:57.000Z'
+const NOW = '2026-11-03T16:41:03.000Z'
 const SCENARIOS = ['smoke', 'permission_request', 'rate_limit_rejected', 'auth_expired'] as const
 
-describe('opencode stream conformance (synthetic fixtures)', () => {
+describe('opencode stream conformance (real + synthetic fixtures)', () => {
   for (const scenario of SCENARIOS) {
     it(`${scenario}: parseOpenCodeEvents(raw) === events.jsonl`, () => {
       const rawLines = readFileSync(join(ROOT, scenario, 'raw.jsonl'), 'utf8')
@@ -34,6 +37,29 @@ describe('opencode stream conformance (synthetic fixtures)', () => {
       }
     })
   }
+
+  it('meta.json expected blocks match what the parser actually produces', () => {
+    for (const scenario of SCENARIOS) {
+      const meta = JSON.parse(readFileSync(join(ROOT, scenario, 'meta.json'), 'utf8')) as {
+        expected: { permission_requests: number; rate_limits: string[]; exit: string }
+      }
+      const events = parseOpenCodeEvents(
+        readFileSync(join(ROOT, scenario, 'raw.jsonl'), 'utf8')
+          .split('\n')
+          .filter(Boolean),
+        NOW,
+      )
+      expect(events.filter((e) => e.type === 'permission_request').length, scenario).toBe(
+        meta.expected.permission_requests,
+      )
+      expect(
+        events.filter((e) => e.type === 'rate_limit').map((e) => (e as { window: string }).window),
+        scenario,
+      ).toEqual(meta.expected.rate_limits)
+      const exit = events.find((e) => e.type === 'exit')
+      expect(exit && exit.type === 'exit' ? exit.terminal_reason : 'none', scenario).toBe(meta.expected.exit)
+    }
+  })
 
   it('the CONTRACTS §1 invariants hold for every fixture', () => {
     for (const scenario of SCENARIOS) {
@@ -92,14 +118,15 @@ const recordingPost = (posts: Post[], id = 'ses_t1') => {
   const adapter = new OpenCodeAdapter({
     post: async (path, body) => {
       posts.push({ path, body })
-      return { id }
+      // the real 2.2.5 response envelope: {data: {id}}
+      return { data: { id } }
     },
   })
   return adapter
 }
 
 describe('OpenCodeAdapter', () => {
-  it('launch posts /api/session with the worktree directory and records the session id', async () => {
+  it('launch posts /api/session with directory, build agent and the bridge ask ruleset', async () => {
     const posts: Post[] = []
     const handle = await recordingPost(posts).launch(spec())
     expect(handle).toMatchObject({ attempt_id: 'att_op1', generation: 0, session_id: 'ses_t1' })
@@ -108,17 +135,32 @@ describe('OpenCodeAdapter', () => {
       location: { directory: '/wt/audit-view' },
       agent: 'build',
       model: undefined,
+      permissions: [{ action: 'bash', resource: '*', effect: 'ask' }],
     })
   })
 
-  it('read-only roles select the read-only agent; resume reuses the session without a new POST', async () => {
+  it('deps.defaultModel (the slot provider profile, plan §5.7) rides every fresh create', async () => {
+    const posts: Post[] = []
+    const adapter = new OpenCodeAdapter({
+      post: async (path, body) => {
+        posts.push({ path, body })
+        return { data: { id: 'ses_t3' } }
+      },
+      defaultModel: { id: 'glm-4.7', providerID: 'zai-coding' },
+    })
+    await adapter.launch(spec())
+    expect(posts[0]?.body).toMatchObject({ model: { id: 'glm-4.7', providerID: 'zai-coding' } })
+    await adapter.launch(spec({ resume: { session_id: 'ses_t9' } }))
+    expect(posts).toHaveLength(1) // resume never creates
+  })
+
+  it('read-only roles select the plan agent; resume reuses the session without a new POST', async () => {
     const posts: Post[] = []
     const adapter = recordingPost(posts)
     await adapter.launch(spec({ read_only: true }))
-    expect(posts[0]?.body).toEqual({
+    expect(posts[0]?.body).toMatchObject({
       location: { directory: '/wt/audit-view' },
-      agent: 'read-only',
-      model: undefined,
+      agent: 'plan', // the real read-only agent id on 2.2.5
     })
     const resumed = await adapter.launch(spec({ resume: { session_id: 'ses_t9' } }))
     expect(resumed.session_id).toBe('ses_t9')
@@ -155,7 +197,7 @@ describe('OpenCodeAdapter permission bridge', () => {
     const adapter = new OpenCodeAdapter({
       post: async (path, body) => {
         posts.push({ path, body })
-        return { id: 'ses_7f3ab2c4' }
+        return { data: { id: 'ses_syn_perm1' } }
       },
       sse: async function* () {
         for (const line of rawLines()) yield line
@@ -170,7 +212,8 @@ describe('OpenCodeAdapter permission bridge', () => {
     expect(events.map((event) => event.type)).toEqual([
       'session_started',
       'permission_request',
-      'permission_result',
+      'permission_result', // synthesised by the adapter after its reply post
+      'tool_call',
       'usage',
       'exit',
     ])
@@ -179,36 +222,59 @@ describe('OpenCodeAdapter permission bridge', () => {
       at: NOW,
       attempt_id: 'att_op1',
       generation: 0,
-      request_id: 'perm_01',
-      operation: { kind: 'shell', command: ['git', 'log', '--oneline', '-5'] },
+      request_id: 'perm_syn_01',
+      // action 'shell' + resources carrying the command → a shell-kind operation
+      operation: { kind: 'shell', summary: 'shell git log --oneline -5' },
       evidence: { worktree: '/wt/audit-view' },
     })
+    const toolCall = events.find((event) => event.type === 'tool_call')
+    expect(toolCall).toMatchObject({
+      tool: 'shell',
+      input: { command: 'git log --oneline -5' },
+      ok: true,
+    })
     expect(posts[1]).toEqual({
-      path: '/api/session/ses_7f3ab2c4/permission/perm_01/reply',
+      path: '/api/session/ses_syn_perm1/permission/perm_syn_01/reply',
       body: { decision: native },
     })
     expect(asked[0]).toEqual({
       kind: 'shell',
       worktree: '/wt/audit-view',
-      deadline: '2026-11-03T15:23:57.000Z',
+      deadline: '2026-11-03T16:46:03.000Z',
     })
   })
 })
 
 describe('classifyOpencodeError', () => {
-  it('maps the documented provider error shapes', () => {
+  it('maps the real 2.2.5 provider error shapes', () => {
+    // real z.ai coding-endpoint auth failure (see the auth_expired fixture)
     expect(
       classifyOpencodeError({
-        code: 429,
-        status: 'RESOURCE_EXHAUSTED',
-        message: 'Resource has been exhausted (e.g. check quota).',
+        type: 'provider.auth',
+        message: '身份验证失败。',
+        status: 401,
+        response: { body: '{"error":{"code":"1000","message":"身份验证失败。"}}' },
+      }),
+    ).toBe('auth')
+    // Google 429 nested inside response.body
+    expect(
+      classifyOpencodeError({
+        type: 'provider.rateLimit',
+        status: 429,
+        response: {
+          body: '{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"Resource has been exhausted (e.g. check quota)."}}',
+        },
       }),
     ).toBe('quota')
     expect(classifyOpencodeError('401 Unauthorized: API key not valid. Please pass a valid API key.')).toBe(
       'auth',
     )
     expect(
-      classifyOpencodeError({ code: 503, status: 'UNAVAILABLE', message: 'The model is overloaded.' }),
+      classifyOpencodeError({
+        type: 'provider.unavailable',
+        status: 503,
+        message: 'The model is overloaded.',
+      }),
     ).toBe('provider_down')
     expect(classifyOpencodeError('something odd happened')).toBe('unknown')
   })

@@ -2,8 +2,8 @@
   "engine": "opencode",
   "engine_version": "2.2.5",
   "scenario": "smoke",
-  "recorded_at": "2026-11-03T16:41:03.000Z",
-  "recorded_by": "fake",
+  "recorded_at": "2026-11-03T22:18:29.000Z",
+  "recorded_by": "real",
   "redacted": true,
   "expected": {
     "reports": [],
@@ -11,5 +11,5 @@
     "rate_limits": [],
     "exit": "completed"
   },
-  "notes": "synthesised from the documented V2 server API"
+  "notes": "real turn THROUGH THE ADAPTER (R2.2 canary run 2) against slot glm-2 (z.ai GLM Coding Plan): serve --stdio + Basic auth, launch → prompt → buffered /api/event stream; prompt: \"Reply with exactly: OPENCODE-H1-OK\"; model zai-coding/glm-4.7 (openai-compatible provider, key injected at launch via {env:} substitution — never persisted); cost 0 is the real Coding-Plan reading; heartbeats and catalog noise (provider/model/agent …updated) are part of the stream and stay in raw"
 }

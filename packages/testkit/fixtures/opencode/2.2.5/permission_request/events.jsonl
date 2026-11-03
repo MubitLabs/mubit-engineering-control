@@ -1,5 +1,5 @@
-{"type": "session_started", "session_id": "ses_7f3ab2c4", "engine": "opencode", "engine_version": "2.2.5", "model": "zai-coding-plan/glm-5.3"}
-{"type": "permission_request", "request_id": "perm_01", "operation": {"kind": "shell", "summary": "git log --oneline -5", "command": ["git", "log", "--oneline", "-5"]}, "evidence": {"raw": {"type": "permission.asked", "sessionID": "ses_7f3ab2c4", "requestID": "perm_01", "permission": {"type": "command", "command": ["git", "log", "--oneline", "-5"], "summary": "git log --oneline -5"}, "directory": "/wt/audit-view"}, "worktree": "/wt/audit-view"}}
-{"type": "permission_result", "request_id": "perm_01", "decision": "allow"}
-{"type": "usage", "input_tokens": 2480, "output_tokens": 210, "cache_read": 12020, "cache_write": 0, "cost_usd": 0.0046}
-{"type": "exit", "code": 0, "terminal_reason": "completed"}
+{"type":"session_started","session_id":"ses_syn_perm1","engine":"opencode","engine_version":"2.2.5","model":"zai-coding/glm-4.7"}
+{"type":"permission_request","request_id":"perm_syn_01","operation":{"kind":"shell","summary":"shell git log --oneline -5","paths":[]},"evidence":{"raw":{"id":"perm_syn_01","sessionID":"ses_syn_perm1","action":"shell","resources":["git log --oneline -5"],"save":["git log*"],"source":{"type":"tool","messageID":"msg_syn_perm1","id":"chatcmpl-tool-syn1"}},"worktree":"/unknown"}}
+{"type":"tool_call","tool":"shell","input":{"command":"git log --oneline -5"},"output":[{"type":"text","text":"a1b2c3d fourth commit"}],"ok":true}
+{"type":"usage","input_tokens":2480,"output_tokens":210,"cache_read":12020,"cache_write":0,"cost_usd":0}
+{"type":"exit","code":0,"terminal_reason":"completed"}

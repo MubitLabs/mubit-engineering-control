@@ -216,6 +216,77 @@ describe('slots api-key routes (§5.4/§5.7/§5.8)', () => {
     expect(ctx.store.slots.get(SLOT_ID)?.state).toBe('login_pending')
   })
 
+  // R2.2: per-provider dispatch — the z.ai Coding Plan slot probes the CODING
+  // models endpoint (the one that bills Coding Plan quota) with a Bearer key.
+  it('validate: glm slots probe the z.ai coding /models endpoint with Bearer', async () => {
+    const ctx = makeServer()
+    ctx.setRespond(() => new Response('{"data":[{"id":"glm-4.7"}]}', { status: 200 }))
+    const glmKey = '0123456789abcdef0123456789abcdef.AAAA0123456789abcdef'
+    const res0 = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/slots/api-key',
+      payload: { label: 'glm-9', provider: 'glm-api', key: glmKey },
+    })
+    expect(res0.statusCode).toBe(200)
+
+    const res = await ctx.app.inject({ method: 'POST', url: '/api/slots/slot_glm-9/validate' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ ok: true })
+    expect(ctx.store.slots.get('slot_glm-9')?.state).toBe('healthy')
+
+    expect(ctx.calls).toHaveLength(1)
+    expect(ctx.calls[0]).toMatchObject({
+      url: 'https://api.z.ai/api/coding/paas/v4/models',
+      method: 'GET',
+    })
+    expect(ctx.calls[0]?.headers.authorization).toBe(`Bearer ${glmKey}`)
+    expect(allEventsJson(ctx)).not.toContain(glmKey)
+  })
+
+  // R2.2: a wrong z.ai key degrades the slot with the same key_rejected contract.
+  it('validate: a 401 from z.ai degrades a glm slot to key_rejected', async () => {
+    const ctx = makeServer()
+    ctx.setRespond(() => new Response('{"error":{"code":"1000"}}', { status: 401 }))
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/api/slots/api-key',
+      payload: {
+        label: 'glm-9',
+        provider: 'glm-api',
+        key: '0123456789abcdef0123456789abcdef.AAAA0123456789abcdef',
+      },
+    })
+
+    const res = await ctx.app.inject({ method: 'POST', url: '/api/slots/slot_glm-9/validate' })
+    expect(res.json()).toEqual({ ok: false, reason: 'key_rejected' })
+    expect(ctx.store.slots.get('slot_glm-9')?.state_reason).toBe('key_rejected')
+  })
+
+  // R2.2: the Gemini slot probes generativelanguage /v1beta/models with x-goog-api-key.
+  it('validate: gemini slots probe generativelanguage /v1beta/models with x-goog-api-key', async () => {
+    const ctx = makeServer()
+    ctx.setRespond(() => new Response('{"models":[{"name":"models/gemini-2.5-flash"}]}', { status: 200 }))
+    const gemKey = `AIzaSy${'a'.repeat(33)}`
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/api/slots/api-key',
+      payload: { label: 'gem-9', provider: 'gemini-api', key: gemKey },
+    })
+
+    const res = await ctx.app.inject({ method: 'POST', url: '/api/slots/slot_gem-9/validate' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ ok: true })
+    expect(ctx.store.slots.get('slot_gem-9')?.state).toBe('healthy')
+
+    expect(ctx.calls).toHaveLength(1)
+    expect(ctx.calls[0]).toMatchObject({
+      url: 'https://generativelanguage.googleapis.com/v1beta/models',
+      method: 'GET',
+    })
+    expect(ctx.calls[0]?.headers['x-goog-api-key']).toBe(gemKey)
+    expect(allDocsJson(ctx)).not.toContain(gemKey)
+  })
+
   it('retire shreds the key file and retires the slot doc', async () => {
     const ctx = makeServer()
     await addKey(ctx.app)
@@ -341,17 +412,29 @@ describe('slots api-key courier: GLM and Gemini providers (R2.2 seam)', () => {
     expect(existsSync(join(ctx.enginesRoot, 'engines'))).toBe(false)
   })
 
-  it('validate is honest about its v0 boundary: a glm slot is 400, not a fake probe', async () => {
+  it('validate is honest about its boundary: a provider with no probe target is 400, not a fake probe', async () => {
     const ctx = makeServer()
-    await ctx.app.inject({
-      method: 'POST',
-      url: '/api/slots/api-key',
-      payload: { label: 'glm-1', provider: 'glm-api', key: GLM_KEY },
+    // Forge a doc for a provider the probe table does not know (intake cannot
+    // create one; the boundary still holds for anything that slips through).
+    const at = '2026-11-03T12:00:00.000Z'
+    ctx.store.atomic(() => {
+      ctx.store.slots.save({
+        id: 'slot_odd',
+        label: 'odd',
+        engine: 'codex',
+        kind: 'codex-chatgpt',
+        provider: 'openai-chatgpt',
+        home: join(ctx.enginesRoot, 'engines', 'codex', 'odd'),
+        fingerprint: { provider: 'openai-chatgpt', last4: 'abcd', hash: 'x' },
+        state: 'login_pending',
+        createdAt: at,
+        updatedAt: at,
+      })
     })
-    const res = await ctx.app.inject({ method: 'POST', url: '/api/slots/slot_glm-1/validate' })
+    const res = await ctx.app.inject({ method: 'POST', url: '/api/slots/slot_odd/validate' })
     expect(res.statusCode).toBe(400)
     expect(res.json()).toMatchObject({
-      error: expect.stringContaining("only 'claude-api' slots validate in v0"),
+      error: expect.stringContaining('do not validate in v0'),
     })
   })
 })

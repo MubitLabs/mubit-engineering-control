@@ -1,3 +1,4 @@
-{"type": "session_started", "session_id": "ses_ab17d3e9", "engine": "opencode", "engine_version": "2.2.5", "model": "google/gemini-3.8-flash"}
-{"type": "error", "class": "auth", "detail": "Request had invalid authentication credentials. Expected Bearer or API key.", "raw": {"code": 401, "status": "UNAUTHENTICATED", "message": "Request had invalid authentication credentials. Expected Bearer or API key."}}
-{"type": "exit", "code": 1, "terminal_reason": "api_error"}
+{"type":"session_started","session_id":"ses_e5c90e567ffeY06Iy1XEWNKVhD","engine":"opencode","engine_version":"2.2.5","model":"zai-coding/glm-4.7"}
+{"type":"error","class":"auth","detail":"身份验证失败。","raw":{"type":"provider.auth","message":"身份验证失败。","status":401,"response":{"body":"{\"error\":{\"code\":\"1000\",\"message\":\"身份验证失败。\"}}"}}}
+{"type":"error","class":"auth","detail":"身份验证失败。","raw":{"type":"provider.auth","message":"身份验证失败。","status":401,"response":{"body":"{\"error\":{\"code\":\"1000\",\"message\":\"身份验证失败。\"}}"}}}
+{"type":"exit","code":1,"terminal_reason":"api_error"}

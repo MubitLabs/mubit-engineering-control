@@ -2,8 +2,8 @@
   "engine": "opencode",
   "engine_version": "2.2.5",
   "scenario": "auth_expired",
-  "recorded_at": "2026-11-03T16:42:24.000Z",
-  "recorded_by": "fake",
+  "recorded_at": "2026-11-03T22:20:00.000Z",
+  "recorded_by": "real",
   "redacted": true,
   "expected": {
     "reports": [],
@@ -11,5 +11,5 @@
     "rate_limits": [],
     "exit": "api_error"
   },
-  "notes": "synthesised from the documented V2 server API"
+  "notes": "real failure shape against the z.ai coding endpoint with a syntactically-valid garbage key (provider 401, z.ai body {\"error\":{\"code\":\"1000\",\"message\":\"身份验证失败。\"}}); no paid quota burned — the provider rejected before any generation; prompt POST itself returns 200, the failure arrives as session.step.failed + session.execution.failed events"
 }

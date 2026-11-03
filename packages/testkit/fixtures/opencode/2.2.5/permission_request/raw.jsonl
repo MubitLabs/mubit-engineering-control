@@ -1,10 +1,7 @@
-event: session.created
-data: {"type":"session.created","sessionID":"ses_7f3ab2c4","title":"Add the audit log view","directory":"/wt/audit-view","version":"2.2.5","model":"zai-coding-plan/glm-5.3"}
-event: permission.asked
-data: {"type":"permission.asked","sessionID":"ses_7f3ab2c4","requestID":"perm_01","permission":{"type":"command","command":["git","log","--oneline","-5"],"summary":"git log --oneline -5"},"directory":"/wt/audit-view"}
-event: permission.updated
-data: {"type":"permission.updated","sessionID":"ses_7f3ab2c4","requestID":"perm_01","decision":"once"}
-event: session.usage.updated
-data: {"type":"session.usage.updated","sessionID":"ses_7f3ab2c4","usage":{"input":2480,"output":210,"cache_read":12020,"cache_write":0,"cost":0.0046}}
-event: session.idle
-data: {"type":"session.idle","sessionID":"ses_7f3ab2c4","reason":"turn ended"}
+data: {"id":"evt_syn_nbkmc0ue","created":1793744000000,"type":"session.created","data":{"sessionID":"ses_syn_perm1","slug":"audit-log-view","version":"2.2.5","model":{"id":"glm-4.7","providerID":"zai-coding"}}}
+data: {"id":"evt_syn_perm2","created":1793744000100,"type":"permission.asked","data":{"id":"perm_syn_01","sessionID":"ses_syn_perm1","action":"shell","resources":["git log --oneline -5"],"save":["git log*"],"source":{"type":"tool","messageID":"msg_syn_perm1","id":"chatcmpl-tool-syn1"}}}
+data: {"id":"evt_syn_p5ermmtg","created":1793744000000,"type":"session.tool.input.started","data":{"sessionID":"ses_syn_perm1","assistantMessageID":"msg_syn_perm1","id":"chatcmpl-tool-syn1","name":"shell"}}
+data: {"id":"evt_syn_ppcvcioq","created":1793744000000,"type":"session.tool.called","data":{"sessionID":"ses_syn_perm1","assistantMessageID":"msg_syn_perm1","id":"chatcmpl-tool-syn1","input":{"command":"git log --oneline -5"}}}
+data: {"id":"evt_syn_w1bbevs3","created":1793744000000,"type":"session.tool.success","data":{"sessionID":"ses_syn_perm1","assistantMessageID":"msg_syn_perm1","id":"chatcmpl-tool-syn1","content":[{"type":"text","text":"a1b2c3d fourth commit"}],"metadata":{"status":"completed","truncated":false,"exit":0}}}
+data: {"id":"evt_syn_3z1ryfqy","created":1793744000000,"type":"session.usage.updated","data":{"sessionID":"ses_syn_perm1","cost":0,"tokens":{"input":2480,"output":210,"reasoning":0,"cache":{"read":12020,"write":0}}}}
+data: {"id":"evt_syn_hvj6kjle","created":1793744000000,"type":"session.execution.succeeded","data":{"sessionID":"ses_syn_perm1"}}

@@ -3,25 +3,42 @@ import type { EngineEventBody, ErrorClass, Json, OperationKind, TerminalReason, 
 /**
  * OpenCode V2 SSE → normalised EngineEvent bodies (plan §9; CONTRACTS §1).
  *
- * One `opencode serve --stdio` process per slot streams `GET /api/event` as SSE: an
- * `event: <name>` line followed by one `data: {json}` line (a bare `data: {"type": …}`
- * line without the `event:` prefix is accepted too — the V2 server sends both forms).
- * Every rule below is proven by the synthetic fixtures in
- * packages/testkit/fixtures/opencode/2.2.5 (CONTRACTS §9, recorded_by: 'fake'):
- * - `session.created` → session_started (`session_id` is the server session id resume needs)
- * - `permission.asked` → permission_request; the permission's shape picks the operation
- *   kind (command→shell, file edit→edit, webfetch→network, anything else→other)
- * - the reply echo (`permission.updated`) → permission_result (once/always→allow, reject→deny)
- * - `session.step.*` and `session.usage.updated` → usage with the cumulative tokens/cost
- *   the data carries; an event with no reading is skipped — missing stays unknown, not 0
- * - `session.idle` is the turn end → exit; an error seen earlier in the turn makes it
- *   `{code: 1, terminal_reason: 'api_error'}`, otherwise `{code: 0, terminal_reason: 'completed'}`.
- *   A stream that ends without `session.idle` is a dead server: the runtime emits exit itself
- *   (CONTRACTS §1 crash rule).
- * - an event carrying `data.error` → error via `classifyOpencodeError`; a quota error
- *   (429 RESOURCE_EXHAUSTED) also emits `rate_limit` rejected first, with `resets_at` from
- *   `RetryInfo.retryDelay` seconds added to `now` and the window from the QuotaFailure
- *   `quotaId` (per-minute vs per-day, plan §5.9); no RetryInfo → resets_at 'unknown'.
+ * Reconciled against a real `opencode serve --stdio` 2.2.5 on 3 Nov 2026 (R2.2,
+ * slot glm-2 on the z.ai Coding Plan and slot gem-1 on a Gemini key); the
+ * recordings live in packages/testkit/fixtures/opencode/2.2.5 (CONTRACTS §9).
+ * One serve process per slot streams `GET /api/event` as SSE. Every event is a
+ * single `data:` line whose JSON is `{id, created, type, location, data}` — the
+ * event NAME is the top-level `type`, the PAYLOAD is nested under `data`. The
+ * server also emits `: heartbeat` comment lines (skipped), prefixes the stream
+ * with `server.connected`, and does NOT send `event:` name lines (an `event:`
+ * line is still accepted if a future version starts sending one).
+ *
+ * Turn lifecycle (real shapes, replacing the plan's §9 guesses):
+ * - `session.created` → session_started (`data.sessionID` is the server session
+ *   id resume needs; `data.model` is `{id, providerID}`)
+ * - `session.text.ended` → message (assistant) — `data.text` is the full part
+ * - `session.step.ended` → usage with the step's tokens/cost; the shape is
+ *   `data.tokens = {input, output, reasoning, cache: {read, write}}` (NOT flat
+ *   cache_read/cache_write) and `data.cost` — the GLM Coding Plan reports cost 0
+ *   (subscription-style), Gemini reports real USD
+ * - `session.usage.updated` → usage, same token shape, cumulative; it fires more
+ *   than once per turn (after each step and once at the end)
+ * - `session.execution.succeeded` is the turn end → exit completed. There is NO
+ *   `session.idle` on 2.2.5. `session.execution.failed` → error (from
+ *   `data.error`) then exit `{code: 1, api_error}`; `session.step.failed` carries
+ *   the same error one event earlier. A stream that ends without an execution
+ *   verdict is a dead server: the runtime emits exit itself (CONTRACTS §1 crash
+ *   rule).
+ * - an error payload `{type: 'provider.auth', status, message, response: {body}}`
+ *   (dot-namespaced `provider.*` types; the provider's own JSON rides inside
+ *   `response.body` as a STRING) → error via `classifyOpencodeError`; a quota
+ *   error also emits `rate_limit` rejected first, with `resets_at` from a Google
+ *   `RetryInfo.retryDelay` inside `response.body` added to `now` and the window
+ *   from the `QuotaFailure` `quotaId` (per-minute vs per-day, plan §5.9); no
+ *   RetryInfo → resets_at 'unknown'.
+ * - `server.*`, `project/provider/model/agent/…​.updated`, `session.inbox.*`,
+ *   `session.reasoning.*`, `session.renamed` and friends stay in the raw stream
+ *   and the journal.
  */
 
 /** The V2 protocol revision the adapter and its fixtures were written against. */
@@ -32,14 +49,59 @@ type AnyRecord = Record<string, unknown>
 const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback)
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
 
-/** Error payload (`{code, status, message}`) or text → ErrorClass, from the documented provider error shapes. */
+/** Parses `response.body` JSON when the error carries the provider's raw body. */
+function responseBody(error: AnyRecord): AnyRecord | undefined {
+  const response = (error.response ?? {}) as AnyRecord
+  if (typeof response.body !== 'string' || response.body === '') return undefined
+  try {
+    const parsed: unknown = JSON.parse(response.body)
+    return typeof parsed === 'object' && parsed !== null ? (parsed as AnyRecord) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Error payload → ErrorClass, from the real 2.2.5 shapes: `{type:
+ * 'provider.auth'|'provider.rateLimit'|…, status, message, response: {body}}`
+ * where `response.body` stringifies the provider's own error JSON (z.ai
+ * `{"error":{"code":"1000","message":"身份验证失败。"}}`, Google
+ * `RESOURCE_EXHAUSTED` with `details[]`). Status/text heuristics stay as the
+ * fallback for shapes the recordings have not shown yet.
+ */
 export function classifyOpencodeError(error: unknown): ErrorClass {
   const record = (error ?? {}) as AnyRecord
-  const code = num(record.code)
+  const code = num(record.status) ?? num(record.code)
+  const type = str(record.type).toLowerCase()
+  const body = responseBody(record) ?? {}
+  const bodyError = (body.error ?? {}) as AnyRecord
   const text =
-    `${str(record.status)} ${str(record.message)} ${typeof error === 'string' ? error : ''}`.toLowerCase()
-  if (code === 429 || text.includes('resource_exhausted') || text.includes('quota')) return 'quota'
-  if (code === 401 || code === 403 || text.includes('unauthor') || text.includes('auth')) return 'auth'
+    `${str(record.status)} ${str(record.message)} ${str(bodyError.status)} ${str(bodyError.message)} ${
+      typeof error === 'string' ? error : ''
+    }`.toLowerCase()
+  const bodyCode = num(bodyError.code)
+  if (
+    type.includes('auth') ||
+    text.includes('unauthor') ||
+    text.includes('invalid api key') ||
+    text.includes('身份验证失败') ||
+    code === 401 ||
+    code === 403 ||
+    bodyCode === 401
+  ) {
+    return 'auth'
+  }
+  if (
+    code === 429 ||
+    bodyCode === 429 ||
+    type.includes('rate') ||
+    type.includes('quota') ||
+    type.includes('exhaust') ||
+    text.includes('resource_exhausted') ||
+    text.includes('quota')
+  ) {
+    return 'quota'
+  }
   if (code !== undefined && code >= 500) return 'provider_down'
   if (text.includes('unavailable') || text.includes('overloaded') || text.includes('internal')) {
     return 'provider_down'
@@ -47,20 +109,38 @@ export function classifyOpencodeError(error: unknown): ErrorClass {
   return 'unknown'
 }
 
-/** The documented permission shapes → OperationKind. */
-function operationKindOf(permission: AnyRecord): OperationKind {
-  const type = str(permission.type).toLowerCase()
-  if (type === 'command' || type === 'bash' || type === 'shell') return 'shell'
-  if (type === 'edit' || type === 'file_edit') return 'edit'
-  if (type === 'webfetch' || type === 'websearch') return 'network'
+/**
+ * The permission's real shape (`Permission.Request`: `{id, sessionID, action,
+ * resources[], source: {type:'tool', id}, …}`) → OperationKind. `action` is the
+ * rule verb (`bash`, `edit`, `read`, `webfetch`…); `source.id` names the TOOL
+ * that asked ('bash', 'edit', 'webfetch'). Both signals map, action first —
+ * the tool id disambiguates action vocabularies the recordings have not shown.
+ */
+function operationKindOf(request: AnyRecord): OperationKind {
+  const action = str(request.action).toLowerCase()
+  if (action === 'bash' || action === 'shell' || action === 'command' || action === 'exec') return 'shell'
+  if (action === 'edit' || action === 'write' || action === 'file_edit') return 'edit'
+  if (action === 'webfetch' || action === 'websearch' || action === 'fetch') return 'network'
+  const source = (request.source ?? {}) as AnyRecord
+  const tool = str(source.id).toLowerCase()
+  if (tool === 'bash' || tool === 'shell') return 'shell'
+  if (tool === 'edit' || tool === 'write') return 'edit'
+  if (tool === 'webfetch' || tool === 'websearch' || tool === 'fetch') return 'network'
   return 'other'
 }
 
-/** Google-style `details[]` → the RetryInfo delay and the QuotaFailure quotaId, when the provider sent them. */
+/** Google-style `details[]` (inside the stringified `response.body`, under `error.details`) → RetryInfo delay and QuotaFailure quotaId. */
 function retryFacts(err: AnyRecord): { retryDelay: string | undefined; quotaId: string | undefined } {
   let retryDelay: string | undefined
   let quotaId: string | undefined
-  const details = Array.isArray(err.details) ? err.details : []
+  const body = responseBody(err)
+  // Google nests everything under `error`; flat payloads stay supported.
+  const nested = (body?.error ?? {}) as AnyRecord
+  const source =
+    typeof nested.details === 'object' && nested.details !== null
+      ? { ...(body as AnyRecord), ...(nested as AnyRecord) }
+      : ((body ?? err) as AnyRecord)
+  const details = Array.isArray(source.details) ? source.details : []
   for (const entry of details) {
     if (entry === null || typeof entry !== 'object') continue
     const detail = entry as AnyRecord
@@ -74,7 +154,7 @@ function retryFacts(err: AnyRecord): { retryDelay: string | undefined; quotaId: 
       }
     }
   }
-  return { retryDelay: retryDelay ?? (str(err.retryDelay) || undefined), quotaId }
+  return { retryDelay: retryDelay ?? (str(source.retryDelay) || undefined), quotaId }
 }
 
 /** `'12s'` (Google `RetryInfo.retryDelay` format) → seconds. */
@@ -93,158 +173,266 @@ function windowFromQuotaId(quotaId: string | undefined): Window {
   return 'unknown'
 }
 
-function mapOpenCodeEvent(name: string, data: AnyRecord, now: string): EngineEventBody[] {
-  const events: EngineEventBody[] = []
-
-  if (name === 'session.created') {
-    const sessionId = str(data.sessionID) || str(data.session_id) || str(data.id)
-    if (sessionId) {
-      events.push({
-        type: 'session_started',
-        session_id: sessionId,
-        engine: 'opencode',
-        engine_version: str(data.version) || 'unknown',
-        model: str(data.model) || undefined,
-      })
-    }
-    return events
+/**
+ * The real 2.2.5 usage tokens `{input, output, reasoning, cache: {read, write}}`
+ * → the contracts' usage body. Missing readings stay undefined (unknown, never
+ * 0 — CONTRACTS §0); a `tokens` object with no reading at all yields no event.
+ */
+function usageBodiesOf(payload: AnyRecord): EngineEventBody[] {
+  const tokens = (payload.tokens ?? {}) as AnyRecord
+  const cache = (tokens.cache ?? {}) as AnyRecord
+  const input = num(tokens.input)
+  const output = num(tokens.output)
+  const cacheRead = num(cache.read)
+  const cacheWrite = num(cache.write)
+  const cost = num(payload.cost)
+  if (
+    input === undefined &&
+    output === undefined &&
+    cacheRead === undefined &&
+    cacheWrite === undefined &&
+    cost === undefined
+  ) {
+    return [] // no reading yet: unknown stays unknown, never 0 (CONTRACTS §0)
   }
-
-  if (name === 'permission.asked') {
-    const requestId = str(data.requestID) || str(data.request_id)
-    if (!requestId) return events
-    const permission = (data.permission ?? {}) as AnyRecord
-    const command = Array.isArray(permission.command) ? permission.command.map(String) : undefined
-    events.push({
-      type: 'permission_request',
-      request_id: requestId,
-      operation: {
-        kind: operationKindOf(permission),
-        summary:
-          str(permission.summary) ||
-          (command ? command.join(' ') : '') ||
-          `${str(permission.type) || 'permission'} request`,
-        command,
-        paths: Array.isArray(permission.paths) ? permission.paths.map(String) : undefined,
-        hosts: Array.isArray(permission.hosts) ? permission.hosts.map(String) : undefined,
-        tool: str(permission.tool) || undefined,
-      },
-      evidence: {
-        raw: data as Json,
-        worktree: str(data.directory) || '/unknown',
-      },
-    })
-    return events
-  }
-
-  if (name === 'permission.updated') {
-    const requestId = str(data.requestID) || str(data.request_id)
-    const native = str(data.decision) || str(data.status)
-    if (!requestId || !native) return events
-    events.push({
-      type: 'permission_result',
-      request_id: requestId,
-      decision: native === 'reject' ? 'deny' : 'allow', // once/always → allow; echo of the reply we sent
-    })
-    return events
-  }
-
-  if (name.startsWith('session.step.') || name === 'session.usage.updated') {
-    const usage = (data.usage ?? {}) as AnyRecord
-    const tokens = (data.tokens ?? usage) as AnyRecord
-    const input = num(tokens.input) ?? num(tokens.input_tokens)
-    const output = num(tokens.output) ?? num(tokens.output_tokens)
-    const cacheRead = num(tokens.cache_read) ?? num(tokens.cache_read_input_tokens)
-    const cacheWrite = num(tokens.cache_write) ?? num(tokens.cache_creation_input_tokens)
-    const cost = num(data.cost) ?? num(usage.cost)
-    if (
-      input === undefined &&
-      output === undefined &&
-      cacheRead === undefined &&
-      cacheWrite === undefined &&
-      cost === undefined
-    ) {
-      return events // no reading yet: unknown stays unknown, never 0 (CONTRACTS §0)
-    }
-    events.push({
+  return [
+    {
       type: 'usage',
       input_tokens: input ?? 0,
       output_tokens: output ?? 0,
       cache_read: cacheRead,
       cache_write: cacheWrite,
       cost_usd: cost,
+    },
+  ]
+}
+
+/** `provider.auth`-style errors → rate_limit (when quota) + error bodies. */
+function errorBodiesOf(err: AnyRecord, now: string): EngineEventBody[] {
+  const events: EngineEventBody[] = []
+  const klass = classifyOpencodeError(err)
+  if (klass === 'quota') {
+    const { retryDelay, quotaId } = retryFacts(err)
+    const delaySeconds = parseDelaySeconds(retryDelay)
+    events.push({
+      type: 'rate_limit',
+      window: windowFromQuotaId(quotaId),
+      status: 'rejected',
+      resets_at:
+        delaySeconds === undefined
+          ? 'unknown'
+          : new Date(Date.parse(now) + delaySeconds * 1000).toISOString(),
+      raw: {
+        type: str(err.type) || null,
+        status: num(err.status) ?? null,
+        quotaId: quotaId ?? null,
+        retryDelay: retryDelay ?? null,
+      },
     })
-    return events
+  }
+  events.push({
+    type: 'error',
+    class: klass,
+    detail: str(err.message) || str(err.type) || 'opencode reported an error',
+    raw: err as Json,
+  })
+  return events
+}
+
+function mapOpenCodeEvent(
+  name: string,
+  data: AnyRecord,
+  now: string,
+  toolCalls: Map<string, { name?: string; input?: unknown }>,
+): EngineEventBody[] {
+  if (name === 'session.created') {
+    const sessionId = str(data.sessionID)
+    if (sessionId) {
+      const model = (data.model ?? {}) as AnyRecord
+      const modelId = str(model.id)
+      const providerId = str(model.providerID)
+      return [
+        {
+          type: 'session_started',
+          session_id: sessionId,
+          engine: 'opencode',
+          engine_version: str(data.version) || 'unknown',
+          model: modelId ? (providerId ? `${providerId}/${modelId}` : modelId) : undefined,
+        },
+      ]
+    }
+    return []
+  }
+
+  if (name === 'session.text.ended') {
+    return [
+      {
+        type: 'message',
+        role: 'assistant',
+        text: str(data.text),
+      },
+    ]
+  }
+
+  if (name === 'session.usage.updated' || name === 'session.step.ended') {
+    return usageBodiesOf(data)
+  }
+
+  // Tool lifecycle (real 2.2.5 shapes): input.started carries the call id and
+  // tool NAME; tool.called the parsed input {command,…}; tool.success/failed the
+  // outcome (content + metadata.exit). One tool_call per call, emitted on
+  // completion — the calls map carries name/input across the three events.
+  if (name === 'session.tool.input.started') {
+    const id = str(data.id)
+    if (id !== '') toolCalls.set(id, { ...toolCalls.get(id), name: str(data.name) })
+    return []
+  }
+  if (name === 'session.tool.called') {
+    const id = str(data.id)
+    if (id !== '') toolCalls.set(id, { ...toolCalls.get(id), input: data.input })
+    return []
+  }
+  if (name === 'session.tool.success' || name === 'session.tool.failed') {
+    const id = str(data.id)
+    if (!id) return []
+    const call = toolCalls.get(id)
+    toolCalls.delete(id)
+    return [
+      {
+        type: 'tool_call',
+        tool: call?.name ?? 'unknown',
+        input: ((call?.input ?? null) as Json) ?? null,
+        output: ((data.content ?? null) as Json) ?? null,
+        ok: name === 'session.tool.success',
+      },
+    ]
+  }
+
+  if (name === 'permission.asked' || name === 'permission.updated') {
+    // `permission.asked` carries the Permission.Request; `permission.updated` is
+    // the echo of the reply we sent (once/always→allow, reject→deny).
+    const requestId = str(data.id) || str(data.requestID)
+    if (name === 'permission.updated') {
+      const native = str(data.decision) || str(data.status)
+      if (!requestId || !native) return []
+      return [
+        {
+          type: 'permission_result',
+          request_id: requestId,
+          decision: native === 'reject' ? 'deny' : 'allow',
+        },
+      ]
+    }
+    if (!requestId) return []
+    const resources = Array.isArray(data.resources) ? data.resources.map(String) : []
+    const metadata = (data.metadata ?? {}) as AnyRecord
+    const command = Array.isArray(metadata.command) ? metadata.command.map(String) : undefined
+    return [
+      {
+        type: 'permission_request',
+        request_id: requestId,
+        operation: {
+          kind: operationKindOf(data),
+          summary:
+            str(data.message) ||
+            str(metadata.summary) ||
+            (command ? command.join(' ') : '') ||
+            `${str(data.action) || 'permission'} ${resources.join(' ')}`.trim() ||
+            'permission request',
+          command,
+          paths: resources.filter((r) => r.startsWith('/')),
+          hosts: undefined,
+          tool: str(metadata.tool) || undefined,
+        },
+        evidence: {
+          raw: data as Json,
+          worktree: '/unknown',
+        },
+      },
+    ]
+  }
+
+  if (name === 'session.step.failed' || name === 'session.execution.failed') {
+    const err = (data.error ?? {}) as AnyRecord
+    return Object.keys(err).length > 0 ? errorBodiesOf(err, now) : []
   }
 
   if (name === 'error' || data.error !== undefined) {
     const err = (data.error ?? data) as AnyRecord
-    const klass = classifyOpencodeError(err)
-    if (klass === 'quota') {
-      const { retryDelay, quotaId } = retryFacts(err)
-      const delaySeconds = parseDelaySeconds(retryDelay)
-      events.push({
-        type: 'rate_limit',
-        window: windowFromQuotaId(quotaId),
-        status: 'rejected',
-        resets_at:
-          delaySeconds === undefined
-            ? 'unknown'
-            : new Date(Date.parse(now) + delaySeconds * 1000).toISOString(),
-        raw: {
-          code: num(err.code) ?? null,
-          status: str(err.status) || null,
-          quotaId: quotaId ?? null,
-          retryDelay: retryDelay ?? null,
-        },
-      })
-    }
-    events.push({
-      type: 'error',
-      class: klass,
-      detail: str(err.message) || str(err.status) || 'opencode reported an error',
-      raw: err as Json,
-    })
-    return events
+    return errorBodiesOf(err, now)
   }
 
-  return events // session.updated and friends stay in the raw stream and the journal
+  return [] // server.*, *.updated, session.inbox.*, session.reasoning.* … stay raw
 }
 
 /** Incremental form the adapter uses: push raw SSE lines, get completed bodies back. */
-export type OpenCodeEventParser = { push(line: string): EngineEventBody[] }
+export type OpenCodeEventParser = {
+  push(line: string): EngineEventBody[]
+  /** Emits the held turn-end exit, if any: the adapter calls this when its SSE stream ends. */
+  flush(): EngineEventBody[]
+}
 
 export function createOpenCodeEventParser(now: string = new Date().toISOString()): OpenCodeEventParser {
   let pendingName: string | undefined
   let sawError = false
+  const toolCalls = new Map<string, { name?: string; input?: unknown }>()
+  // The real server keeps talking AFTER the execution verdict (a final
+  // cumulative session.usage.updated, session.renamed …), while CONTRACTS §1
+  // makes exit the attempt's last event. The verdict is therefore HELD and
+  // flushed at stream end — or pre-emptively when the next turn's prompt
+  // arrives (session.inbox.enqueued), whichever comes first.
+  let pendingExit: EngineEventBody | undefined
   return {
     push(line: string): EngineEventBody[] {
       const trimmed = line.trim()
-      if (trimmed === '') return []
+      if (trimmed === '' || trimmed.startsWith(':')) return [] // heartbeats/SSE comments
       if (trimmed.startsWith('event:')) {
         pendingName = trimmed.slice('event:'.length).trim()
         return []
       }
       if (!trimmed.startsWith('data:')) return []
-      let data: AnyRecord
+      let parsed: AnyRecord
       try {
-        data = JSON.parse(trimmed.slice('data:'.length).trim()) as AnyRecord
+        parsed = JSON.parse(trimmed.slice('data:'.length).trim()) as AnyRecord
       } catch {
         return [] // a torn line is skipped; the journal owns durability
       }
-      const name = pendingName ?? str(data.type)
+      // Real 2.2.5: `{id, created, type, location, data}` — name top-level,
+      // payload nested under `data`. Tolerate a flat payload (no envelope).
+      const name = pendingName ?? str(parsed.type)
       pendingName = undefined
       if (!name) return []
-      const bodies = mapOpenCodeEvent(name, data, now)
+      const payload =
+        parsed.data !== undefined && typeof parsed.data === 'object' && parsed.data !== null
+          ? (parsed.data as AnyRecord)
+          : parsed
+      if (pendingExit !== undefined && name === 'session.inbox.enqueued') {
+        // a new turn starts: the previous turn's exit goes out first
+        const held = pendingExit
+        pendingExit = undefined
+        const bodies = mapOpenCodeEvent(name, payload, now, toolCalls)
+        return [held, ...bodies]
+      }
+      const bodies = mapOpenCodeEvent(name, payload, now, toolCalls)
       if (bodies.some((body) => body.type === 'error')) sawError = true
-      if (name === 'session.idle') {
-        bodies.push({
+      if (name === 'session.execution.succeeded') {
+        pendingExit = {
           type: 'exit',
           code: sawError ? 1 : 0,
           terminal_reason: (sawError ? 'api_error' : 'completed') as TerminalReason,
-        })
+        }
+        return bodies
+      }
+      if (name === 'session.execution.failed') {
+        pendingExit = { type: 'exit', code: 1, terminal_reason: 'api_error' as TerminalReason }
+        return bodies
       }
       return bodies
+    },
+    flush(): EngineEventBody[] {
+      const held = pendingExit
+      pendingExit = undefined
+      return held === undefined ? [] : [held]
     },
   }
 }
@@ -257,5 +445,6 @@ export function parseOpenCodeEvents(
   const parser = createOpenCodeEventParser(now)
   const events: EngineEventBody[] = []
   for (const line of rawLines) events.push(...parser.push(line))
+  events.push(...parser.flush())
   return events
 }

@@ -4,6 +4,7 @@ import type {
   Capabilities,
   EngineAdapter,
   EngineEvent,
+  EngineEventBody,
   ErrorClass,
   Input,
   LaunchSpec,
@@ -13,14 +14,22 @@ import type {
 import { classifyOpencodeError, createOpenCodeEventParser, OPENCODE_ENGINE_VERSION } from './protocol'
 
 /**
- * OpenCode V2 adapter (plan §9). One `opencode serve --hostname 127.0.0.1 --port 0 --stdio`
- * process per slot, MEC-generated `OPENCODE_PASSWORD`, HTTP Basic user `opencode`; one
- * server session per attempt. The serve process is supervised by the runtime (plan §8.1),
- * so the adapter speaks only the V2 server API: `POST /api/session`, `POST …/prompt`,
- * `POST …/interrupt`, the permission reply endpoint and the `GET /api/event` SSE stream.
- * `deps.post` and `deps.sse` are injectable — tests inject fakes, the runtime injects the
- * authenticated client for its spawned serve process; `deps.spawnFn` is the seam that
- * client will use, unused here because no test runs the real binary.
+ * OpenCode V2 adapter (plan §9, reconciled to the real 2.2.5 server — R2.2).
+ * One `opencode serve --hostname 127.0.0.1 --port 0 --stdio` process per slot,
+ * MEC-generated `OPENCODE_PASSWORD`, HTTP Basic user `opencode`; the serve
+ * process prints `{"url": "http://127.0.0.1:<port>"}` on stdout line 1 and the
+ * runtime connects to that URL; one server session per attempt. The serve
+ * process is supervised by the runtime (plan §8.1), so the adapter speaks only
+ * the V2 server API: `POST /api/session {location, agent, model}` (response
+ * enveloped as `{data: {id}}`), `POST …/prompt` (enqueues; always 200 —
+ * failures arrive as `session.*.failed` events), `POST …/interrupt`, the
+ * permission reply endpoint and the `GET /api/event` SSE stream. The location
+ * directory must exist on disk or every request fails `LocationNotFoundError`.
+ * Real agent ids on 2.2.5: `build` (default) and `plan` (read-only).
+ * `deps.post` and `deps.sse` are injectable — tests inject fakes, the runtime
+ * injects the authenticated client for its spawned serve process; `deps.spawnFn`
+ * is the seam that client will use, unused here because no test runs the real
+ * binary.
  */
 
 /** How long the bridge may hold a `permission.asked` before the adapter denies it. */
@@ -39,6 +48,12 @@ export type OpenCodeAdapterDeps = {
   sse?: OpenCodeSse
   spawnFn?: OpenCodeSpawnFn
   authList?: OpenCodeAuthList
+  /**
+   * The slot's default model `{id, providerID}` (plan §5.7 — the provider profile
+   * owns it; `session.create` without a model does NOT inherit the config-file
+   * default, verified zero-token on 2.2.5). Sent on every fresh session create.
+   */
+  defaultModel?: { id: string; providerID: string }
   /** Clock for event timestamps and bridge deadlines; injectable for deterministic tests. */
   now?: () => string
 }
@@ -57,7 +72,28 @@ const defaultAuthList: OpenCodeAuthList = async () => {
   })
 }
 
-type Launch = { handle: AttemptHandle; spec: LaunchSpec; sessionId: string }
+type Launch = {
+  handle: AttemptHandle
+  spec: LaunchSpec
+  sessionId: string
+  /**
+   * The SSE subscription started BEFORE the session was created (see launch);
+   * undefined when deps.sse is not wired. The PUMP owns parsing AND the
+   * permission round trip: 2.2.5 finding (verified live, reproducible) — a
+   * permission reply POSTed from outside the SSE read loop (a reader.read()
+   * pending in flight) leaves the turn stalled forever (204 lands, the pending
+   * list clears, execution never resumes; a 3s in-loop delay still succeeds),
+   * so the bridge call and the reply POST run between reads, inside the pump.
+   * `events()` only drains the normalised bodies.
+   */
+  stream:
+    | {
+        bodies: EngineEventBody[]
+        ended: boolean
+        wake: (() => void)[]
+      }
+    | undefined
+}
 
 export class OpenCodeAdapter implements EngineAdapter {
   private readonly launches = new Map<string, Launch>()
@@ -91,36 +127,108 @@ export class OpenCodeAdapter implements EngineAdapter {
         interrupt: true, // POST /interrupt
         resume: true, // server session id in the same data dir
         usage: true, // session.usage.updated
-        rate_limit_events: true, // 429 RESOURCE_EXHAUSTED mapping (protocol.ts)
-        sandbox: false, // no OS sandbox (plan §8.4); permissions list instead
-        restricted_mode: true, // read-only agent
+        rate_limit_events: true, // provider rate/quota error mapping (protocol.ts)
+        sandbox: false, // no OS sandbox (plan §8.4); permissions ruleset instead
+        restricted_mode: true, // the read-only `plan` agent (real id on 2.2.5)
         mcp_http: true, // mcp.servers remote entries
         usage_mode: 'cumulative',
       },
       auth:
         providers.length > 0
           ? { logged_in: true, method: providers[0], detail: providers.join(', ') }
-          : { logged_in: false, detail: 'no authenticated providers' },
+          : {
+              logged_in: false,
+              // 2.2.5 finding: `auth list` shows only integration (OAuth) logins —
+              // config-file API-key slots (the GLM/Gemini slot kinds, R2.2) show []
+              // while working; their validity check is the slot-layer zero-token
+              // provider probe (packages/slots probes / server validate route).
+              detail:
+                'no authenticated integrations (config-file API-key slots probe via the provider endpoint)',
+            },
     }
   }
 
   async launch(spec: LaunchSpec): Promise<AttemptHandle> {
+    // The V2 server emits `session.created` ON THE EVENT STREAM the moment the
+    // session is POSTed — subscribing later (at events() time) misses it. The
+    // SSE subscription therefore starts HERE and buffers into the launch;
+    // events() drains the buffer (2.2.5 finding).
+    const sseFactory = this.deps.sse
+    const stream: Launch['stream'] =
+      sseFactory === undefined ? undefined : { bodies: [], ended: false, wake: [] }
     let sessionId = spec.resume?.session_id
-    if (!sessionId) {
-      const created = (await this.post('/api/session', {
-        location: { directory: spec.cwd },
-        agent: spec.brief.isolation.read_only ? 'read-only' : 'build',
-        model: undefined, // the slot's provider profile owns the default model (plan §5.7)
-      })) as { id?: string }
-      sessionId = created.id
-    }
-    if (!sessionId) throw new Error('opencode adapter: POST /api/session returned no session id')
     const handle: AttemptHandle = {
       attempt_id: spec.brief.attempt_id,
       generation: spec.brief.generation,
-      session_id: sessionId,
+      session_id: '',
     }
-    this.launches.set(spec.brief.attempt_id, { handle, spec, sessionId })
+    if (sseFactory !== undefined && stream !== undefined) {
+      const now = this.deps.now ?? (() => new Date().toISOString())
+      const parser = createOpenCodeEventParser(now())
+      void (async () => {
+        try {
+          for await (const line of sseFactory()) {
+            for (const body of parser.push(line)) {
+              stream.bodies.push(body)
+              // The permission round trip runs INSIDE the read loop (see the
+              // Launch type's 2.2.5 finding note): bridge → reply post →
+              // synthesised permission_result (2.2.5 sends no echo event).
+              if (body.type === 'permission_request') {
+                const corrected = {
+                  ...body,
+                  evidence: { ...body.evidence, worktree: spec.brief.worktree },
+                }
+                stream.bodies[stream.bodies.length - 1] = corrected
+                const decision = await spec.bridge.request(
+                  { attempt_id: spec.brief.attempt_id, generation: spec.brief.generation },
+                  corrected.operation,
+                  corrected.evidence,
+                  new Date(Date.parse(now()) + OPENCODE_PERMISSION_DEADLINE_MS).toISOString(),
+                )
+                // allow answers once (never `always`: each approval binds one operation, plan §13)
+                await this.post(`/api/session/${sessionId}/permission/${body.request_id}/reply`, {
+                  decision: decision === 'allow' ? 'once' : 'reject',
+                })
+                stream.bodies.push({
+                  type: 'permission_result',
+                  request_id: body.request_id,
+                  decision,
+                })
+              }
+            }
+          }
+        } catch {
+          // a dead stream ends the attempt; the runtime's crash rule applies
+        } finally {
+          for (const flush of parser.flush()) stream.bodies.push(flush)
+          stream.ended = true
+          for (const wake of stream.wake.splice(0)) wake()
+        }
+      })()
+    }
+    if (!sessionId) {
+      // §8.4: bridge mode routes shell to `ask` so every command outside the
+      // bootstrap/check profiles surfaces as a permission request; `none` keeps
+      // the agent's own defaults (the `plan` agent is read-only anyway).
+      const permissions =
+        spec.brief.isolation.permission_mode === 'bridge'
+          ? [{ action: 'bash', resource: '*', effect: 'ask' }]
+          : undefined
+      const created = (await this.post('/api/session', {
+        location: { directory: spec.cwd },
+        // Real 2.2.5 agent ids: `plan` is the read-only agent; `build` the default.
+        agent: spec.brief.isolation.read_only ? 'plan' : 'build',
+        // `{id, providerID}` from the slot's provider profile (plan §5.7) —
+        // `session.create` without a model does not fall back to the config-file
+        // default (verified zero-token on 2.2.5).
+        model: this.deps.defaultModel,
+        permissions,
+      })) as { data?: { id?: string }; id?: string }
+      sessionId = created.data?.id ?? created.id // the response is enveloped: {data: {id}}
+    }
+    if (!sessionId) throw new Error('opencode adapter: POST /api/session returned no session id')
+    handle.session_id = sessionId
+    this.launches.set(spec.brief.attempt_id, { handle, spec, sessionId, stream })
     return handle
   }
 
@@ -141,45 +249,26 @@ export class OpenCodeAdapter implements EngineAdapter {
 
   async *events(handle: AttemptHandle): AsyncIterable<EngineEvent> {
     const launch = this.requireLaunch(handle)
-    if (!this.deps.sse) throw new Error('opencode adapter: deps.sse is not wired to the serve process')
+    const stream = launch.stream
+    if (stream === undefined) {
+      throw new Error('opencode adapter: deps.sse is not wired to the serve process')
+    }
     const now = this.deps.now ?? (() => new Date().toISOString())
-    const parser = createOpenCodeEventParser(now())
     let seq = 1
-    for await (const line of this.deps.sse()) {
-      for (const body of parser.push(line)) {
-        if (body.type === 'permission_request') {
-          // The worktree is ours to state, not the engine session's claim.
-          const corrected = {
-            ...body,
-            evidence: { ...body.evidence, worktree: launch.spec.brief.worktree },
-          }
-          yield {
-            ...corrected,
-            seq: seq++,
-            at: now(),
-            attempt_id: handle.attempt_id,
-            generation: handle.generation,
-          }
-          const decision = await launch.spec.bridge.request(
-            { attempt_id: handle.attempt_id, generation: handle.generation },
-            corrected.operation,
-            corrected.evidence,
-            new Date(Date.parse(now()) + OPENCODE_PERMISSION_DEADLINE_MS).toISOString(),
-          )
-          // allow answers once (never `always`: each approval binds one operation, plan §13)
-          const native = decision === 'allow' ? 'once' : 'reject'
-          await this.post(`/api/session/${launch.sessionId}/permission/${body.request_id}/reply`, {
-            decision: native,
-          })
-        } else {
-          yield {
-            ...body,
-            seq: seq++,
-            at: now(),
-            attempt_id: handle.attempt_id,
-            generation: handle.generation,
-          }
-        }
+    // The pump (launch) already parsed every line and ran the permission round
+    // trip inside the read loop; this only wraps the buffered bodies.
+    for (;;) {
+      while (stream.bodies.length === 0 && !stream.ended) {
+        await new Promise<void>((resolve) => stream.wake.push(resolve))
+      }
+      if (stream.bodies.length === 0) break // ended and drained
+      const body = stream.bodies.shift() as EngineEventBody
+      yield {
+        ...body,
+        seq: seq++,
+        at: now(),
+        attempt_id: handle.attempt_id,
+        generation: handle.generation,
       }
     }
   }

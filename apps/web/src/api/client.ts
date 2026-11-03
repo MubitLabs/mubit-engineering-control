@@ -16,6 +16,15 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
     headers: body === undefined ? {} : { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
+  // An expired session mid-use: go to sign-in and come back here, instead of failing silently.
+  if (
+    res.status === 401 &&
+    url !== '/api/me' &&
+    !url.startsWith('/auth/') &&
+    location.pathname !== '/login'
+  ) {
+    location.assign(`/login?next=${encodeURIComponent(location.pathname + location.search)}`)
+  }
   const text = await res.text()
   const json = text ? JSON.parse(text) : null
   if (!res.ok) {

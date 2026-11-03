@@ -85,7 +85,7 @@ export function ProjectPage() {
                 <tbody>
                   {deliveries.data?.deliveries.map((d) => (
                     <tr key={d.id}>
-                      <td>
+                      <td style={{ minWidth: 180 }}>
                         <Link to={`/projects/${projectId}/deliveries/${d.id}`}>{d.title}</Link>
                       </td>
                       <td>

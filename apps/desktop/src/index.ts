@@ -1,4 +1,5 @@
 export { backup, type ExcludedKind, exclusionKindFor, scanForCredentialFiles } from './backup'
+export { type RunningServer, startServer } from './composition'
 export { buildDoctorReport, type DoctorIo, defaultVersionRunner } from './doctor'
 export {
   type HealthSnapshot,
@@ -10,6 +11,8 @@ export {
 export { type CliIo, runCli } from './mec'
 export { restore, runRestoreDrill } from './restore'
 export { DEFAULT_RULES, eligibility, planRetention, type RetentionRule } from './retention'
+export { serveMain } from './serve'
+export { buildHealthSnapshot, buildServer, type ServerDeps } from './server'
 export { formatStatus, type StatusCode, type StatusResult, statusFromSnapshot } from './status'
 export {
   clearStopMarker,

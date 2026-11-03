@@ -2,7 +2,7 @@ import type { CheckCommand } from '@mec/contracts'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { api } from '../../api/client'
+import { api, errorMessage } from '../../api/client'
 import { useProjectEvents } from '../../api/events'
 import type { Delivery, Member, Project, ProjectRole, Repository, StoredEvent } from '../../api/types'
 import { useTitle } from '../../components/Layout'
@@ -525,6 +525,7 @@ function PauseButton({ projectId, paused }: { projectId: string; paused: boolean
       }
     >
       {paused ? 'Resume dispatch' : 'Pause dispatch'}
+      {toggle.isError && <span className="faint"> · failed: {errorMessage(toggle.error)}</span>}
     </button>
   )
 }

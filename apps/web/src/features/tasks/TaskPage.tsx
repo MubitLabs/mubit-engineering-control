@@ -136,8 +136,8 @@ export function TaskPage() {
               </div>
             </div>
           </Panel>
-          {canPrompt && task.state === 'ready' && <StartAttempt taskId={task.id} />}
-          {canPrompt && task.state === 'failed' && <RetryTask taskId={task.id} />}
+          {canPrompt && task.state === 'ready' && task.kind === 'work' && <StartAttempt taskId={task.id} />}
+          {canPrompt && task.state === 'failed' && task.kind === 'work' && <RetryTask taskId={task.id} />}
           {attempts.length > 0 && (
             <Panel title="Attempts" flush>
               <table className="table">

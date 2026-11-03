@@ -365,6 +365,14 @@ export async function applyLifecycle(
 }
 
 /** Task consequences of an attempt reaching a terminal or parked state. */
+/** Whether a coordinator run's revision left draft, i.e. a valid graph was submitted for approval. */
+async function proposedGraph(tx: Tx, taskId: string): Promise<boolean> {
+  const [row] = await tx<{ state: string }[]>`
+    select r.state from tasks t join plan_revisions r on r.id = t.plan_revision_id where t.id = ${taskId}
+  `
+  return !!row && row.state !== 'draft'
+}
+
 export async function followTask(tx: Tx, attempt: AttemptRow, to: AttemptState): Promise<void> {
   const [task] = await tx<TaskRow[]>`select * from tasks where id = ${attempt.taskId} for update`
   if (task?.state !== 'active') return
@@ -377,6 +385,25 @@ export async function followTask(tx: Tx, attempt: AttemptRow, to: AttemptState):
   }
   if (task.kind !== 'work') {
     // A coordinator run is reviewed through the plan approval, not as a task result.
+    if (to === 'succeeded' && task.kind === 'planning' && !(await proposedGraph(tx, task.id))) {
+      await transition(tx, {
+        table: 'tasks',
+        machine: taskMachine,
+        id: task.id,
+        from: 'active',
+        event: 'attempt_failed_final',
+        set: {
+          blocker: tx.json({
+            kind: 'decision',
+            detail:
+              'The coordinator finished without proposing a valid task graph; run it again or write the tasks yourself',
+            refs: [],
+          } as never),
+        },
+        ...ctx,
+      })
+      return
+    }
     if (to === 'succeeded') {
       await transition(tx, {
         table: 'tasks',

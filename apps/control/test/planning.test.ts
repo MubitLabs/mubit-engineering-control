@@ -136,6 +136,15 @@ describe('coordinator', () => {
     expect(planning).toMatchObject({ key: 'mec-plan-1', state: 'accepted' })
   })
 
+  it('marks a coordinator run that proposed nothing as failed, with the reason', async () => {
+    const delivery = await newDelivery()
+    await coordinate(delivery.id, [{ say: 'I looked around but will not propose anything.' }])
+    const detail = (await s.admin.get(`/api/deliveries/${delivery.id}`)).json()
+    const planning = detail.tasks.find((x: { kind: string }) => x.kind === 'planning')
+    expect(planning.state).toBe('failed')
+    expect(planning.blocker.detail).toMatch(/without proposing a valid task graph/)
+  })
+
   it('stops after a bounded number of invalid proposals', async () => {
     const delivery = await newDelivery()
     const steps = Array.from({ length: 5 }, () => ({ call: 'propose_tasks', params: cyclicGraph }))

@@ -29,7 +29,7 @@ Every row of plan §26, what proves it today, and what remains. Written 3 Nov (s
 | Sandbox profile | isolation settings builder + macOS Seatbelt implicit | Linux sandbox dependency check in `mec doctor` |
 | Shims and gitconfig | shims manifest/tamper/foreign-file tests | — |
 | Platform-tool fencing | mec-tools stale generation → empty set; specialist cannot call `propose_plan` | — |
-| Compliance guard | slots `scanSourceForViolations` + tests | run the scan over our own `src/` as a CI test |
+| Compliance guard | slots `scanSourceForViolations` + tests + **self-scan over the product source in CI** (compliance-self.test.ts) | — |
 | Capability drift | probe `flags_verified` from `--help` | drift → `engine_unsupported` degradation wiring |
 | Secrets in chat | — | server redact-before-durability + Slots pointer reply |
 | Acknowledgement | acks: one per message id, first-text-final | — |

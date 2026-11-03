@@ -436,6 +436,56 @@ label.field {
   padding: 28px;
 }
 
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline dotted var(--faint);
+  text-underline-offset: 3px;
+}
+.linklike:hover {
+  color: var(--accent);
+}
+.diff {
+  margin: 0;
+  max-height: 600px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.45;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 0;
+}
+.diff > div {
+  padding: 0 10px;
+  white-space: pre;
+}
+.diff .add {
+  color: var(--ok);
+  background: rgba(70, 183, 91, 0.08);
+}
+.diff .del {
+  color: var(--err);
+  background: rgba(239, 91, 84, 0.08);
+}
+.diff .hunk {
+  color: var(--info);
+}
+.diff .meta {
+  color: var(--faint);
+}
+.diff .file {
+  color: var(--text);
+  font-weight: 600;
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
 /* ── Narrow screens: answering decisions from a phone ───────────────────── */
 @media (max-width: 760px) {
   .shell {

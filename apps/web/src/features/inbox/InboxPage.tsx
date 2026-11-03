@@ -51,7 +51,7 @@ export function InboxPage() {
   )
 }
 
-export function DecisionCard({ approval }: { approval: Approval }) {
+export function DecisionCard({ approval, onTaskPage = false }: { approval: Approval; onTaskPage?: boolean }) {
   const qc = useQueryClient()
   const [answer, setAnswer] = useState('')
   const [reason, setReason] = useState('')
@@ -170,7 +170,18 @@ export function DecisionCard({ approval }: { approval: Approval }) {
             {approval.taskId && (
               <>
                 {' '}
-                · <Link to={`/projects/${approval.projectId}/tasks/${approval.taskId}`}>open the diff</Link>
+                ·{' '}
+                {onTaskPage ? (
+                  <button
+                    type="button"
+                    className="linklike"
+                    onClick={() => document.getElementById('attempt')?.scrollIntoView({ behavior: 'smooth' })}
+                  >
+                    see the diff below
+                  </button>
+                ) : (
+                  <Link to={`/projects/${approval.projectId}/tasks/${approval.taskId}`}>open the diff</Link>
+                )}
               </>
             )}
           </div>

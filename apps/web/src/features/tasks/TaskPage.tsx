@@ -87,10 +87,12 @@ export function TaskPage() {
       <div className="grid-2">
         <div className="stack">
           {pending.map((a) => (
-            <DecisionCard key={a.id} approval={a} />
+            <DecisionCard key={a.id} approval={a} onTaskPage />
           ))}
           {attempt ? (
-            <AttemptPanel attempt={attempt} canPrompt={canPrompt} />
+            <div id="attempt">
+              <AttemptPanel attempt={attempt} canPrompt={canPrompt} />
+            </div>
           ) : (
             <Panel title="Attempts">
               <Empty>

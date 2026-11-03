@@ -57,3 +57,15 @@ Real bugs the run caught in the release module (all fixed, unit tests green): `g
 Real product bug found and fixed (`packages/git` commitAll): `git add --all` staged the worktree's `.mec/` control directory into task commits (H3 pushed it to GitHub; f9af3a6 retains the dead attempt token in history — private repo, token dead, removal noted in 819f617, history rewrite not warranted). The seam now pathspec-excludes `.mec/` in both status and add — a tree whose only changes are attempt artifacts is CLEAN to it. Regression test included.
 
 H4 quota: ~4 Claude implementer turns + 5 Codex review turns (vendor-accounted, cents).
+
+## R2.3 — cross-engine pairs complete (the inverted pair) — 3 November 2026
+
+**PASSED** — PR [#4](https://github.com/MubitLabs/mec-sandbox/pull/4) merged GitHub-confirmed 22:27:36Z, main `7c533cc`. With H4 this closes R2.3's pair evidence in BOTH directions:
+
+- **Codex implementer** (slot `codex-1`, workspace-write sandbox, bridge allow) wrote the exclaim feature on base `a99d2b1`; `npm-test` passed on head `e06be12`.
+- **Claude reviewer** (slot `preflight-a`, read-only): **LGTM**, request + diff delivered in the objective (first attempt hit max_turns hunting for context the prompt never carried — reviewer briefs must be self-contained; recorded).
+- Cards opened/settled through the real store under DECISIONS #8; merge GitHub-confirmed.
+- **The commitAll `.mec` exclusion held in production**: the merged commit touches `exclaim.js`/`exclaim.test.js` only — the leak class H3 shipped and H4's reviewer caught is closed for real runs.
+- Transient lesson: a superseded check-run reports `CANCELLED` between check-suite updates; `mergeBehindCard` correctly refuses any non-green read — the retry with a fresh card merged cleanly. (Possible follow-up: treat CANCELLED-when-a-successor-exists as non-blocking.)
+
+Quota: ~3 Codex turns + 2 Claude review turns.

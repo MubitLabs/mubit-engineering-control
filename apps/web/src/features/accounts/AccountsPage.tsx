@@ -160,7 +160,11 @@ export function AccountsPage() {
         <ErrorBox error={revoke.error} />
       </Panel>
       {mine.length > 0 ? (
-        <CreateProfile runners={mine} projects={projects.data?.projects ?? []} />
+        <CreateProfile
+          key={projects.data ? 'projects' : 'loading'}
+          runners={mine}
+          projects={projects.data?.projects ?? []}
+        />
       ) : (
         <Panel>
           <div className="muted">
@@ -179,20 +183,26 @@ function CreateProfile({ runners, projects }: { runners: RunnerView[]; projects:
   const agents = runner?.agents.filter((a) => a.available) ?? []
   const [agentKind, setAgentKind] = useState('')
   const [label, setLabel] = useState('')
-  const [grants, setGrants] = useState<Grants>({ allowed: [], delegates: '', maxActive: 1 })
+  const initialGrants = (): Grants => ({
+    allowed: projects.length === 1 ? [projects[0]!.id] : [],
+    delegates: '',
+    maxActive: 1,
+  })
+  const [grants, setGrants] = useState<Grants>(initialGrants)
   const kind = agentKind || agents[0]?.kind || ''
   const agent = agents.find((a) => a.kind === kind)
+  const defaultLabel = `${kind === 'claude-code' ? 'Claude Code' : kind} on ${runner?.name ?? 'runner'}`
   const create = useMutation({
     mutationFn: () =>
       api.post('/api/profiles', {
         runnerId,
         agentKind: kind,
-        label,
+        label: label.trim() || defaultLabel,
         ...grantBody(grants),
       }),
     onSuccess: () => {
       setLabel('')
-      setGrants({ allowed: [], delegates: '', maxActive: 1 })
+      setGrants(initialGrants())
       qc.invalidateQueries({ queryKey: ['setup'] })
       qc.invalidateQueries({ queryKey: ['profiles'] })
     },
@@ -229,11 +239,7 @@ function CreateProfile({ runners, projects }: { runners: RunnerView[]; projects:
           </label>
           <label className="field" style={{ flex: 1 }}>
             Label
-            <input
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="my Claude subscription"
-            />
+            <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={defaultLabel} />
           </label>
         </div>
         {agent && agent.auth !== 'ok' && (
@@ -246,7 +252,7 @@ function CreateProfile({ runners, projects }: { runners: RunnerView[]; projects:
         <GrantFields grants={grants} onChange={setGrants} projects={projects} />
         <ErrorBox error={create.error} />
         <div>
-          <button type="submit" className="btn primary" disabled={!label || !kind || create.isPending}>
+          <button type="submit" className="btn primary" disabled={!kind || create.isPending}>
             Create profile
           </button>
         </div>

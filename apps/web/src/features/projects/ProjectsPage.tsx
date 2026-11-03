@@ -71,7 +71,21 @@ function SetupChecklist({ isAdmin }: { isAdmin: boolean }) {
       done: steps.project,
       title: 'Create a project',
       detail: 'A project groups repositories, people and deliveries.',
-      action: isAdmin ? <a href="#new-project">New project</a> : 'Ask a project owner to add you.',
+      action: isAdmin ? (
+        <button
+          type="button"
+          className="linklike"
+          onClick={() => {
+            const input = document.querySelector<HTMLInputElement>('#new-project input')
+            input?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            input?.focus({ preventScroll: true })
+          }}
+        >
+          New project
+        </button>
+      ) : (
+        'Ask a project owner to add you.'
+      ),
     },
     {
       done: steps.repository,

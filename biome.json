@@ -13,7 +13,7 @@
       "!**/*.pdf",
       "!**/*.md",
       "!**/fixtures",
-      "!docs/design/prototype/**",
+      "!docs/design/prototype",
       "!docs/design/prototype",
       "!packages/prompts/defaults"
     ]

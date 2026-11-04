@@ -1603,7 +1603,6 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       })),
   )
 
-
   // ─── T1 model routes (review 2026-11-04 §3 + §6.2 — GET/PUT /api/models) ────────
   // ONE additive block, deliberately self-contained: every import it needs is made
   // here, dynamically, so nothing above this comment moves. Route blocks from other
@@ -1661,11 +1660,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       // OpenCode slot only serves its own provider's block (§3), so only that
       // block's entries are marked for it.
       const entryTable = loaded.table.engines[engine]
-const providerKeyOf = (provider: string | undefined): string | undefined => {
+      const providerKeyOf = (provider: string | undefined): string | undefined => {
         if (provider !== 'zai-coding-plan' && provider !== 'google') return undefined
         return provider in (loaded.table.engines.opencode?.providers ?? {}) ? provider : undefined
       }
-            const models: Record<string, string> = {}
+      const models: Record<string, string> = {}
       if (engine === 'opencode') {
         const providerKey = providerKeyOf(slot.provider)
         const block = providerKey !== undefined ? entryTable.providers?.[providerKey] : undefined
@@ -1740,7 +1739,7 @@ const providerKeyOf = (provider: string | undefined): string | undefined => {
     return { provenance: { source: 'user', path: modelsPath, sha256 } }
   })
 
-    // ─── T4 prompt routes (review 2026-11-04 §6.2 · plan §16) ───────────────────────
+  // ─── T4 prompt routes (review 2026-11-04 §6.2 · plan §16) ───────────────────────
   // The editable prompt surface: shipped defaults, overrides with provenance, immutable
   // revisions, stale-base refusal, preview and Default-updated diffs — one contiguous block;
   // other route work appends below it. The store is rooted at <keystoreRoot>/prompts, so
@@ -1852,7 +1851,7 @@ const providerKeyOf = (provider: string | undefined): string | undefined => {
   // on the next save.
   app.get('/api/prompts/changes', async () => ({ changes: prompts.changes() }))
 
-if (existsSync(WEB_DIST)) {
+  if (existsSync(WEB_DIST)) {
     app.setNotFoundHandler((request, reply) => {
       if (request.method !== 'GET' && request.method !== 'HEAD') {
         reply.code(404).send({ error: 'not found' })

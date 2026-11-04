@@ -13,7 +13,9 @@ import type { LaunchSpec, Store } from '@mec/contracts'
 import { BridgeImpl, MecToolsServer } from '@mec/mec-tools'
 import { fakeBrain, MetaAgentService, RealClaudeBrain } from '@mec/meta'
 import { loadPolicy } from '@mec/policy'
+import { loadModelsTable } from '@mec/prompts'
 import { parkFromEvents } from '@mec/runtime'
+import { probeModelAvailabilitySync } from '@mec/slots'
 import type { EffectHandler, HealthClaim, Json } from '@mec/store'
 import { DirLock, HealthBoardImpl, MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import { FakeEngine } from '@mec/testkit'
@@ -180,6 +182,39 @@ export async function startServer(opts: {
         metaAgent: new MetaAgentService({
           store,
           effects: store.effects,
+          // Issue #14: the planner's capability-table supplier — without it the service
+          // falls back to an EMPTY table, every tier is unplaceable, every plan rejected.
+          modelsTable: () => {
+            try {
+              const loaded = loadModelsTable()
+              return {
+                table: loaded.table,
+                provenance: {
+                  sha256: loaded.provenance.sha256,
+                  origin: loaded.provenance.source,
+                },
+              }
+            } catch {
+              return undefined
+            }
+          },
+          // Issue #14, seam two: per-turn availability marks — the config-declared probe
+          // for opencode slots (the slot's own opencode.json), honestly unlisted elsewhere.
+          marks: () => {
+            const out: Record<string, Record<string, 'available' | 'unavailable' | 'unlisted'>> = {}
+            for (const slot of store.slots.list()) {
+              if (slot.engine !== 'opencode' || typeof slot.home !== 'string') continue
+              try {
+                const report = probeModelAvailabilitySync('opencode', {
+                  configDir: join(slot.home, 'config'),
+                })
+                out[String(slot.id)] = report.availability
+              } catch {
+                // a slot whose config cannot be read is honestly unlisted (empty marks)
+              }
+            }
+            return out
+          },
           brain: new RealClaudeBrain({
             slotDir: metaSlotDir,
             toolsSecret: randomBytes(24).toString('hex'),

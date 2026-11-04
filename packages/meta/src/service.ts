@@ -177,7 +177,7 @@ export class MetaAgentService {
   readonly #caps: Caps
   readonly #now: () => string
   readonly #policyText: string
-  readonly #marks?: Record<string, Record<string, import('@mec/domain').ModelAvailability>>
+  readonly #marks?: () => Record<string, Record<string, import('@mec/domain').ModelAvailability>>
   readonly #modelsTable?: () => ModelsTableSource | undefined
   readonly #acks = new Acknowledger()
   readonly #escalation = new EscalationCounter()
@@ -190,8 +190,8 @@ export class MetaAgentService {
     now?: () => string
     /** The executable policy text (§13); the empty-authorisation document when absent. */
     policyText?: string
-    /** Probe marks per slot (T1's surface); absent marks are honestly unlisted. */
-    marks?: Record<string, Record<string, import('@mec/domain').ModelAvailability>>
+    /** Probe marks per slot, supplied per turn (slots appear after boot); absent → honestly unlisted. */
+    marks?: () => Record<string, Record<string, import('@mec/domain').ModelAvailability>>
     /** The capability-table seam (T1's loader); absent means the planner is told so honestly. */
     modelsTable?: () => ModelsTableSource | undefined
   }) {
@@ -277,7 +277,7 @@ export class MetaAgentService {
       }),
       caps: this.#caps,
       table,
-      slots: slotViewsFromStore(this.#store, this.#marks),
+      slots: slotViewsFromStore(this.#store, this.#marks?.()),
       frontierPreAuthorised:
         (loadPolicy(this.#policyText).preAuthorised as Record<string, unknown>).frontier_model !== undefined,
       now: () => new Date(this.#now()),
@@ -298,7 +298,7 @@ export class MetaAgentService {
       },
       policyText: this.#policyText,
       caps: this.#caps,
-      ...(this.#marks !== undefined && { marks: this.#marks }),
+      ...(this.#marks !== undefined && { marks: this.#marks() }),
       ...(this.#modelsTable !== undefined && { modelsTable: this.#modelsTable }),
     })
   }
@@ -719,9 +719,22 @@ export class MetaAgentService {
           slotId: String(doc.slotId),
           workItemId: String(doc.workItemId),
         }))
+      // Issue #14: the REAL healthy slots feed the dispatch (the fake shim stays for
+      // MEC_FAKE_ENGINE). Degraded slots never place; usage is honest-unknown when absent.
+      const slotViews = slotViewsFromStore(this.#store, this.#marks?.())
+      const healthySlots: SlotView[] =
+        process.env.MEC_FAKE_ENGINE === '1'
+          ? [FAKE_SLOT]
+          : slotViews.map((view) => ({
+              id: view.slotId,
+              state: (view.healthy ? 'healthy' : 'degraded') as 'healthy' | 'degraded',
+              pinnedRoles: [] as string[],
+              inUse: 0,
+              concurrency: 1,
+            }))
       const dispatch = planDispatches({
         ready,
-        slots: process.env.MEC_FAKE_ENGINE === '1' ? [FAKE_SLOT] : [],
+        slots: healthySlots,
         active,
         caps: this.#caps,
         utilisationCeiling: UTILISATION_CEILING,

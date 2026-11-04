@@ -31,5 +31,6 @@
       "esbuild",
       "node-pty"
     ]
-  }
+  },
+  "version": "0.2.1"
 }

@@ -107,11 +107,9 @@ const SETTINGS_REPOSITORIES_ID = 'settings/repositories'
  *  Two layouts: the repo (`apps/web/dist` beside the source) and the artifact, where the
  *  UI ships inside the bundle's own `dist/web` (review 2026-11-04 §2.1) — the bundle-aware
  *  path wins when it exists. */
-const WEB_DIST_CANDIDATES = [
-  fileURLToPath(new URL('../dist/web', import.meta.url)),
-  fileURLToPath(new URL('../../web/dist', import.meta.url)),
-]
-const WEB_DIST = WEB_DIST_CANDIDATES.find((dir) => existsSync(dir)) ?? WEB_DIST_CANDIDATES[1]
+const BUNDLE_WEB_DIST = fileURLToPath(new URL('../dist/web', import.meta.url))
+const REPO_WEB_DIST = fileURLToPath(new URL('../../web/dist', import.meta.url))
+const WEB_DIST: string = existsSync(BUNDLE_WEB_DIST) ? BUNDLE_WEB_DIST : REPO_WEB_DIST
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { HealthBoard, HealthClaim, HealthName, Store, StoreDoc } from '@mec/contracts'
@@ -87,7 +87,7 @@ const SLOT_GLM = {
   engine: 'opencode',
   kind: 'opencode-glm',
   provider: 'zai-coding-plan',
-  home: '/tmp/mec-slot-homes/opencode/glm-1',
+  home: join(mkdtempSync(join(tmpdir(), 'mec-glm-home-')), 'slot'),
   state: 'healthy',
   createdAt: AT,
   updatedAt: AT,
@@ -111,20 +111,16 @@ describe('GET /api/models', () => {
     expect(body.availability).toEqual([]) // no slots: nothing to probe
   })
 
-  it('marks table entries per slot: opencode probed via probeCmd, claude honestly unlisted', async () => {
-    const probeCalls: Array<{ cmd: string; args: readonly string[]; env?: NodeJS.ProcessEnv }> = []
-    const probeCmd: ProbeCmd = async (cmd, args, opts) => {
-      probeCalls.push({ cmd, args, env: opts?.env })
-      if (cmd === 'opencode' && args[0] === 'models') {
-        return {
-          code: 0,
-          stdout: '[{"providerID":"zai-coding-plan","id":"glm-5.3"}]',
-          stderr: '',
-        }
-      }
-      return { code: 0, stdout: '', stderr: '' }
-    }
-    const { app, store, probeCalls: _ } = makeServer({ probeCmd })
+  it('marks table entries per slot: opencode config-declared, claude honestly unlisted', async () => {
+    // Config-declared availability (T8): the probe reads the slot's own opencode.json —
+    // glm-5.3 is declared; the flash variant is absent from the config, hence unlisted.
+    const configDir = join(SLOT_GLM.home, 'config')
+    mkdirSync(join(configDir, 'opencode'), { recursive: true })
+    writeFileSync(
+      join(configDir, 'opencode', 'opencode.json'),
+      JSON.stringify({ provider: { 'zai-coding-plan': { models: { 'glm-5.3': { name: 'GLM 5.3' } } } } }),
+    )
+    const { app, store } = makeServer({})
     store.slots.save(SLOT_GLM as unknown as StoreDoc)
     store.slots.save({
       id: 'slot_max1',
@@ -147,8 +143,11 @@ describe('GET /api/models', () => {
     expect(glm?.provider).toBe('zai-coding-plan')
     expect(glm?.models).toEqual({
       'zai-coding-plan/glm-5.3': 'available',
+      // the slot WAS probed (config-declared) and flash is absent from its config —
+      // unavailable ON THIS SLOT, which is the placement-relevant mark.
       'zai-coding-plan/glm-5.3-flash': 'unavailable',
     })
+    expect(glm?.note).toContain('config-declared')
     const claude = body.availability.find((entry) => entry.slotId === 'slot_max1')
     expect(claude?.models).toEqual({
       haiku: 'unlisted',
@@ -156,17 +155,8 @@ describe('GET /api/models', () => {
       opus: 'unlisted',
       fable: 'unlisted',
     })
-    // the probe ran argv-only, under the slot's own XDG isolation (process.env rides
-    // along underneath so execFile does not strip PATH)
-    expect(probeCalls).toHaveLength(1)
-    expect(probeCalls[0]).toMatchObject({ cmd: 'opencode', args: ['models'] })
-    expect(probeCalls[0]!.env).toMatchObject({
-      XDG_DATA_HOME: '/tmp/mec-slot-homes/opencode/glm-1/data',
-      XDG_CONFIG_HOME: '/tmp/mec-slot-homes/opencode/glm-1/config',
-      XDG_STATE_HOME: '/tmp/mec-slot-homes/opencode/glm-1/state',
-      XDG_CACHE_HOME: '/tmp/mec-slot-homes/opencode/glm-1/cache',
-      OPENCODE_CONFIG_DIR: '/tmp/mec-slot-homes/opencode/glm-1/config',
-    })
+    // (The config-declared probe spawns nothing — isolation is the slot's config path,
+    // proven by the marks above; there is no argv to assert.)
   })
 
   it('a broken user table is a loud 500 with the parse detail, never a quiet default', async () => {

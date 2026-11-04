@@ -100,7 +100,7 @@ function parseOffered(stdout: string): string[] | undefined {
  * `unlisted` — their acceptance probing is gated future work, not a guess here.
  */
 export async function probeModelAvailability(
-  run: ProbeRun,
+  _run: ProbeRun,
   engine: EngineId,
   opts: { env?: Record<string, string>; configDir?: string } = {},
 ): Promise<ModelProbeReport> {

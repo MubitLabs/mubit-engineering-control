@@ -68,10 +68,12 @@ describe('defaultVersionRunner', () => {
 
 describe('buildDoctorJson (the --json bundle)', () => {
   it('emits the same facts machine-readably, redacted, with an ok flag', async () => {
-    const run = async (cmd: string) =>
-      cmd === 'claude' ? { stdout: '2.1.317 (Claude Code)\n' } : null
+    const run = async (cmd: string) => (cmd === 'claude' ? { stdout: '2.1.317 (Claude Code)\n' } : null)
     const bundle = await buildDoctorJson({
-      env: { PATH: '/usr/bin', ANTHROPIC_API_KEY: 'sk-ant-test-fixture-000000000000abcd' } as unknown as NodeJS.ProcessEnv,
+      env: {
+        PATH: '/usr/bin',
+        ANTHROPIC_API_KEY: 'sk-ant-test-fixture-000000000000abcd',
+      } as unknown as NodeJS.ProcessEnv,
       run,
       snapshotText: 'present',
     })

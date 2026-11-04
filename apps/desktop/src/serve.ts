@@ -19,11 +19,11 @@ function setupComplete(dataDir: string): boolean {
   try {
     const db = new Database(join(dataDir, 'mec.db'), { readonly: true })
     try {
-      const row = db.prepare("SELECT json FROM docs WHERE id = ?").get('settings/repositories') as
+      const row = db.prepare('SELECT json FROM docs WHERE id = ?').get('settings/repositories') as
         | { json: string }
         | undefined
       const repoDoc = row === undefined ? undefined : (JSON.parse(row.json) as { repositories?: unknown })
-      const slotRow = db.prepare("SELECT json FROM docs WHERE id = ?").get('settings/meta-slot') as
+      const slotRow = db.prepare('SELECT json FROM docs WHERE id = ?').get('settings/meta-slot') as
         | { json: string }
         | undefined
       const slotDoc = slotRow === undefined ? undefined : (JSON.parse(slotRow.json) as { slotId?: unknown })

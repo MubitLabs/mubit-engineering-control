@@ -8,7 +8,7 @@ name: release
 # commented out — uncomment only after the owner records the decision.
 on:
   push:
-    tags: ['v*']
+    tags: ["v*"]
 
 permissions:
   contents: write

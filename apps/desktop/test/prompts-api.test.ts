@@ -56,11 +56,20 @@ function track(server: ReturnType<typeof buildServer>): ReturnType<typeof buildS
 }
 
 describe('T4 prompt routes', () => {
-  it('GET /api/prompts answers the empty config at revision 0', async () => {
+  it('GET /api/prompts answers the full catalogue at revision 0 with no edits', async () => {
     const { app } = makeServer()
     const res = await track(app).inject({ method: 'GET', url: '/api/prompts' })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ revision: 0, parts: [] })
+    const body = res.json() as {
+      revision: number
+      parts: Array<{ id: string; edited: boolean; defaultUpdated: boolean }>
+      overrides: unknown[]
+    }
+    expect(body.revision).toBe(0)
+    expect(body.overrides).toEqual([])
+    expect(body.parts.length).toBeGreaterThan(20)
+    expect(body.parts.every((part) => !part.edited && !part.defaultUpdated)).toBe(true)
+    expect(body.parts.some((part) => part.id === 'roles/meta_agent/protocol.md')).toBe(true)
   })
 
   it('GET /api/prompts/defaults lists the 21 shipped markdown parts, models.yaml excluded', async () => {
@@ -98,9 +107,13 @@ describe('T4 prompt routes', () => {
 
     const config = await app.inject({ method: 'GET', url: '/api/prompts' })
     expect(config.statusCode).toBe(200)
-    const body = config.json() as { revision: number; parts: Array<{ path: string; layer: string }> }
+    const body = config.json() as {
+      revision: number
+      parts: Array<{ id: string; edited: boolean }>
+      overrides: Array<{ path: string; text: string; layer: string }>
+    }
     expect(body.revision).toBe(1)
-    expect(body.parts).toEqual([
+    expect(body.overrides).toEqual([
       {
         path: 'roles/implementer.md',
         text: 'My implementer rules.\n',
@@ -108,6 +121,8 @@ describe('T4 prompt routes', () => {
         layer: 'role',
       },
     ])
+    const implementer = body.parts.find((part) => part.id === 'roles/implementer.md')
+    expect(implementer?.edited).toBe(true)
   })
 
   it('PUT with a stale base is refused with 409 and writes nothing', async () => {
@@ -172,7 +187,14 @@ describe('T4 prompt routes', () => {
     expect(reverted.statusCode).toBe(200)
     expect(reverted.json()).toEqual({ revision: 2 })
     const config = await app.inject({ method: 'GET', url: '/api/prompts' })
-    expect(config.json()).toEqual({ revision: 2, parts: [] })
+    const cfg = config.json() as {
+      revision: number
+      overrides: unknown[]
+      parts: Array<{ id: string; edited: boolean }>
+    }
+    expect(cfg.revision).toBe(2)
+    expect(cfg.overrides).toEqual([])
+    expect(cfg.parts.find((part) => part.id === 'roles/implementer.md')?.edited).toBe(false)
   })
 
   it('GET /api/prompts/revisions/:n serves the snapshot verbatim, 404 for the missing', async () => {

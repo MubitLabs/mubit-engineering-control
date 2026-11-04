@@ -706,7 +706,23 @@ export function subscribeEvents(
   after: number,
   onEvent: (event: ServerEvent) => void,
 ): () => void {
-  const source = new EventSource(`/api/events?stream=${encodeURIComponent(stream)}&after=${after}`)
+  return subscribeMerged([{ stream, after }], onEvent)
+}
+
+/**
+ * ONE EventSource for every stream (browsers cap ~6 connections per origin on HTTP/1.1,
+ * and the workbench needs more streams than that — a stream-per-connection starves every
+ * fetch behind the cap, which is exactly the stuck-"sending…" bug). The server accepts a
+ * comma-separated stream list with comma-aligned cursors.
+ */
+export function subscribeMerged(
+  subscriptions: ReadonlyArray<{ stream: string; after: number }>,
+  onEvent: (event: ServerEvent) => void,
+): () => void {
+  if (subscriptions.length === 0) return () => {}
+  const streams = subscriptions.map((s) => s.stream).join(',')
+  const after = subscriptions.map((s) => s.after).join(',')
+  const source = new EventSource(`/api/events?stream=${encodeURIComponent(streams)}&after=${after}`)
   source.onmessage = (message) => {
     let parsed: unknown
     try {

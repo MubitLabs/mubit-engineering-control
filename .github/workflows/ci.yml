@@ -7,7 +7,7 @@ on:
 
 jobs:
   static:
-    runs-on: mubit-any
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -20,7 +20,7 @@ jobs:
       - run: pnpm lint
 
   suite-a:
-    runs-on: mubit-any
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -36,7 +36,7 @@ jobs:
       - run: pnpm test:a
 
   suite-b:
-    runs-on: mubit-any
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -53,7 +53,7 @@ jobs:
 
   audit:
     name: audit — no known prod vulnerabilities
-    runs-on: mubit-any
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -64,7 +64,7 @@ jobs:
 
   compliance-guard:
     name: compliance — credential-path self-scan
-    runs-on: mubit-any
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

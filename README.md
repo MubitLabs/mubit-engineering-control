@@ -97,7 +97,7 @@ pnpm test:b       # engine/runtime-side suite
 pnpm build:desktop   # both bundles: dist/mec.mjs (server) + dist/mec-cli.mjs (CLI)
 ```
 
-Real-engine canaries are gated behind env vars so CI never spends quota: `MEC_REAL_ENGINE=1` (Claude), `MEC_REAL_CODEX=1`, `MEC_REAL_OPENCODE=1`. CI runs on the org's self-hosted runners (`mubit-any` label).
+Real-engine canaries are gated behind env vars so CI never spends quota: `MEC_REAL_ENGINE=1` (Claude), `MEC_REAL_CODEX=1`, `MEC_REAL_OPENCODE=1`. CI runs on GitHub-hosted runners (`ubuntu-latest`/`macos-latest`).
 
 The review rule that matters (§7.2): a test that mocks its own unit is rejected; cross-review before merge; gates never pass on fakes.
 

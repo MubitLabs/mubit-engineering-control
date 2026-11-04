@@ -1339,13 +1339,27 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 
   app.get('/api/events', (request, reply) => {
     const query = (request.query ?? {}) as { stream?: string; after?: string }
-    const stream = typeof query.stream === 'string' ? query.stream : ''
-    if (stream === '') {
+    const streamParam = typeof query.stream === 'string' ? query.stream : ''
+    if (streamParam === '') {
       reply.code(400).send({ error: 'stream is required' })
       return
     }
-    const after = Number.parseInt(query.after ?? '0', 10)
-    let cursor = Number.isFinite(after) && after >= 0 ? after : 0
+    // Merged form (one connection for many streams — browsers cap 6 per origin, and the
+    // workbench needs more streams than that): `stream=a,b,c&after=1,0,5`, the afters
+    // comma-aligned with the streams. The single-stream form is exactly the length-1 case.
+    const streams = streamParam
+      .split(',')
+      .map((name) => name.trim())
+      .filter((name) => name !== '')
+    const afters =
+      typeof query.after === 'string' ? query.after.split(',').map((n) => Number.parseInt(n, 10)) : []
+    const cursors = new Map<string, number>()
+    streams.forEach((name, i) => {
+      const after = afters[i] ?? Number.NaN
+      cursors.set(name, Number.isFinite(after) && after >= 0 ? after : 0)
+    })
+    const stream = streams[0] ?? ''
+    let cursor = cursors.get(stream) ?? 0
 
     reply.hijack()
     const raw = reply.raw
@@ -1356,10 +1370,15 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       'x-accel-buffering': 'no',
     })
     const flush = (): void => {
-      for (const event of store.events.read(stream, cursor)) {
-        raw.write(`id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`)
-        cursor = event.seq
+      for (const name of streams) {
+        let at = cursors.get(name) ?? 0
+        for (const event of store.events.read(name, at)) {
+          raw.write(`id: ${name}:${event.seq}\ndata: ${JSON.stringify(event)}\n\n`)
+          at = event.seq
+        }
+        cursors.set(name, at)
       }
+      cursor = cursors.get(stream) ?? cursor
     }
     raw.on('error', () => {})
     flush()
@@ -1747,10 +1766,22 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // @mec/prompts (declared in package.json), matching how every other package lands here.
   const prompts = new PromptStore(join(keystoreRoot, 'prompts'))
 
-  // The live config: every override (path, text, defaultBaseHash, layer) and its revision.
+  // The live config as the Settings page reads it: the FULL catalogue (every shipped
+  // default) with edited/default-updated flags, plus the revision. Overrides ride along
+  // as their own field so draft tooling keeps its shape.
   app.get('/api/prompts', async () => {
     const { revision, parts } = prompts.config()
-    return { revision, parts }
+    const overridePaths = new Set(parts.map((part) => part.path))
+    const changed = new Set(prompts.changes().map((change) => change.path))
+    const catalogue = defaultParts().map((part) => ({
+      id: part.path,
+      layer: part.layer,
+      name: part.name,
+      edited: overridePaths.has(part.path),
+      defaultUpdated: changed.has(part.path),
+      provenance: overridePaths.has(part.path) ? 'user override' : 'shipped default',
+    }))
+    return { revision, parts: catalogue, overrides: parts }
   })
 
   // One save = one immutable revision (§16.2). The body names the revision it was drafted

@@ -19,7 +19,7 @@ import {
   type RepositoryEntry,
   type SlotEntry,
   type StatusSnapshot,
-  subscribeEvents,
+  subscribeMerged,
   type WorkItem,
 } from './api'
 import { type Route, useHashRoute } from './router'
@@ -226,15 +226,15 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   }, [work, slots])
 
   useEffect(() => {
-    const disposers = streamKeys.map((stream) =>
-      subscribeEvents(stream, cursors.current[stream] ?? 0, (event) => {
-        cursors.current[stream] = event.seq
+    // ONE connection for every stream (the per-origin cap starved fetches otherwise).
+    const dispose = subscribeMerged(
+      streamKeys.map((stream) => ({ stream, after: cursors.current[stream] ?? 0 })),
+      (event) => {
+        if (typeof event.stream === 'string') cursors.current[event.stream] = event.seq
         refresh()
-      }),
+      },
     )
-    return () => {
-      for (const dispose of disposers) dispose()
-    }
+    return dispose
   }, [streamKeys, refresh])
 
   // The runtime line only: /api/status on a 10 s interval (§7).

@@ -263,7 +263,7 @@ describe('buildServer', () => {
     const res = await track(app).inject({ method: 'GET', url: '/api/events?stream=work:wi_fixture' })
     expect(res.statusCode).toBe(200)
     expect(res.headers['content-type']).toContain('text/event-stream')
-    expect(res.body).toContain('id: 1\n')
+    expect(res.body).toContain('id: work:wi_fixture:1\n')
     expect(res.body).toContain('"type":"work_admitted"')
   })
 

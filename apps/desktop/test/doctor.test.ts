@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildDoctorReport, defaultVersionRunner } from '../src/doctor'
+import { buildDoctorJson, buildDoctorReport, defaultVersionRunner } from '../src/doctor'
 
 /** Key-shaped fakes in the real `sk-ant-` format without being real keys. */
 const envKey = `sk-ant-${'a'.repeat(32)}`
@@ -63,5 +63,28 @@ describe('buildDoctorReport', () => {
 describe('defaultVersionRunner', () => {
   it('is exported as a function', () => {
     expect(typeof defaultVersionRunner).toBe('function')
+  })
+})
+
+describe('buildDoctorJson (the --json bundle)', () => {
+  it('emits the same facts machine-readably, redacted, with an ok flag', async () => {
+    const run = async (cmd: string) =>
+      cmd === 'claude' ? { stdout: '2.1.317 (Claude Code)\n' } : null
+    const bundle = await buildDoctorJson({
+      env: { PATH: '/usr/bin', ANTHROPIC_API_KEY: 'sk-ant-test-fixture-000000000000abcd' } as unknown as NodeJS.ProcessEnv,
+      run,
+      snapshotText: 'present',
+    })
+    expect(bundle.ok).toBe(false) // codex/opencode answered null in this stub
+    expect(bundle.engines).toEqual([
+      { engine: 'claude', version: '2.1.317 (Claude Code)' },
+      { engine: 'codex', version: null },
+      { engine: 'opencode', version: null },
+    ])
+    expect(bundle.env.PATH).toBe('/usr/bin')
+    expect(JSON.stringify(bundle)).not.toContain('sk-ant')
+    expect(bundle.snapshot).toBe('present')
+    const round = JSON.parse(JSON.stringify(bundle)) as typeof bundle
+    expect(round.at).toBe(bundle.at)
   })
 })

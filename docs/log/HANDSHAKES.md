@@ -103,3 +103,12 @@ The §8 acceptance paragraph, driven live against the composed server on the rea
 - F2: the real planner's tasks persist `ready` but the composed flow enqueues no launches (`launchesEnqueued: 0`) — the R1.4-era launch wiring does not consume the new brain's propose_plan path.
 - Claude 2.1.318 headless regression: planner turns (MCP tools + restricted headless) end `api_error` deterministically (three turns) while plain one-shots succeed — blocks claude-side planner/attempt assertions until diagnosed; the §10 monthly re-verification exists for exactly this.
 - The release bundle 404s route blocks that the source serves (the prompt routes are registered identically; fastify route-tree shows them; yet bundled-server requests fall to the SPA) — and `DEFAULT_MODELS_YAML_PATH` resolves to a nonexistent path inside the bundle. Both need bundle-layer fixes before the next tag.
+
+## The three-issue fix wave — 4 November 2026 (PR #18, `b60517e`)
+
+#14/#15/#16 closed by finding the real chain, live:
+
+- **The composed planner now places and launches.** Three integration seams, all built in T5 and never wired: the capability-table supplier (every real turn planned against an EMPTY table), the availability-marks supplier (every slot honestly unlisted, so no tier was placeable), and the dispatch's slot list (FAKE_SLOT-or-EMPTY — real mode placed nothing). A fourth: the shipped meta protocol was the OLD three-tool text, so the model's conforming plans were rejected into ack-only turns.
+- **Proof (the new gated canary, MEC_REAL_PLANNER=1)**: one real service turn on the real store copy → task created with tier `fast` and a reasoned modelRequest that names the slot by cost ("cost 1 vs 3 for balanced on slot_glm-2") → `launchesEnqueued: ["att_1"]`.
+- **#15 reclassified**: not a 2.1.318 regression — the deterministic api_error turns ran wiper-corrupted bundles; real brain turns on 2.1.318 succeed repeatedly.
+- **#16**: the models default resolves via three candidates and the tarball ships it beside the bundle; the route "shadowing" was a stale-bundle artifact (clean builds serve every block).

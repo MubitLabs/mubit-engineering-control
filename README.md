@@ -59,7 +59,7 @@ Every claim below ran against real binaries, real accounts and a real repository
 - **[Reference](docs/reference.md)** — every CLI command, every HTTP route, the policy schema, the fixture library
 - **[Known limits](docs/known-limits.md)** — what is honestly absent or defaulted
 - **[Security](docs/security/threat-model.md)** — the threat model, control→test citations, residual risks
-- **[The spec](docs/plan/PLAN_v4.1_local_meta_agent.md)** — every behaviour question is answered from it
+- **[The spec](docs/plan/spec.md)** — every behaviour question is answered from it
 - **[CONTRACTS](docs/handoff/CONTRACTS.md)** — the frozen v0 interface seam (implementation tagged `contracts-v0`)
 - **[Handshakes](docs/log/HANDSHAKES.md)** — the real-binary gate record · **[Fault suite](docs/fault-suite.md)** — the §26 evidence matrix
 - **[Status](docs/STATUS.md)** — what is verified / on fakes / absent · **[Changelog](docs/CHANGELOG.md)** · **[Contributing](CONTRIBUTING.md)** · **[Setup guide for agents](SETUP.md)**

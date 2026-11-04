@@ -5,7 +5,7 @@ This is the shared entry for every coding agent working in this repository (Code
 ## Non-negotiables
 
 1. **Never read a credential.** No vendor OAuth store (`~/.claude/.credentials.json`, `~/.codex/auth.json`, anything under a slot home's `keys/` — `*.key`, `.salt`), no key in a message, a log, a commit, a fixture, or a test. Keys enter only through the workbench Slots form / the keystore API; code reads them only via `SlotKeystore.read()` at launch. If a task seems to need a key's bytes, it is wrong — stop and say so.
-2. **The plan is the source of truth for behaviour.** `docs/plan/PLAN_v4.1_local_meta_agent.md`. When behaviour is unclear, cite the section number and ask — never guess, never invent a standard to fill a template.
+2. **The plan is the source of truth for behaviour.** `docs/plan/spec.md`. When behaviour is unclear, cite the section number and ask — never guess, never invent a standard to fill a template.
 3. **`packages/contracts` is frozen** (tag `contracts-v0`). A change there needs the matching fixture update and a line in `docs/handoff/CONTRACTS.md` §10. Additive changes (a new optional field, a new pattern) are the safe direction.
 4. **Gates never pass on fakes.** Real-binary evidence lives in `docs/log/HANDSHAKES.md`; the fault matrix is `docs/fault-suite.md`. A test that mocks its own unit is rejected (§7.2 — cross-review before merge).
 5. **Secrets never become durable.** Redaction runs before any write (contracts `SECRET_PATTERNS` → `redact()`/`redactEvent()`). Chat pastes of key-shaped strings are stored redacted by design.
@@ -23,7 +23,7 @@ Real-engine canaries are **gated and never run in CI or wrappers** (they spend r
 
 | Need | Canonical |
 | --- | --- |
-| Behaviour questions | `docs/plan/PLAN_v4.1_local_meta_agent.md` (the spec) · `docs/plan/PLAN_v4.1_implementation_plan.md` (releases/gates) |
+| Behaviour questions | `docs/plan/spec.md` (the spec) · `docs/plan/product-plan.md` (releases/gates) |
 | Interfaces | `docs/handoff/CONTRACTS.md` + `packages/contracts` |
 | What is proven / on fakes / absent | `docs/STATUS.md` · `docs/log/HANDSHAKES.md` · `docs/fault-suite.md` |
 | Layout & quickstart | `README.md` |

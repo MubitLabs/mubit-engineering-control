@@ -2,7 +2,7 @@
 
 Open source under Apache-2.0; built for Mubit's own use; no support promised; issues welcome, PRs reviewed when we can.
 
-MEC (Mubit Engineering Control) is an internal, free-forever product (owner decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md)). The behaviour of record is the plan — [`docs/plan/PLAN_v4.1_local_meta_agent.md`](docs/plan/PLAN_v4.1_local_meta_agent.md); the frozen interface of record is [`docs/handoff/CONTRACTS.md`](docs/handoff/CONTRACTS.md) (tag `contracts-v0`). When behaviour is unclear, cite the plan section and ask — never guess.
+MEC (Mubit Engineering Control) is an internal, free-forever product (owner decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md)). The behaviour of record is the plan — [`docs/plan/spec.md`](docs/plan/spec.md); the frozen interface of record is [`docs/handoff/CONTRACTS.md`](docs/handoff/CONTRACTS.md) (tag `contracts-v0`). When behaviour is unclear, cite the plan section and ask — never guess.
 
 ## Licence
 
@@ -67,7 +67,7 @@ Vendor terms bind the adapter design (§5.11): unmodified binary, documented int
 
 ## Review rules
 
-From [`docs/plan/PLAN_v4.1_implementation_plan.md`](docs/plan/PLAN_v4.1_implementation_plan.md) §7.2:
+From [`docs/plan/product-plan.md`](docs/plan/product-plan.md) §7.2:
 
 - **Cross-review.** Every PR is reviewed by the other stream's person or instance (single-operator mode: a fresh instance, not the author's own context). The audit gate repeats, lighter, before R1 and R2.
 - **Tests that mock their own unit are rejected.** Tests written by the author of the code count only when they consume shared fixtures or contract schemas. A test that mocks the unit under test is not evidence — use the fixture library, `MemoryRepositories`, or a recorded stream.

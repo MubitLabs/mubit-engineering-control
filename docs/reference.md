@@ -1,6 +1,6 @@
 # MEC reference
 
-The surfaces a user or script touches, exactly as they exist in the tree. The `mec` CLI lives in `apps/desktop/src/mec.ts` (entry `apps/desktop/bin/mec.js`); the HTTP API lives in `apps/desktop/src/server.ts`; the policy schema in `packages/policy/src/policy.ts`; the fixture library under `packages/testkit/fixtures/`. Behaviour of record: [`docs/plan/PLAN_v4.1_local_meta_agent.md`](plan/PLAN_v4.1_local_meta_agent.md).
+The surfaces a user or script touches, exactly as they exist in the tree. The `mec` CLI lives in `apps/desktop/src/mec.ts` (entry `apps/desktop/bin/mec.js`); the HTTP API lives in `apps/desktop/src/server.ts`; the policy schema in `packages/policy/src/policy.ts`; the fixture library under `packages/testkit/fixtures/`. Behaviour of record: [`docs/plan/spec.md`](plan/spec.md).
 
 ## The `mec` CLI
 

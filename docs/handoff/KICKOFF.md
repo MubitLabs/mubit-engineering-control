@@ -4,13 +4,13 @@ Four files, meant to be given to a person or a coding agent together with the pl
 
 | File | Who reads it | What it is |
 | --- | --- | --- |
-| `PLAN_v4.1_local_meta_agent.md` | both | the spec; every behaviour question is answered from it |
+| `spec.md` | both | the spec; every behaviour question is answered from it |
 | `KICKOFF.md` (this file) | both | how to start, the rules, the handshakes, the prompts to paste |
 | `CONTRACTS.md` | both | the `packages/contracts` v0 spec; written once in the first three days, then frozen |
 | `STREAM_A.md` | the person on Stream A | self-contained brief: core and workflow |
 | `STREAM_B.md` | the person on Stream B | self-contained brief: engines, slots and runtime |
 
-`PLAN_v4.1_parallel_split.md` is the rationale for the split; it is not needed to work.
+`parallel-split.md` is the rationale for the split; it is not needed to work.
 
 ## 1. Before anyone starts
 
@@ -55,12 +55,12 @@ Record each handshake in `docs/log/HANDSHAKES.md`: what ran, what was stubbed, w
 
 ## 5. Prompts to paste into a coding agent
 
-Attach `PLAN_v4.1_local_meta_agent.md`, `CONTRACTS.md`, `KICKOFF.md` and the stream file. Replace the bracketed values.
+Attach `spec.md`, `CONTRACTS.md`, `KICKOFF.md` and the stream file. Replace the bracketed values.
 
 **Stream A**
 
-> You are implementing Stream A (core and workflow) of MEC v4.1. Read PLAN_v4.1_local_meta_agent.md (the spec), CONTRACTS.md (the shared interfaces) and STREAM_A.md (your brief), then KICKOFF.md §3 for the rules. The repository is at [path]; the v1 codebase to port from is at [path]. Start with the contracts PR exactly as CONTRACTS.md specifies and stop for review before going further. Then follow STREAM_A.md §4 in order: for each item, implement it inside the packages STREAM_A.md §2 assigns to this stream, stub anything from Stream B behind the contract, make the item's definition-of-done tests pass, and report what landed and what is stubbed. When a behaviour is unclear, cite the plan section and ask instead of guessing. Never touch packages/runtime, packages/engines, packages/slots or apps/desktop.
+> You are implementing Stream A (core and workflow) of MEC v4.1. Read spec.md (the spec), CONTRACTS.md (the shared interfaces) and STREAM_A.md (your brief), then KICKOFF.md §3 for the rules. The repository is at [path]; the v1 codebase to port from is at [path]. Start with the contracts PR exactly as CONTRACTS.md specifies and stop for review before going further. Then follow STREAM_A.md §4 in order: for each item, implement it inside the packages STREAM_A.md §2 assigns to this stream, stub anything from Stream B behind the contract, make the item's definition-of-done tests pass, and report what landed and what is stubbed. When a behaviour is unclear, cite the plan section and ask instead of guessing. Never touch packages/runtime, packages/engines, packages/slots or apps/desktop.
 
 **Stream B**
 
-> You are implementing Stream B (engines, slots and runtime) of MEC v4.1. Read PLAN_v4.1_local_meta_agent.md (the spec, especially §5, §8, §9, §20, §21, §22), CONTRACTS.md (the shared interfaces) and STREAM_B.md (your brief), then KICKOFF.md §3 for the rules. The repository is at [path]; the v1 codebase to port from is at [path]. Claude Code, Codex and OpenCode are installed on this machine. Start with STREAM_B.md §3 (machine pre-flight and the first fixture) while Stream A's contracts PR is in review; review that PR against the real engines. Then follow STREAM_B.md §4 in order: implement each item inside the packages STREAM_B.md §2 assigns to this stream, stub anything from Stream A behind the contract, make the item's definition-of-done tests pass, and report what landed and what is stubbed. Record every real-engine stream as a redacted fixture before relying on it. Never read a vendor OAuth store, never log a credential, and never touch packages/domain, packages/effects, packages/mec-tools, packages/policy or packages/prompts.
+> You are implementing Stream B (engines, slots and runtime) of MEC v4.1. Read spec.md (the spec, especially §5, §8, §9, §20, §21, §22), CONTRACTS.md (the shared interfaces) and STREAM_B.md (your brief), then KICKOFF.md §3 for the rules. The repository is at [path]; the v1 codebase to port from is at [path]. Claude Code, Codex and OpenCode are installed on this machine. Start with STREAM_B.md §3 (machine pre-flight and the first fixture) while Stream A's contracts PR is in review; review that PR against the real engines. Then follow STREAM_B.md §4 in order: implement each item inside the packages STREAM_B.md §2 assigns to this stream, stub anything from Stream A behind the contract, make the item's definition-of-done tests pass, and report what landed and what is stubbed. Record every real-engine stream as a redacted fixture before relying on it. Never read a vendor OAuth store, never log a credential, and never touch packages/domain, packages/effects, packages/mec-tools, packages/policy or packages/prompts.

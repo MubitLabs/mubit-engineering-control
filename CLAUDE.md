@@ -13,7 +13,7 @@ compaction.
 2. **Contracts are frozen** (tag `contracts-v0`). A change in `packages/contracts` needs the
    matching fixture update and a line in `docs/handoff/CONTRACTS.md` §10. Additive changes (a
    new optional field, a new pattern) are the safe direction.
-3. **The spec decides behaviour.** `docs/plan/PLAN_v4.1_local_meta_agent.md`. When behaviour is
+3. **The spec decides behaviour.** `docs/plan/spec.md`. When behaviour is
    unclear, cite the section number and ask — never guess, never invent a standard to fill a
    template. The §26 evidence matrix lives in `docs/fault-suite.md`.
 4. **Never touch a credential.** Never read a vendor OAuth store or a key file

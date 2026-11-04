@@ -1,6 +1,6 @@
 # MEC v4.1 — Two-person parallel split
 
-Companion to `PLAN_v4.1_local_meta_agent.md` (3 November 2026). It divides the v4.1 backlog into two streams that can start on the same day and meet at five handshakes. Section numbers (§) and backlog ids (V01–V30) refer to the plan.
+Companion to `spec.md` (3 November 2026). It divides the v4.1 backlog into two streams that can start on the same day and meet at five handshakes. Section numbers (§) and backlog ids (V01–V30) refer to the plan.
 
 ## 1. The split in one line
 
@@ -154,7 +154,7 @@ After H0, a contract change is a PR with both reviewers, a fixture update and a 
 3. **Owner review across the seam.** CODEOWNERS routes PRs; a change in the other stream's package waits for its owner, who answers within a working day.
 4. **Trunk-based, flagged.** Short-lived branches; incomplete integrations behind `MEC_FAKE_ENGINE`, `MEC_FAKE_SLOTS` and `MEC_SKIP_SANDBOX` flags that only tests set.
 5. **A daily note, a weekly handshake.** One line a day on what changed at the seam; thirty minutes at each handshake with the demo in the table, not a status meeting.
-6. **The plan is the spec.** Behaviour questions are answered from `PLAN_v4.1_local_meta_agent.md`; a change to it is a PR from A with B's review, and the §26 table is updated in the same PR.
+6. **The plan is the spec.** Behaviour questions are answered from `spec.md`; a change to it is a PR from A with B's review, and the §26 table is updated in the same PR.
 7. **Secrets never cross the seam in a fixture.** The fixture recorder redacts before writing; the compliance guard (V29) runs in CI from week 3.
 8. **Rebalance at handshakes only**, by moving one of the designated movable items (§3), never by splitting an item in two.
 

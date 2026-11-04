@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        MEC's behaviour of record is the spec — `docs/plan/PLAN_v4.1_local_meta_agent.md`.
+        MEC's behaviour of record is the spec — `docs/plan/spec.md`.
         Some absence is deliberate: `docs/known-limits.md` lists what is designed-out, and
         `docs/STATUS.md` tracks what is not built yet. A one-line check of those two files
         saves everyone a round trip.

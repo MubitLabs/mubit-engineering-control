@@ -20,9 +20,11 @@
  *   `permission_mode: 'none'` (argv: `--restricted --permission-prompts none`),
  *   sandbox required, the brain-owned tmpdir the only writable path, and a
  *   settings/mcp-config pair written exactly like a specialist attempt's (H1 pattern).
- * - **The instruction text is a compiled bundle** (plan §16): a static `role`
- *   component with the tool protocol and a per-turn `delivery` component with the
- *   user message and the live work list; the revision pins what the meta run saw.
+ * - **The instruction text is a compiled bundle** (plan §16): a `role` component with the tool
+ *   protocol — READ PER TURN from the shipped defaults tree (`roles/meta_agent/protocol.md`,
+ *   editable in Settings; the in-code constant is only a missing-tree fallback) — and a per-turn
+ *   `delivery` component with the user message and the live work list; the revision pins what
+ *   the meta run saw.
  *
  * Cross-package imports are relative source paths on purpose: meta declares only
  * `@mec/contracts` and `@mec/domain`, pnpm links nothing else into it, and R1.4
@@ -39,6 +41,7 @@ import { MecToolsServer } from '../../mec-tools/src/server'
 import { issueToken } from '../../mec-tools/src/tokens'
 import type { ToolName } from '../../mec-tools/src/tools'
 import { type CompiledBundle, compileBundle, componentHash } from '../../prompts/src/bundles'
+import { readDefaultPart } from '../../prompts/src/loader'
 import { buildAgentEnv } from '../../runtime/src/env'
 import { buildAttemptSettings, serialiseAttemptSettings } from '../../runtime/src/isolation'
 import type { MetaBrain, MetaDecision } from './service'
@@ -112,6 +115,18 @@ const META_PROTOCOL_TEXT = [
   '',
   'If the message is a question or context only, skip step 2. Call no tools other than the mcp__mec__ ones.',
 ].join('\n')
+
+/**
+ * The shipped protocol part (T4, plan §16): the turn protocol is prompt text on disk at
+ * `roles/meta_agent/protocol.md`, read per turn so an edit in Settings reaches the next turn
+ * without a restart. The constant above is the FALLBACK for a checkout whose defaults tree is
+ * missing — never the path in a normal install.
+ */
+const META_PROTOCOL_PART = 'roles/meta_agent/protocol.md'
+
+function metaProtocolText(): string {
+  return readDefaultPart(META_PROTOCOL_PART)?.text ?? META_PROTOCOL_TEXT
+}
 
 /** A mapped plan task — the service's MetaDecision shape. */
 type PlanTask = { taskId: string; objective: string; dependsOn: string[]; role: string }
@@ -448,8 +463,8 @@ function buildTurnBundle(
     {
       layer: 'role',
       name: 'meta_agent',
-      text: META_PROTOCOL_TEXT,
-      hash: componentHash(META_PROTOCOL_TEXT),
+      text: metaProtocolText(),
+      hash: componentHash(metaProtocolText()),
       origin: 'default',
     },
     {

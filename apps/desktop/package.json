@@ -22,6 +22,7 @@
     "@mec/mec-tools": "workspace:*",
     "@mec/meta": "workspace:*",
     "@mec/policy": "workspace:*",
+    "@mec/prompts": "workspace:*",
     "@mec/store": "workspace:*",
     "better-sqlite3": "^12.0.0",
     "fastify": "^5.0.0",

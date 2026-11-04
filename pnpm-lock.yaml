@@ -50,6 +50,9 @@ importers:
       '@mec/policy':
         specifier: workspace:*
         version: link:../../packages/policy
+      '@mec/prompts':
+        specifier: workspace:*
+        version: link:../../packages/prompts
       '@mec/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime

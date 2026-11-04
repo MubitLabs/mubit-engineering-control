@@ -1,141 +1,92 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, type ChatMessage, newIdempotencyKey } from '../api'
-import { Button, Card, EmptyState } from '../components/ui'
-import { routeToHash } from '../router'
-import { useWorkItemContext, workItemContext } from '../state'
-import { usePolling } from '../usePolling'
+import { useEffect, useState } from 'react'
+import { api, isNotServed, type WorkItemDetail } from '../api'
+import { Btn } from '../components/base'
+import { Composer } from '../components/Composer'
+import { Conversation } from '../components/Conversation'
+import { PaneHead } from '../components/Rail'
+import { Tray, type TrayCard } from '../components/Tray'
+import { useWorkbench } from '../workbench'
 
-/** A server message, or an optimistic row still waiting on its POST. */
-type ChatRow = ChatMessage & { pending?: boolean }
-
-function formatClock(iso: string): string {
-  const date = new Date(iso)
-  return Number.isNaN(date.getTime()) ? iso : date.toLocaleTimeString([], { hour12: false })
-}
-
-/** Clicking a message's work-item chip points the next reply at that item. */
-function WorkItemChip({ workItemId }: { workItemId: string }) {
-  return (
-    <button className="chip" onClick={() => workItemContext.set(workItemId)} type="button">
-      {workItemId}
-    </button>
-  )
-}
-
+/**
+ * Chat is the home screen: the live work item's name as the title, the tray
+ * pinned above the conversation so a decision is never out of sight, and the
+ * composer.
+ */
 export function ChatView() {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [pendingRows, setPendingRows] = useState<ChatRow[]>([])
-  const [inboxCount, setInboxCount] = useState(0)
-  const [draft, setDraft] = useState('')
-  const [idemKey, setIdemKey] = useState(() => newIdempotencyKey())
-  const [sending, setSending] = useState(false)
-  const [sendError, setSendError] = useState<string | null>(null)
-  const replyTo = useWorkItemContext()
-  const listRef = useRef<HTMLUListElement | null>(null)
-
-  const refresh = useCallback(async () => {
-    const [freshMessages, inbox] = await Promise.all([api.chat(), api.inbox()])
-    setMessages(freshMessages)
-    setInboxCount(inbox.length)
-  }, [])
-
-  const poll = useCallback(() => {
-    refresh().catch(() => {})
-  }, [refresh])
-  usePolling(poll, 3000)
-
-  const rows: ChatRow[] = [...messages, ...pendingRows]
+  const wb = useWorkbench()
+  const live = wb.work.find((item) => item.state !== 'done' && item.state !== 'stopped')
+  const [detail, setDetail] = useState<WorkItemDetail | null>(null)
+  const liveId = live?.id
 
   useEffect(() => {
-    const list = listRef.current
-    if (list !== null && rows.length > 0) list.scrollTop = list.scrollHeight
-  }, [rows.length])
+    let alive = true
+    if (liveId === undefined) {
+      setDetail(null)
+      return
+    }
+    api
+      .workItemDetail(liveId)
+      .then((d) => {
+        if (alive) setDetail(d)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [liveId])
 
-  const send = useCallback(async () => {
-    const text = draft.trim()
-    if (text === '' || sending) return
-    const optimistic: ChatRow = {
-      id: `pending:${idemKey}`,
-      text,
-      at: new Date().toISOString(),
-      pending: true,
-      ...(replyTo === null ? {} : { workItemId: replyTo }),
-    }
-    setSending(true)
-    setSendError(null)
-    setDraft('')
-    setPendingRows((current) => [...current, optimistic])
+  const knownTitle = detail !== null && detail.absent !== true ? detail.title : null
+  const active = live?.taskCounts.byStatus.active ?? 0
+  const sub =
+    live === undefined
+      ? 'Nothing in flight. Ask for something; the meta agent plans it and brings you only what needs a person.'
+      : `${live.stage}. ${active} of ${live.taskCounts.total} task${live.taskCounts.total === 1 ? '' : 's'} running.`
+
+  const cards: TrayCard[] = [
+    ...wb.inbox.map((item) => ({ kind: 'decision' as const, item })),
+    ...wb.questions.map((question) => ({ kind: 'question' as const, question })),
+  ]
+
+  const hold = async () => {
+    if (live === undefined) return
     try {
-      await api.sendChat(text, replyTo === null ? undefined : replyTo, idemKey)
-      setPendingRows((current) => current.filter((row) => row.id !== optimistic.id))
-      setIdemKey(newIdempotencyKey())
-      setSending(false)
-      await refresh().catch(() => {})
-    } catch {
-      // Keep the draft and its idempotency key so a retry stays idempotent.
-      setPendingRows((current) => current.filter((row) => row.id !== optimistic.id))
-      setDraft(text)
-      setSendError('send failed — try again')
-      setSending(false)
+      await api.holdWorkItem(live.id)
+      wb.toast('Held.')
+    } catch (error) {
+      wb.toast(isNotServed(error) ? 'Hold is not served by the server yet.' : 'Hold failed — try again.')
     }
-  }, [draft, idemKey, refresh, replyTo, sending])
+  }
+
+  const stop = async () => {
+    if (live === undefined) return
+    try {
+      await api.stopWorkItem(live.id)
+      wb.toast('Stopped.')
+    } catch (error) {
+      wb.toast(isNotServed(error) ? 'Stop is not served by the server yet.' : 'Stop failed — try again.')
+    }
+  }
 
   return (
-    <div className="chat">
-      <Card>
-        {inboxCount > 0 ? (
-          <a className="inbox-strip" href={routeToHash('inbox')}>
-            {inboxCount} {inboxCount === 1 ? 'decision' : 'decisions'} waiting — open the inbox
-          </a>
-        ) : (
-          <EmptyState>No decisions waiting</EmptyState>
+    <section className="pane is-active" id="pane-chat" aria-labelledby="chat-title">
+      <PaneHead title={knownTitle ?? 'Chat'} sub={sub}>
+        {live === undefined ? null : (
+          <>
+            <Btn variant="quiet" onClick={() => wb.openContext({ kind: 'work', id: live.id })}>
+              Details
+            </Btn>
+            <Btn variant="quiet" onClick={() => void hold()}>
+              Hold
+            </Btn>
+            <Btn variant="quiet" onClick={() => void stop()}>
+              Stop
+            </Btn>
+          </>
         )}
-      </Card>
-      <div className="messages">
-        {rows.length === 0 ? (
-          <EmptyState>No messages yet — the meta agent will answer here</EmptyState>
-        ) : (
-          <ul className="message-list" ref={listRef}>
-            {rows.map((row) => (
-              <li className={row.pending === true ? 'msg msg-pending' : 'msg'} key={row.id}>
-                <div className="msg-text">{row.text}</div>
-                <div className="msg-meta">
-                  <span className="mono">{formatClock(row.at)}</span>
-                  {row.workItemId === undefined ? null : <WorkItemChip workItemId={row.workItemId} />}
-                  {row.pending === true ? <span className="mono">sending…</span> : null}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-      <div className="composer-aux">
-        {replyTo === null ? null : (
-          <button className="chip" onClick={() => workItemContext.set(null)} type="button">
-            reply-to: {replyTo} ×
-          </button>
-        )}
-        {sendError === null ? null : <span className="error-note">{sendError}</span>}
-      </div>
-      <form
-        className="composer"
-        onSubmit={(event) => {
-          event.preventDefault()
-          void send()
-        }}
-      >
-        <input
-          aria-label="message"
-          autoComplete="off"
-          onChange={(event) => setDraft(event.target.value)}
-          placeholder="message the meta agent"
-          type="text"
-          value={draft}
-        />
-        <Button disabled={sending} type="submit" variant="primary">
-          Send
-        </Button>
-      </form>
-    </div>
+      </PaneHead>
+      {cards.length > 0 ? <Tray cards={cards} /> : null}
+      <Conversation messages={wb.messages} pending={wb.pendingMessages} />
+      <Composer prefill={wb.composerPrefill} />
+    </section>
   )
 }

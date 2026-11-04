@@ -1,17 +1,27 @@
 import { useCallback, useEffect, useState } from 'react'
 
-export type Route = 'chat' | 'inbox' | 'work' | 'slots' | 'wizard' | 'settings'
+/**
+ * The six screens of the workbench (04_UI_DESIGN_SPEC.md §4). The hash is the
+ * prototype's `#chat` form; the scaffold's older `#/wizard` and `#/inbox`
+ * deep links stay working as aliases so nothing already shared breaks.
+ */
+export type Route = 'chat' | 'needs' | 'work' | 'slots' | 'setup' | 'settings'
 
-const ROUTES: ReadonlySet<string> = new Set(['chat', 'inbox', 'work', 'slots', 'wizard', 'settings'])
+const ROUTES: ReadonlySet<string> = new Set(['chat', 'needs', 'work', 'slots', 'setup', 'settings'])
 
-/** '#/chat' -> 'chat'; anything unrecognized falls back to 'chat'. */
+/** Old scaffold names → the screen that carries them now. */
+const ALIASES: Readonly<Record<string, Route>> = { inbox: 'needs', wizard: 'setup' }
+
+/** '#chat' | '#/chat' | '#/wizard' → 'chat' | … ; anything unrecognized falls back to 'chat'. */
 export function parseHash(hash: string): Route {
   const candidate = hash.replace(/^#\/?/, '')
-  return ROUTES.has(candidate) ? (candidate as Route) : 'chat'
+  if (ROUTES.has(candidate)) return candidate as Route
+  const aliased = ALIASES[candidate]
+  return aliased ?? 'chat'
 }
 
 export function routeToHash(route: Route): string {
-  return `#/${route}`
+  return `#${route}`
 }
 
 export function useHashRoute(): [Route, (r: Route) => void] {

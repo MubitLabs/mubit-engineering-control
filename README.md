@@ -28,7 +28,7 @@ node apps/desktop/bin/mec.js          # → prints the URL, opens Setup on first
 
 Then: talk to the meta agent in **Chat**; approve pushes, PRs and merges in the inbox; watch the work in **Work**.
 
-## Engine versions — what "proven" means
+## Engine versions
 
 The fixtures and gates were recorded against these exact versions (`docs/engines.md` carries the full findings):
 
@@ -38,19 +38,14 @@ The fixtures and gates were recorded against these exact versions (`docs/engines
 | Codex CLI | 0.148.0 | ✅ real recordings + live canary (R2.1) |
 | OpenCode | 2.2.5 | ✅ real recordings + live canary (R2.2) |
 
-## What is proven
+## Status
 
-Every claim below ran against real binaries, real accounts and a real repository — never fakes. Full evidence in [`docs/log/HANDSHAKES.md`](docs/log/HANDSHAKES.md); the honest open-items list lives in [`docs/STATUS.md`](docs/STATUS.md).
+Every engine claim in the table above was proven against the real binary on a real account — recorded fixtures, live canaries, and full deliveries merged behind user-approved confirmation cards (one of them caught by the cross-engine reviewer catching a leak no automated check saw). Gates never passed on fakes.
 
-| Capability | Status | Evidence |
-| --- | --- | --- |
-| Claude Code engine | ✅ real recordings + live canary | H1: sandbox, permission bridge, quota signals, checks on exact SHAs |
-| Codex engine (ChatGPT login) | ✅ real recordings + live canary | R2.1: protocol reconciled on codex-cli 0.148.0, permission round-trip |
-| OpenCode (GLM / Gemini) | ✅ real recordings + live canary | R2.2: both slots validated healthy over real HTTP; permission round-trip on the real binary |
-| Delivery loop on a real repo | ✅ end to end | H3: PR [#2](https://github.com/MubitLabs/mec-sandbox/pull/2) merged, GitHub-confirmed |
-| Mixed-engine delivery | ✅ both pairings | H4/R2.3: PRs [#3](https://github.com/MubitLabs/mec-sandbox/pull/3) & [#4](https://github.com/MubitLabs/mec-sandbox/pull/4) — Claude implements + Codex reviews, and the inverse; the Codex reviewer caught a real leak class no fake-based check sees |
-| Backup / restore | ✅ drill on real state | archives exclude every credential by rule (`auth.json`, keystores, salts) |
-| Security review | ✅ closed | [`docs/security/threat-model.md`](docs/security/threat-model.md) — every control cited to a test; `pnpm audit` clean |
+- **What is verified, what runs on synthetic fixtures, what is absent**: [`docs/STATUS.md`](docs/STATUS.md)
+- **The gate record with its limits**: [`docs/log/HANDSHAKES.md`](docs/log/HANDSHAKES.md) · the fault matrix: [`docs/fault-suite.md`](docs/fault-suite.md)
+- **Security posture and residual risks**: [`docs/security/threat-model.md`](docs/security/threat-model.md) (every control cited to a test; `pnpm audit` clean)
+- **Backups**: drill-verified on real state — archives exclude every credential by rule
 
 ## Documentation
 

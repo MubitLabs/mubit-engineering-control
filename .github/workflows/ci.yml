@@ -7,7 +7,7 @@ on:
 
 jobs:
   static:
-    runs-on: mubit-any
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -20,7 +20,7 @@ jobs:
       - run: pnpm lint
 
   suite-a:
-    runs-on: mubit-any
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -36,7 +36,7 @@ jobs:
       - run: pnpm test:a
 
   suite-b:
-    runs-on: mubit-any
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -50,3 +50,68 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:b
+
+  audit:
+    name: audit — no known prod vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --prod
+
+  compliance-guard:
+    name: compliance — credential-path self-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec vitest run packages/slots/test/compliance-self.test.ts packages/slots/test/compliance.test.ts
+
+  install-smoke:
+    name: install — the tarball installs and answers on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:desktop
+      - run: pnpm pack:internal
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: extract and install (natives build via their install scripts)
+        run: |
+          mkdir mec && tar xzf dist-internal/mec-*.tgz -C mec
+          cd mec && npm install --omit=dev --no-audit --no-fund
+      - name: version and doctor answer
+        run: |
+          cd mec
+          node bin/mec.js --version
+          node bin/mec.js doctor --json > doctor.json
+          node -e "JSON.parse(require('node:fs').readFileSync('doctor.json','utf8'))"
+      - name: the server answers healthz and serves the workbench
+        run: |
+          cd mec
+          MEC_DATA_DIR="$(mktemp -d)" MEC_NO_OPEN=1 node bin/mec.js > server.log 2>&1 &
+          pid=$!
+          url=""
+          for i in $(seq 1 30); do
+            url=$(grep -o 'http://127\.0\.0\.1:[0-9]*' server.log | head -1 || true)
+            [ -n "$url" ] && break
+            sleep 1
+          done
+          [ -n "$url" ] || { cat server.log; exit 1; }
+          curl -fsS "$url/healthz" | grep -q '"ok":true'
+          curl -fsS "$url/" | grep -q '<div id="root">'
+          kill $pid || true

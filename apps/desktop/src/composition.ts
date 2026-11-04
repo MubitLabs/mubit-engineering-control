@@ -9,7 +9,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { LaunchSpec } from '@mec/contracts'
+import type { LaunchSpec, Store } from '@mec/contracts'
 import { BridgeImpl, MecToolsServer } from '@mec/mec-tools'
 import { fakeBrain, MetaAgentService, RealClaudeBrain } from '@mec/meta'
 import { loadPolicy } from '@mec/policy'
@@ -48,12 +48,29 @@ export interface RunningServer {
   isPaused: () => boolean
 }
 
-export async function startServer(opts: { dataDir: string; policyText?: string }): Promise<RunningServer> {
+/** The wizard's persisted meta-slot choice → that slot's home dir. Best-effort: an absent
+ *  or dangling choice means "not chosen yet" (undefined), never a crash on startup. */
+function metaSlotFromStore(store: Store): string | undefined {
+  const setting = store.engines.get('settings/meta-slot')
+  const slotId = setting !== undefined && typeof setting.slotId === 'string' ? setting.slotId : undefined
+  if (slotId === undefined) return undefined
+  const slot = store.slots.get(slotId)
+  return slot !== undefined && typeof slot.home === 'string' && slot.home !== '' ? slot.home : undefined
+}
+
+export async function startServer(opts: {
+  dataDir: string
+  policyText?: string
+  /** The meta agent's slot home. Default: the wizard's persisted choice in the store, then
+   *  MEC_META_SLOT as the override (review 2026-11-04 §3.2 — the env var stops being the way). */
+  metaSlotDir?: string
+}): Promise<RunningServer> {
   const lock = DirLock.acquire(opts.dataDir)
   mkdirSync(opts.dataDir, { recursive: true })
   const db = new Database(join(opts.dataDir, 'mec.db'))
   migrate(db, MIGRATIONS_v1)
   const store = new SqliteStore(db)
+  const metaSlotDir = opts.metaSlotDir ?? metaSlotFromStore(store) ?? process.env.MEC_META_SLOT
   const health = new HealthBoardImpl()
   health.claim('runtime').ready('composition root up')
   // Fail fast: a policy that cannot load never starts a server that would enforce it.
@@ -159,12 +176,12 @@ export async function startServer(opts: { dataDir: string; policyText?: string }
       }),
     }),
     ...(process.env.MEC_FAKE_ENGINE !== '1' &&
-      process.env.MEC_META_SLOT !== undefined && {
+      metaSlotDir !== undefined && {
         metaAgent: new MetaAgentService({
           store,
           effects: store.effects,
           brain: new RealClaudeBrain({
-            slotDir: process.env.MEC_META_SLOT,
+            slotDir: metaSlotDir,
             toolsSecret: randomBytes(24).toString('hex'),
           }).asBrain(),
         }),

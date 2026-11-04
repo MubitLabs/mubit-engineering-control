@@ -42,6 +42,47 @@ export const defaultVersionRunner: (cmd: string, args: string[]) => Promise<{ st
     })
   })
 
+/** The machine-readable doctor bundle (bug reports attach this): engines with versions,
+ *  the non-secret env allowlist, snapshot presence — the same facts as the text report,
+ *  redacted by the same rules. `ok` is true when every probed engine answered. */
+export async function buildDoctorJson(io: DoctorIo = {}): Promise<{
+  at: string
+  ok: boolean
+  engines: Array<{ engine: string; version: string | null }>
+  env: Record<string, string>
+  snapshot: 'present' | 'absent' | 'present-redacted'
+}> {
+  const run = io.run ?? defaultVersionRunner
+  const env = io.env ?? process.env
+  const engines: Array<{ engine: string; version: string | null }> = []
+  for (const engine of ENGINES) {
+    const result = await run(engine, ['--version'])
+    const firstLine = result?.stdout.split('\n')[0]?.trim() ?? ''
+    engines.push({ engine, version: result === null ? null : firstLine === '' ? null : firstLine })
+  }
+  const envOut: Record<string, string> = {}
+  for (const name of ENV_ALLOWLIST) {
+    if (isSecretEnvName(name)) continue
+    const value = env[name]
+    if (value === undefined) continue
+    envOut[name] = matchesSecret(value) ? '[redacted]' : value
+  }
+  const snapshotText = io.snapshotText
+  const snapshot =
+    typeof snapshotText === 'string' && snapshotText !== ''
+      ? matchesSecret(snapshotText)
+        ? 'present-redacted'
+        : 'present'
+      : 'absent'
+  return {
+    at: new Date().toISOString(),
+    ok: engines.every((entry) => entry.version !== null),
+    engines,
+    env: envOut,
+    snapshot,
+  }
+}
+
 export async function buildDoctorReport(io: DoctorIo = {}): Promise<string> {
   const run = io.run ?? defaultVersionRunner
   const env = io.env ?? process.env

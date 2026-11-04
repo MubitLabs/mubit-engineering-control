@@ -7,8 +7,8 @@ live checks §7.4 demands (`pnpm audit`, planted-violation coverage of the compl
 guard). Method: for every control, the test that proves it is cited by file and case name,
 and every case name was verified present by `grep -rn` on this tree — a control with no
 test is listed as a **GAP**, not papered over. Residual risk is stated in one honest
-sentence per threat. Plan references are `docs/plan/PLAN_v4.1_local_meta_agent.md` (§
-numbers), the implementation plan is `docs/plan/PLAN_v4.1_implementation_plan.md`, and
+sentence per threat. Plan references are `docs/plan/spec.md` (§
+numbers), the implementation plan is `docs/plan/product-plan.md`, and
 `docs/fault-suite.md` is the §26 evidence matrix this document closes against.
 
 ---

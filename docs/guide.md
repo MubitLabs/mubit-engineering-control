@@ -2,7 +2,7 @@
 
 MEC (Mubit Engineering Control) is a local meta-agent orchestration app: you connect your coding agents (Claude Code, Codex, OpenCode), talk to one **meta agent** in chat, and it plans, spawns specialists, and runs the delivery loop — worktrees → checks → review → integration → PR — interrupting you only for guardrail confirmations. Everything runs on your machine: SQLite storage, no cloud, credentials never leave it.
 
-This guide describes the product's behaviour of record (plan [`docs/plan/PLAN_v4.1_local_meta_agent.md`](plan/PLAN_v4.1_local_meta_agent.md); sections cited as §n). What today's build has already proven is recorded in [`docs/log/HANDSHAKES.md`](log/HANDSHAKES.md); what is still gap is recorded in [`docs/fault-suite.md`](fault-suite.md).
+This guide describes the product's behaviour of record (plan [`docs/plan/spec.md`](plan/spec.md); sections cited as §n). What today's build has already proven is recorded in [`docs/log/HANDSHAKES.md`](log/HANDSHAKES.md); what is still gap is recorded in [`docs/fault-suite.md`](fault-suite.md).
 
 ## Concepts
 

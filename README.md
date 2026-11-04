@@ -4,7 +4,39 @@ A local meta-agent orchestration app. Connect your coding agents (Claude Code, C
 
 **Fully local**: SQLite on your machine, no cloud, no telemetry. Credentials never leave the machine: engine logins live in isolated slot homes, API keys in per-slot keystores (`0600`), and the database holds fingerprints, never secrets. Nothing crosses the network without a confirmed card — push, PR and merge each wait for your click.
 
-**Internal product** (owner decisions #3/#4): free forever, distributed inside the company via this repository and the internal tarball — never a public registry.
+> Open source under Apache-2.0; built for Mubit's own use; no support promised; issues welcome, PRs reviewed when we can.
+
+## Install
+
+Requirements: macOS or Linux · Node ≥ 22.18 · at least one coding agent installed and signed in (Claude Code, Codex CLI, or OpenCode) · `gh` signed in if you want MEC to open pull requests.
+
+```bash
+curl -fsSL https://github.com/MubitLabs/mubit-engineering-control/releases/latest/download/install.sh | bash
+```
+
+Read it first — it is [40 lines](scripts/install.sh), stdlib only, no sudo: it installs the release tarball into `~/.mec/app`, builds the two native modules, and links `mec` into `~/.local/bin`. Then run `mec`: the workbench opens in your browser straight into **Setup**, which finds your installed agents, lets you link an existing login or sign in to a dedicated one (through the vendor's own flow — MEC never sees a token), paste an API key if you use GLM or Gemini, register a repository, and pick which slot runs the meta agent. Two minutes, no terminal.
+
+From source instead:
+
+```bash
+git clone https://github.com/MubitLabs/mubit-engineering-control.git mec && cd mec
+pnpm install && pnpm build:desktop && (cd apps/web && pnpm build)
+node apps/desktop/bin/mec.js          # → prints the URL, opens Setup on first run
+```
+
+`mec --no-open` for scripts and CI; `mec --version`, `mec doctor`, `mec status`, `mec stop` from any terminal.
+
+Then: talk to the meta agent in **Chat**; approve pushes, PRs and merges in the inbox; watch the work in **Work**.
+
+## Engine versions — what "proven" means
+
+The fixtures and gates were recorded against these exact versions (`docs/engines.md` carries the full findings):
+
+| Engine | Proven on | Status |
+| --- | --- | --- |
+| Claude Code | 2.1.317 | ✅ real recordings + live canaries (H1, H3, H4) |
+| Codex CLI | 0.148.0 | ✅ real recordings + live canary (R2.1) |
+| OpenCode | 2.2.5 | ✅ real recordings + live canary (R2.2) |
 
 ## What is proven
 
@@ -20,44 +52,6 @@ Every claim below ran against real binaries, real accounts and a real repository
 | Backup / restore | ✅ drill on real state | archives exclude every credential by rule (`auth.json`, keystores, salts) |
 | Security review | ✅ closed | [`docs/security/threat-model.md`](docs/security/threat-model.md) — every control cited to a test; `pnpm audit` clean |
 
-## Quickstart (from this repository)
-
-Requires Node ≥ 22.18 and pnpm; macOS arm64 is the proven platform (Linux pending).
-
-```bash
-git clone git@github.com:MubitLabs/mubit-engineering-control.git mec && cd mec
-pnpm install                    # native modules build via the pnpm allowlist
-(cd apps/web && pnpm build)     # the workbench UI — once, and after UI changes
-node apps/desktop/bin/mec.js    # the server; prints http://127.0.0.1:<port>
-```
-
-Open the printed URL → **Setup** (the four-step wizard: engines → slot/link or paste key → repository → meta agent), or do it by hand from the **Slots** panel. Then:
-
-1. **Slots** — link an existing Claude login, run a terminal login card for a dedicated slot, or paste an API key (Anthropic / GLM / Gemini). The form is the only door for keys — never chat, never a CLI flag.
-2. Restart the server with the meta agent's slot: `MEC_META_SLOT="$HOME/.mec/engines/claude/<label>" node apps/desktop/bin/mec.js`
-3. **Chat** — talk to the meta agent; confirmations land in the **Inbox**; work surfaces in **Work**.
-
-The CLI covers the rest (it talks to local state, never a running server):
-
-```bash
-node apps/desktop/bin/mec.js status    # health snapshot + setup state
-node apps/desktop/bin/mec.js doctor    # probes engines, sandbox, store
-node apps/desktop/bin/mec.js slot add|list|probe|retire
-node apps/desktop/bin/mec.js update    # version + internal reinstall path (no network, by design)
-node apps/desktop/bin/mec.js stop      # intentional stop; restart honours it
-```
-
-### Internal tarball instead of a checkout
-
-```bash
-pnpm pack:internal               # → dist-internal/mec-<version>.tgz (never publishes)
-mkdir mec && tar xzf dist-internal/mec-*.tgz -C mec && cd mec
-npm install --omit=dev --ignore-scripts=false   # builds the two native modules
-node bin/mec.js
-```
-
-A machine that cannot build native modules gets the §21.7 refusal (exit 3) with the fix spelled out — never a stack trace.
-
 ## Documentation
 
 - **[User guide](docs/guide.md)** — concepts, the five screens, policy, troubleshooting by symptom
@@ -65,7 +59,7 @@ A machine that cannot build native modules gets the §21.7 refusal (exit 3) with
 - **[Reference](docs/reference.md)** — every CLI command, every HTTP route, the policy schema, the fixture library
 - **[Known limits](docs/known-limits.md)** — what is honestly absent or defaulted
 - **[Security](docs/security/threat-model.md)** — the threat model, control→test citations, residual risks
-- **[The spec](docs/plan/PLAN_v4.1_local_meta_agent.md)** — every behaviour question is answered from it
+- **[The spec](docs/plan/spec.md)** — every behaviour question is answered from it
 - **[CONTRACTS](docs/handoff/CONTRACTS.md)** — the frozen v0 interface seam (implementation tagged `contracts-v0`)
 - **[Handshakes](docs/log/HANDSHAKES.md)** — the real-binary gate record · **[Fault suite](docs/fault-suite.md)** — the §26 evidence matrix
 - **[Status](docs/STATUS.md)** — what is verified / on fakes / absent · **[Changelog](docs/CHANGELOG.md)** · **[Contributing](CONTRIBUTING.md)** · **[Setup guide for agents](SETUP.md)**
@@ -103,7 +97,7 @@ pnpm test:b       # engine/runtime-side suite
 pnpm build:desktop   # both bundles: dist/mec.mjs (server) + dist/mec-cli.mjs (CLI)
 ```
 
-Real-engine canaries are gated behind env vars so CI never spends quota: `MEC_REAL_ENGINE=1` (Claude), `MEC_REAL_CODEX=1`, `MEC_REAL_OPENCODE=1`. CI runs on the org's self-hosted runners (`mubit-any` label).
+Real-engine canaries are gated behind env vars so CI never spends quota: `MEC_REAL_ENGINE=1` (Claude), `MEC_REAL_CODEX=1`, `MEC_REAL_OPENCODE=1`. CI runs on GitHub-hosted runners (`ubuntu-latest`/`macos-latest`).
 
 The review rule that matters (§7.2): a test that mocks its own unit is rejected; cross-review before merge; gates never pass on fakes.
 

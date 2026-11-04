@@ -1,7 +1,7 @@
 # Mubit Engineering Control — Full Product Implementation Plan
 
 **From the current scaffold to a fully built product** · 3 November 2026
-Companion to `PLAN_v4.1_local_meta_agent.md` (the spec: what the product is and how it behaves), `PLAN_v4.1_parallel_split.md` and the hand-off kit (how two streams build it). This document answers two questions the spec does not: *what does "fully built" mean, release by release, and what is needed — people, machines, accounts, money, time, decisions — to get there?*
+Companion to `spec.md` (the spec: what the product is and how it behaves), `parallel-split.md` and the hand-off kit (how two streams build it). This document answers two questions the spec does not: *what does "fully built" mean, release by release, and what is needed — people, machines, accounts, money, time, decisions — to get there?*
 
 ---
 
@@ -303,7 +303,7 @@ Version bumped; changelog; migrations tested fresh and upgrade; prebuild matrix 
 
 ## Appendix A — Audit prompt for the reviewer instance
 
-> You are reviewing, not building. Clone `MubitLabs/mubit-engineering-control` fresh. Read `docs/plan/PLAN_v4.1_local_meta_agent.md` §26 and `docs/fault-suite.md`. For each row marked proven, find the test and the fixture it uses and state whether the fixture is `recorded_by: 'real'` or `'fake'`; relabel accordingly in a PR to `docs/fault-suite.md`. Then run these checks for real, not through mocks, and report pass/fail with the command and output: (1) `pnpm check` on this machine with native modules loading; (2) spawn an engine process for a subscription slot with `ANTHROPIC_API_KEY=test` in your shell and prove it is absent from the child's environment; (3) feed each provider's real key format through the redaction filter; (4) plant `readFileSync('.credentials.json')` in an adapter and prove the compliance guard fails CI; (5) resolve one confirmation from two concurrent requests and prove exactly one wins; (6) start a second `mec` against the same `~/.mec` and prove it refuses. List every test that mocks its own unit, asserts nothing, or snapshots its own output. Finish by writing `docs/STATUS.md`: verified / on fakes / absent. Do not fix anything beyond relabelling; file issues.
+> You are reviewing, not building. Clone `MubitLabs/mubit-engineering-control` fresh. Read `docs/plan/spec.md` §26 and `docs/fault-suite.md`. For each row marked proven, find the test and the fixture it uses and state whether the fixture is `recorded_by: 'real'` or `'fake'`; relabel accordingly in a PR to `docs/fault-suite.md`. Then run these checks for real, not through mocks, and report pass/fail with the command and output: (1) `pnpm check` on this machine with native modules loading; (2) spawn an engine process for a subscription slot with `ANTHROPIC_API_KEY=test` in your shell and prove it is absent from the child's environment; (3) feed each provider's real key format through the redaction filter; (4) plant `readFileSync('.credentials.json')` in an adapter and prove the compliance guard fails CI; (5) resolve one confirmation from two concurrent requests and prove exactly one wins; (6) start a second `mec` against the same `~/.mec` and prove it refuses. List every test that mocks its own unit, asserts nothing, or snapshots its own output. Finish by writing `docs/STATUS.md`: verified / on fakes / absent. Do not fix anything beyond relabelling; file issues.
 
 ## Appendix B — Gate demos
 

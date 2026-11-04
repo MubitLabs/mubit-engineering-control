@@ -1,6 +1,8 @@
 # Contributing to MEC
 
-MEC (Mubit Engineering Control) is an internal, free-forever product (owner decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md)). The behaviour of record is the plan — [`docs/plan/PLAN_v4.1_local_meta_agent.md`](docs/plan/PLAN_v4.1_local_meta_agent.md); the frozen interface of record is [`docs/handoff/CONTRACTS.md`](docs/handoff/CONTRACTS.md) (tag `contracts-v0`). When behaviour is unclear, cite the plan section and ask — never guess.
+Open source under Apache-2.0; built for Mubit's own use; no support promised; issues welcome, PRs reviewed when we can.
+
+MEC (Mubit Engineering Control) is an internal, free-forever product (owner decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md)). The behaviour of record is the plan — [`docs/plan/spec.md`](docs/plan/spec.md); the frozen interface of record is [`docs/handoff/CONTRACTS.md`](docs/handoff/CONTRACTS.md) (tag `contracts-v0`). When behaviour is unclear, cite the plan section and ask — never guess.
 
 ## Licence
 
@@ -38,6 +40,9 @@ pnpm test:b         # engine/runtime-side suite
 pnpm -s exec vitest run <file>   # one file while iterating
 ```
 
+**Commit hygiene:** subject ≤ 72 characters, the narrative in the body — long-form detail
+belongs in [`docs/log/`](docs/log/). The PR template carries the checklist.
+
 Log the work: [`docs/log/week1.md`](docs/log/week1.md) carries the seam log; [`docs/log/HANDSHAKES.md`](docs/log/HANDSHAKES.md) records each gate's demo honestly (a gate not yet run says so); [`docs/fault-suite.md`](docs/fault-suite.md) tracks every §26 row's evidence and gaps — update the row you touched.
 
 ## Recording a fixture
@@ -62,7 +67,7 @@ Vendor terms bind the adapter design (§5.11): unmodified binary, documented int
 
 ## Review rules
 
-From [`docs/plan/PLAN_v4.1_implementation_plan.md`](docs/plan/PLAN_v4.1_implementation_plan.md) §7.2:
+From [`docs/plan/product-plan.md`](docs/plan/product-plan.md) §7.2:
 
 - **Cross-review.** Every PR is reviewed by the other stream's person or instance (single-operator mode: a fresh instance, not the author's own context). The audit gate repeats, lighter, before R1 and R2.
 - **Tests that mock their own unit are rejected.** Tests written by the author of the code count only when they consume shared fixtures or contract schemas. A test that mocks the unit under test is not evidence — use the fixture library, `MemoryRepositories`, or a recorded stream.

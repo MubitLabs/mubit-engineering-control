@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildDoctorReport, defaultVersionRunner } from './doctor'
+import { buildDoctorJson, buildDoctorReport, defaultVersionRunner } from './doctor'
 import type { HealthSnapshot } from './health'
 import { parseHealthSnapshot } from './health'
 import { runSlotCli } from './slot-cli'
@@ -79,6 +79,15 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
   }
 
   if (command === 'doctor') {
+    // --json is the machine bundle bug reports attach (SETUP.md, the issue template).
+    // Exit 0 whenever the bundle was produced: `ok` inside the JSON says whether engines
+    // answered — a machine with none installed is a REPORTED state, not a command failure
+    // (the CI install-smoke runs exactly such a machine).
+    if (argv.includes('--json')) {
+      const bundle = await buildDoctorJson({ env: process.env, run: defaultVersionRunner })
+      io.stdout(JSON.stringify(bundle, null, 2))
+      return 0
+    }
     const report = await buildDoctorReport({ env: process.env, run: defaultVersionRunner })
     io.stdout(report)
     return 0

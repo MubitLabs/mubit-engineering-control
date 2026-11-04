@@ -1,6 +1,6 @@
 # MEC v4.1 — Stream A brief: core and workflow
 
-Hand-off brief · 3 November 2026 · read with `PLAN_v4.1_local_meta_agent.md` (the spec), `CONTRACTS.md` (the shared interfaces) and `KICKOFF.md` (rules, handshakes, the prompt to paste).
+Hand-off brief · 3 November 2026 · read with `spec.md` (the spec), `CONTRACTS.md` (the shared interfaces) and `KICKOFF.md` (rules, handshakes, the prompt to paste).
 
 ## 1. Mission
 

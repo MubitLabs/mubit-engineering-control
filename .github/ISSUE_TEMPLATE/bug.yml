@@ -1,0 +1,78 @@
+name: Bug report
+description: MEC is broken for you — crash, wrong behaviour, slot or probe failure.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening: `docs/known-limits.md` lists what is designed-out (no auto-update,
+        single writer, no compile-on-install), and `docs/STATUS.md` states plainly what is
+        proven, what runs on fakes and what is absent — the behaviour you are seeing may be
+        a documented limit rather than a bug.
+
+        Never paste a credential, token or key. The doctor bundle below is safe by construction.
+  - type: input
+    id: version
+    attributes:
+      label: mec --version
+      description: Output of `mec --version`, or the release tag if installed via install.sh.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Doctor bundle
+      description: >-
+        Attach or paste the output of `mec doctor --json` (plain `mec doctor` on builds before
+        the flag existed). It is redacted by construction — if you see a secret-shaped string
+        in it, redact that string manually and tell us; that is a bug too.
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Engine and version
+      options:
+        - Claude Code 2.1.317
+        - Codex 0.148.0
+        - OpenCode 2.2.5
+        - Other or multiple (name it in the steps)
+        - Not engine-specific
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS and arch
+      options:
+        - macOS arm64
+        - macOS x64
+        - Linux arm64
+        - Linux x64
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Commands or workbench actions, in order, from a fresh start if you can.
+      placeholder: |
+        1. mec ...
+        2. in the workbench, ...
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+      description: The exact output or behaviour, including any exit code.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true

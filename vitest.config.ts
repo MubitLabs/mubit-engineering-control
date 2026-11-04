@@ -1,6 +1,6 @@
 import { configDefaults, defineConfig } from 'vitest/config'
 
-// Suites follow the ownership table in docs/plan/PLAN_v4.1_parallel_split.md §2.
+// Suites follow the ownership table in docs/plan/parallel-split.md §2.
 const T = '{test,spec}.{ts,tsx}'
 
 const SHARED = [`packages/contracts/**/*.${T}`, 'packages/testkit/conformance.spec.ts']

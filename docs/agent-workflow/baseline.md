@@ -3,7 +3,7 @@
 Status: **established** 4 Nov 2026. Refresh the table (and the revision) whenever you take the repo over for a new task; never convert an unknown or unexecuted check into a pass.
 
 Base revision: `main` at `e5ae484` (clean tree)
-Environment: macOS arm64, Node 25.8.2, pnpm 10.x; CI mirrors on self-hosted Linux runners (`mubit-any`)
+Environment: macOS arm64, Node 25.8.2, pnpm 10.x; CI mirrors on GitHub-hosted Linux runners (`ubuntu-latest`)
 Baseline scope: full repository
 
 | Exact command | Outcome | Scope | Prerequisites / known state |

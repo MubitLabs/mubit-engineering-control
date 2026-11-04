@@ -193,6 +193,9 @@ importers:
       '@mec/domain':
         specifier: workspace:*
         version: link:../domain
+      '@mec/store':
+        specifier: workspace:*
+        version: link:../store
     devDependencies:
       '@mec/testkit':
         specifier: workspace:*

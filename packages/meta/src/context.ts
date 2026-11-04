@@ -34,10 +34,10 @@ export type ModelsTableLike = TierTableLike & {
   engines: Record<
     string,
     {
-      models?: Record<string, { tier: ModelTier; speed?: number; cost?: number; vendor_says: string }>
+      models?: Record<string, { tier: ModelTier; speed?: number; cost?: number; vendor_says?: string }>
       providers?: Record<
         string,
-        { models: Record<string, { tier: ModelTier; speed?: number; cost?: number; vendor_says: string }> }
+        { models: Record<string, { tier: ModelTier; speed?: number; cost?: number; vendor_says?: string }> }
       >
     }
   >

@@ -47,6 +47,11 @@ if (webBuild.status !== 0) {
 cpSync(join(appDir, 'bin'), join(staging, 'bin'), { recursive: true })
 cpSync(join(appDir, 'dist'), join(staging, 'dist'), { recursive: true })
 cpSync(join(root, 'apps/web/dist'), join(staging, 'dist', 'web'), { recursive: true })
+// Issue #16: the bundle resolves the shipped models table relative to itself — ship it
+// beside the bundle at dist/prompts-defaults/.
+cpSync(join(root, 'packages/prompts/defaults'), join(staging, 'dist', 'prompts-defaults'), {
+  recursive: true,
+})
 
 const appPkg = JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8'))
 writeFileSync(

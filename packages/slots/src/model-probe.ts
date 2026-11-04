@@ -99,11 +99,10 @@ function parseOffered(stdout: string): string[] | undefined {
  * `opencode models` under the slot's XDG isolation; claude/codex answer honestly
  * `unlisted` — their acceptance probing is gated future work, not a guess here.
  */
-export async function probeModelAvailability(
-  _run: ProbeRun,
+export function probeModelAvailabilitySync(
   engine: EngineId,
   opts: { env?: Record<string, string>; configDir?: string } = {},
-): Promise<ModelProbeReport> {
+): ModelProbeReport {
   if (engine !== 'opencode') {
     return {
       engine,
@@ -161,4 +160,14 @@ export async function probeModelAvailability(
     availability,
     note: 'config-declared availability (the slot opencode.json models); live catalogue probing collides with the ambient opencode service — see T8 notes',
   }
+}
+
+/** The async seam callers already use (v0: identical to the sync core — the CLI-listing
+ *  future restores real I/O here without changing any caller). */
+export async function probeModelAvailability(
+  _run: ProbeRun,
+  engine: EngineId,
+  opts: { env?: Record<string, string>; configDir?: string } = {},
+): Promise<ModelProbeReport> {
+  return probeModelAvailabilitySync(engine, opts)
 }

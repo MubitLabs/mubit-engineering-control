@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@mec/contracts": "workspace:*",
-    "@mec/domain": "workspace:*"
+    "@mec/domain": "workspace:*",
+    "@mec/store": "workspace:*"
   },
   "devDependencies": {
     "@mec/testkit": "workspace:*",

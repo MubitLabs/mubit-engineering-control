@@ -103,8 +103,15 @@ export type ServerDeps = {
  */
 const SETTINGS_REPOSITORIES_ID = 'settings/repositories'
 
-/** The built workbench (`apps/web`); served at `/*` with an SPA fallback when present. */
-const WEB_DIST = fileURLToPath(new URL('../../web/dist', import.meta.url))
+/** The built workbench (`apps/web`); served at `/*` with an SPA fallback when present.
+ *  Two layouts: the repo (`apps/web/dist` beside the source) and the artifact, where the
+ *  UI ships inside the bundle's own `dist/web` (review 2026-11-04 §2.1) — the bundle-aware
+ *  path wins when it exists. */
+const WEB_DIST_CANDIDATES = [
+  fileURLToPath(new URL('../dist/web', import.meta.url)),
+  fileURLToPath(new URL('../../web/dist', import.meta.url)),
+]
+const WEB_DIST = WEB_DIST_CANDIDATES.find((dir) => existsSync(dir)) ?? WEB_DIST_CANDIDATES[1]
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',

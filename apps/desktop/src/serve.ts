@@ -7,8 +7,45 @@
  * TODO(B0 wiring): `mec.ts`'s `main` still calls a no-op `startServer`; pointing its
  * `CliIo.startServer` at `serveMain(home)` is the wiring step this module exists for.
  */
+import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import Database from 'better-sqlite3'
 import { startServer } from './composition'
 import { readStopMarker } from './stop-marker'
+
+/** Setup-completeness from the store (best-effort): the wizard sets both of these. */
+function setupComplete(dataDir: string): boolean {
+  try {
+    const db = new Database(join(dataDir, 'mec.db'), { readonly: true })
+    try {
+      const row = db.prepare("SELECT json FROM docs WHERE id = ?").get('settings/repositories') as
+        | { json: string }
+        | undefined
+      const repoDoc = row === undefined ? undefined : (JSON.parse(row.json) as { repositories?: unknown })
+      const slotRow = db.prepare("SELECT json FROM docs WHERE id = ?").get('settings/meta-slot') as
+        | { json: string }
+        | undefined
+      const slotDoc = slotRow === undefined ? undefined : (JSON.parse(slotRow.json) as { slotId?: unknown })
+      const hasRepo =
+        repoDoc !== undefined && Array.isArray(repoDoc.repositories) && repoDoc.repositories.length > 0
+      const hasSlot = slotDoc !== undefined && typeof slotDoc.slotId === 'string' && slotDoc.slotId !== ''
+      return hasRepo && hasSlot
+    } finally {
+      db.close()
+    }
+  } catch {
+    return false
+  }
+}
+
+function openBrowser(url: string): void {
+  const cmd = process.platform === 'darwin' ? 'open' : 'xdg-open'
+  const child = spawn(cmd, [url], { stdio: 'ignore' })
+  child.on('error', () => {
+    console.log(`open ${url} in your browser to continue`)
+  })
+}
 
 export async function serveMain(dataDir: string): Promise<void> {
   if (readStopMarker(dataDir).present) {
@@ -18,6 +55,11 @@ export async function serveMain(dataDir: string): Promise<void> {
 
   const handle = await startServer({ dataDir })
   console.log(`mec server listening on ${handle.url}`)
+  // Review §3.2: on an incomplete setup, open the browser straight into the wizard;
+  // --no-open (exported by bin/mec.js as MEC_NO_OPEN) keeps scripts and CI quiet.
+  if (process.env.MEC_NO_OPEN !== '1' && !setupComplete(dataDir)) {
+    openBrowser(`${handle.url}/#/wizard`)
+  }
 
   await new Promise<void>((resolve) => {
     let stopped = false

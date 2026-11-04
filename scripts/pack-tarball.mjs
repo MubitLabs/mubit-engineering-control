@@ -34,10 +34,19 @@ if (bundled.status !== 0) {
 
 // 2. Stage the npm-pack shape (entries at the archive root; no `package/` wrapper, so
 //    `tar xzf mec-<version>.tgz -C mec` lands the files directly in the target dir).
+//    The workbench UI ships INSIDE the artifact (review 2026-11-04 §2.1): build apps/web
+//    fresh so the tarball never carries a stale UI, then place it at dist/web where the
+//    bundled server resolves it.
 rmSync(staging, { recursive: true, force: true })
 mkdirSync(staging, { recursive: true })
+const webBuild = spawnSync('pnpm', ['--dir', join(root, 'apps/web'), 'build'], { stdio: 'inherit' })
+if (webBuild.status !== 0) {
+  console.error('pack-tarball: apps/web build failed — the artifact must carry the workbench')
+  process.exit(webBuild.status ?? 1)
+}
 cpSync(join(appDir, 'bin'), join(staging, 'bin'), { recursive: true })
 cpSync(join(appDir, 'dist'), join(staging, 'dist'), { recursive: true })
+cpSync(join(root, 'apps/web/dist'), join(staging, 'dist', 'web'), { recursive: true })
 
 const appPkg = JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8'))
 writeFileSync(

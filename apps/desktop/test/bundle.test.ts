@@ -34,7 +34,7 @@ describe('bin/mec.js bundle smoke', () => {
       tempDirs.push(dataDir)
 
       const child = spawn(process.execPath, [binPath], {
-        env: { ...process.env, MEC_DATA_DIR: dataDir },
+        env: { ...process.env, MEC_DATA_DIR: dataDir, MEC_NO_OPEN: '1' },
         stdio: ['ignore', 'pipe', 'pipe'],
       })
       let out = ''

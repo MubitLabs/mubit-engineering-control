@@ -35,8 +35,35 @@ function isNativeLoadFailure(error) {
 try {
   // §21.1 dispatch: no arguments → the guarded server; `mec <command>` → the CLI
   // (status/stop/restart/doctor/slot/update), which never starts a second server.
-  const args = process.argv.slice(2)
-  if (args.length > 0) {
+  // Server flags are intercepted here: --no-open (scripts/CI) exports MEC_NO_OPEN and
+  // still runs the server; --version/-v and help print and exit without the store.
+  const { readFile } = await import('node:fs/promises')
+  const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+  const rawArgs = process.argv.slice(2)
+  if (rawArgs.includes('--no-open')) process.env.MEC_NO_OPEN = '1'
+  const args = rawArgs.filter((a) => a !== '--no-open')
+  const HELP = `mec ${pkg.version} — Mubit Engineering Control
+
+usage: mec [command]
+
+(no command)    start the workbench server and print its URL (opens Setup on first run)
+--no-open       start the server without opening a browser
+--version, -v   print the version
+help            this help
+status          health snapshot + setup state (exit 0–3)
+stop            record an intentional stop
+restart         start the server again (--respect-stop honours an intentional stop)
+doctor          probe engines, sandbox and store; print a redacted report
+slot            add | list | probe | retire — local slot state (never a running server)
+update          version + the internal reinstall path (no network, by design)
+
+docs: https://github.com/MubitLabs/mubit-engineering-control — README → guide
+`
+  if (args[0] === '--version' || args[0] === '-v') {
+    console.log(`mec ${pkg.version}`)
+  } else if (args[0] === 'help' || args[0] === '--help' || args[0] === '-h') {
+    console.log(HELP)
+  } else if (args.length > 0) {
     const { cliMain } = await import(hasBundle ? '../dist/mec-cli.mjs' : '../src/mec.ts')
     await cliMain()
   } else {

@@ -11,6 +11,7 @@
  * app-server's `model/list` — so their entries report `unlisted` until the gated
  * acceptance-probing work lands. Never a guess, never a network probe (plan §5.8).
  */
+import { readFileSync } from 'node:fs'
 import type { EngineId } from '@mec/contracts'
 import type { ProbeRun } from './probes'
 
@@ -99,9 +100,9 @@ function parseOffered(stdout: string): string[] | undefined {
  * `unlisted` — their acceptance probing is gated future work, not a guess here.
  */
 export async function probeModelAvailability(
-  run: ProbeRun,
+  _run: ProbeRun,
   engine: EngineId,
-  opts: { env?: Record<string, string> } = {},
+  opts: { env?: Record<string, string>; configDir?: string } = {},
 ): Promise<ModelProbeReport> {
   if (engine !== 'opencode') {
     return {
@@ -114,30 +115,50 @@ export async function probeModelAvailability(
           : "codex's model catalogue lives behind the app-server model/list; probing is gated future work — entries are unlisted",
     }
   }
-  let result: Awaited<ReturnType<ProbeRun>>
+  // v0 honest method (review T8 finding): `opencode models --standalone` reads NO config
+  // (catalog only), and the managed-service variant collides with the user's ambient
+  // opencode service — so a live slot-scoped listing is not reliably probeable. The
+  // slot's own opencode.json is the declaration of what it runs: mark its provider/model
+  // ids available (config-declared), and say so in the note. Reachability is the
+  // launch-time probe's job, not this listing.
+  const configDir = opts.configDir ?? opts.env?.XDG_CONFIG_HOME ?? process.env.XDG_CONFIG_HOME ?? ''
+  const configPath = configDir === '' ? '' : `${configDir}/opencode/opencode.json`
+  let raw = ''
   try {
-    result = await run('opencode', ['models'], opts.env)
+    raw = readFileSync(configPath, 'utf8')
   } catch {
-    return { engine, probed: false, availability: {}, note: 'opencode binary missing — entries are unlisted' }
-  }
-  if (result.code !== 0) {
     return {
       engine,
       probed: false,
       availability: {},
-      note: `opencode models exited ${result.code} — entries are unlisted`,
+      note: 'no slot opencode.json found — entries are unlisted',
     }
   }
-  const offered = parseOffered(result.stdout)
-  if (offered === undefined) {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
     return {
       engine,
       probed: false,
       availability: {},
-      note: 'opencode models output not parseable — entries are unlisted',
+      note: 'slot opencode.json is not valid JSON — entries are unlisted',
     }
   }
-  const availability: Record<string, ModelAvailability> = {}
-  for (const id of offered) availability[id] = 'available'
-  return { engine, probed: true, availability, note: `opencode models listed ${offered.length} model(s)` }
+  const availability: Record<string, 'available'> = {}
+  const providers =
+    typeof parsed === 'object' && parsed !== null && 'provider' in parsed
+      ? (parsed as { provider?: Record<string, { models?: Record<string, unknown> }> }).provider
+      : undefined
+  for (const [providerId, provider] of Object.entries(providers ?? {})) {
+    for (const modelId of Object.keys(provider.models ?? {})) {
+      availability[`${providerId}/${modelId}`] = 'available'
+    }
+  }
+  return {
+    engine,
+    probed: true,
+    availability,
+    note: 'config-declared availability (the slot opencode.json models); live catalogue probing collides with the ambient opencode service — see T8 notes',
+  }
 }

@@ -138,7 +138,12 @@ export async function probeModelAvailability(
   try {
     parsed = JSON.parse(raw)
   } catch {
-    return { engine, probed: false, availability: {}, note: 'slot opencode.json is not valid JSON — entries are unlisted' }
+    return {
+      engine,
+      probed: false,
+      availability: {},
+      note: 'slot opencode.json is not valid JSON — entries are unlisted',
+    }
   }
   const availability: Record<string, 'available'> = {}
   const providers =

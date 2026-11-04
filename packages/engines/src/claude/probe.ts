@@ -29,7 +29,6 @@ export const REQUIRED_FLAGS: readonly string[] = [
   '--permission-prompt-tool',
   '--permission-prompts',
   '--restricted',
-  '--max-turns',
   '--allowedTools',
   '--disallowedTools',
   '--model',

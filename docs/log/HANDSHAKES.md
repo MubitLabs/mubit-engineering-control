@@ -87,3 +87,19 @@ The review package (docs/review/2026-11-04/) implemented end to end across PRs #
 **T8 canary (MEC_REAL_MODELS=1, live)**: the shipped table's zai entries resolve against the live slot; ladder degradation holds. Real findings recorded: `opencode models --standalone` reads NO config (catalog only) and the managed-service variant collides with the ambient opencode install — availability probing is therefore **config-declared** in v0 (the slot's own opencode.json, method stated in the probe note); the glm-2 slot's config was stale (zai-coding/glm-4.7 from the R2.2 era) and was aligned to zai-coding-plan/glm-5.3{,-flash}.
 
 **Process record, honestly**: four working-tree wipe events destroyed uncommitted lanes mid-build (an errant destructive git operation by an unidentified process). Countermeasures that ended it: a 3-second rolling snapshot daemon (recovered two lanes verbatim), a read-only .git lock between commits, Rule Zero (no git writes) in every agent brief, and commit-within-a-minute. The lost work was rebuilt each time; every merged lane was verified after its final recovery.
+
+## Session-2 acceptance run — PARTIAL, honest — 4 November 2026
+
+The §8 acceptance paragraph, driven live against the composed server on the real state:
+
+**Proven live:**
+- The real nine-tool planner planned from a real chat message: acknowledged, one implementer task with `originalRequestRef`, `ownedPaths`, `acceptanceChecks`, `budget` — and an honest deferral ("no slot is ready yet") that was CORRECT at the time (the store's slots were unvalidated; the meta slot had no slot doc).
+- Slots made real: both API-key slots validate healthy through the server; the Claude slot doc created and probed healthy on 2.1.318.
+- **F1 fixed by the run**: propose_plan tasks now REQUIRE `model_request` (tier|model + reason) end to end — the first live plan omitted it silently.
+- **§5.8 drift catch, live**: Claude Code self-updated 2.1.317→2.1.318 mid-run; the probe degraded the slot on `--max-turns` leaving `--help`; functional check showed the flag still works; probe's required set corrected; engines.md records the drift.
+- The prompt-edit flow end to end: PUT with base_revision+parts → revision 0→1 → the 8.2KB assembled implementer bundle for opencode carries the edit; Default-updated diff machinery answers.
+
+**Open findings (issues filed):**
+- F2: the real planner's tasks persist `ready` but the composed flow enqueues no launches (`launchesEnqueued: 0`) — the R1.4-era launch wiring does not consume the new brain's propose_plan path.
+- Claude 2.1.318 headless regression: planner turns (MCP tools + restricted headless) end `api_error` deterministically (three turns) while plain one-shots succeed — blocks claude-side planner/attempt assertions until diagnosed; the §10 monthly re-verification exists for exactly this.
+- The release bundle 404s route blocks that the source serves (the prompt routes are registered identically; fastify route-tree shows them; yet bundled-server requests fall to the SPA) — and `DEFAULT_MODELS_YAML_PATH` resolves to a nonexistent path inside the bundle. Both need bundle-layer fixes before the next tag.

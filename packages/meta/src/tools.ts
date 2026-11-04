@@ -447,7 +447,14 @@ export class PlannerTools {
     index: number,
     issues: string[],
   ): PlannerPlanTask['modelRequest'] | undefined {
-    if (raw === undefined) return undefined
+    if (raw === undefined) {
+      // Acceptance finding 4 Nov: a task WITHOUT a tier is exactly what §5.3 forbids —
+      // push it back as a repair instead of accepting silently.
+      issues.push(
+        `tasks[${index}].model_request is required: every task carries {tier | model, effort?, reason}`,
+      )
+      return undefined
+    }
     if (typeof raw !== 'object' || raw === null) {
       issues.push(`tasks[${index}].model_request must be {tier | model, effort?, reason}`)
       return undefined

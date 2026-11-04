@@ -115,7 +115,7 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
                 properties: { max_tier: { type: 'string' }, depth: { type: 'number' } },
               },
             },
-            required: ['id', 'objective'],
+            required: ['id', 'objective', 'role', 'model_request'],
           },
         },
         deps: { type: 'array', items: { type: 'string' } },

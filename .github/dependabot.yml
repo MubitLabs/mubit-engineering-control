@@ -1,0 +1,17 @@
+# Engines (Claude Code, Codex CLI, OpenCode) are NOT npm dependencies — Dependabot cannot
+# watch them. Vendor re-verification is a separate scheduled workflow (plan §10 / §28);
+# see docs/engines.md for the pinned versions each adapter was verified against.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+      major:
+        update-types:
+          - major

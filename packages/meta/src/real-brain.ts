@@ -1,10 +1,17 @@
 /**
- * The REAL MetaBrain (plan R1.4): the meta agent as a real Claude Code run with the
- * platform tool set. One `decide()` is one turn — a real `claude -p --restricted`
- * process whose only write channel is the `mcp__mec__*` tools served by mec-tools.
- * The event stream, not the model's prose, is the decision's source of truth:
- * `acknowledge` supplies the ack text, the last VALID `propose_plan` supplies the
- * plan, and both are re-derived deterministically from the normalised events.
+ * The REAL MetaBrain (plan R1.4, now the T5 driver): the meta agent as a real Claude Code
+ * run with the platform tool set. `asBrain()` — the surface the composition root wires —
+ * returns the NINE-TOOL PLANNER (`PlannerBrain`, review 2026-11-04 §5): per-turn §5.1
+ * context, the executed tool set over the mec-tools MCP server, wakes, the 12-turn budget,
+ * and the protocol read from T4's editable prompt parts. RealClaudeBrain contributes the
+ * transport seams the planner reuses — the injectable engine adapter, the brain-owned
+ * tmpdir with the read-only settings pair, the per-process tools server, the single-flight
+ * gate — and `close()` now retires both.
+ *
+ * The v0 `decide()` (three executed tools: acknowledge, propose_plan, report_result)
+ * REMAINS, unchanged, as the fixed canary surface its committed tests and the
+ * `MEC_REAL_CLAUDE=1` real-engine gate pin; production turns go through `asBrain()`,
+ * which is the planner.
  *
  * What the brain keeps deliberately minimal:
  * - **The tool side is per-brain-instance.** One MecToolsServer, started lazily on
@@ -20,11 +27,9 @@
  *   `permission_mode: 'none'` (argv: `--restricted --permission-prompts none`),
  *   sandbox required, the brain-owned tmpdir the only writable path, and a
  *   settings/mcp-config pair written exactly like a specialist attempt's (H1 pattern).
- * - **The instruction text is a compiled bundle** (plan §16): a `role` component with the tool
- *   protocol — READ PER TURN from the shipped defaults tree (`roles/meta_agent/protocol.md`,
- *   editable in Settings; the in-code constant is only a missing-tree fallback) — and a per-turn
- *   `delivery` component with the user message and the live work list; the revision pins what
- *   the meta run saw.
+ * - **The instruction text is a compiled bundle** (plan §16): a static `role`
+ *   component with the tool protocol and a per-turn `delivery` component with the
+ *   user message and the live work list; the revision pins what the meta run saw.
  *
  * Cross-package imports are relative source paths on purpose: meta declares only
  * `@mec/contracts` and `@mec/domain`, pnpm links nothing else into it, and R1.4
@@ -41,9 +46,9 @@ import { MecToolsServer } from '../../mec-tools/src/server'
 import { issueToken } from '../../mec-tools/src/tokens'
 import type { ToolName } from '../../mec-tools/src/tools'
 import { type CompiledBundle, compileBundle, componentHash } from '../../prompts/src/bundles'
-import { readDefaultPart } from '../../prompts/src/loader'
 import { buildAgentEnv } from '../../runtime/src/env'
 import { buildAttemptSettings, serialiseAttemptSettings } from '../../runtime/src/isolation'
+import { PlannerBrain } from './brain'
 import type { MetaBrain, MetaDecision } from './service'
 
 /** The engine surface the brain uses; `ClaudeAdapter` satisfies it structurally. */
@@ -116,18 +121,6 @@ const META_PROTOCOL_TEXT = [
   'If the message is a question or context only, skip step 2. Call no tools other than the mcp__mec__ ones.',
 ].join('\n')
 
-/**
- * The shipped protocol part (T4, plan §16): the turn protocol is prompt text on disk at
- * `roles/meta_agent/protocol.md`, read per turn so an edit in Settings reaches the next turn
- * without a restart. The constant above is the FALLBACK for a checkout whose defaults tree is
- * missing — never the path in a normal install.
- */
-const META_PROTOCOL_PART = 'roles/meta_agent/protocol.md'
-
-function metaProtocolText(): string {
-  return readDefaultPart(META_PROTOCOL_PART)?.text ?? META_PROTOCOL_TEXT
-}
-
 /** A mapped plan task — the service's MetaDecision shape. */
 type PlanTask = { taskId: string; objective: string; dependsOn: string[]; role: string }
 
@@ -135,9 +128,11 @@ type PlanTask = { taskId: string; objective: string; dependsOn: string[]; role: 
 type TurnState = { acks: string[]; reports: string[]; proposals: number }
 
 /**
- * The real meta brain. `decide()` is the MetaBrain signature (a class cannot
- * `implements` a call signature, so `asBrain()` is the compiler-checked adapter);
- * `MetaAgentService` consumes its decisions unchanged.
+ * The real meta brain. `asBrain()` is the production surface — the nine-tool planner
+ * driver (T5) — while `decide()` keeps the v0 three-tool turn its committed tests and
+ * the real-engine canary pin (a class cannot `implements` a call signature, so the
+ * brains adapt through `asBrain()`); `MetaAgentService` consumes their decisions
+ * unchanged.
  */
 export class RealClaudeBrain {
   /** Every executed platform tool call, in order — the test and audit mirror. */
@@ -155,6 +150,8 @@ export class RealClaudeBrain {
   #tools: MecToolsServer | null = null
   #url: string | undefined
   #turn: TurnState | null = null
+  /** The nine-tool planner this brain drives once asBrain() is wired (T5). */
+  #planner: PlannerBrain | null = null
   /** Decides are serialised: the shared tools server routes to one turn at a time. */
   #gate: Promise<unknown> = Promise.resolve()
 
@@ -172,9 +169,26 @@ export class RealClaudeBrain {
     return this.#url
   }
 
-  /** The brain as `MetaAgentService` accepts it; the compiler checks the shape here. */
+  /**
+   * The brain as `MetaAgentService` accepts it — THE DRIVER (T5): the nine-tool planner on
+   * this brain's seams (slot home, tools secret, adapter, clock), reading T4's editable
+   * protocol from disk by default. The service supplies the executed tool set and the §5.1
+   * snapshot per turn; a context without them is refused (the planner never runs unvalidated).
+   */
   asBrain(): MetaBrain {
-    return (context) => this.decide(context)
+    return (context) => this.#plannerBrain().asBrain()(context)
+  }
+
+  /** The nine-tool planner over this brain's seams, built once and reused across turns. */
+  #plannerBrain(): PlannerBrain {
+    this.#planner ??= new PlannerBrain({
+      slotDir: this.#slotDir,
+      homeDir: this.#home,
+      toolsSecret: this.#secret,
+      now: this.#now,
+      adapter: this.#engine,
+    })
+    return this.#planner
   }
 
   async decide(context: {
@@ -192,14 +206,17 @@ export class RealClaudeBrain {
     return run
   }
 
-  /** Stops the tools server and removes the brain-owned tmpdir; decides must be done. */
+  /** Stops both tool servers and removes the brain-owned tmpdirs; decides must be done. */
   async close(): Promise<void> {
     await this.#gate
     const server = this.#tools
     this.#tools = null
     this.#url = undefined
     this.#turn = null
+    const planner = this.#planner
+    this.#planner = null
     await server?.stop()
+    await planner?.close()
     rmSync(this.#root, { recursive: true, force: true })
   }
 
@@ -463,8 +480,8 @@ function buildTurnBundle(
     {
       layer: 'role',
       name: 'meta_agent',
-      text: metaProtocolText(),
-      hash: componentHash(metaProtocolText()),
+      text: META_PROTOCOL_TEXT,
+      hash: componentHash(META_PROTOCOL_TEXT),
       origin: 'default',
     },
     {

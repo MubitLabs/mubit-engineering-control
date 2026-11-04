@@ -24,6 +24,7 @@ import type { LiveWork } from '@mec/meta'
 import { routeMessage, SetupAgent, type SetupSettingsApi } from '@mec/meta'
 import type { ConfirmationRecord } from '@mec/policy'
 import { loadPolicy, resolveConfirmation } from '@mec/policy'
+import { defaultParts, PromptStore, StaleBaseError, UnknownPartError } from '@mec/prompts'
 import {
   API_KEY_PROBE_TARGETS,
   claudeHome,
@@ -1602,8 +1603,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       })),
   )
 
+
   // ─── T1 model routes (review 2026-11-04 §3 + §6.2 — GET/PUT /api/models) ────────
-  //
   // ONE additive block, deliberately self-contained: every import it needs is made
   // here, dynamically, so nothing above this comment moves. Route blocks from other
   // work streams append AFTER this block — never reorder, never interleave.
@@ -1616,7 +1617,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // `opencode models` per OpenCode slot under its own XDG isolation; claude/codex
   // answer honestly `unlisted` (acceptance probing is gated future work, §3 rule 2).
   app.get('/api/models', async (_request, reply) => {
-    const { loadModelsTable, providerKeyOf } = await import('@mec/runtime')
+    const { loadModelsTable } = await import('@mec/prompts')
     const { opencodeProbeEnv, probeModelAvailability } = await import('@mec/slots')
     let loaded: ReturnType<typeof loadModelsTable>
     try {
@@ -1660,7 +1661,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       // OpenCode slot only serves its own provider's block (§3), so only that
       // block's entries are marked for it.
       const entryTable = loaded.table.engines[engine]
-      const models: Record<string, string> = {}
+const providerKeyOf = (provider: string | undefined): string | undefined => {
+        if (provider !== 'zai-coding-plan' && provider !== 'google') return undefined
+        return provider in (loaded.table.engines.opencode?.providers ?? {}) ? provider : undefined
+      }
+            const models: Record<string, string> = {}
       if (engine === 'opencode') {
         const providerKey = providerKeyOf(slot.provider)
         const block = providerKey !== undefined ? entryTable.providers?.[providerKey] : undefined
@@ -1693,7 +1698,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       reply.code(400).send({ error: 'yaml (the full models.yaml text) is required' })
       return
     }
-    const { loadModelsTable, parseModelsYaml, validateModelsTable } = await import('@mec/runtime')
+    const { loadModelsTable, parseModelsYaml, validateModelsTable } = await import('@mec/prompts')
     try {
       validateModelsTable(parseModelsYaml(yaml))
     } catch (error) {
@@ -1735,7 +1740,119 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     return { provenance: { source: 'user', path: modelsPath, sha256 } }
   })
 
-  if (existsSync(WEB_DIST)) {
+    // ─── T4 prompt routes (review 2026-11-04 §6.2 · plan §16) ───────────────────────
+  // The editable prompt surface: shipped defaults, overrides with provenance, immutable
+  // revisions, stale-base refusal, preview and Default-updated diffs — one contiguous block;
+  // other route work appends below it. The store is rooted at <keystoreRoot>/prompts, so
+  // tests inject a temp root through the existing keystoreRoot seam; the imports come from
+  // @mec/prompts (declared in package.json), matching how every other package lands here.
+  const prompts = new PromptStore(join(keystoreRoot, 'prompts'))
+
+  // The live config: every override (path, text, defaultBaseHash, layer) and its revision.
+  app.get('/api/prompts', async () => {
+    const { revision, parts } = prompts.config()
+    return { revision, parts }
+  })
+
+  // One save = one immutable revision (§16.2). The body names the revision it was drafted
+  // against; a stale base is refused with 409 and NOTHING is written — the draft survives.
+  // A part saved identical to its current default removes the override so the part follows
+  // future defaults.
+  app.put('/api/prompts', async (request, reply) => {
+    const body = (request.body ?? {}) as {
+      base_revision?: unknown
+      origin?: unknown
+      parts?: unknown
+    }
+    if (
+      typeof body.base_revision !== 'number' ||
+      !Number.isInteger(body.base_revision) ||
+      body.base_revision < 0
+    ) {
+      reply.code(400).send({ error: 'base_revision must be a non-negative integer' })
+      return
+    }
+    const origin = body.origin === undefined || body.origin === 'panel' ? 'panel' : body.origin
+    if (origin !== 'user' && origin !== 'agent' && origin !== 'panel') {
+      reply.code(400).send({ error: "origin must be 'user', 'agent' or 'panel'" })
+      return
+    }
+    if (!Array.isArray(body.parts)) {
+      reply.code(400).send({ error: 'parts must be an array of {path, text}' })
+      return
+    }
+    const parts: Array<{ path: string; text: string }> = []
+    for (const entry of body.parts) {
+      if (
+        typeof entry !== 'object' ||
+        entry === null ||
+        typeof (entry as { path?: unknown }).path !== 'string' ||
+        typeof (entry as { text?: unknown }).text !== 'string'
+      ) {
+        reply.code(400).send({ error: 'parts must be an array of {path, text}' })
+        return
+      }
+      parts.push({ path: (entry as { path: string }).path, text: (entry as { text: string }).text })
+    }
+    try {
+      const { revision } = prompts.save({ baseRevision: body.base_revision, origin, parts, now })
+      return { revision }
+    } catch (error) {
+      if (error instanceof StaleBaseError) {
+        reply.code(409).send({ error: 'stale_base', current_revision: error.currentRevision })
+        return
+      }
+      if (error instanceof UnknownPartError) {
+        reply.code(400).send({ error: error.message })
+        return
+      }
+      throw error
+    }
+  })
+
+  // Every shipped default (path, layer, name, text, hash) — the read-only side of the editor.
+  app.get('/api/prompts/defaults', async () => ({ parts: defaultParts() }))
+
+  // One immutable revision snapshot, verbatim.
+  app.get('/api/prompts/revisions/:n', async (request, reply) => {
+    const raw = String((request.params as { n?: string }).n ?? '')
+    const n = Number.parseInt(raw, 10)
+    const snapshot = Number.isInteger(n) && raw === String(n) ? prompts.getRevision(n) : undefined
+    if (snapshot === undefined) {
+      reply.code(404).send({ error: 'no such revision' })
+      return
+    }
+    return snapshot
+  })
+
+  // Assemble a role's full text WITHOUT saving (§6.2): shared → role → conventions → delivery
+  // → engine → skills → generated, with the live overrides applied. What the editor's Full
+  // prompt tab shows and what an attempt pins.
+  app.post('/api/prompts/preview', async (request, reply) => {
+    const body = (request.body ?? {}) as { role?: unknown; engine?: unknown }
+    if (typeof body.role !== 'string' || body.role.trim() === '') {
+      reply.code(400).send({ error: 'role is required' })
+      return
+    }
+    const engine = typeof body.engine === 'string' && body.engine !== '' ? body.engine : undefined
+    try {
+      const { revision, text } = prompts.assemble(body.role.trim(), engine)
+      return { revision, text }
+    } catch (error) {
+      if (error instanceof Error && /unknown (role|engine)/.test(error.message)) {
+        reply.code(400).send({ error: error.message })
+        return
+      }
+      throw error
+    }
+  })
+
+  // Default-updated parts (§16.3): overrides whose shipped default changed — old default
+  // (recovered from revision history), new default, user text — plus removed parts, dropped
+  // on the next save.
+  app.get('/api/prompts/changes', async () => ({ changes: prompts.changes() }))
+
+if (existsSync(WEB_DIST)) {
     app.setNotFoundHandler((request, reply) => {
       if (request.method !== 'GET' && request.method !== 'HEAD') {
         reply.code(404).send({ error: 'not found' })

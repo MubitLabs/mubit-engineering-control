@@ -43,27 +43,73 @@ import {
   validateGraph,
   WORK_ITEM_TERMINAL,
 } from '@mec/domain'
+import { loadPolicy } from '../../policy/src/policy'
 import { Acknowledger } from './acks'
+import {
+  type ModelsTableSource,
+  type PlannerContextInput,
+  plannerContextFromStore,
+  slotViewsFromStore,
+} from './context'
 import { EscalationCounter } from './escalation'
 import { routeMessage } from './routing'
+import type { PlannerConfirmationDraft, PlannerQuestionRecord, PlannerTurnJournal } from './tools'
+import { PlannerTools } from './tools'
 
-/** What the brain decided for one message: the ack to record, and optionally a task plan. */
-export type MetaDecision =
-  | {
-      ack: string
-      plan?: { tasks: { taskId: string; objective: string; dependsOn: string[]; role: string }[] }
-    }
-  | { ack: string }
+/** One planned task as the service persists it: the v0 four fields, plus the §5.2 brief fields. */
+export type MetaPlanTask = {
+  taskId: string
+  objective: string
+  dependsOn: string[]
+  role: string
+  /** §6: the original message this task serves (defaults to the originating message id). */
+  originalRequestRef?: string
+  ownedPaths?: string[]
+  acceptanceChecks?: string[]
+  modelRequest?: { tier?: string; model?: string; effort?: string; variant?: string; reason: string }
+  slotHint?: { slotClass?: string; slotId?: string }
+  budget?: { turns: number; wallClockMs: number; usd?: number }
+  subagentPolicy?: { maxTier: string; depth: number }
+}
+
+/** What the brain decided for one message: the ack, optionally a task plan, and the §5.2 extras. */
+export type MetaDecision = {
+  ack: string
+  plan?: { tasks: MetaPlanTask[] }
+  /** ask_user records the service persists for /api/questions (§5.2). */
+  questions?: PlannerQuestionRecord[]
+  /** request_confirmation cards the service persists as pending confirmations (§13). */
+  confirmations?: PlannerConfirmationDraft[]
+  /** route decisions the tools executed (attach/stop/hold/release; §12.1/§12.5). */
+  routes?: PlannerTurnJournal['routes']
+  /** ad-hoc spawns bounded by caps (§5.2 spawn_agent). */
+  spawns?: PlannerTurnJournal['spawns']
+  reports?: PlannerTurnJournal['reports']
+  stops?: PlannerTurnJournal['stops']
+  cancels?: PlannerTurnJournal['cancels']
+  escalated?: boolean
+}
+
+/** The wake descriptor: why a turn runs (user message, specialist report, answered question). */
+export type MetaWake = { reason: string; detail?: string }
 
 /**
  * The planning brain: sees the message and the live work, returns the acknowledgement
- * text and (for new work) the proposed task graph. Production is the Claude adapter with
- * platform tools; tests and composition wire `fakeBrain`. Must be side-effect free — the
- * service owns every write.
+ * text and (for new work) the proposed task graph. Production is the engine-backed
+ * planner (PlannerBrain over the executed platform tools); tests and composition wire
+ * `fakeBrain`. Must be side-effect free — the service owns every write.
  */
 export type MetaBrain = (context: {
+  messageId?: string
   messageText: string
   liveWork: { workItemId: string; stage: string }[]
+  workItemId?: string
+  /** §6 wakes: a specialist report or an answered question re-invokes the planner. */
+  wake?: MetaWake
+  /** The executed tool set for the turn (§5.2) — the engine-backed planner executes it. */
+  tools?: PlannerTools
+  /** The compiled §5.1 snapshot for the turn. */
+  snapshot?: PlannerContextInput
 }) => Promise<MetaDecision>
 
 /** What one message's turn did — the receipt the caller shows the user, plus the counts. */
@@ -80,6 +126,17 @@ type LaunchRecord = { attemptId: string; key: string; taskId: string; slotId: st
 
 /** The v0 pseudo-check standing in for the checks registry (see the module doc). */
 const MANUAL_REVIEW_CHECK = 'manual-review'
+
+/**
+ * The honest empty table used when no capability-table seam is wired: no tiers, no models,
+ * an empty subagent routing block. Tier-carrying proposals fail validation with the
+ * repair issue naming the escape (drop model_request) — never a silent pass.
+ */
+const FALLBACK_EMPTY_TABLE = {
+  tiers: [],
+  engines: {},
+  routing: { subagents: {} },
+}
 
 /** v0 escalation is one streak per meta agent (see the module doc). */
 const PLANNING_STREAK_KEY = 'meta-planning'
@@ -119,6 +176,9 @@ export class MetaAgentService {
   readonly #brain: MetaBrain
   readonly #caps: Caps
   readonly #now: () => string
+  readonly #policyText: string
+  readonly #marks?: Record<string, Record<string, import('@mec/domain').ModelAvailability>>
+  readonly #modelsTable?: () => ModelsTableSource | undefined
   readonly #acks = new Acknowledger()
   readonly #escalation = new EscalationCounter()
 
@@ -128,12 +188,21 @@ export class MetaAgentService {
     brain: MetaBrain
     caps?: Caps
     now?: () => string
+    /** The executable policy text (§13); the empty-authorisation document when absent. */
+    policyText?: string
+    /** Probe marks per slot (T1's surface); absent marks are honestly unlisted. */
+    marks?: Record<string, Record<string, import('@mec/domain').ModelAvailability>>
+    /** The capability-table seam (T1's loader); absent means the planner is told so honestly. */
+    modelsTable?: () => ModelsTableSource | undefined
   }) {
     this.#store = deps.store
     this.#effects = deps.effects
     this.#brain = deps.brain
     this.#caps = deps.caps ?? DEFAULT_CAPS
     this.#now = deps.now ?? (() => new Date().toISOString())
+    this.#policyText = deps.policyText ?? '{"preAuthorised":{}}'
+    this.#marks = deps.marks
+    this.#modelsTable = deps.modelsTable
   }
 
   async onUserMessage(input: {
@@ -194,6 +263,130 @@ export class MetaAgentService {
   }
 
   // ── Turns ────────────────────────────────────────────────────────────────────────────────
+
+  /** The executed tool set for one turn (§5.2): built from the store, single source. */
+  #buildTools(turn: { messageId: string; workItemId?: string }): PlannerTools {
+    const modelsTable = this.#modelsTable?.()
+    const table = modelsTable?.table ?? FALLBACK_EMPTY_TABLE
+    return new PlannerTools({
+      turn,
+      snapshot: this.#buildSnapshot({
+        messageId: turn.messageId,
+        turn: { wake: 'user message' },
+        ...(turn.workItemId !== undefined && { workItemId: turn.workItemId }),
+      }),
+      caps: this.#caps,
+      table,
+      slots: slotViewsFromStore(this.#store, this.#marks),
+      frontierPreAuthorised:
+        (loadPolicy(this.#policyText).preAuthorised as Record<string, unknown>).frontier_model !== undefined,
+      now: () => new Date(this.#now()),
+      liveWork: this.#routingWork(),
+    })
+  }
+
+  #buildSnapshot(opts: {
+    messageId: string
+    workItemId?: string
+    turn: { wake: string; detail?: string }
+  }): ReturnType<typeof plannerContextFromStore> {
+    return plannerContextFromStore(this.#store, {
+      turn: {
+        wake: opts.turn.wake,
+        ...(opts.turn.detail !== undefined && { detail: opts.turn.detail }),
+        messageId: opts.messageId,
+      },
+      policyText: this.#policyText,
+      caps: this.#caps,
+      ...(this.#marks !== undefined && { marks: this.#marks }),
+      ...(this.#modelsTable !== undefined && { modelsTable: this.#modelsTable }),
+    })
+  }
+
+  /**
+   * §6 WAKES: a specialist report, an answered question, a resolved confirmation — anything
+   * that starts a planner turn without a user message. The wake reason travels to the brain
+   * and the decision commits exactly like a message turn.
+   */
+  async onWake(input: { reason: string; detail?: string; workItemId?: string }): Promise<TurnOutcome> {
+    const messageId = freshId('msg_wake_')
+    const workItemId = input.workItemId ?? freshId('wi_')
+    if (input.workItemId === undefined) {
+      const at = this.#now()
+      this.#store.atomic(() => {
+        this.#store.workItems.save({
+          id: workItemId,
+          state: 'planning',
+          mandate: { originMessageId: messageId },
+          originMessageId: messageId,
+          createdAt: at,
+          updatedAt: at,
+        })
+      })
+    }
+    let decision: MetaDecision
+    try {
+      decision = await this.#brain({
+        messageId,
+        messageText: input.detail ?? input.reason,
+        liveWork: this.#liveForBrain(),
+        ...(input.workItemId !== undefined && { workItemId: input.workItemId }),
+        wake: { reason: input.reason, ...(input.detail !== undefined && { detail: input.detail }) },
+        tools: this.#buildTools({ messageId, workItemId: input.workItemId }),
+        snapshot: this.#buildSnapshot({
+          messageId,
+          ...(input.workItemId !== undefined && { workItemId: input.workItemId }),
+          turn: { wake: input.reason, ...(input.detail !== undefined && { detail: input.detail }) },
+        }),
+      })
+    } catch (error) {
+      return this.#failTurn(
+        { messageId, text: input.detail ?? input.reason },
+        workItemId,
+        error instanceof Error ? error.message : String(error),
+      )
+    }
+    const plan = 'plan' in decision ? decision.plan : undefined
+    if (plan === undefined) return this.#ackOnlyTurn({ messageId, text: input.reason }, workItemId, decision)
+    return this.#commitPlan({ messageId, text: input.reason }, workItemId, plan, decision)
+  }
+
+  /**
+   * §5.2/§12.6: an answered question is persisted (first answer wins) and WAKES the
+   * planner with the answer in context — the §1 gap this closes.
+   */
+  async onQuestionAnswered(
+    questionId: string,
+    answer: string,
+  ): Promise<{ status: 'answered' | 'not_open' | 'missing'; outcome?: TurnOutcome }> {
+    const docId = questionId.startsWith('question/') ? questionId : `question/${questionId}`
+    const doc = this.#store.engines.get(docId)
+    if (doc === undefined) return { status: 'missing' }
+    if (doc.status !== 'open') return { status: 'not_open' }
+    const at = this.#now()
+    this.#store.atomic(() => {
+      this.#store.engines.save({
+        ...doc,
+        status: 'answered',
+        answer,
+        answeredAt: at,
+        updatedAt: at,
+      })
+      this.#appendEvent(
+        docId,
+        'question_answered',
+        { questionId: typeof doc.questionId === 'string' ? doc.questionId : questionId, answer, at },
+        at,
+      )
+    })
+    const workItemId = typeof doc.workItemId === 'string' ? doc.workItemId : undefined
+    const outcome = await this.onWake({
+      reason: 'question answered',
+      detail: `question "${String(doc.question ?? '')}" answered: ${answer}`,
+      ...(workItemId !== undefined && { workItemId }),
+    })
+    return { status: 'answered', outcome }
+  }
 
   /** §6 attach: a message on existing work is acknowledged as a note, nothing more. */
   #noteAttached(input: { messageId: string; text: string }, workItemId: string): TurnOutcome {
@@ -271,7 +464,19 @@ export class MetaAgentService {
 
     let decision: MetaDecision
     try {
-      decision = await this.#brain({ messageText: input.text, liveWork: this.#liveForBrain() })
+      decision = await this.#brain({
+        messageId: input.messageId,
+        messageText: input.text,
+        liveWork: this.#liveForBrain(),
+        workItemId,
+        wake: { reason: 'user message', detail: input.text.slice(0, 200) },
+        tools: this.#buildTools({ messageId: input.messageId, workItemId }),
+        snapshot: this.#buildSnapshot({
+          messageId: input.messageId,
+          workItemId,
+          turn: { wake: 'user message', detail: input.text.slice(0, 200) },
+        }),
+      })
     } catch (error) {
       // The brain failing must never throw outward (§6): the user gets the failure ack,
       // the work item is stopped with the error on its stream, and the turn ends.
@@ -279,31 +484,41 @@ export class MetaAgentService {
     }
 
     const plan = 'plan' in decision ? decision.plan : undefined
-    if (plan === undefined) {
-      // Ack-only decision (e.g. the brain asked a question): the item stays `planning`
-      // for the reply, which will arrive as an attach on this work item.
-      const at = this.#now()
-      this.#store.atomic(() => {
-        this.#saveMessage(input, {
-          routing: 'new_work',
-          at,
-          workItemId,
-          ackText: decision.ack,
-          tasksCreated: 0,
-          launches: [],
-          escalated: false,
-        })
-      })
-      this.#acks.acknowledge(input.messageId, decision.ack)
-      return {
-        acknowledged: decision.ack,
+    if (plan === undefined) return this.#ackOnlyTurn(input, workItemId, decision)
+    return this.#commitPlan(input, workItemId, plan, decision)
+  }
+
+  /**
+   * Ack-only decision (e.g. the brain asked a question): the item stays `planning` for
+   * the reply, and the decision's questions/confirmations/routes still persist — the
+   * turn's whole write set, not just the words.
+   */
+  #ackOnlyTurn(
+    input: { messageId: string; text: string },
+    workItemId: string,
+    decision: MetaDecision,
+  ): TurnOutcome {
+    const at = this.#now()
+    this.#store.atomic(() => {
+      this.#persistExtras(workItemId, decision, at)
+      this.#saveMessage(input, {
+        routing: 'new_work',
+        at,
         workItemId,
+        ackText: decision.ack,
         tasksCreated: 0,
-        launchesEnqueued: [],
-        escalated: false,
-      }
+        launches: [],
+        escalated: decision.escalated === true,
+      })
+    })
+    this.#acks.acknowledge(input.messageId, decision.ack)
+    return {
+      acknowledged: decision.ack,
+      workItemId,
+      tasksCreated: 0,
+      launchesEnqueued: [],
+      escalated: decision.escalated === true,
     }
-    return this.#commitPlan(input, workItemId, plan, decision.ack)
   }
 
   /** A brain failure ends the turn safely: failure ack, stopped work item, error event. */
@@ -336,17 +551,21 @@ export class MetaAgentService {
   #commitPlan(
     input: { messageId: string; text: string },
     workItemId: string,
-    plan: { tasks: { taskId: string; objective: string; dependsOn: string[]; role: string }[] },
-    ack: string,
+    plan: { tasks: MetaPlanTask[] },
+    decision: MetaDecision,
   ): TurnOutcome {
     const tasks = plan.tasks
+    const ack = decision.ack
     // v0: every task gets the pseudo-check (module doc); roles must exist in the registry.
     const issues = validateGraph(
       tasks.map((task) => ({
         id: task.taskId,
         dependsOn: [...task.dependsOn],
-        ownedPaths: [],
-        acceptanceChecks: [MANUAL_REVIEW_CHECK],
+        ownedPaths: task.ownedPaths ?? [],
+        acceptanceChecks:
+          task.acceptanceChecks !== undefined && task.acceptanceChecks.length > 0
+            ? [...task.acceptanceChecks]
+            : [MANUAL_REVIEW_CHECK],
         maxAttempts: this.#caps.repairAttemptsPerTask + 1,
         basePolicy: 'integration',
         role: task.role,
@@ -409,11 +628,50 @@ export class MetaAgentService {
           dependsOn: [...task.dependsOn],
           role: task.role,
           status: 'ready',
-          acceptanceChecks: [MANUAL_REVIEW_CHECK],
+          acceptanceChecks:
+            task.acceptanceChecks !== undefined && task.acceptanceChecks.length > 0
+              ? [...task.acceptanceChecks]
+              : [MANUAL_REVIEW_CHECK],
+          // §5.2's brief fields persist verbatim; the runtime's resolveModel reads them.
+          originalRequestRef: task.originalRequestRef ?? input.messageId,
+          ...(task.ownedPaths !== undefined && { ownedPaths: [...task.ownedPaths] }),
+          ...(task.modelRequest !== undefined && { modelRequest: { ...task.modelRequest } }),
+          ...(task.slotHint !== undefined && { slotHint: { ...task.slotHint } }),
+          ...(task.budget !== undefined && { budget: { ...task.budget } }),
+          ...(task.subagentPolicy !== undefined && { subagentPolicy: { ...task.subagentPolicy } }),
           createdAt: at,
           updatedAt: at,
         })
       }
+
+      // §5.2 spawn_agent: ad-hoc specialists outside the plan get task docs and dispatch
+      // through the same §11 pass — the executor already bounded them by caps.
+      for (const spawn of decision.spawns ?? []) {
+        this.#store.tasks.save({
+          id: spawn.taskId,
+          workItemId: spawn.workItemId,
+          objective: spawn.objective,
+          dependsOn: [],
+          role: spawn.role,
+          status: 'ready',
+          acceptanceChecks: [MANUAL_REVIEW_CHECK],
+          originalRequestRef: input.messageId,
+          ...(spawn.modelRequest !== undefined && { modelRequest: { ...spawn.modelRequest } }),
+          ...(spawn.slotHint !== undefined && { slotHint: { ...spawn.slotHint } }),
+          createdAt: at,
+          updatedAt: at,
+        })
+        this.#appendEvent(
+          `work:${spawn.workItemId}`,
+          'agent_spawned',
+          { taskId: spawn.taskId, role: spawn.role, workItemId: spawn.workItemId, at },
+          at,
+        )
+      }
+
+      // The turn's other executed effects (§5.2): questions, cards, routes, reports,
+      // stops, cancels — one transaction with the plan.
+      this.#persistExtras(workItemId, decision, at)
 
       // Dependency-satisfied tasks only (§14): within a fresh plan every dependency is
       // still `ready` — an integration dependency needs `integrated` — so a task with any
@@ -425,7 +683,16 @@ export class MetaAgentService {
         const state = states.get(dep)
         return state === 'accepted' || state === 'integrated' ? state : undefined
       }
-      const ready: SchedulableTask[] = tasks
+      const ready: SchedulableTask[] = [
+        ...tasks,
+        ...(decision.spawns ?? []).map((spawn) => ({
+          taskId: spawn.taskId,
+          objective: spawn.objective,
+          dependsOn: [] as string[],
+          role: spawn.role,
+          slotHint: spawn.slotHint,
+        })),
+      ]
         .filter((task) =>
           task.dependsOn.every(
             (dep) =>
@@ -439,6 +706,9 @@ export class MetaAgentService {
           readyAt: Date.parse(at),
           generation: 1,
           role: task.role,
+          ...('slotHint' in task && task.slotHint?.slotClass !== undefined
+            ? { slotClass: task.slotHint.slotClass }
+            : {}),
         }))
 
       const active = this.#store.attempts
@@ -495,7 +765,7 @@ export class MetaAgentService {
         ackText: ack,
         tasksCreated: tasks.length,
         launches: records,
-        escalated: false,
+        escalated: decision.escalated === true,
       })
       return records
     })
@@ -506,7 +776,112 @@ export class MetaAgentService {
       workItemId,
       tasksCreated: tasks.length,
       launchesEnqueued: launches.map((record) => record.attemptId),
-      escalated: false,
+      escalated: decision.escalated === true,
+    }
+  }
+
+  /**
+   * Persists the executed-but-not-plan effects of a turn (§5.2), inside the caller's
+   * transaction: ask_user questions (served by /api/questions), request_confirmation
+   * cards, route decisions (hold/release/stop), reports, attempt stops and task cancels.
+   */
+  #persistExtras(workItemId: string, decision: MetaDecision, at: string): void {
+    for (const question of decision.questions ?? []) {
+      this.#store.engines.save({
+        id: `question/${question.id}`,
+        questionId: question.id,
+        question: question.question,
+        options: question.options,
+        ...(question.forMessageId !== undefined && { forMessageId: question.forMessageId }),
+        ...(question.workItemId !== undefined && { workItemId: question.workItemId }),
+        ...(question.workItemId === undefined && { workItemId }),
+        status: 'open',
+        askedAt: question.at,
+        createdAt: question.at,
+        updatedAt: at,
+      })
+      this.#appendEvent(
+        `question/${question.id}`,
+        'question_asked',
+        { questionId: question.id, question: question.question, workItemId, at },
+        at,
+      )
+    }
+    for (const draft of decision.confirmations ?? []) {
+      this.#store.confirmations.save({
+        id: draft.id,
+        cls: draft.cls,
+        operationHash: draft.operationHash,
+        status: 'pending',
+        createdAt: at,
+        expiresAt: draft.expiresAt,
+        payload: {
+          operation: draft.operation,
+          evidence: draft.evidence,
+        } as unknown as Json,
+        ...(draft.workItemId !== undefined && { workItemId: draft.workItemId }),
+      })
+      this.#appendEvent(
+        `work:${draft.workItemId ?? workItemId}`,
+        'confirmation_requested',
+        { confirmationId: draft.id, cls: draft.cls, workItemId, at },
+        at,
+      )
+    }
+    for (const route of decision.routes ?? []) {
+      if (route.target === undefined) continue
+      if (route.decision === 'hold') {
+        const doc = this.#store.workItems.get(route.target)
+        if (doc !== undefined) {
+          this.#store.workItems.save({
+            ...doc,
+            hold: { reason: route.note ?? 'held by planner', at },
+            updatedAt: at,
+          })
+          this.#appendEvent(
+            `work:${route.target}`,
+            'work_held',
+            { workItemId: route.target, reason: route.note ?? 'held by planner', at },
+            at,
+          )
+        }
+      } else if (route.decision === 'release') {
+        const doc = this.#store.workItems.get(route.target)
+        const hold = doc?.hold as { reason?: string; at?: string; liftedAt?: string } | undefined
+        if (doc !== undefined && hold !== undefined) {
+          this.#store.workItems.save({ ...doc, hold: { ...hold, liftedAt: at }, updatedAt: at })
+          this.#appendEvent(`work:${route.target}`, 'hold_lifted', { workItemId: route.target, at }, at)
+        }
+      } else if (route.decision === 'stop') {
+        this.#stopPlanningWork(route.target, route.messageId, at, route.note ?? 'stopped by planner route')
+      }
+    }
+    for (const report of decision.reports ?? []) {
+      this.#appendEvent(
+        `work:${report.workItemId}`,
+        'result_reported',
+        { workItemId: report.workItemId, summary: report.summary, artifacts: report.artifacts, at },
+        at,
+      )
+    }
+    for (const stop of decision.stops ?? []) {
+      const doc = this.#store.attempts.get(stop.attemptId)
+      if (doc !== undefined) {
+        this.#store.attempts.save({ ...doc, state: 'interrupted', updatedAt: at })
+        this.#appendEvent(
+          `attempt:${stop.attemptId}`,
+          'attempt.interrupt_requested',
+          { attemptId: stop.attemptId, at },
+          at,
+        )
+      }
+    }
+    for (const cancel of decision.cancels ?? []) {
+      const doc = this.#store.tasks.get(cancel.taskId)
+      if (doc !== undefined) {
+        this.#store.tasks.save({ ...doc, status: 'cancelled', updatedAt: at })
+        this.#appendEvent(`task:${cancel.taskId}`, 'task_cancelled', { taskId: cancel.taskId, at }, at)
+      }
     }
   }
 

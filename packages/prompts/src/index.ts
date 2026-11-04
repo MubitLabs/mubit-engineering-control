@@ -1,4 +1,6 @@
 export * from './bundles'
+export * from './loader'
 export * from './models'
+export * from './store'
 export * from './proposals'
 export * from './upgrades'

@@ -71,7 +71,7 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
   },
   propose_plan: {
     description:
-      'Propose a task graph for a work item: tasks with dependencies; validated deterministically, repairs returned',
+      'Propose a task graph for a work item: tasks with dependencies, role, model_request and owned paths; validated deterministically, repairs returned',
     inputSchema: {
       type: 'object',
       properties: {
@@ -83,7 +83,37 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
             properties: {
               id: { type: 'string' },
               objective: { type: 'string' },
+              original_request_ref: { type: 'string' },
+              owned_paths: { type: 'array', items: { type: 'string' } },
+              acceptance_checks: { type: 'array', items: { type: 'string' } },
               depends_on: { type: 'array', items: { type: 'string' } },
+              role: { type: 'string' },
+              model_request: {
+                type: 'object',
+                properties: {
+                  tier: { type: 'string', enum: ['fast', 'balanced', 'strong', 'frontier'] },
+                  model: { type: 'string' },
+                  effort: { type: 'string' },
+                  reason: { type: 'string' },
+                },
+                required: ['reason'],
+              },
+              slot_hint: {
+                type: 'object',
+                properties: { slot_class: { type: 'string' }, slot_id: { type: 'string' } },
+              },
+              budget: {
+                type: 'object',
+                properties: {
+                  turns: { type: 'number' },
+                  wall_clock_ms: { type: 'number' },
+                  usd: { type: 'number' },
+                },
+              },
+              subagent_policy: {
+                type: 'object',
+                properties: { max_tier: { type: 'string' }, depth: { type: 'number' } },
+              },
             },
             required: ['id', 'objective'],
           },
@@ -107,14 +137,19 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
       required: ['task', 'role'],
     },
   },
+  // T5 (review 2026-11-04 §5.2): the full §12 routing vocabulary — attach/hold/release carry
+  // their target in `target`; only these decisions exist.
   route: {
     description:
-      'Attach a message to live work, new work, a stop or the conversation, with an optional bounded note',
+      'Attach a message to live work, new work, a stop, hold or release, or the conversation, with an optional bounded note',
     inputSchema: {
       type: 'object',
       properties: {
         message_id: { type: 'string' },
-        decision: { type: 'string', enum: ['live_work', 'new_work', 'stop', 'conversation'] },
+        decision: {
+          type: 'string',
+          enum: ['new_work', 'attach', 'stop', 'hold', 'release', 'conversation'],
+        },
         target: { type: 'string' },
         note: { type: 'string' },
       },
@@ -134,12 +169,14 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
     },
   },
   ask_user: {
-    description: 'Ask the user one concrete question, optionally bound to the message that raised it',
+    description:
+      'Ask the user one concrete question, optionally bound to the message that raised it, with options',
     inputSchema: {
       type: 'object',
       properties: {
         question: { type: 'string' },
         for_message_id: { type: 'string' },
+        options: { type: 'array', items: { type: 'string' } },
       },
       required: ['question'],
     },

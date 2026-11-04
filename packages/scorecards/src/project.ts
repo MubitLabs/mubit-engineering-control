@@ -24,8 +24,15 @@
  *   decorates the record from the attempt row (which slot ran it, in which role).
  * - `coverage` records what the adapter actually surfaced (§19): `lifecycle` needs both
  *   `session_started` and `exit`; `usage` and `rateLimit` need at least one event of that kind.
+ * - The tier-era fields (§5.5) come from an optional `AttemptContext`: the stream holds what
+ *   the engine said, while the tier asked for, the model the runtime launched, the task and
+ *   repository the attempt belongs to, and the adapter's `usage_mode` live on the attempt row.
+ *   `spend` totals the usage events as that mode adds up (cumulative: the freshest reading is
+ *   the total; delta: the sum), and `utilisationDelta` reads last − before on one window —
+ *   a lone reading never fakes a 0, and a mid-attempt reset keeps its real negative.
  */
-import type { EngineEvent } from '@mec/contracts'
+import type { EngineEvent, UsageMode } from '@mec/contracts'
+import type { LaunchModel, ModelTier } from './tiers'
 
 export type AttemptOutcome = {
   attemptId: string
@@ -42,6 +49,36 @@ export type AttemptOutcome = {
   quotaParks: number
   errors: number
   coverage: { lifecycle: boolean; usage: boolean; rateLimit: boolean }
+  /** The tier the brief asked for (§5.5); undefined = an explicit-model or pre-tier ask. */
+  tier?: ModelTier
+  /** What the runtime actually launched (contracts-v0.1 `LaunchSpec.model`); null when nothing did. */
+  resolvedModel: LaunchModel | null
+  /** e.g. `'strong→balanced (provider has no strong)'` (§3 rule 1); null when the tier held. */
+  tierDegraded: string | null
+  /** Total spend over the attempt from usage events, as the adapter's `usage_mode` adds up. */
+  spend: number | 'unknown'
+  /** Last − before utilisation on one window; null without a genuine pair of readings. */
+  utilisationDelta: number | null
+  repository?: string
+  taskId?: string
+  /** Findings the attempt's report carried, when it was a review that reported. */
+  reviewFindings?: number
+}
+
+/**
+ * Tier-era facts the event stream does not carry (plan §5.5; the contracts-v0.1 change adding
+ * them to the brief and launch spec is in flight). Every field is optional, so the pre-tier
+ * two-argument call keeps working unchanged — its rows read the tier fields as unknown.
+ */
+export type AttemptContext = {
+  tier?: ModelTier
+  resolvedModel?: LaunchModel | null
+  tierDegraded?: string | null
+  /** The adapter's `Capabilities.usage_mode`; defaults to `'cumulative'` (the contracts' primary). */
+  usageMode?: UsageMode
+  repository?: string
+  taskId?: string
+  reviewFindings?: number
 }
 
 type SessionStartedEvent = Extract<EngineEvent, { type: 'session_started' }>
@@ -60,7 +97,47 @@ function durationOf(events: readonly EngineEvent[]): number | 'unknown' {
   return end - start > 0 ? end - start : 'unknown'
 }
 
-export function projectAttempt(attemptId: string, events: readonly EngineEvent[]): AttemptOutcome {
+/**
+ * Total spend from `usage` events as the adapter's `usage_mode` adds up (CONTRACTS §4):
+ * cumulative mode reports a running total — the freshest reading IS the total; delta mode
+ * reports per-turn spend — the total is the sum. A stream with no reported cost stays
+ * `'unknown'`, never 0; an engine that really reported 0 keeps its 0.
+ */
+function spendOf(usage: readonly UsageEvent[], mode: UsageMode): number | 'unknown' {
+  if (mode === 'none') return 'unknown'
+  const costs = usage
+    .map((event) => event.cost_usd)
+    .filter((cost): cost is number => typeof cost === 'number')
+  if (costs.length === 0) return 'unknown'
+  return mode === 'cumulative' ? (costs.at(-1) ?? 'unknown') : costs.reduce((sum, cost) => sum + cost, 0)
+}
+
+/**
+ * How far the attempt moved one window's utilisation: last − before on the first window (in
+ * stream order) that reported a genuine pair of readings. A lone reading never fakes a 0, and
+ * a window that reset mid-attempt keeps its real negative (§5.5).
+ */
+function utilisationDeltaOf(rateLimits: readonly RateLimitEvent[]): number | null {
+  const readings = new Map<string, number[]>()
+  for (const event of rateLimits) {
+    if (typeof event.utilization !== 'number') continue
+    const seen = readings.get(event.window)
+    if (seen === undefined) readings.set(event.window, [event.utilization])
+    else seen.push(event.utilization)
+  }
+  for (const seen of readings.values()) {
+    const before = seen[0]
+    const last = seen.at(-1)
+    if (before !== undefined && last !== undefined && seen.length >= 2) return last - before
+  }
+  return null
+}
+
+export function projectAttempt(
+  attemptId: string,
+  events: readonly EngineEvent[],
+  context: AttemptContext = {},
+): AttemptOutcome {
   const own = events.filter((event) => event.attempt_id === attemptId)
   const started = own.find((event): event is SessionStartedEvent => event.type === 'session_started')
   const usage = own.filter((event): event is UsageEvent => event.type === 'usage')
@@ -89,5 +166,18 @@ export function projectAttempt(attemptId: string, events: readonly EngineEvent[]
       usage: usage.length > 0,
       rateLimit: rateLimits.length > 0,
     },
+    tier: context.tier,
+    resolvedModel:
+      context.resolvedModel !== undefined
+        ? context.resolvedModel
+        : started?.model !== undefined
+          ? { id: started.model }
+          : null,
+    tierDegraded: context.tierDegraded ?? null,
+    spend: spendOf(usage, context.usageMode ?? 'cumulative'),
+    utilisationDelta: utilisationDeltaOf(rateLimits),
+    repository: context.repository,
+    taskId: context.taskId,
+    reviewFindings: context.reviewFindings,
   }
 }

@@ -1,4 +1,4 @@
-import type { EngineEvent, EngineEventBody } from '@mec/contracts'
+import type { EngineEvent, EngineEventBody, Window } from '@mec/contracts'
 import { describe, expect, it } from 'vitest'
 import { projectAttempt } from '../src'
 
@@ -50,6 +50,10 @@ describe('projectAttempt — happy path', () => {
       quotaParks: 0,
       errors: 0,
       coverage: { lifecycle: true, usage: true, rateLimit: true },
+      resolvedModel: null, // no runtime resolution and no session_started echo
+      tierDegraded: null,
+      spend: 0.06, // cumulative default: the last usage reading is the total
+      utilisationDelta: null, // one five_hour reading — no genuine pair, never a fake 0
     })
   })
 })
@@ -225,5 +229,151 @@ describe('projectAttempt — incomplete and foreign facts', () => {
     const outcome = projectAttempt('att_1', events)
     expect(outcome.permissionRequests).toBe(1)
     expect(outcome.errors).toBe(1)
+  })
+})
+
+describe('projectAttempt — tier context', () => {
+  it('carries the tier-era facts the stream does not hold onto the row', () => {
+    const outcome = projectAttempt('att_1', happyPath(), {
+      tier: 'strong',
+      resolvedModel: { id: 'opus', effort: 'high' },
+      tierDegraded: 'strong→balanced (provider has no strong)',
+      repository: 'mec',
+      taskId: 'task_9',
+      reviewFindings: 2,
+    })
+    expect(outcome.tier).toBe('strong')
+    expect(outcome.resolvedModel).toEqual({ id: 'opus', effort: 'high' })
+    expect(outcome.tierDegraded).toBe('strong→balanced (provider has no strong)')
+    expect(outcome.repository).toBe('mec')
+    expect(outcome.taskId).toBe('task_9')
+    expect(outcome.reviewFindings).toBe(2)
+  })
+
+  it('an explicit-model ask carries no tier, and no degradation reads null', () => {
+    const outcome = projectAttempt('att_1', happyPath(), {
+      resolvedModel: { id: 'glm-5.3', variant: 'max' },
+    })
+    expect(outcome.tier).toBeUndefined()
+    expect(outcome.resolvedModel).toEqual({ id: 'glm-5.3', variant: 'max' })
+    expect(outcome.tierDegraded).toBeNull()
+  })
+
+  it("falls back to the engine's own session_started echo when the runtime resolution is absent", () => {
+    const events = [
+      env(
+        {
+          type: 'session_started',
+          session_id: 's_1',
+          engine: 'claude',
+          engine_version: '2.1.317',
+          model: 'opus',
+        },
+        1,
+        at(0),
+      ),
+      env({ type: 'exit', code: 0, terminal_reason: 'completed' }, 2, at(1_000)),
+    ]
+    expect(projectAttempt('att_1', events).resolvedModel).toEqual({ id: 'opus' })
+    expect(projectAttempt('att_1', events, { resolvedModel: { id: 'sonnet' } }).resolvedModel).toEqual({
+      id: 'sonnet',
+    })
+  })
+})
+
+describe('projectAttempt — spend', () => {
+  const spent = (usages: { cost_usd?: number | 'unknown' }[], usageMode?: 'cumulative' | 'delta' | 'none') =>
+    projectAttempt(
+      'att_1',
+      [
+        env(
+          { type: 'session_started', session_id: 's_1', engine: 'claude', engine_version: '2.1.317' },
+          1,
+          at(0),
+        ),
+        ...usages.map((usage, index) =>
+          env(
+            { type: 'usage', input_tokens: 2, output_tokens: 16, cost_usd: usage.cost_usd },
+            index + 2,
+            at((index + 1) * 1_000),
+          ),
+        ),
+        env({ type: 'exit', code: 0, terminal_reason: 'completed' }, usages.length + 2, at(10_000)),
+      ],
+      usageMode === undefined ? {} : { usageMode },
+    ).spend
+
+  it('cumulative mode (the default) reads the freshest running total', () => {
+    expect(spent([{ cost_usd: 0.06 }, { cost_usd: 0.25 }, { cost_usd: 0.1 }])).toBe(0.1)
+  })
+
+  it('delta mode sums per-turn spend, and none stays unknown', () => {
+    expect(spent([{ cost_usd: 0.06 }, { cost_usd: 0.25 }, { cost_usd: 0.1 }], 'delta')).toBeCloseTo(0.41, 10)
+    expect(spent([{ cost_usd: 0.25 }], 'none')).toBe('unknown')
+  })
+
+  it('keeps spend unknown when no usage event reported a cost', () => {
+    expect(spent([{ cost_usd: undefined }, { cost_usd: 'unknown' }])).toBe('unknown')
+    expect(spent([])).toBe('unknown')
+  })
+})
+
+describe('projectAttempt — utilisation delta', () => {
+  const delta = (readings: { window: Window; utilization?: number }[]) =>
+    projectAttempt('att_1', [
+      env(
+        { type: 'session_started', session_id: 's_1', engine: 'claude', engine_version: '2.1.317' },
+        1,
+        at(0),
+      ),
+      ...readings.map((reading, index) =>
+        env(
+          {
+            type: 'rate_limit',
+            window: reading.window,
+            status: 'allowed',
+            utilization: reading.utilization,
+          },
+          index + 2,
+          at((index + 1) * 1_000),
+        ),
+      ),
+      env({ type: 'exit', code: 0, terminal_reason: 'completed' }, readings.length + 2, at(10_000)),
+    ]).utilisationDelta
+
+  it('reads last − before from a genuine pair; a lone reading never fakes a 0', () => {
+    expect(
+      delta([
+        { window: 'five_hour', utilization: 0.23 },
+        { window: 'five_hour', utilization: 0.71 },
+      ]),
+    ).toBeCloseTo(0.48, 10)
+    expect(
+      delta([
+        { window: 'five_hour', utilization: 0.23 },
+        { window: 'five_hour', utilization: 0.23 },
+      ]),
+    ).toBe(0) // a real pair may read 0
+    expect(delta([{ window: 'five_hour', utilization: 0.23 }])).toBeNull()
+    expect(delta([])).toBeNull()
+  })
+
+  it("keeps a window reset's real negative", () => {
+    expect(
+      delta([
+        { window: 'five_hour', utilization: 0.8 },
+        { window: 'five_hour', utilization: 0.05 },
+      ]),
+    ).toBeCloseTo(-0.75, 10)
+  })
+
+  it('takes the first window in stream order that reported a genuine pair', () => {
+    expect(
+      delta([
+        { window: 'five_hour', utilization: 0.23 }, // lone reading — no pair
+        { window: 'seven_day', utilization: 0.4 },
+        { window: 'seven_day', utilization: 0.6 },
+      ]),
+    ).toBeCloseTo(0.2, 10)
   })
 })

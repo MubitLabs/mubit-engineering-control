@@ -20,6 +20,9 @@ export default defineConfig({
   retries: 0,
   timeout: 30_000,
   use: {
+    // The bundled chromium follows the macOS SYSTEM proxy for 127.0.0.1 (env no_proxy is
+    // ignored); real-server tests 502 behind it. No proxy inside the tests, ever.
+    launchOptions: { args: ['--no-proxy-server'] },
     baseURL: 'http://127.0.0.1:4173',
     trace: 'off',
   },

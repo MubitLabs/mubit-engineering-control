@@ -56,3 +56,13 @@ The audit above is unchanged as a record. What moved since, against its own thre
 - Codex `rate_limit_rejected` fixture synthetic by necessity (window exhaustion not forceable cheaply); meta notes say so.
 
 **Still open:** R1.11 (the owner's week of daily use — repo not yet chosen), H5's two-clean-machines leg, Linux §26 rows (second machine), the natural-capture fixtures (Claude `allowed_warning`; Gemini 429 needs a free-tier key), `docs/guide.md`'s troubleshoot row for `expectedInputSha` corrected in `docs/fault-suite.md` (the bug was fixed in R1.6-era server work and re-tested at `server.test.ts` "audit #5").
+
+---
+
+## Update — 4 November 2026 (the review implementation, PRs #9–#12)
+
+- **v0.1.0 released**: the artifact carries the workbench, installs one-command on clean hosted runners (both OSes smoke-proven in CI), `mec --version/help/--no-open`, `doctor --json` (the bundle the docs always promised).
+- **The tier layer is real**: models.yaml capability table with provenance, contracts-v0.1 (`model_request`/`resolved_model`), per-engine flag resolution with degradation, subagent-policy writers confined to slot homes; the gated models canary ran live (config-declared availability — see HANDSHAKES for why).
+- **Prompts on disk** (21 shipped defaults, revisions, Default-updated), **the nine-tool planner** with bounded honest context and wakes, **the setup agent** (policy cards it can never apply), **scorecard tier projections** (≥5 gate), **the ported workbench** (two-step approvals, keyboard-first, SSE, Playwright 21/21).
+- **Repo**: branch protection live (nine required checks, linear history), all CI on GitHub-hosted runners, community files, plan files renamed, docs/README.md index.
+- Still open: the Session-2 acceptance demo on mec-sandbox (a tiered plan → cheap-tier attempt visible in resolved_model → cross-provider review → prompt-edit visible in the next attempt → setup-agent draft applied); R1.11 (owner's week); the R2 exit review (DECISIONS #8/#9 expiry); Linux §26 rows.

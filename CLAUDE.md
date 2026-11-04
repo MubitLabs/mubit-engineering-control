@@ -19,3 +19,5 @@ The spec is docs/plan/PLAN_v4.1_local_meta_agent.md. When a behaviour is unclear
 and ask; never guess. The §26 evidence matrix lives in docs/fault-suite.md.
 Never read a vendor OAuth store, never call an undocumented endpoint with a vendor token, never
 write a credential anywhere.
+
+@AGENTS.md

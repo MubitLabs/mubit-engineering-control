@@ -61,6 +61,7 @@ A machine that cannot build native modules gets the §21.7 refusal (exit 3) with
 ## Documentation
 
 - **[User guide](docs/guide.md)** — concepts, the five screens, policy, troubleshooting by symptom
+- **Agent guide**: [`AGENTS.md`](AGENTS.md) — the shared entry for coding agents working IN this repo (rules, commands, navigation); workflow detail in [`docs/agent-workflow/`](docs/agent-workflow/)
 - **[Reference](docs/reference.md)** — every CLI command, every HTTP route, the policy schema, the fixture library
 - **[Known limits](docs/known-limits.md)** — what is honestly absent or defaulted
 - **[Security](docs/security/threat-model.md)** — the threat model, control→test citations, residual risks

@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "verify": ["check"],
+  "commands": {
+    "setup": [
+      {
+        "argv": ["pnpm", "install"],
+        "timeout_seconds": 600
+      }
+    ],
+    "check": [
+      {
+        "argv": ["pnpm", "check"],
+        "timeout_seconds": 900
+      }
+    ],
+    "test": [
+      {
+        "argv": ["pnpm", "test:a"],
+        "timeout_seconds": 600
+      },
+      {
+        "argv": ["pnpm", "test:b"],
+        "timeout_seconds": 600
+      }
+    ],
+    "integration": null,
+    "smoke": [
+      {
+        "argv": ["node", "apps/desktop/bin/mec.js", "doctor"],
+        "timeout_seconds": 120
+      }
+    ]
+  },
+  "areas": {
+    "engines": {
+      "commands": {
+        "test": [
+          {
+            "argv": ["pnpm", "exec", "vitest", "run", "packages/engines", "packages/contracts"],
+            "timeout_seconds": 600
+          }
+        ]
+      }
+    },
+    "desktop": {
+      "commands": {
+        "test": [
+          {
+            "argv": ["pnpm", "exec", "vitest", "run", "apps/desktop"],
+            "timeout_seconds": 600
+          }
+        ]
+      }
+    },
+    "web": {
+      "commands": {
+        "test": [
+          {
+            "argv": ["pnpm", "exec", "vitest", "run", "apps/web"],
+            "timeout_seconds": 600
+          },
+          {
+            "argv": ["pnpm", "exec", "tsc", "--noEmit"],
+            "cwd": "apps/web",
+            "timeout_seconds": 300
+          }
+        ]
+      }
+    }
+  }
+}

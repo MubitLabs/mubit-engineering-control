@@ -4,14 +4,20 @@
  * delivery-specific sections — and compiled into a bundle whose revision pins exactly the text an
  * attempt ran with (§16.1: a compiled bundle is pinned to each attempt before launch).
  *
- * Composition order is fixed (§16.1): shared → role → conventions → delivery → skills. Within a
- * layer parts keep the order given here, so callers load parts in a canonical order.
+ * Composition order is fixed (§16.1): shared → role → conventions → delivery → engine → skills →
+ * generated. Within a layer parts keep the order given here, so callers load parts in a canonical
+ * order. The generated sections come last so an environment or policy change leaves the preceding
+ * text unchanged and prompt caches stay warm (§16.1).
  */
 
 import { createHash } from 'node:crypto'
 
-/** The five layers a bundle is assembled from. */
-export type BundleLayer = 'shared' | 'role' | 'conventions' | 'delivery' | 'skills'
+/**
+ * The seven layers a bundle is assembled from. `engine` carries the engine-specific notes for the
+ * slot an attempt runs on (tool names, protocol quirks); `generated` carries per-attempt sections
+ * compiled by the core (environment, slot health, policy, models) — review 2026-11-04 §6.1.
+ */
+export type BundleLayer = 'shared' | 'role' | 'conventions' | 'delivery' | 'engine' | 'skills' | 'generated'
 
 /** A part's identity and text — the shape defaults, overrides and proposals are all made of. */
 export type ComponentText = {
@@ -32,7 +38,15 @@ export type BundleComponent = ComponentText & {
 }
 
 /** Composition order, plan §16.1. The compiled text follows this order layer by layer. */
-export const LAYER_ORDER: readonly BundleLayer[] = ['shared', 'role', 'conventions', 'delivery', 'skills']
+export const LAYER_ORDER: readonly BundleLayer[] = [
+  'shared',
+  'role',
+  'conventions',
+  'delivery',
+  'engine',
+  'skills',
+  'generated',
+]
 
 /** A compiled bundle: the revision an attempt pins, the assembled text, the ordered part hashes. */
 export type CompiledBundle = {

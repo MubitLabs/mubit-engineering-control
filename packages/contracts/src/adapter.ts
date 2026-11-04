@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { PermissionBridge } from './bridge'
-import type { AttemptBrief } from './brief'
+import { type AttemptBrief, EffortLevel } from './brief'
 import { type AttemptId, type Generation, InputId, MessageId } from './common'
 import type { EngineEvent, ErrorClass } from './events'
 import type { Report } from './report'
@@ -49,6 +49,18 @@ export const Input = z.strictObject({
 export type SlotRef = Pick<Slot, 'id' | 'engine' | 'kind' | 'home' | 'credential_kind'>
 
 /**
+ * The resolved model `launch` hands the engine (additive v0.1, review 2026-11-04 §4):
+ * `id` is engine-facing — a Claude alias (`opus`), a Codex id (`gpt-6.1-sol`) or an
+ * OpenCode `provider/model` — and `effort`/`variant` carry the engine's effort
+ * mechanism (Claude/Codex effort, OpenCode `#variant`).
+ */
+export const LaunchModel = z.strictObject({
+  id: z.string().min(1),
+  effort: EffortLevel.optional(),
+  variant: EffortLevel.optional(),
+})
+
+/**
  * Everything `launch` needs. The runtime builds the environment, shims, gitconfig and worktree;
  * the adapter builds argv, the per-attempt settings/config files and the MCP configuration from
  * `brief.tools`, and starts the process inside the runtime's process group (CONTRACTS §4).
@@ -61,6 +73,8 @@ export interface LaunchSpec {
   /** What a relaunch passes the engine so it continues the same conversation. */
   resume?: { session_id: string }
   bridge: PermissionBridge
+  /** Additive v0.1: the runtime's `resolveModel()` output, when the brief carried a model_request. */
+  model?: LaunchModel
 }
 
 export interface AttemptHandle {
@@ -88,3 +102,4 @@ export type Capabilities = z.infer<typeof Capabilities>
 export type AuthHealth = z.infer<typeof AuthHealth>
 export type InputKind = z.infer<typeof InputKind>
 export type Input = z.infer<typeof Input>
+export type LaunchModel = z.infer<typeof LaunchModel>

@@ -17,11 +17,21 @@ const bundle = (): readonly BundleComponent[] => [
   part('delivery', 'pr-evidence', 'PRs carry evidence.'),
   part('conventions', 'team', 'Team conventions.'),
   part('shared', 'secrets', 'Never ask for secrets.'),
+  part('engine', 'claude', 'Engine notes.'),
+  part('generated', 'env', 'Environment lines.'),
 ]
 
 describe('LAYER_ORDER', () => {
-  it('matches plan §16: shared → role → conventions → delivery → skills', () => {
-    expect(LAYER_ORDER).toEqual(['shared', 'role', 'conventions', 'delivery', 'skills'])
+  it('matches plan §16: shared → role → conventions → delivery → engine → skills → generated', () => {
+    expect(LAYER_ORDER).toEqual([
+      'shared',
+      'role',
+      'conventions',
+      'delivery',
+      'engine',
+      'skills',
+      'generated',
+    ])
   })
 })
 
@@ -35,7 +45,9 @@ describe('compileBundle', () => {
         '## role/implementer\nImplement the task.',
         '## conventions/team\nTeam conventions.',
         '## delivery/pr-evidence\nPRs carry evidence.',
+        '## engine/claude\nEngine notes.',
         '## skills/review-budget\nReview within budget.',
+        '## generated/env\nEnvironment lines.',
       ].join('\n\n'),
     )
   })
@@ -48,7 +60,9 @@ describe('compileBundle', () => {
       componentHash('Implement the task.'),
       componentHash('Team conventions.'),
       componentHash('PRs carry evidence.'),
+      componentHash('Engine notes.'),
       componentHash('Review within budget.'),
+      componentHash('Environment lines.'),
     ])
   })
 

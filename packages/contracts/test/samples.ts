@@ -258,6 +258,18 @@ export const SAMPLES: Record<string, Samples> = {
   Decision: { valid: ['allow', 'expired'], invalid: ['approve', 'timeout'] },
 
   // brief.ts
+  TierName: { valid: ['fast', 'frontier'], invalid: ['turbo', 'FAST'] },
+  EffortLevel: { valid: ['low', 'max'], invalid: ['extreme', 'medium-high'] },
+  ModelRequest: {
+    valid: [
+      { tier: 'balanced', reason: 'Clearly scoped task with existing tests (review §5.3).' },
+      { model: 'opus', effort: 'xhigh', variant: 'high', reason: 'The user named the model for this pass.' },
+    ],
+    invalid: [
+      { reason: 'neither tier nor model named' },
+      { tier: 'strong', model: 'opus', reason: 'both named' },
+    ],
+  },
   IsolationProfile: {
     valid: [PROFILE, { ...PROFILE, sandbox: 'off', read_only: true, permission_mode: 'none' }],
     invalid: [
@@ -288,6 +300,10 @@ export const SAMPLES: Record<string, Samples> = {
 
   // adapter.ts
   UsageMode: { valid: ['cumulative', 'delta'], invalid: ['total', 'CUMULATIVE'] },
+  LaunchModel: {
+    valid: [{ id: 'opus' }, { id: 'zai-coding-plan/glm-5.3', variant: 'max' }],
+    invalid: [{ id: '' }, { id: 'opus', effort: 'extreme' }],
+  },
   InputKind: { valid: ['message', 'policy_changed'], invalid: ['reply', 'question'] },
   Capabilities: {
     valid: [

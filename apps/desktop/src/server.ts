@@ -19,9 +19,12 @@ import type { Effects, HealthBoard, HealthName, Json, ProviderId, Store, StoreDo
 import { matchesSecret } from '@mec/contracts'
 import { WORK_ITEM_TERMINAL, type WorkItemState } from '@mec/domain'
 import type { LiveWork } from '@mec/meta'
-import { routeMessage } from '@mec/meta'
+// T7 (review 2026-11-04 §7): the setup agent for Chat's Setup mode — the Settings API's
+// read side plus a safe slot subset, every write a user-applied draft.
+import { routeMessage, SetupAgent, type SetupSettingsApi } from '@mec/meta'
 import type { ConfirmationRecord } from '@mec/policy'
-import { resolveConfirmation } from '@mec/policy'
+import { loadPolicy, resolveConfirmation } from '@mec/policy'
+import { defaultParts, PromptStore, StaleBaseError, UnknownPartError } from '@mec/prompts'
 import {
   API_KEY_PROBE_TARGETS,
   claudeHome,
@@ -35,6 +38,7 @@ import {
   SlotKeystore,
 } from '@mec/slots'
 import Fastify, { type FastifyInstance } from 'fastify'
+import { buildDoctorReport } from './doctor'
 import type { HealthSnapshot, PartEntry } from './health'
 import { type CardEvent, LoginCardManager } from './login-cards'
 import {
@@ -92,7 +96,34 @@ export type ServerDeps = {
       launchesEnqueued: string[]
       escalated: boolean
     }>
+    /** T5 wakes: an answered question re-invokes the planner with the answer in context. */
+    onQuestionAnswered?(
+      questionId: string,
+      answer: string,
+    ): Promise<{ status: 'answered' | 'not_open' | 'missing'; outcome?: unknown }>
   }
+  /** T7: the setup agent for Chat's Setup mode; a store-backed default is built when absent. */
+  setupAgent?: SetupAgentSurface
+  /** T7: the Settings API the default setup agent drafts against (the integrator wires T1/T4 here). */
+  setupSettingsApi?: SetupSettingsApi
+}
+
+/** The chat route's setup-mode surface — `SetupAgent` from @mec/meta satisfies it structurally. */
+export type SetupAgentSurface = {
+  handleMessage(input: { messageId: string; text: string; conversationId?: string }): Promise<{
+    reply: string
+    calls: { tool: string; args: unknown; result: unknown }[]
+    drafts: {
+      id: string
+      target: string
+      reason: string
+      cls?: 'policy_change'
+      status: string
+    }[]
+    applied: string[]
+    openLoginCard?: { engine: string; label: string }
+    openKeyForm?: { provider: string; label: string }
+  }>
 }
 
 /**
@@ -425,7 +456,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   app.get('/api/status', async () => buildHealthSnapshot(store, deps.health))
 
   app.post('/api/chat/messages', async (request, reply) => {
-    const body = (request.body ?? {}) as { text?: unknown; referencesWorkItem?: unknown }
+    const body = (request.body ?? {}) as { text?: unknown; referencesWorkItem?: unknown; setup?: unknown }
     const text = typeof body.text === 'string' ? body.text.trim() : ''
     if (text === '') {
       reply.code(400).send({ error: 'text is required' })
@@ -455,6 +486,43 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       })
       return
     }
+    // T7 setup mode (review 2026-11-04 §7): body.setup === true routes the message to the
+    // setup agent — a separate role with its own tool set; it never enters the work planner.
+    const setupAgent = deps.setupAgent ?? defaultSetupAgent
+    if (body.setup === true) {
+      const setupMessageId = freshId('msg_')
+      const setupAt = now().toISOString()
+      const result = await setupAgent.handleMessage({
+        messageId: setupMessageId,
+        text,
+        conversationId: 'setup',
+      })
+      store.atomic(() => {
+        store.messages.save({
+          id: setupMessageId,
+          text,
+          createdAt: setupAt,
+          updatedAt: setupAt,
+          routing: 'setup',
+          setupReply: result.reply,
+        })
+      })
+      return {
+        messageId: setupMessageId,
+        mode: 'setup',
+        reply: result.reply,
+        drafts: result.drafts.map((draft) => ({
+          id: draft.id,
+          target: draft.target,
+          reason: draft.reason,
+          ...(draft.cls !== undefined && { cls: draft.cls }),
+        })),
+        applied: result.applied,
+        ...(result.openLoginCard !== undefined && { openLoginCard: result.openLoginCard }),
+        ...(result.openKeyForm !== undefined && { openKeyForm: result.openKeyForm }),
+      }
+    }
+
     const referencesWorkItem =
       typeof body.referencesWorkItem === 'string' && body.referencesWorkItem !== ''
         ? body.referencesWorkItem
@@ -1316,6 +1384,473 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     })
   })
 
+  // ─── T5/T7 planner routes (review 2026-11-04 §5.2/§7) ────────────────────────────────────
+  // Additive block: the question surface ask_user creates (open + answered, with the
+  // decision-card evidence mapping served honestly from what exists), the answer route
+  // that records the user's word and WAKES the planner, and Chat's Setup mode backing
+  // (the store-backed default setup agent). Other lanes may append after this block.
+
+  /**
+   * The decision-card evidence mapping (what/why/facts/consequences) from the question
+   * record alone: every field is served from what exists, and what does not exist says
+   * so — no invention (the UI team marked these TODO).
+   */
+  const questionEvidence = (doc: StoreDoc): Record<string, unknown> => ({
+    what: typeof doc.question === 'string' ? doc.question : 'unknown',
+    why:
+      typeof doc.forMessageId === 'string'
+        ? `asked for message ${doc.forMessageId}`
+        : 'asked by the planner this turn',
+    facts: Array.isArray(doc.options) ? doc.options : [],
+    consequences: 'unknown — not recorded in this build',
+  })
+
+  app.get('/api/questions', async () =>
+    store.engines
+      .list()
+      .filter((doc) => String(doc.id).startsWith('question/'))
+      .sort((a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')))
+      .map((doc) => ({
+        id: String(doc.questionId ?? String(doc.id).slice('question/'.length)),
+        question: String(doc.question ?? ''),
+        options: Array.isArray(doc.options) ? doc.options : [],
+        status: String(doc.status ?? 'open'),
+        ...(typeof doc.workItemId === 'string' && { workItemId: doc.workItemId }),
+        ...(typeof doc.forMessageId === 'string' && { forMessageId: doc.forMessageId }),
+        ...(typeof doc.answer === 'string' && { answer: doc.answer }),
+        ...(typeof doc.askedAt === 'string' && { askedAt: doc.askedAt }),
+        ...(typeof doc.answeredAt === 'string' && { answeredAt: doc.answeredAt }),
+        evidence: questionEvidence(doc),
+      })),
+  )
+
+  app.post('/api/questions/:id/answer', async (request, reply) => {
+    const raw = String((request.params as { id?: string }).id ?? '')
+    const body = (request.body ?? {}) as { answer?: unknown }
+    const answer = typeof body.answer === 'string' ? body.answer.trim() : ''
+    if (answer === '') {
+      reply.code(400).send({ error: 'answer is required' })
+      return
+    }
+    const docId = raw.startsWith('question/') ? raw : `question/${raw}`
+    const doc = store.engines.get(docId)
+    if (doc === undefined) {
+      reply.code(404).send({ error: 'question not found' })
+      return
+    }
+    if (String(doc.status ?? 'open') !== 'open') {
+      // First answer wins (§13's compare-and-set discipline for questions too).
+      reply.code(409).send({ error: 'already_answered', status: String(doc.status) })
+      return
+    }
+    const at = now().toISOString()
+    store.atomic(() => {
+      store.engines.save({ ...doc, status: 'answered', answer, answeredAt: at, updatedAt: at })
+      appendEvent(store, docId, 'question_answered', { questionId: raw, answer, at }, at)
+    })
+    // T5 wake: the planner re-runs with the answer in context (§1's gap). A meta agent
+    // without the wake surface is told the answer only through the store — honestly.
+    let woke: unknown
+    if (deps.metaAgent?.onQuestionAnswered !== undefined) {
+      woke = await deps.metaAgent.onQuestionAnswered(raw, answer)
+    }
+    return { id: raw, status: 'answered', answer, ...(woke !== undefined && { wake: woke }) }
+  })
+
+  // The store-backed Settings API the default setup agent drafts against. The T1/T4
+  // surfaces (prompt store, models table) are being rebuilt on this branch; their reads
+  // and applies answer honestly until deps.setupSettingsApi wires them.
+  const defaultSetupSettingsApi: SetupSettingsApi = {
+    read: async (resource) => {
+      switch (resource) {
+        case 'settings':
+          return store.engines.list().filter((doc) => String(doc.id).startsWith('settings/'))
+        case 'slots':
+          return store.slots.list()
+        case 'repositories':
+          return store.engines.get(SETTINGS_REPOSITORIES_ID) ?? null
+        case 'status':
+          return buildHealthSnapshot(store, deps.health)
+        case 'policy':
+          return {
+            text: deps.policyText,
+            preAuthorisedClasses: safePolicyPreAuthorised(deps.policyText),
+          }
+        case 'doctor':
+          return await buildDoctorReport({ env: process.env })
+        case 'prompts':
+        case 'models':
+          return {
+            error: 'not wired in this build — the prompt-parts and models-table API returns with T1/T4',
+          }
+        default:
+          return { error: `unknown resource '${String(resource)}'` }
+      }
+    },
+    applyDraft: async (draft) => {
+      if (draft.target === 'repository') {
+        const patch = draft.patch as { label?: unknown; url_or_path?: unknown; trust?: unknown }
+        return await registerRepositoryDoc(
+          typeof patch.label === 'string' ? patch.label : '',
+          typeof patch.url_or_path === 'string' ? patch.url_or_path : '',
+          patch,
+        )
+      }
+      return {
+        ok: false,
+        error: `the settings API for '${draft.target}' is not wired in this build — the draft stands, applying returns with T1/T4`,
+      }
+    },
+    openLoginCard: () => {},
+    openKeyForm: () => {},
+    registerRepository: async (input) =>
+      registerRepositoryDoc(input.label, input.urlOrPath, {
+        ...(input.bootstrap !== undefined && { bootstrap: input.bootstrap }),
+        ...(input.checks !== undefined && { checks: input.checks }),
+        ...(input.trust !== undefined && { trust: input.trust }),
+      }),
+    setMetaSlot: (slotId) => {
+      const at = now().toISOString()
+      store.atomic(() => {
+        store.engines.save({ id: META_SLOT_ID, slotId, updatedAt: at, createdAt: at })
+        appendEvent(store, META_SLOT_ID, 'meta_slot_set', { slotId, at }, at)
+      })
+    },
+    runDoctor: async () => buildDoctorReport({ env: process.env }),
+  }
+
+  /**
+   * Repository registration through the setup seam: the same rules the POST route
+   * enforces — https-without-credentials or an existing local path, argv-only bootstrap
+   * and check strings — applied only when a DRAFT the user approved says so (§7).
+   */
+  const registerRepositoryDoc = async (
+    label: string,
+    urlOrPath: string,
+    patch: Record<string, unknown>,
+  ): Promise<{ ok: true; id: string } | { ok: false; error: string }> => {
+    if (label === '' || urlOrPath === '')
+      return { ok: false, error: 'repository needs a label and a url_or_path' }
+    const bootstrap = Array.isArray(patch.bootstrap)
+      ? patch.bootstrap.filter((entry): entry is string => typeof entry === 'string')
+      : []
+    const checks = Array.isArray(patch.checks)
+      ? patch.checks.filter((entry): entry is string => typeof entry === 'string')
+      : []
+    for (const cmd of [...bootstrap, ...checks]) {
+      if (SHELL_METACHARS.test(cmd))
+        return { ok: false, error: `command carries shell metacharacters: ${cmd}` }
+    }
+    if (isRemoteUrl(urlOrPath)) {
+      if (!urlOrPath.toLowerCase().startsWith('https://')) {
+        return { ok: false, error: 'only https:// URLs are accepted (or a local path)' }
+      }
+      try {
+        const parsed = new URL(urlOrPath)
+        if (parsed.username !== '' || parsed.password !== '') {
+          return { ok: false, error: 'https URL must not carry credentials (user:pass@host)' }
+        }
+      } catch {
+        return { ok: false, error: 'url_or_path is not a valid https URL' }
+      }
+    } else if (!existsSync(urlOrPath)) {
+      return { ok: false, error: `path does not exist: ${urlOrPath}` }
+    }
+    const id = freshId('repo_')
+    const at = now().toISOString()
+    store.atomic(() => {
+      store.engines.save({
+        id,
+        label,
+        url: urlOrPath,
+        bootstrap,
+        checks: checks.map((cmd, index) => ({ name: `check_${index + 1}`, cmd })),
+        trust: patch.trust === true,
+        origin: 'setup_agent',
+        createdAt: at,
+        updatedAt: at,
+      })
+      appendEvent(
+        store,
+        id,
+        'repository_registered',
+        { id, label, url: urlOrPath, at, origin: 'setup_agent' },
+        at,
+      )
+    })
+    return { ok: true, id }
+  }
+
+  const defaultSetupAgent = new SetupAgent({
+    store,
+    api: deps.setupSettingsApi ?? defaultSetupSettingsApi,
+    now,
+  })
+
+  // The setup agent's open drafts — the inbox-shaped view of §7's propose_change cards.
+  app.get('/api/setup/drafts', async () =>
+    store.engines
+      .list()
+      .filter((doc) => String(doc.id).startsWith('draft/'))
+      .map((doc) => ({
+        id: String(doc.draftId ?? String(doc.id).slice('draft/'.length)),
+        target: String(doc.target ?? ''),
+        reason: String(doc.reason ?? ''),
+        diff: String(doc.diff ?? ''),
+        ...(doc.cls !== undefined && { cls: String(doc.cls) }),
+        status: String(doc.status ?? 'pending'),
+        createdAt: String(doc.createdAt ?? ''),
+      })),
+  )
+
+  // ─── T1 model routes (review 2026-11-04 §3 + §6.2 — GET/PUT /api/models) ────────
+  // ONE additive block, deliberately self-contained: every import it needs is made
+  // here, dynamically, so nothing above this comment moves. Route blocks from other
+  // work streams append AFTER this block — never reorder, never interleave.
+  //
+  // The capability table is a prompt part in all but name (§3 rule 4): same
+  // provenance (source + sha256), same stale-base 409 discipline as the prompts
+  // surface; `PUT` is the ONE write path (agents propose, the user applies), and
+  // every write lands as a `models_table_updated` event on the 'models' stream.
+  // Availability rides the §21.3 `probeCmd` seam: one local, zero-token
+  // `opencode models` per OpenCode slot under its own XDG isolation; claude/codex
+  // answer honestly `unlisted` (acceptance probing is gated future work, §3 rule 2).
+  app.get('/api/models', async (_request, reply) => {
+    const { loadModelsTable } = await import('@mec/prompts')
+    const { opencodeProbeEnv, probeModelAvailability } = await import('@mec/slots')
+    let loaded: ReturnType<typeof loadModelsTable>
+    try {
+      loaded = loadModelsTable({ userPath: join(keystoreRoot, 'models.yaml') })
+    } catch (error) {
+      reply.code(500).send({
+        error: 'models table invalid',
+        detail: error instanceof Error ? error.message : String(error),
+      })
+      return
+    }
+    const availability: Array<{
+      slotId: string
+      engine: string
+      provider?: string
+      models: Record<string, string>
+      note: string
+    }> = []
+    for (const doc of store.slots.list()) {
+      const slot = doc as unknown as {
+        id?: string
+        engine?: string
+        provider?: string
+        home?: string
+      }
+      if (
+        slot.id === undefined ||
+        (slot.engine !== 'claude' && slot.engine !== 'codex' && slot.engine !== 'opencode')
+      ) {
+        continue
+      }
+      const engine = slot.engine
+      const run = (cmd: string, args: readonly string[], env?: Record<string, string>) =>
+        probeCmd(cmd, args, env !== undefined ? { env: { ...process.env, ...env } } : undefined)
+      const report = await probeModelAvailability(run, engine, {
+        ...(engine === 'opencode' && slot.home !== undefined ? { env: opencodeProbeEnv(slot.home) } : {}),
+      })
+      // Merge the probe with the table: a listed model is available; a model the
+      // listing omitted while the probe RAN is unavailable; a probe that could not
+      // run leaves its entries unlisted — never a guess in either direction. An
+      // OpenCode slot only serves its own provider's block (§3), so only that
+      // block's entries are marked for it.
+      const entryTable = loaded.table.engines[engine]
+      const providerKeyOf = (provider: string | undefined): string | undefined => {
+        if (provider !== 'zai-coding-plan' && provider !== 'google') return undefined
+        return provider in (loaded.table.engines.opencode?.providers ?? {}) ? provider : undefined
+      }
+      const models: Record<string, string> = {}
+      if (engine === 'opencode') {
+        const providerKey = providerKeyOf(slot.provider)
+        const block = providerKey !== undefined ? entryTable.providers?.[providerKey] : undefined
+        if (block !== undefined) {
+          for (const id of Object.keys(block.models)) {
+            const key = `${providerKey}/${id}`
+            models[key] = report.probed ? (report.availability[key] ?? 'unavailable') : 'unlisted'
+          }
+        }
+      } else {
+        for (const id of Object.keys(entryTable.models ?? {})) {
+          models[id] = report.probed ? (report.availability[id] ?? 'unavailable') : 'unlisted'
+        }
+      }
+      availability.push({
+        slotId: slot.id,
+        engine,
+        ...(slot.provider !== undefined && { provider: slot.provider }),
+        models,
+        note: report.note,
+      })
+    }
+    return { table: loaded.table, provenance: loaded.provenance, availability }
+  })
+
+  app.put('/api/models', async (request, reply) => {
+    const body = (request.body ?? {}) as { yaml?: unknown; base_sha256?: unknown }
+    const yaml = typeof body.yaml === 'string' ? body.yaml : ''
+    if (yaml.trim() === '') {
+      reply.code(400).send({ error: 'yaml (the full models.yaml text) is required' })
+      return
+    }
+    const { loadModelsTable, parseModelsYaml, validateModelsTable } = await import('@mec/prompts')
+    try {
+      validateModelsTable(parseModelsYaml(yaml))
+    } catch (error) {
+      reply.code(400).send({
+        error: 'invalid models table',
+        detail: error instanceof Error ? error.message : String(error),
+      })
+      return
+    }
+    const modelsPath = join(keystoreRoot, 'models.yaml')
+    const base =
+      typeof body.base_sha256 === 'string' && body.base_sha256 !== '' ? body.base_sha256 : undefined
+    if (base !== undefined) {
+      let current: string
+      try {
+        current = loadModelsTable({ userPath: modelsPath }).provenance.sha256
+      } catch (error) {
+        reply.code(500).send({
+          error: 'the currently stored models table is invalid — fix or remove it first',
+          detail: error instanceof Error ? error.message : String(error),
+        })
+        return
+      }
+      if (current !== base) {
+        reply
+          .code(409)
+          .send({ error: 'stale base — reload the table and reapply the edit', current_sha256: current })
+        return
+      }
+    }
+    const { mkdirSync, writeFileSync } = await import('node:fs')
+    mkdirSync(keystoreRoot, { recursive: true })
+    writeFileSync(modelsPath, yaml, { mode: 0o600 })
+    const at = now().toISOString()
+    const sha256 = loadModelsTable({ userPath: modelsPath }).provenance.sha256
+    store.atomic(() => {
+      appendEvent(store, 'models', 'models_table_updated', { path: modelsPath, sha256, at }, at)
+    })
+    return { provenance: { source: 'user', path: modelsPath, sha256 } }
+  })
+
+  // ─── T4 prompt routes (review 2026-11-04 §6.2 · plan §16) ───────────────────────
+  // The editable prompt surface: shipped defaults, overrides with provenance, immutable
+  // revisions, stale-base refusal, preview and Default-updated diffs — one contiguous block;
+  // other route work appends below it. The store is rooted at <keystoreRoot>/prompts, so
+  // tests inject a temp root through the existing keystoreRoot seam; the imports come from
+  // @mec/prompts (declared in package.json), matching how every other package lands here.
+  const prompts = new PromptStore(join(keystoreRoot, 'prompts'))
+
+  // The live config: every override (path, text, defaultBaseHash, layer) and its revision.
+  app.get('/api/prompts', async () => {
+    const { revision, parts } = prompts.config()
+    return { revision, parts }
+  })
+
+  // One save = one immutable revision (§16.2). The body names the revision it was drafted
+  // against; a stale base is refused with 409 and NOTHING is written — the draft survives.
+  // A part saved identical to its current default removes the override so the part follows
+  // future defaults.
+  app.put('/api/prompts', async (request, reply) => {
+    const body = (request.body ?? {}) as {
+      base_revision?: unknown
+      origin?: unknown
+      parts?: unknown
+    }
+    if (
+      typeof body.base_revision !== 'number' ||
+      !Number.isInteger(body.base_revision) ||
+      body.base_revision < 0
+    ) {
+      reply.code(400).send({ error: 'base_revision must be a non-negative integer' })
+      return
+    }
+    const origin = body.origin === undefined || body.origin === 'panel' ? 'panel' : body.origin
+    if (origin !== 'user' && origin !== 'agent' && origin !== 'panel') {
+      reply.code(400).send({ error: "origin must be 'user', 'agent' or 'panel'" })
+      return
+    }
+    if (!Array.isArray(body.parts)) {
+      reply.code(400).send({ error: 'parts must be an array of {path, text}' })
+      return
+    }
+    const parts: Array<{ path: string; text: string }> = []
+    for (const entry of body.parts) {
+      if (
+        typeof entry !== 'object' ||
+        entry === null ||
+        typeof (entry as { path?: unknown }).path !== 'string' ||
+        typeof (entry as { text?: unknown }).text !== 'string'
+      ) {
+        reply.code(400).send({ error: 'parts must be an array of {path, text}' })
+        return
+      }
+      parts.push({ path: (entry as { path: string }).path, text: (entry as { text: string }).text })
+    }
+    try {
+      const { revision } = prompts.save({ baseRevision: body.base_revision, origin, parts, now })
+      return { revision }
+    } catch (error) {
+      if (error instanceof StaleBaseError) {
+        reply.code(409).send({ error: 'stale_base', current_revision: error.currentRevision })
+        return
+      }
+      if (error instanceof UnknownPartError) {
+        reply.code(400).send({ error: error.message })
+        return
+      }
+      throw error
+    }
+  })
+
+  // Every shipped default (path, layer, name, text, hash) — the read-only side of the editor.
+  app.get('/api/prompts/defaults', async () => ({ parts: defaultParts() }))
+
+  // One immutable revision snapshot, verbatim.
+  app.get('/api/prompts/revisions/:n', async (request, reply) => {
+    const raw = String((request.params as { n?: string }).n ?? '')
+    const n = Number.parseInt(raw, 10)
+    const snapshot = Number.isInteger(n) && raw === String(n) ? prompts.getRevision(n) : undefined
+    if (snapshot === undefined) {
+      reply.code(404).send({ error: 'no such revision' })
+      return
+    }
+    return snapshot
+  })
+
+  // Assemble a role's full text WITHOUT saving (§6.2): shared → role → conventions → delivery
+  // → engine → skills → generated, with the live overrides applied. What the editor's Full
+  // prompt tab shows and what an attempt pins.
+  app.post('/api/prompts/preview', async (request, reply) => {
+    const body = (request.body ?? {}) as { role?: unknown; engine?: unknown }
+    if (typeof body.role !== 'string' || body.role.trim() === '') {
+      reply.code(400).send({ error: 'role is required' })
+      return
+    }
+    const engine = typeof body.engine === 'string' && body.engine !== '' ? body.engine : undefined
+    try {
+      const { revision, text } = prompts.assemble(body.role.trim(), engine)
+      return { revision, text }
+    } catch (error) {
+      if (error instanceof Error && /unknown (role|engine)/.test(error.message)) {
+        reply.code(400).send({ error: error.message })
+        return
+      }
+      throw error
+    }
+  })
+
+  // Default-updated parts (§16.3): overrides whose shipped default changed — old default
+  // (recovered from revision history), new default, user text — plus removed parts, dropped
+  // on the next save.
+  app.get('/api/prompts/changes', async () => ({ changes: prompts.changes() }))
+
   if (existsSync(WEB_DIST)) {
     app.setNotFoundHandler((request, reply) => {
       if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -1340,6 +1875,15 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   }
 
   return app
+}
+
+/** The pre-authorised class names a policy text carries — [] when it cannot load (honest empty). */
+function safePolicyPreAuthorised(text: string): string[] {
+  try {
+    return Object.keys(loadPolicy(text).preAuthorised)
+  } catch {
+    return []
+  }
 }
 
 function decodePath(path: string): string {

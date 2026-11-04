@@ -7,6 +7,7 @@ import type {
   EngineEventBody,
   ErrorClass,
   Input,
+  LaunchModel,
   LaunchSpec,
   Report,
   SlotRef,
@@ -70,6 +71,28 @@ const defaultAuthList: OpenCodeAuthList = async () => {
       })
     })
   })
+}
+
+/**
+ * LaunchSpec.model.id arrives engine-facing — `provider/model`, optionally carrying
+ * its effort as `provider/model#variant` — and the V2 session API wants
+ * `{providerID, id, variant}` (review §4). An explicit `variant` field wins over a
+ * hash suffix inside the id.
+ */
+function sessionModelOf(model: LaunchModel): { providerID: string; id: string; variant?: string } {
+  const hashAt = model.id.indexOf('#')
+  const withoutVariant = hashAt === -1 ? model.id : model.id.slice(0, hashAt)
+  const hashVariant = hashAt === -1 ? undefined : model.id.slice(hashAt + 1)
+  const slash = withoutVariant.indexOf('/')
+  if (slash <= 0 || slash === withoutVariant.length - 1) {
+    throw new Error(`opencode adapter: model id '${model.id}' is not provider/model`)
+  }
+  const variant = model.variant ?? hashVariant
+  return {
+    providerID: withoutVariant.slice(0, slash),
+    id: withoutVariant.slice(slash + 1),
+    ...(variant !== undefined && { variant }),
+  }
 }
 
 type Launch = {
@@ -214,14 +237,15 @@ export class OpenCodeAdapter implements EngineAdapter {
         spec.brief.isolation.permission_mode === 'bridge'
           ? [{ action: 'bash', resource: '*', effect: 'ask' }]
           : undefined
+      // LaunchSpec.model (additive v0.1) wins over deps.defaultModel: it is the
+      // runtime's resolveModel output for THIS attempt — `{providerID, id, variant}`
+      // per the V2 session API (review §4). `id` arrives engine-facing as
+      // `provider/model` (+ optional `#variant`, carried as the variant field).
       const created = (await this.post('/api/session', {
         location: { directory: spec.cwd },
         // Real 2.2.5 agent ids: `plan` is the read-only agent; `build` the default.
         agent: spec.brief.isolation.read_only ? 'plan' : 'build',
-        // `{id, providerID}` from the slot's provider profile (plan §5.7) —
-        // `session.create` without a model does not fall back to the config-file
-        // default (verified zero-token on 2.2.5).
-        model: this.deps.defaultModel,
+        model: spec.model !== undefined ? sessionModelOf(spec.model) : this.deps.defaultModel,
         permissions,
       })) as { data?: { id?: string }; id?: string }
       sessionId = created.data?.id ?? created.id // the response is enveloped: {data: {id}}

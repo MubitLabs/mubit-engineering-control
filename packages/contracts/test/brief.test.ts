@@ -37,3 +37,24 @@ describe('AttemptBrief', () => {
     expect(parses({ tools: { url: 'https://mec.example.com/mcp', token: 't' } })).toBe(false)
   })
 })
+
+describe('AttemptBrief.model_request (additive v0.1)', () => {
+  it('takes a tier or a model — exactly one — with a reason and optional effort/variant', () => {
+    expect(
+      parses({ model_request: { tier: 'strong', effort: 'max', reason: 'Security-sensitive migration.' } }),
+    ).toBe(true)
+    expect(parses({ model_request: { model: 'opus', reason: 'The user named the model.' } })).toBe(true)
+    expect(
+      parses({
+        model_request: { model: 'zai-coding-plan/glm-5.3', variant: 'high', reason: 'Cheap lookup pass.' },
+      }),
+    ).toBe(true)
+  })
+
+  it('refuses neither, both, a missing reason and an unknown tier', () => {
+    expect(parses({ model_request: { reason: 'neither tier nor model' } })).toBe(false)
+    expect(parses({ model_request: { tier: 'strong', model: 'opus', reason: 'both' } })).toBe(false)
+    expect(parses({ model_request: { tier: 'strong' } })).toBe(false) // the reason is required
+    expect(parses({ model_request: { tier: 'turbo', reason: 'off the ladder' } })).toBe(false)
+  })
+})

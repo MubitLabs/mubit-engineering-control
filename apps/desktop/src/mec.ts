@@ -39,7 +39,7 @@ export type CliIo = {
   env?: Record<string, string | undefined>
 }
 
-const USAGE = 'usage: mec <status|stop|restart|doctor|slot|update> [flags]'
+const USAGE = 'usage: mec <status|stop|restart|doctor|setup|slot|update> [flags]'
 
 /** `parseHealthSnapshot` handles '' but not invalid JSON; a corrupt file is "no snapshot". */
 function parseSnapshot(text: string | null): HealthSnapshot | null {
@@ -90,6 +90,19 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
     }
     const report = await buildDoctorReport({ env: process.env, run: defaultVersionRunner })
     io.stdout(report)
+    return 0
+  }
+
+  // T7 (review 2026-11-04 §7): `mec setup` points at the workbench's Setup mode — the
+  // CLI stays thin; the setup agent itself runs in Chat against the Settings API.
+  if (command === 'setup') {
+    io.stdout(
+      [
+        'open the workbench → Chat → Setup mode',
+        'the setup agent configures MEC with you there: slots, prompts, the model table, repositories',
+        '(this command configures nothing itself — the CLI stays thin by design)',
+      ].join('\n'),
+    )
     return 0
   }
 

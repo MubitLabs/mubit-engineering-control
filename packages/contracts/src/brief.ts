@@ -31,6 +31,43 @@ const OriginMessage = z.union([
   z.strictObject({ id: MessageId, pointer: z.string().min(1) }),
 ])
 
+/** The tier ladder the planner reasons about (review 2026-11-04 §2). Additive v0.1. */
+export const TierName = z.enum(['fast', 'balanced', 'strong', 'frontier'])
+
+/**
+ * The effort vocabulary across the three engines (review 2026-11-04 §3/§4): Claude and
+ * Codex take `low…max` (plus Codex `ultra` — parallel subagents, gated by the subagent
+ * policy); OpenCode expresses effort as the model's `#variant` (`minimal` exists only
+ * on Gemini Flash-Lite). Additive v0.1.
+ */
+export const EffortLevel = z.enum(['low', 'minimal', 'medium', 'high', 'xhigh', 'max', 'ultra'])
+
+/**
+ * What the planner asks a slot to run (review 2026-11-04 §4): a tier from the ladder
+ * OR an explicit engine-facing model id — exactly one, never both, never neither —
+ * with an optional effort/variant lift and the reason the choice was made (§5.3:
+ * every tier choice is recorded). Additive v0.1: optional on the brief, so every
+ * contracts-v0 brief stays valid.
+ */
+export const ModelRequest = z
+  .strictObject({
+    tier: TierName.optional(),
+    model: z.string().min(1).optional(),
+    effort: EffortLevel.optional(),
+    variant: EffortLevel.optional(),
+    reason: z.string().min(1),
+  })
+  .superRefine((request, ctx) => {
+    const named = [request.tier, request.model].filter((value) => value !== undefined).length
+    if (named !== 1) {
+      ctx.addIssue({
+        code: 'custom',
+        path: named === 0 ? ['tier'] : ['model'],
+        message: 'exactly one of tier or model is required — a ladder tier or an explicit model id',
+      })
+    }
+  })
+
 const ROUTING_NOTE_MAX_WORDS = 50
 
 const countWords = (text: string) => text.split(/\s+/).filter(Boolean).length
@@ -73,6 +110,8 @@ export const AttemptBrief = z.strictObject({
       message: `at most ${ROUTING_NOTE_MAX_WORDS} words`,
     })
     .optional(),
+  /** Additive v0.1 (review 2026-11-04 §4): what the planner asked this attempt to run. */
+  model_request: ModelRequest.optional(),
   budget: z.strictObject({
     turns: z.int().min(1),
     wall_clock_ms: z.int().min(1),
@@ -93,4 +132,7 @@ export const AttemptBrief = z.strictObject({
 })
 
 export type IsolationProfile = z.infer<typeof IsolationProfile>
+export type TierName = z.infer<typeof TierName>
+export type EffortLevel = z.infer<typeof EffortLevel>
+export type ModelRequest = z.infer<typeof ModelRequest>
 export type AttemptBrief = z.infer<typeof AttemptBrief>

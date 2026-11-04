@@ -2,21 +2,71 @@
  * Typed wrappers over the workbench server's HTTP API. All views go through
  * this module; the server contract is the one in docs/handoff (status, chat,
  * inbox, work, events).
+ *
+ * Everything the server does not serve yet carries a numbered marker (10 in
+ * total, the API additions 04_UI_DESIGN_SPEC.md §7 lists). Each such function first
+ * tries the real endpoint and only falls back to the §23 demo fixture in
+ * mocks.ts when the route is absent (404) — the day the endpoint lands, real
+ * data flows with no client change. Demo payloads carry `demo: true`, which the
+ * UI surfaces as an honest "not served by the server yet" label. Operations
+ * that would fake an effect (hold/stop/pause, answering, backups) never fall
+ * back: they report the gap instead.
  */
+
+import {
+  demoBackups,
+  demoDecisionDetails,
+  demoModelTiers,
+  demoPromptParts,
+  demoQuestions,
+  demoTaskDetails,
+  demoWorkItemDetails,
+} from './mocks'
 
 export type PartState = 'ok' | 'degraded' | 'error'
 export type PartEntry = { state: PartState; detail?: string }
 export type RuntimeState = 'starting' | 'ready' | 'paused' | 'error'
 
-/** GET /api/status — the health snapshot behind the top badge and Slots view. */
+/** GET /api/status — the health snapshot behind the runtime line and Slots view. */
 export type StatusSnapshot = {
   runtime: { state: RuntimeState; instances: number; answering: boolean }
   parts: Record<string, PartEntry>
   setup: { has_slot: boolean; has_repository: boolean }
 }
 
-/** GET /api/chat/messages — newest last. */
-export type ChatMessage = { id: string; text: string; at: string; workItemId?: string }
+/**
+ * GET /api/chat/messages — newest last. The server persists plain rows today
+ * ({id, text, createdAt}); `kind`, `meta`, `plan` and `noticeRoute` are the
+ * conversation vocabulary the design needs (user / agent / status / notice and
+ * plan cards).
+ *
+ * TODO(server) #6 of 10: chat message kinds + plan payloads — until the server
+ * attaches them, a message with no `kind` renders as a plain line (never
+ * guessed), and plan cards arrive only where the feed carries them.
+ */
+export type ChatMessageKind = 'user' | 'agent' | 'status' | 'notice'
+export type PlanTaskRow = {
+  id: string
+  task: string
+  role: string
+  tier: string
+  slot: string
+  state: string
+  stateKind?: 'ok' | 'warn' | 'attn' | 'bad' | 'done'
+}
+export type ChatPlan = { title: string; note?: string; approvedNote?: string; tasks: PlanTaskRow[] }
+export type ChatMessage = {
+  id: string
+  text: string
+  createdAt: string
+  workItemId?: string
+  kind?: ChatMessageKind
+  /** Who said it, e.g. "Meta agent on max-1" / "You". */
+  meta?: string
+  plan?: ChatPlan
+  /** A notice's optional action, e.g. { label: "See slots", route: "slots" }. */
+  noticeRoute?: { label: string; route: string }
+}
 
 /** POST /api/chat/messages response. */
 export type SendChatResult = { messageId: string; workItemId?: string }
@@ -24,15 +74,100 @@ export type SendChatResult = { messageId: string; workItemId?: string }
 /** GET /api/inbox — confirmations still waiting on a person. */
 export type InboxItem = { id: string; cls: string; operationHash: string; expiresAt: string }
 
-export type WorkTaskCounts = {
-  ready: number
-  active: number
-  awaiting_review: number
-  integrated: number
+/**
+ * The evidence a decision card states in words (§7): what will happen, why it
+ * is being asked, the facts (branch, bound head SHA, checks, findings), the
+ * consequences of either answer, and the diff summary.
+ *
+ * TODO(server) #1 of 10: decision what/why/facts/consequences/checks/findings/diff —
+ * the inbox serves {id, cls, operationHash, expiresAt} today; the detail comes
+ * from the §23 demo fixture (labelled) until the endpoint exists.
+ */
+export type DecisionCheck = { name: string; state: 'passed' | 'failed' | 'running' | 'none'; note?: string }
+export type DecisionFinding = { title: string; disposition: string }
+export type DecisionDetail = {
+  demo?: true
+  /** True when this is the honest placeholder for an id the §23 fixture does not know. */
+  absent?: true
+  what: string
+  why: string
+  facts: Array<{ label: string; value: string; mono?: boolean }>
+  operation: string
+  requestedBy: string
+  consequences: { approve: string; deny: string }
+  checks: DecisionCheck[]
+  findings: DecisionFinding[]
+  diff: { summary: string; files: Array<{ path: string; added: number; removed: number }> }
 }
 
-/** GET /api/work — one row per work item, placed on the board by `stage`. */
-export type WorkItem = { id: string; stage: string; taskCounts: WorkTaskCounts; createdAt: string }
+/**
+ * A specialist's question as a card with choices (§5 "A question from a
+ * specialist").
+ *
+ * TODO(server) #2 of 10: questions-as-cards with options — the demo question is
+ * labelled as such wherever it renders.
+ */
+export type Question = {
+  demo?: true
+  id: string
+  eyebrow: string
+  what: string
+  why: string
+  options: string[]
+  sideNote?: string
+  evidence?: { note: string; code: string }
+}
+
+export type WorkTaskCounts = { total: number; byStatus: Record<string, number> }
+
+/**
+ * GET /api/work — one row per work item, exactly as the server serves it:
+ * {id, state, stage, taskCounts: {total, byStatus}, updatedAt} (stage is the
+ * item's own lifecycle state until the §10 projection lands).
+ */
+export type WorkItem = {
+  id: string
+  state: string
+  stage: string
+  taskCounts: WorkTaskCounts
+  updatedAt: string
+}
+
+/**
+ * TODO(server) #3 of 10: work-item detail — the pane's full record (mandate,
+ * policy hash, bundle revision, tasks, handoffs, "so far"). The §23 fixture
+ * fills the known ids; anything else falls back to the honest /api/work row.
+ */
+export type WorkItemDetail = {
+  demo?: true
+  /** True when this is the honest fallback for an id the §23 fixture does not know. */
+  absent?: true
+  title: string
+  stage: string
+  kv: Array<{ label: string; value: string; mono?: boolean }>
+  tasks: Array<{
+    id?: string
+    name: string
+    state: string
+    stateKind?: 'ok' | 'warn' | 'attn' | 'bad' | 'done'
+  }>
+  handoffs: Array<{ title: string; note: string }>
+  soFar?: Array<{ label: string; value: string }>
+}
+
+/**
+ * TODO(server) #4 of 10: task / attempt detail — role, tier and resolved model,
+ * slot, head, state, report summary.
+ */
+export type TaskDetail = {
+  demo?: true
+  /** True when this is the honest fallback for an id the §23 fixture does not know. */
+  absent?: true
+  name: string
+  kv: Array<{ label: string; value: string; mono?: boolean }>
+  report?: string
+  note?: string
+}
 
 /**
  * GET /api/slots — slot docs from the store. Fingerprints only: a key never leaves the
@@ -48,7 +183,15 @@ export type SlotEntry = {
   stateReason?: string
   home?: string
   fingerprint?: { provider: string; last4: string }
+  /**
+   * TODO(server) #5 of 10: slot usage with `unknown` — a reading only when the
+   * provider has a usage API; `unknown` renders as "No reading yet", never 0%.
+   */
+  usage?: SlotUsage
 }
+export type SlotUsage =
+  | { kind: 'unknown'; reason: string }
+  | { kind: 'percent'; label: string; percent: number; resetsAt?: string; lines?: string[] }
 
 /** POST /api/slots/api-key — the §5.7 courier's receipt: identity + fingerprint, never the key. */
 export type AddApiKeyResult = { id: string; fingerprint: { provider: string; last4: string } }
@@ -90,6 +233,37 @@ export type RepositoryEntry = {
 export type ResolveAnswer = 'approve' | 'deny'
 export type ResolveResult = { status: string }
 
+/**
+ * TODO(server) #7 of 10: prompts endpoint — the part list by layer with edited
+ * and default-updated marks, provenance and revision history.
+ */
+export type PromptPart = {
+  id: string
+  layer: string
+  name: string
+  edited?: boolean
+  defaultUpdated?: boolean
+  provenance?: string
+  text?: string
+  more?: number
+}
+
+/**
+ * TODO(server) #8 of 10: models endpoint — the tier ladder with the vendor's
+ * own words, per provider.
+ */
+export type ModelTiers = {
+  demo?: true
+  providers: string[]
+  rows: Array<{ tier: string; cells: Array<{ text: string; note?: string } | undefined> }>
+  note: string
+}
+
+/**
+ * TODO(server) #10 of 10: backups — the last run and what it excludes.
+ */
+export type BackupsStatus = { demo?: true; lastAt?: string; note: string; excluded: string }
+
 /** A non-2xx response from the workbench server. */
 export class HttpError extends Error {
   readonly path: string
@@ -124,6 +298,21 @@ export function isAlreadyHandled(error: unknown): boolean {
   return error instanceof AlreadyHandledError
 }
 
+/** An endpoint the server does not serve yet (one of the ten marked seams above). */
+export class NotServedError extends Error {
+  readonly path: string
+
+  constructor(path: string) {
+    super(`${path} is not served by the server yet`)
+    this.name = 'NotServedError'
+    this.path = path
+  }
+}
+
+export function isNotServed(error: unknown): boolean {
+  return error instanceof NotServedError
+}
+
 /** One idempotency key per draft; the UUID generator stays inside this module. */
 export function newIdempotencyKey(): string {
   return crypto.randomUUID()
@@ -153,6 +342,30 @@ async function errorOf(response: Response): Promise<string | undefined> {
     // A non-JSON error body carries no reason worth showing.
   }
   return undefined
+}
+
+/** Reads a not-yet-served endpoint; a 404 (route absent) becomes NotServedError. */
+async function requestOrNotServed<T>(path: string, init?: RequestInit): Promise<T> {
+  try {
+    return await request<T>(path, init)
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 404) throw new NotServedError(path)
+    throw error
+  }
+}
+
+/**
+ * The demo fallback for a read the server does not serve: only a missing route
+ * (NotServedError) falls back to the §23 fixture, flagged `demo: true`. Any
+ * other failure propagates — a 500 is a real error, not a demo.
+ */
+async function withDemo<T>(call: () => Promise<T>, demo: () => T): Promise<T> {
+  try {
+    return await call()
+  } catch (error) {
+    if (error instanceof NotServedError) return demo()
+    throw error
+  }
 }
 
 export const api = {
@@ -204,6 +417,43 @@ export const api = {
 
   slots(): Promise<SlotEntry[]> {
     return request<SlotEntry[]>('/api/slots')
+  },
+
+  /** The card's evidence in words (demo-labelled until the server serves it). */
+  decisionDetail(id: string): Promise<DecisionDetail> {
+    return withDemo(
+      () => requestOrNotServed<DecisionDetail>(`/api/inbox/${encodeURIComponent(id)}/detail`),
+      () => demoDecisionDetails[id] ?? absentDecisionDetail(id),
+    )
+  },
+
+  /** Open questions as cards (demo-labelled until the server serves them). */
+  questions(): Promise<Question[]> {
+    return withDemo(
+      () => requestOrNotServed<Question[]>('/api/questions'),
+      () => demoQuestions,
+    )
+  },
+
+  /** The pane's work-item record; unknown ids degrade to the honest /api/work row. */
+  workItemDetail(id: string): Promise<WorkItemDetail> {
+    return withDemo(
+      () => requestOrNotServed<WorkItemDetail>(`/api/work/${encodeURIComponent(id)}`),
+      () => demoWorkItemDetails[id] ?? absentWorkItemDetail(id),
+    )
+  },
+
+  /** The pane's task / attempt record. */
+  taskDetail(id: string): Promise<TaskDetail> {
+    return withDemo(
+      () => requestOrNotServed<TaskDetail>(`/api/tasks/${encodeURIComponent(id)}`),
+      () => demoTaskDetails[id] ?? absentTaskDetail(id),
+    )
+  },
+
+  /** §5.6: cancel the running login card (the terminal card's own Cancel). */
+  cancelLogin(): Promise<{ ok: boolean }> {
+    return request<{ ok: boolean }>('/api/slots/login/cancel', { method: 'POST' })
   },
 
   /**
@@ -298,6 +548,113 @@ export const api = {
   metaSlot(): Promise<{ slotId: string | null }> {
     return request<{ slotId: string | null }>('/api/wizard/meta-slot')
   },
+
+  /** The prompt parts by layer (demo-labelled until the server serves them). */
+  prompts(): Promise<PromptPart[]> {
+    return withDemo(
+      () => requestOrNotServed<PromptPart[]>('/api/prompts'),
+      () => demoPromptParts,
+    )
+  },
+
+  /** The tier ladder with the vendor's own words (demo-labelled until served). */
+  models(): Promise<ModelTiers> {
+    return withDemo(
+      () => requestOrNotServed<ModelTiers>('/api/models'),
+      () => demoModelTiers,
+    )
+  },
+
+  /**
+   * TODO(server) #9 of 10: question-answer + hold/stop/pause — the operator
+   * commands beyond approve/deny. None is served today, so each reports the
+   * gap honestly instead of pretending the effect happened.
+   */
+  answerQuestion(id: string, option: string): Promise<{ status: string }> {
+    return requestOrNotServed<{ status: string }>(`/api/questions/${encodeURIComponent(id)}/answer`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ option }),
+    })
+  },
+
+  holdWorkItem(id: string): Promise<{ status: string }> {
+    return requestOrNotServed<{ status: string }>(`/api/work/${encodeURIComponent(id)}/hold`, {
+      method: 'POST',
+    })
+  },
+
+  stopWorkItem(id: string): Promise<{ status: string }> {
+    return requestOrNotServed<{ status: string }>(`/api/work/${encodeURIComponent(id)}/stop`, {
+      method: 'POST',
+    })
+  },
+
+  pauseProcessing(): Promise<{ status: string }> {
+    return requestOrNotServed<{ status: string }>('/api/processing/pause', { method: 'POST' })
+  },
+
+  /** #10 read side: the backups record (demo-labelled until served). */
+  backups(): Promise<BackupsStatus> {
+    return withDemo(
+      () => requestOrNotServed<BackupsStatus>('/api/backups'),
+      () => demoBackups,
+    )
+  },
+
+  backupNow(): Promise<{ status: string }> {
+    return requestOrNotServed<{ status: string }>('/api/backups', { method: 'POST' })
+  },
+}
+
+/**
+ * The honest placeholders for ids the §23 fixture does not know: they never
+ * invent evidence, they say the server does not serve it.
+ */
+function absentDecisionDetail(id: string): DecisionDetail {
+  return {
+    demo: true,
+    absent: true,
+    what: 'This confirmation’s evidence is not served by the server yet.',
+    why: `The inbox serves only the class, the operation hash and the expiry today; the card’s what, why, facts, checks, findings and diff arrive with the decision-detail endpoint.`,
+    facts: [
+      { label: 'Class', value: id },
+      { label: 'Operation', value: 'not served yet', mono: true },
+    ],
+    operation: '—',
+    requestedBy: '—',
+    consequences: {
+      approve: 'unknown until the endpoint serves it',
+      deny: 'unknown until the endpoint serves it',
+    },
+    checks: [],
+    findings: [],
+    diff: { summary: 'not served by the server yet', files: [] },
+  }
+}
+
+function absentWorkItemDetail(id: string): WorkItemDetail {
+  return {
+    demo: true,
+    absent: true,
+    title: id,
+    stage: 'unknown — work-item detail is not served by the server yet',
+    kv: [{ label: 'Work item', value: id, mono: true }],
+    tasks: [],
+    handoffs: [],
+  }
+}
+
+function absentTaskDetail(id: string): TaskDetail {
+  return {
+    demo: true,
+    absent: true,
+    name: id,
+    kv: [
+      { label: 'Task', value: id, mono: true },
+      { label: 'State', value: 'not served by the server yet' },
+    ],
+  }
 }
 
 export type ServerEvent = { seq: number } & Record<string, unknown>

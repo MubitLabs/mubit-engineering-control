@@ -18,7 +18,12 @@ export type ClaudeArgvInput = {
   /** Bridge tool approvals to `mcp__mec__confirm`, or ask nothing. */
   permissionMode: 'bridge' | 'none'
   maxTurns: number
+  /** LaunchSpec.model.id — the resolved alias/id (`opus`, `gpt-6.1-sol`, …); absent = the engine default. */
   model?: string
+  /** LaunchSpec.model.effort — Claude's `--effort` (low|medium|high|xhigh|max). */
+  effort?: string
+  /** The per-attempt subagent catalogue the runtime wrote (`--agents <file>`, review §4). */
+  agentsPath?: string
   allowedTools?: readonly string[]
   disallowedTools?: readonly string[]
   /** Same-home session resume. */
@@ -54,9 +59,11 @@ export function buildClaudeArgv(input: ClaudeArgvInput): string[] {
   if (input.readOnly) {
     argv.push('--restricted', '--permission-prompts', 'none')
   }
+  if (input.agentsPath) argv.push('--agents', input.agentsPath)
   for (const tool of input.allowedTools ?? []) argv.push('--allowedTools', tool)
   for (const tool of input.disallowedTools ?? []) argv.push('--disallowedTools', tool)
   if (input.model) argv.push('--model', input.model)
+  if (input.effort) argv.push('--effort', input.effort)
   if (input.maxBudgetUsd !== undefined) argv.push('--max-budget-usd', String(input.maxBudgetUsd))
   return argv
 }

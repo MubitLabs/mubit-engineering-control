@@ -52,3 +52,4 @@ export {
 } from './states'
 export type { BasePolicy, GraphIssue, GraphIssueKind, RoledTaskNode, TaskNode } from './task-graph'
 export { normalisePath, pathsOverlap, validateGraph } from './task-graph'
+export * from './tiers'

@@ -1,0 +1,88 @@
+version: 1
+tiers: [fast, balanced, strong, frontier]
+
+engines:
+  claude:
+    # Claude Code aliases resolve per provider; on the Anthropic API/subscriptions today:
+    # opus → Opus 5.5 (the plan default), sonnet → Sonnet 5.5, haiku → Haiku 5.5; fable → Fable 5.1.
+    # Anthropic's own cost guidance: Sonnet for most coding, Opus for architecture and multi-step
+    # reasoning, Haiku for simple subagents, lower effort for simple tasks (code.claude.com/docs/en/costs).
+    select: { flag: "--model", effort_flag: "--effort" }
+    effort_levels: [low, medium, high, xhigh, max]       # per model; probe confirms; 'medium' is the 5.5-family default
+    models:
+      haiku:   { tier: fast,     effort: medium, speed: 4, cost: 1,  context: 1m, output: 128k, api_usd_per_mtok: [0.10, 0.50],
+                 vendor_says: "fast and efficient, for simple tasks; meant as a subagent beside Opus and Sonnet" }
+      sonnet:  { tier: balanced, effort: medium, speed: 3, cost: 3,  context: 1m, output: 128k, api_usd_per_mtok: [2, 10],
+                 vendor_says: "latest Sonnet, for daily coding tasks" }
+      opus:    { tier: strong,   effort: high,   speed: 2, cost: 5,  context: 1m, output: 128k, api_usd_per_mtok: [4, 20],
+                 vendor_says: "latest Opus, for complex reasoning tasks; clearly stronger on open-ended work" }
+      fable:   { tier: frontier, effort: high,   speed: 1, cost: 8,  context: 1m, output: 128k, api_usd_per_mtok: [10, 50],
+                 bills: "credits on Pro; up to 50% of the weekly limit included on Max/Ultra",
+                 vendor_says: "for the hardest and longest-running tasks" }
+    # Subscriptions also carry per-family windows ("Opus limit", "Sonnet limit"): a parked attempt on one family
+    # may continue on another family of the same slot — the planner sees rate_limit_type seven_day_opus/sonnet.
+    subagents:
+      mechanism: agents_file            # per-attempt --agents <file>; frontmatter model/effort per subagent
+      depth_var: CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH
+      force_vars: [CLAUDE_CODE_SUBAGENT_MODEL, CLAUDE_CODE_SUBAGENT_MODEL_FORCE]
+
+  codex:
+    select: { flag: "-m", effort_override: "-c model_reasoning_effort=\"<level>\"" }   # -c values are TOML: quote strings
+    effort_levels: [low, medium, high, xhigh, max, ultra]  # 'ultra' = parallel subagents, not deeper thinking; not on Luna
+    models:
+      gpt-6-luna:   { tier: fast,     effort: low,    speed: 4, cost: 1,
+                      vendor_says: "focused, high-volume tasks: summarising, extraction, focused coding; fastest and cheapest" }
+      gpt-6.1-terra: { tier: fast,     effort: medium, speed: 4, cost: 2, requires_cli: ">=0.159.0",
+                      vendor_says: "fast, efficient writing, visual understanding, computer use" }
+      gpt-6.1-sol:  { tier: balanced, effort: medium, speed: 3, cost: 3, context: 500k,
+                      vendor_says: "near-Astra results for repeated, long-running work at lower cost" }
+      gpt-6-astra:  { tier: strong,   effort: high,   speed: 2, cost: 5,
+                      vendor_says: "hardest end-to-end work across code, apps and research; Max for one hard problem, Ultra when the work parallelises" }
+    subagents:
+      mechanism: config                 # subagents are on by default (agents.enabled / features.multi_agent):
+      keys: [agents.default_subagent_model, agents.default_subagent_reasoning_effort, agents.max_concurrent_threads_per_session]
+      catalogue: "$CODEX_HOME/agents/*.toml"   # name, description, developer_instructions, model, model_reasoning_effort
+      ultra: "only when the policy allows subagents"
+
+  opencode:
+    select: { flag: "--model", syntax: "provider/model#variant" }   # variants per model catalog; probe lists them
+    providers:
+      zai-coding-plan:
+        # credit multipliers (input/cached/output per 10k tokens): glm-5.3 = 6.9/1.7/24; glm-5.3-flash = 2.3/0.56/8
+        # glm-5.2 and glm-5.1 route to glm-5.3; glm-4.7 routes to glm-5.3-flash. Off-peak (outside Mon–Fri 14:00–18:00 UTC+8) is half price.
+        # effort variants #low | #high | #max (default max; Z.ai recommends max for coding)
+        models:
+          glm-5.3-flash: { tier: fast,     variant: high, speed: 4, cost: 1, context: 1m, output: 128k,
+                           vendor_says: "the Flash model; multimodal; about three times cheaper in credits than GLM-5.3" }
+          glm-5.3:       { tier: balanced, variant: max,  speed: 3, cost: 3, context: 1m, output: 128k,
+                           vendor_says: "the flagship, for long-horizon coding" }
+      google:
+        # variants map to thinkingLevel: low | medium | high (Flash-Lite adds minimal); 2.5 models reroute on 1 Dec 2026
+        models:
+          gemini-3.5-flash-lite: { tier: fast,     variant: low,    speed: 4, cost: 1, api_usd_per_mtok: [0.30, 2.50],
+                                   vendor_says: "fastest, most cost-effective; high-throughput" }
+          gemini-3.8-flash:      { tier: balanced, variant: medium, speed: 3, cost: 2, context: 1m, api_usd_per_mtok: [0.75, 3.75],
+                                   vendor_says: "most intelligent Flash; long-horizon coding and agents" }
+          gemini-4-argon:        { tier: strong,   variant: high,   speed: 2, cost: 5, context: 1m, free_tier: false, api_usd_per_mtok: [2, 10],
+                                   vendor_says: "flagship reasoning model" }
+    subagents:
+      mechanism: agents_config          # agents.<name>.model = "provider/model#variant", mode: subagent; the `subagent` permission allows or denies spawning
+
+routing:
+  # which tier each built-in role asks for by default; the planner may override per task with a reason
+  roles:
+    implementer:      { tier: balanced }
+    test_author:      { tier: balanced }
+    code_reviewer:    { tier: balanced, prefer: different_provider }
+    pr_reviewer:      { tier: strong,   prefer: different_provider }
+    security_checker: { tier: strong,   effort: max }
+    integrator:       { tier: balanced }
+    repair_agent:     { tier: strong }
+    release_agent:    { tier: fast }
+    meta_agent:       { tier: strong,   effort: high }
+  # specialists' own subagents: the ceiling they may spawn, and how deep
+  subagents:
+    default: { max_tier: fast, depth: 1 }
+    repair_agent: { max_tier: balanced, depth: 1 }
+    security_checker: { max_tier: balanced, depth: 1 }
+  frontier: { requires: preauthorised }   # confirmation class; never autonomous

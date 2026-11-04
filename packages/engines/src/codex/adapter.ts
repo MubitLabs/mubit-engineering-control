@@ -141,6 +141,9 @@ export class CodexAdapter implements EngineAdapter {
     await this.post({ jsonrpc: '2.0', method: 'initialized' }) // notification: no id
     const sandbox = spec.brief.isolation.read_only ? 'read-only' : 'workspace-write'
     const approvalPolicy = spec.brief.isolation.permission_mode === 'bridge' ? 'on-request' : 'never'
+    // LaunchSpec.model (additive v0.1): the documented app-server model selection —
+    // `model` in thread/start (review §4; the CLI's `-m`/`-c` forms belong to the
+    // runtime's argv_additions, not this process).
     const started = spec.resume?.session_id
       ? ((await this.request('thread/resume', { threadId: spec.resume.session_id })) as {
           thread?: { id?: string }
@@ -149,6 +152,7 @@ export class CodexAdapter implements EngineAdapter {
           cwd: spec.cwd,
           sandbox,
           approvalPolicy,
+          ...(spec.model?.id !== undefined && { model: spec.model.id }),
         })) as { thread?: { id?: string } })
     const threadId = started?.thread?.id || spec.resume?.session_id
     if (!threadId) throw new Error('codex adapter: thread/start returned no thread id')

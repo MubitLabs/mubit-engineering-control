@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MEC workbench</title>
+<meta name="description" content="Design prototype of the MEC workbench: chat, needs-you tray, work, slots, setup and settings." />
+<!-- Preview only: the shipped app self-hosts both families (OFL) under apps/web/public/fonts — no runtime network. -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=Spline+Sans+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="tokens.css" />
+<link rel="stylesheet" href="workbench.css" />
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- ───────── Rail ───────── -->
+  <nav class="rail" aria-label="Primary">
+    <a class="brand" href="#chat" data-route="chat" aria-label="MEC home">MEC</a>
+    <ul class="rail-nav">
+      <li><a href="#chat" data-route="chat" class="rail-item is-active"><span>Chat</span></a></li>
+      <li><a href="#needs" data-route="needs" class="rail-item"><span>Needs you</span><b class="count count-attention" id="needs-count">2</b></a></li>
+      <li><a href="#work" data-route="work" class="rail-item"><span>Work</span><b class="count">3</b></a></li>
+      <li><a href="#slots" data-route="slots" class="rail-item"><span>Slots</span><b class="count count-attention">1</b></a></li>
+      <li><a href="#setup" data-route="setup" class="rail-item"><span>Setup</span></a></li>
+      <li><a href="#settings" data-route="settings" class="rail-item"><span>Settings</span></a></li>
+    </ul>
+    <div class="rail-foot">
+      <div class="slot-dots" aria-label="Slot health">
+        <span class="dot dot-warn" title="max-1: five-hour window at 85%, resets 18:40"></span>
+        <span class="dot dot-ok" title="max-2: healthy, 31%"></span>
+        <span class="dot dot-ok" title="glm-1: healthy, no reading yet"></span>
+        <span class="dot dot-ok" title="gem-1: healthy, $0.42 today"></span>
+        <span class="dot dot-attn" title="codex-1: login expired"></span>
+      </div>
+      <p class="rail-status">Runtime ready<br /><span class="muted">2 attempts running</span></p>
+      <div class="theme" role="group" aria-label="Appearance">
+        <button type="button" data-theme="auto" class="is-active">Auto</button>
+        <button type="button" data-theme="light">Light</button>
+        <button type="button" data-theme="dark">Dark</button>
+      </div>
+      <p class="rail-hint"><kbd>⌘K</kbd> commands</p>
+    </div>
+  </nav>
+
+  <!-- ───────── Main ───────── -->
+  <main class="main" id="main">
+
+    <!-- ===== Chat (home) ===== -->
+    <section class="pane is-active" id="pane-chat" aria-labelledby="chat-title">
+      <header class="pane-head">
+        <h1 id="chat-title" class="pane-title">Audit-log viewing</h1>
+        <p class="pane-sub">Working. 2 of 3 tasks running in <span class="mono">acme/console</span>.</p>
+        <div class="pane-tools">
+          <button type="button" class="btn btn-quiet" data-open-context="wi_a1">Details</button>
+          <button type="button" class="btn btn-quiet">Hold</button>
+          <button type="button" class="btn btn-quiet btn-danger-text">Stop</button>
+        </div>
+      </header>
+
+      <!-- Needs-you tray: the only amber on the page -->
+      <section class="tray" id="tray" aria-labelledby="tray-title">
+        <header class="tray-head">
+          <h2 id="tray-title" class="tray-title">Needs you <span class="tray-count">2</span></h2>
+          <p class="tray-sub">Approve with <kbd>A</kbd>, deny with <kbd>D</kbd>, move with <kbd>J</kbd> <kbd>K</kbd></p>
+          <button type="button" class="btn btn-quiet tray-toggle" aria-expanded="true" aria-controls="tray-list">Collapse</button>
+        </header>
+        <ol class="tray-list" id="tray-list">
+          <li class="decision" tabindex="0" data-decision="conf_71" data-context="conf_71">
+            <div class="decision-main">
+              <p class="decision-what">Push the branch and open a pull request</p>
+              <p class="decision-why">The release agent finished the audit-log work. This is the first thing that leaves your machine.</p>
+              <dl class="decision-facts">
+                <div><dt>Branch</dt><dd class="mono">mec/a1/release → origin</dd></div>
+                <div><dt>Head</dt><dd class="mono">4f2c9e1</dd></div>
+                <div><dt>Checks</dt><dd>lint, typecheck, unit passed on that commit</dd></div>
+                <div><dt>Findings</dt><dd>2 reviewed, 1 fixed, 1 declined with reason</dd></div>
+              </dl>
+            </div>
+            <div class="decision-side">
+              <p class="expires">Expires in <time datetime="PT23M">23 min</time></p>
+              <div class="decision-actions">
+                <button type="button" class="btn btn-primary" data-approve="conf_71">Approve</button>
+                <button type="button" class="btn btn-quiet" data-deny="conf_71">Deny</button>
+              </div>
+              <button type="button" class="link" data-open-context="conf_71">See the diff and checks</button>
+            </div>
+          </li>
+          <li class="decision decision-question" tabindex="0" data-decision="q_12" data-context="q_12">
+            <div class="decision-main">
+              <p class="decision-eyebrow">The console implementer asks</p>
+              <p class="decision-what">Should deleted users stay identifiable in the audit log?</p>
+              <p class="decision-why">Rows written by users who were later deleted can show the original user id, or an anonymous marker. The API task is unaffected; the console task waits on this.</p>
+              <div class="choices" role="group" aria-label="Answer">
+                <button type="button" class="choice" data-answer="q_12">Keep the user id</button>
+                <button type="button" class="choice" data-answer="q_12">Show “deleted user”</button>
+                <button type="button" class="choice choice-other" data-answer="q_12">Answer in chat…</button>
+              </div>
+            </div>
+            <div class="decision-side">
+              <p class="expires muted">Work on the API task continues</p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <!-- Conversation -->
+      <ol class="conversation" id="conversation">
+        <li class="msg msg-user">
+          <p>Add audit-log viewing to the console and expose it through the API. It should have tests.</p>
+          <p class="msg-meta"><span>You</span><time>14:02</time></p>
+        </li>
+        <li class="msg msg-agent">
+          <p>On it: adding audit-log viewing to the console and the API, with tests.</p>
+          <p class="msg-meta"><span>Meta agent on max-1</span><time>14:02</time></p>
+        </li>
+        <li class="msg msg-card">
+          <article class="plan" aria-labelledby="plan-1">
+            <header class="plan-head">
+              <h3 id="plan-1">Plan: 3 tasks</h3>
+              <p class="muted">Approved by you at 14:03 under policy <span class="mono">9c1e…</span></p>
+            </header>
+            <table class="plan-table">
+              <thead><tr><th>Task</th><th>Role</th><th>Tier</th><th>Slot</th><th>State</th></tr></thead>
+              <tbody>
+                <tr data-context="task_api"><td>Storage and API for audit events</td><td>Implementer</td><td><span class="tier">balanced</span></td><td>max-2</td><td><span class="state state-ok">Checks passed</span></td></tr>
+                <tr data-context="task_console"><td>Console page with filters</td><td>Implementer</td><td><span class="tier">balanced</span></td><td>max-2</td><td><span class="state state-attn">Waiting on your answer</span></td></tr>
+                <tr data-context="task_tests"><td>Tests for both</td><td>Test author</td><td><span class="tier">fast</span></td><td>glm-1</td><td><span class="state">Queued</span></td></tr>
+              </tbody>
+            </table>
+            <p class="plan-note">Review runs on a different provider (glm-1). Security pass on gem-1 at max effort because findings block integration here.</p>
+          </article>
+        </li>
+        <li class="msg msg-status">
+          <p>Checks passed on the API task.</p>
+          <p class="msg-meta"><time>14:31</time></p>
+        </li>
+        <li class="msg msg-notice">
+          <p><b>max-1 hit its five-hour window.</b> It resets at 18:40. The API task moved to max-2 under your max-1 → max-2 pairing; nothing was lost.</p>
+          <p class="msg-meta"><time>14:38</time><button type="button" class="link" data-route="slots">See slots</button></p>
+        </li>
+        <li class="msg msg-agent">
+          <p>The console implementer needs one decision from you before it can finish the deleted-users case.</p>
+          <p class="msg-meta"><span>Meta agent</span><time>14:44</time><button type="button" class="link" data-focus-decision="q_12">Answer above</button></p>
+        </li>
+      </ol>
+
+      <!-- Composer -->
+      <form class="composer" id="composer" aria-label="Message the meta agent">
+        <div class="composer-context" id="composer-context">
+          <span class="chip">Replying about <b>Audit-log viewing</b></span>
+          <button type="button" class="link" id="clear-context">Clear</button>
+        </div>
+        <label class="sr-only" for="composer-input">Message</label>
+        <textarea id="composer-input" rows="1" placeholder="Message the meta agent"></textarea>
+        <div class="composer-foot">
+          <p class="muted composer-hint">Enter sends. Shift+Enter adds a line. <kbd>/</kbd> focuses.</p>
+          <button type="submit" class="btn btn-primary">Send</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- ===== Needs you (full page) ===== -->
+    <section class="pane" id="pane-needs" aria-labelledby="needs-title">
+      <header class="pane-head">
+        <h1 id="needs-title" class="pane-title">Needs you</h1>
+        <p class="pane-sub">Two things wait for you. Approve what leaves the machine; answer what a specialist cannot decide.</p>
+      </header>
+      <p class="muted" style="max-width:62ch">This is the same list as the tray in Chat, kept here so it has a keyboard home: <kbd>J</kbd> <kbd>K</kbd> to move, <kbd>A</kbd> to approve, <kbd>D</kbd> to deny, <kbd>Enter</kbd> to open the evidence.</p>
+      <div class="empty-hint" id="needs-mirror"></div>
+    </section>
+
+    <!-- ===== Work ===== -->
+    <section class="pane" id="pane-work" aria-labelledby="work-title">
+      <header class="pane-head">
+        <h1 id="work-title" class="pane-title">Work</h1>
+        <p class="pane-sub">Every open piece of work, grouped by whom it waits for.</p>
+      </header>
+      <section class="group">
+        <h2 class="group-title">Needs you <span class="count count-attention">1</span></h2>
+        <ul class="rows">
+          <li class="row" tabindex="0" data-context="wi_a1">
+            <div class="row-main"><p class="row-title">Audit-log viewing</p><p class="row-sub">Approve the pull request; one question open</p></div>
+            <div class="row-side"><span class="state state-attn">Needs your approval</span><p class="row-meta">acme/console, started 14:02</p></div>
+          </li>
+        </ul>
+      </section>
+      <section class="group">
+        <h2 class="group-title">Working <span class="count">1</span></h2>
+        <ul class="rows">
+          <li class="row" tabindex="0" data-context="wi_b2">
+            <div class="row-main"><p class="row-title">Rate-limit headers on the public API</p><p class="row-sub">Implementer on max-2, checks running on <span class="mono">a91d0c3</span></p></div>
+            <div class="row-side"><span class="state">Working</span><p class="row-meta">acme/api, started 13:10</p></div>
+          </li>
+        </ul>
+      </section>
+      <section class="group">
+        <h2 class="group-title">Waiting <span class="count">1</span></h2>
+        <ul class="rows">
+          <li class="row" tabindex="0" data-context="wi_c3">
+            <div class="row-main"><p class="row-title">Flaky integration test in billing</p><p class="row-sub">Parked on max-1 until its window resets at 18:40</p></div>
+            <div class="row-side"><span class="state">Waiting for quota</span><p class="row-meta">acme/billing, started 11:48 <button type="button" class="link">Switch slot</button></p></div>
+          </li>
+        </ul>
+      </section>
+      <section class="group">
+        <h2 class="group-title">Done today <span class="count">2</span></h2>
+        <ul class="rows rows-quiet">
+          <li class="row" tabindex="0"><div class="row-main"><p class="row-title">Fix date formatting in invoices</p><p class="row-sub">Merged as PR #409</p></div><div class="row-side"><span class="state state-done">Merged</span><p class="row-meta">11:20</p></div></li>
+          <li class="row" tabindex="0"><div class="row-main"><p class="row-title">Remove unused feature flags</p><p class="row-sub">Dropped: a human branch already contained the change</p></div><div class="row-side"><span class="state state-done">Dropped</span><p class="row-meta">09:55</p></div></li>
+        </ul>
+      </section>
+    </section>
+
+    <!-- ===== Slots ===== -->
+    <section class="pane" id="pane-slots" aria-labelledby="slots-title">
+      <header class="pane-head">
+        <h1 id="slots-title" class="pane-title">Slots</h1>
+        <p class="pane-sub">Each slot is one engine signed in to one account. Keys and logins stay on this machine; MEC keeps only a fingerprint.</p>
+        <div class="pane-tools"><button type="button" class="btn btn-primary" id="add-slot">Add a slot</button></div>
+      </header>
+
+      <ul class="slot-grid">
+        <li class="slot slot-attn" data-context="slot_codex1">
+          <header class="slot-head"><h3>codex-1</h3><span class="state state-attn">Login expired</span></header>
+          <p class="slot-line">Codex on ChatGPT Pro, <span class="muted">you@mubit.dev</span></p>
+          <p class="slot-line">Two attempts are parked until you sign in again. Nothing was lost.</p>
+          <div class="slot-actions"><button type="button" class="btn btn-primary" data-open-login="codex-1">Sign in again</button><button type="button" class="btn btn-quiet">Retire</button></div>
+        </li>
+        <li class="slot slot-warn" data-context="slot_max1">
+          <header class="slot-head"><h3>max-1</h3><span class="state state-warn">Near its window</span></header>
+          <p class="slot-line">Claude Code on Max, <span class="muted">anil@mubit.dev</span></p>
+          <div class="meter" role="meter" aria-valuenow="85" aria-valuemin="0" aria-valuemax="100" aria-label="Five-hour window"><span style="width:85%"></span></div>
+          <p class="slot-line">Five-hour window at 85%, resets 18:40. Weekly window at 41%.</p>
+          <p class="slot-line muted">Paired with max-2. New work goes elsewhere above 80%.</p>
+          <div class="slot-actions"><button type="button" class="btn btn-quiet">Drain</button><button type="button" class="btn btn-quiet">Pinning</button></div>
+        </li>
+        <li class="slot" data-context="slot_max2">
+          <header class="slot-head"><h3>max-2</h3><span class="state state-ok">Healthy</span></header>
+          <p class="slot-line">Claude Code on Max, <span class="muted">ops@mubit.dev</span></p>
+          <div class="meter" role="meter" aria-valuenow="31" aria-valuemin="0" aria-valuemax="100" aria-label="Five-hour window"><span style="width:31%"></span></div>
+          <p class="slot-line">Five-hour window at 31%. Weekly window at 22%. The meta agent runs here.</p>
+          <div class="slot-actions"><button type="button" class="btn btn-quiet">Drain</button><button type="button" class="btn btn-quiet">Pinning</button></div>
+        </li>
+        <li class="slot" data-context="slot_glm1">
+          <header class="slot-head"><h3>glm-1</h3><span class="state state-ok">Healthy</span></header>
+          <p class="slot-line">OpenCode on the GLM Coding Plan (Pro), key <span class="mono">…7f2a</span></p>
+          <p class="slot-line">No usage reading yet — the plan reports credits only on its dashboard.</p>
+          <p class="slot-line muted">Preferred for reviews: a different provider from the implementer.</p>
+          <div class="slot-actions"><button type="button" class="btn btn-quiet">Validate</button><button type="button" class="btn btn-quiet">Replace key</button></div>
+        </li>
+        <li class="slot" data-context="slot_gem1">
+          <header class="slot-head"><h3>gem-1</h3><span class="state state-ok">Healthy</span></header>
+          <p class="slot-line">OpenCode on the Gemini API, billing-linked project, key <span class="mono">…Q9ce</span></p>
+          <p class="slot-line">$0.42 spent today of a $5.00 daily cap. Per-minute limit hit twice and retried.</p>
+          <div class="slot-actions"><button type="button" class="btn btn-quiet">Validate</button><button type="button" class="btn btn-quiet">Replace key</button></div>
+        </li>
+      </ul>
+    </section>
+
+    <!-- ===== Setup ===== -->
+    <section class="pane" id="pane-setup" aria-labelledby="setup-title">
+      <header class="pane-head">
+        <h1 id="setup-title" class="pane-title">Set up MEC</h1>
+        <p class="pane-sub">About two minutes. You can come back to any step later.</p>
+      </header>
+      <ol class="steps">
+        <li class="step is-done">
+          <div class="step-mark" aria-hidden="true"></div>
+          <div class="step-body">
+            <h2 class="step-title">Your coding agents</h2>
+            <p class="step-sub">Found Claude Code 2.1.317 (signed in as anil@mubit.dev), Codex 0.148.0 (signed in), OpenCode 2.2.5.</p>
+          </div>
+        </li>
+        <li class="step is-current">
+          <div class="step-mark" aria-hidden="true"></div>
+          <div class="step-body">
+            <h2 class="step-title">Connect a slot</h2>
+            <p class="step-sub">Pick how MEC should use each agent. You can add more slots later.</p>
+            <div class="options">
+              <button type="button" class="option">
+                <span class="option-title">Use my existing Claude login</span>
+                <span class="option-sub">Zero extra sign-in. MEC’s sessions will appear in your own history and share your quota.</span>
+              </button>
+              <button type="button" class="option is-selected" data-open-login="max-1">
+                <span class="option-title">Sign in to a dedicated slot</span>
+                <span class="option-sub">Recommended. Opens Anthropic’s own sign-in in a terminal card; MEC never sees the token.</span>
+              </button>
+              <button type="button" class="option" id="open-key-form">
+                <span class="option-title">Paste an API key</span>
+                <span class="option-sub">For GLM Coding Plan, Gemini, or Anthropic/OpenAI pay-as-you-go. Stored only in the slot’s keystore.</span>
+              </button>
+            </div>
+            <div class="step-actions"><button type="button" class="btn btn-primary">Continue</button><button type="button" class="btn btn-quiet">Skip for now</button></div>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step-mark" aria-hidden="true"></div>
+          <div class="step-body"><h2 class="step-title">Add a repository</h2><p class="step-sub">A path or a URL. MEC reads its README and proposes the bootstrap and check commands for you to confirm.</p></div>
+        </li>
+        <li class="step">
+          <div class="step-mark" aria-hidden="true"></div>
+          <div class="step-body"><h2 class="step-title">Choose where the meta agent runs</h2><p class="step-sub">The healthiest subscription slot, unless you say otherwise.</p></div>
+        </li>
+        <li class="step">
+          <div class="step-mark" aria-hidden="true"></div>
+          <div class="step-body"><h2 class="step-title">Try it</h2><p class="step-sub">A first request on your repository, with every push behind a card.</p></div>
+        </li>
+      </ol>
+    </section>
+
+    <!-- ===== Settings ===== -->
+    <section class="pane" id="pane-settings" aria-labelledby="settings-title">
+      <header class="pane-head">
+        <h1 id="settings-title" class="pane-title">Settings</h1>
+      </header>
+      <div class="settings">
+        <nav class="settings-nav" aria-label="Settings sections">
+          <button type="button" class="settings-link" data-settings="policy">Policy</button>
+          <button type="button" class="settings-link is-active" data-settings="prompts">Prompts</button>
+          <button type="button" class="settings-link" data-settings="models">Models</button>
+          <button type="button" class="settings-link" data-settings="repos">Repositories</button>
+          <button type="button" class="settings-link" data-settings="backups">Backups</button>
+        </nav>
+
+        <div class="settings-body">
+          <section class="settings-section is-active" id="settings-prompts">
+            <header class="section-head">
+              <h2 class="section-title">Prompts</h2>
+              <p class="muted">What each agent reads. Edit any part; your text stays when defaults change, and you decide what to take.</p>
+            </header>
+            <div class="parts">
+              <ul class="part-list" aria-label="Prompt parts">
+                <li class="part-group">Shared</li>
+                <li class="part"><span>Communication</span></li>
+                <li class="part"><span>Scope</span><span class="mark">edited</span></li>
+                <li class="part"><span>Delivery</span></li>
+                <li class="part-group">Meta agent</li>
+                <li class="part"><span>Protocol</span></li>
+                <li class="part is-active"><span>Planning</span><span class="mark mark-attn">Default updated</span></li>
+                <li class="part-group">Roles</li>
+                <li class="part"><span>Implementer</span></li>
+                <li class="part"><span>Code reviewer</span><span class="mark">edited</span></li>
+                <li class="part"><span>Security checker</span></li>
+                <li class="part muted-item"><span>5 more</span></li>
+              </ul>
+              <div class="editor">
+                <header class="editor-head">
+                  <h3>Meta agent: Planning</h3>
+                  <p class="muted">Your text, based on the default from 20 Oct. The default changed on 3 Nov.</p>
+                  <div class="editor-tools">
+                    <button type="button" class="btn btn-quiet">Compare with new default</button>
+                    <button type="button" class="btn btn-quiet">Use the new default</button>
+                    <button type="button" class="btn btn-quiet">Full prompt</button>
+                  </div>
+                </header>
+                <textarea class="editor-text" rows="12" aria-label="Planning part">Choose the cheapest tier that the task's risk allows, and say why in `reason`. Mechanical work is fast. Work with a clear scope and existing tests is balanced. Work that touches interfaces, concurrency, security, data migration, or that a previous attempt failed is strong. Frontier needs the user's pre-authorisation; propose it only when the task is an investigation whose cost of being wrong is high.
+
+Reviews prefer a different provider than the implementer. The security checker runs strong at max effort when policy marks its findings blocking.
+
+Give a specialist a subagent policy only when its task has separable lookups; subagents are fast by default. When a slot is above its utilisation ceiling, place elsewhere or say the work waits.</textarea>
+                <div class="savebar" id="savebar" hidden>
+                  <p>Unsaved changes</p>
+                  <div><button type="button" class="btn btn-quiet" id="discard">Discard</button><button type="button" class="btn btn-primary" id="save">Save as revision 14</button></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-section" id="settings-models">
+            <header class="section-head">
+              <h2 class="section-title">Models</h2>
+              <p class="muted">The ladder the meta agent plans with. Tiers are relative within a provider; the vendor’s own words are shown, not ours.</p>
+            </header>
+            <table class="tiers">
+              <thead><tr><th>Tier</th><th>Claude Code</th><th>Codex</th><th>OpenCode on GLM</th><th>OpenCode on Gemini</th></tr></thead>
+              <tbody>
+                <tr><th>fast</th><td>haiku <span class="muted">medium</span></td><td>gpt-6-luna <span class="muted">low</span></td><td>glm-5.3-flash</td><td>gemini-3.5-flash-lite</td></tr>
+                <tr><th>balanced</th><td>sonnet <span class="muted">medium</span></td><td>gpt-6.1-sol <span class="muted">medium</span></td><td>glm-5.3</td><td>gemini-3.8-flash</td></tr>
+                <tr><th>strong</th><td>opus <span class="muted">high</span></td><td>gpt-6-astra <span class="muted">high</span></td><td class="muted">none on this plan</td><td>gemini-4-argon</td></tr>
+                <tr><th>frontier</th><td>fable <span class="muted">high, bills credits</span></td><td class="muted">—</td><td class="muted">—</td><td class="muted">—</td></tr>
+              </tbody>
+            </table>
+            <p class="muted">Frontier needs your pre-authorisation per repository. Last probed on this machine 4 Nov, 09:12.</p>
+          </section>
+
+          <section class="settings-section" id="settings-policy"><header class="section-head"><h2 class="section-title">Policy</h2><p class="muted">Caps, confirmation classes, pairs and spend limits. Edited here with validation; agents can only propose.</p></header><div class="empty"><p>Policy editor lands with the planner work.</p></div></section>
+          <section class="settings-section" id="settings-repos"><header class="section-head"><h2 class="section-title">Repositories</h2></header><div class="empty"><p>acme/console, acme/api and acme/billing, each with its bootstrap and check commands, trust level and UI-evidence rule.</p></div></section>
+          <section class="settings-section" id="settings-backups"><header class="section-head"><h2 class="section-title">Backups</h2></header><div class="empty"><p>Last backup at 03:00 today, credentials excluded by rule. <button type="button" class="link">Back up now</button></p></div></section>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ───────── Context pane ───────── -->
+  <aside class="context" id="context" aria-label="Details" hidden>
+    <header class="context-head">
+      <h2 class="context-title" id="context-title">Details</h2>
+      <button type="button" class="btn btn-quiet context-close" id="context-close" aria-label="Close details">Close</button>
+    </header>
+    <div class="context-body" id="context-body"></div>
+  </aside>
+</div>
+
+<!-- ───────── Sheets ───────── -->
+<div class="scrim" id="scrim" hidden></div>
+
+<div class="sheet" id="sheet-login" role="dialog" aria-modal="true" aria-labelledby="login-title" hidden>
+  <header class="sheet-head"><h2 id="login-title">Sign in to max-1</h2><p class="muted">This is Anthropic’s own sign-in, running in your terminal. MEC watches for the URL and never reads the token.</p></header>
+  <div class="terminal" aria-live="polite">
+    <pre>$ claude auth login
+Opening https://claude.ai/oauth/authorize?… in your browser
+If the browser does not open, paste the code shown there:
+Paste code here if prompted: _</pre>
+  </div>
+  <div class="sheet-actions">
+    <button type="button" class="btn btn-primary">Open the sign-in page</button>
+    <button type="button" class="btn btn-quiet">Paste code</button>
+    <button type="button" class="btn btn-quiet" data-close-sheet>Cancel</button>
+    <p class="muted">Times out in 10 minutes. One sign-in at a time.</p>
+  </div>
+</div>
+
+<div class="sheet" id="sheet-key" role="dialog" aria-modal="true" aria-labelledby="key-title" hidden>
+  <header class="sheet-head"><h2 id="key-title">Add an API key</h2><p class="muted">The key goes to the slot’s keystore on this disk. MEC keeps a fingerprint, never the key.</p></header>
+  <form class="form" onsubmit="return false">
+    <label>Provider
+      <select><option>GLM Coding Plan (Z.ai)</option><option>Gemini API (Google)</option><option>Anthropic API</option><option>OpenAI API</option></select>
+    </label>
+    <label>Slot name <input type="text" placeholder="glm-2" /></label>
+    <label>API key <input type="password" placeholder="Paste the key" autocomplete="off" /></label>
+    <p class="form-note">Gemini free-tier keys are refused for private repositories: Google may use free-tier prompts to improve its products.</p>
+    <div class="sheet-actions">
+      <button type="button" class="btn btn-primary">Validate and add</button>
+      <button type="button" class="btn btn-quiet" data-close-sheet>Cancel</button>
+    </div>
+  </form>
+</div>
+
+<div class="palette" id="palette" role="dialog" aria-modal="true" aria-label="Commands" hidden>
+  <input type="text" id="palette-input" placeholder="Type a command or a work item" autocomplete="off" />
+  <ul class="palette-list">
+    <li><button type="button" data-route="needs">Open Needs you <kbd>G N</kbd></button></li>
+    <li><button type="button" data-route="work">Open Work <kbd>G W</kbd></button></li>
+    <li><button type="button" data-route="slots">Open Slots <kbd>G S</kbd></button></li>
+    <li><button type="button">Pause all processing</button></li>
+    <li><button type="button">Back up now</button></li>
+    <li><button type="button">Audit-log viewing — work item</button></li>
+  </ul>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="workbench.js"></script>
+</body>
+</html>

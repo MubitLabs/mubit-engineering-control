@@ -113,9 +113,16 @@ export class ClaudeAdapter implements EngineAdapter {
       readOnly: spec.brief.isolation.read_only,
       permissionMode: spec.brief.isolation.permission_mode,
       maxTurns: spec.brief.budget.turns,
-      model: undefined,
+      // LaunchSpec.model (additive v0.1): the runtime's resolveModel output — id + effort.
+      model: spec.model?.id,
+      effort: spec.model?.effort,
+      // The runtime's subagent writer (review §4) hands its file over through the brief env.
+      agentsPath: spec.brief.env.MEC_AGENTS_PATH as string | undefined,
       resumeSessionId: spec.resume?.session_id,
       allowedTools: (spec.brief.env.MEC_ALLOWED_TOOLS as string | undefined)?.split(',').filter(Boolean),
+      disallowedTools: (spec.brief.env.MEC_DISALLOWED_TOOLS as string | undefined)
+        ?.split(',')
+        .filter(Boolean),
     })
     const proc = spawnFn(argv, { cwd: spec.cwd, env: spec.env })
     const handle: AttemptHandle = {

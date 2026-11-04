@@ -6,6 +6,7 @@ import {
   Capabilities,
   type EngineAdapter,
   Input,
+  LaunchModel,
   type LaunchSpec,
 } from '../src/adapter'
 import type { Runtime } from '../src/runtime'
@@ -136,6 +137,30 @@ describe('EngineAdapter', () => {
       classify: (error) => (String(error).includes('authentication') ? 'auth' : 'unknown'),
     }
     expect(classifier.classify(new Error('authentication_failed'))).toBe('auth')
+  })
+})
+
+describe('LaunchModel (additive v0.1)', () => {
+  it('accepts a bare engine-facing id and one with effort or variant', () => {
+    expect(LaunchModel.safeParse({ id: 'opus' }).success).toBe(true)
+    expect(LaunchModel.safeParse({ id: 'gpt-6.1-sol', effort: 'low' }).success).toBe(true)
+    expect(LaunchModel.safeParse({ id: 'zai-coding-plan/glm-5.3', variant: 'max' }).success).toBe(true)
+  })
+
+  it('rejects an empty id and an unknown effort', () => {
+    expect(LaunchModel.safeParse({ id: '' }).success).toBe(false)
+    expect(LaunchModel.safeParse({ id: 'opus', effort: 'extreme' }).success).toBe(false)
+  })
+
+  it('rides LaunchSpec as an optional field next to the sample brief', () => {
+    const spec: LaunchSpec = {
+      brief: AttemptBrief.parse(BRIEF),
+      env: {},
+      cwd: '/Users/me/wt/att_01',
+      bridge: { request: async () => 'allow' },
+      model: { id: 'sonnet', effort: 'medium' },
+    }
+    expect(spec.model).toEqual({ id: 'sonnet', effort: 'medium' })
   })
 })
 

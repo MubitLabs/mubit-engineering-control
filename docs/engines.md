@@ -47,3 +47,7 @@ Recorded against the logged-in `codex-1` slot (`CODEX_HOME=~/.mec/engines/codex/
 ## Codex slot (R2.1)
 
 - `~/.mec/engines/codex/codex-1` — logged in 3 Nov 21:06 via the vendor's browser flow ("Logged in using ChatGPT", `codex login status` exit 0). `auth.json` at 0600 in the home; MEC never reads it (compliance guard). The R2.1 agent is reconciling the adapter + recording real fixtures against this slot.
+
+## Claude Code 2.1.318 drift (4 November 2026, caught live by the §5.8 probe during the acceptance demo)
+
+The CLI self-updated 2.1.317 → 2.1.318 mid-session. `--max-turns` left `--help` but still works (verified with a real one-turn run); `--effort` is now documented (good for the tier layer). The probe's required-verified set drops `--max-turns` (help-absence on a working flag was a false `engine_unsupported`). **Open**: headless meta-planner turns on 2.1.318 end `api_error` deterministically (three turns) while plain one-shots succeed — suspected 2.1.318 + headless-MCP regression; blocked the demo's claude-side assertions.

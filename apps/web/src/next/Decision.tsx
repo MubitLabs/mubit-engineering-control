@@ -20,7 +20,12 @@ interface DecisionFrame {
   inspectLabel?: string
 }
 
-export interface ApprovalProps extends DecisionFrame {
+/** Set on the card a person just settled, so it takes focus back wherever the list refiles it. */
+interface FocusClaim {
+  claimFocus?: boolean
+}
+
+export interface ApprovalProps extends DecisionFrame, FocusClaim {
   approveLabel: string
   /** Names the exact effect, for the armed button and the announcement. */
   confirmLabel: string
@@ -30,7 +35,7 @@ export interface ApprovalProps extends DecisionFrame {
   onDeny: () => void
 }
 
-export interface QuestionProps extends DecisionFrame {
+export interface QuestionProps extends DecisionFrame, FocusClaim {
   choices: readonly string[]
   freeTextLabel: string
   onAnswer: (answer: string) => void
@@ -77,15 +82,20 @@ function Frame({
   )
 }
 
-/** When the controls unmount on settling, focus lands on the outcome instead of the body. */
-function useSettledFocus(status: DecisionStatus) {
+/**
+ * When the controls unmount on settling, focus lands on the outcome instead of the body. A card
+ * filed under Settled is a new element, so one that claims focus takes it again as it mounts.
+ */
+function useSettledFocus(status: DecisionStatus, claim = false) {
   const heading = useRef<HTMLHeadingElement>(null)
   const wasOpen = useRef(status.state === 'open')
   useLayoutEffect(() => {
     const open = status.state === 'open'
-    if (wasOpen.current && !open && document.activeElement === document.body) heading.current?.focus()
+    if ((wasOpen.current || claim) && !open && document.activeElement === document.body) {
+      heading.current?.focus()
+    }
     wasOpen.current = open
-  }, [status.state])
+  }, [status.state, claim])
   return heading
 }
 
@@ -95,7 +105,7 @@ function useSettledFocus(status: DecisionStatus) {
  */
 export function Approval(props: ApprovalProps) {
   const { status, onConfirm, onDeny } = props
-  const heading = useSettledFocus(status)
+  const heading = useSettledFocus(status, props.claimFocus)
   const [armed, setArmed] = useState(false)
   const confirm = useRef<HTMLButtonElement>(null)
   const open = status.state === 'open'
@@ -157,7 +167,7 @@ export function Approval(props: ApprovalProps) {
 
 export function Question(props: QuestionProps) {
   const { status, choices, onAnswer } = props
-  const heading = useSettledFocus(status)
+  const heading = useSettledFocus(status, props.claimFocus)
   const [picked, setPicked] = useState<string | null>(null)
   const [text, setText] = useState('')
   const groupName = useId()

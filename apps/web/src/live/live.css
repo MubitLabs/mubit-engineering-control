@@ -1,5 +1,13 @@
 /* Only what the live surfaces add to the next shell's own stylesheets. */
 
+/* The Search button takes the room at the narrowest width; the drawer still names the repository. */
+@media (max-width: 360px) {
+  .breadcrumb-repo,
+  .breadcrumb [aria-hidden="true"] {
+    display: none;
+  }
+}
+
 .composer-failure {
   display: flex;
   align-items: center;
@@ -14,8 +22,10 @@
   margin-bottom: 16px;
 }
 
-.work-actions {
-  padding: 4px 16px 12px;
+.entry-found {
+  border-radius: 8px;
+  outline: 2px solid var(--focus, currentColor);
+  outline-offset: 4px;
 }
 
 .repo-choices {

@@ -60,7 +60,8 @@ describe('the production build keeps the shells apart', () => {
     const css = read(asset(/^entry-.*\.css$/))
     expect(css).not.toMatch(/Instrument Sans|@font-face/)
     const js = read(asset(/^entry-.*\.js$/))
-    expect(js).not.toMatch(/\/api\/|demoStatus|demoWork/)
+    // The inspection paths are the live layer's own and belong here; a mock's names never do.
+    expect(js).not.toMatch(/demoStatus|demoWork/)
   })
 
   it('dist/assets contains no SAMPLE-ONLY', () => {

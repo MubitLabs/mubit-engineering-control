@@ -5,6 +5,7 @@ import {
   decodeChatLines,
   decodeNeedsPage,
   decodeSearchPage,
+  decodeSnapshot,
   decodeTaskDetail,
   decodeWorkDetail,
   decodeWorkPage,
@@ -14,6 +15,7 @@ import {
   chatLines,
   needsPage,
   searchPage,
+  storedLines,
   taskDetails,
   workDetails,
   workPage,
@@ -28,6 +30,39 @@ describe('inspection decoders', () => {
     for (const detail of Object.values(workDetails)) expect(decodeWorkDetail(detail)).toEqual(detail)
     for (const detail of Object.values(taskDetails)) expect(decodeTaskDetail(detail)).toEqual(detail)
     for (const detail of Object.values(cardEvidence)) expect(decodeCardEvidence(detail)).toEqual(detail)
+  })
+
+  it('a stored message with no kind keeps its acknowledgement and guard', () => {
+    expect(decodeChatLines(storedLines)).toEqual(storedLines)
+  })
+
+  it('a detail without its truncation count rejects, because a cut would read as complete', () => {
+    const { work_working } = workDetails
+    const { tasksTruncated: _tasks, ...noTasks } = work_working
+    expect(() => decodeWorkDetail(noTasks)).toThrow(DecodeError)
+    const { cursorsTruncated: _cursors, ...noCursors } = work_working
+    expect(() => decodeWorkDetail(noCursors)).toThrow(DecodeError)
+    const { attemptsTruncated: _attempts, ...noAttempts } = taskDetails.task_done
+    expect(() => decodeTaskDetail(noAttempts)).toThrow(DecodeError)
+    const { dependsOnTruncated: _depends, ...noDepends } = taskDetails.task_done
+    expect(() => decodeTaskDetail(noDepends)).toThrow(DecodeError)
+  })
+
+  it('an absent card detail stays marked absent', () => {
+    expect(decodeCardEvidence({ ...cardEvidence.card_pending, absent: true }).absent).toBe(true)
+    expect('absent' in decodeCardEvidence(cardEvidence.card_pending)).toBe(false)
+  })
+
+  it('a snapshot needs its cursors', () => {
+    const snapshot = {
+      observedAt: 'now',
+      repositories: [{ id: 'repo_a', label: 'sample', needsCount: 1 }],
+      repositoriesTruncated: 0,
+      needsCount: 1,
+      cursors: { repositories: 3 },
+    }
+    expect(decodeSnapshot(snapshot)).toEqual(snapshot)
+    expect(() => decodeSnapshot({ ...snapshot, cursors: undefined })).toThrow(DecodeError)
   })
 
   it('malformed work page rejects', () => {

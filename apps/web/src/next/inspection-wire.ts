@@ -39,6 +39,8 @@ export type TaskRow = {
   role: string | null
   status: string
   dependsOn: string[]
+  /** Ids left out of `dependsOn`. */
+  dependsOnTruncated: number
   planRevision: number | null
   attemptCount: number
 }
@@ -57,11 +59,15 @@ export type WorkDetail = WorkRow & {
   hold: { since: string; reason: string | null } | null
   planRevision: number | null
   tasks: TaskRow[]
+  /** Tasks left out of `tasks`. */
+  tasksTruncated: number
   /** Parent and child attempts. Empty until M2 records them; never inferred from dependencies. */
   delegation: { parentAttemptId: string; childAttemptId: string }[]
   delivery: DeliveryView
   coverage: Coverage
   cursors: Record<string, number>
+  /** Attempt streams left out of `cursors`. */
+  cursorsTruncated: number
 }
 
 export type AttemptView = {
@@ -90,12 +96,15 @@ export type TaskDetail = TaskRow & {
   repoId: string | null
   objective: string
   attempts: AttemptView[]
+  /** Older attempts left out of `attempts`. */
+  attemptsTruncated: number
   /** Only for the exact head named; never inherited from another scope. */
-  checks: { headSha: string | null; results: CheckView[] }
+  checks: { headSha: string | null; results: CheckView[]; truncated: number }
   diff: {
     headSha: string | null
     summary: string | null
     files: { path: string; added: number; removed: number }[]
+    truncated: number
   }
   usage: { reportedUsd: number | null; missingAttempts: number; mode: 'api' | 'subscription' | 'unknown' }
   coverage: Coverage
@@ -128,6 +137,16 @@ export type CardItem = {
 
 export type NeedItem = QuestionItem | CardItem
 
+/** GET /api/inspect/snapshot: one consistent read of the counts and the event cursors. */
+export type Snapshot = {
+  observedAt: string
+  repositories: { id: string; label: string | null; needsCount: number }[]
+  /** Repositories left out of `repositories`. */
+  repositoriesTruncated: number
+  needsCount: number
+  cursors: Record<string, number>
+}
+
 export type SearchHit = {
   kind: 'message' | 'work' | 'task' | 'attempt' | 'reference'
   id: string
@@ -141,6 +160,8 @@ export type SearchHit = {
  * M3.1's shape: a copy, because next/* cannot import api.ts.
  */
 export type CardEvidence = {
+  /** The honest placeholder for a card the server serves no evidence for: nothing to approve on. */
+  absent?: true
   what: string
   verb: string | null
   why: string
@@ -158,5 +179,10 @@ export type ChatLine = {
   text: string
   createdAt: string
   workItemId: string | null
+  /** Stored messages have no kind yet: null is the person's own message, unless it is a wake's. */
   kind: string | null
+  /** The meta agent's acknowledgement, stored on the message it answers. */
+  ackText?: string
+  /** The server redacted this message: it looked like a key. */
+  secretGuard?: true
 }

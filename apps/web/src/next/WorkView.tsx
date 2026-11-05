@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { DeliveryPlan, PageHeader } from './Conversation'
 import { Approval } from './Decision'
 import { GlossaryButton } from './GlossarySheet'
@@ -7,6 +7,7 @@ import { useShellActions } from './Shell'
 import { EmptyState, StateNotice } from './states'
 import type {
   DeliveryDetailView,
+  DiscussAction,
   Read,
   RepoFilterOption,
   SurfaceState,
@@ -129,12 +130,22 @@ function DeliveryDetail({
   selectedTaskId: string | null
   onOpenTask: (id: string) => void
   onAction: (action: WorkAction) => void
-  onDiscuss: (id: string) => void
+  onDiscuss: (action: DiscussAction) => void
 }) {
   const { openInspector } = useShellActions()
   const [stopping, setStopping] = useState<WorkAction | null>(null)
+  const { discuss } = detail
+  const root = useRef<HTMLDivElement>(null)
+  const stopButton = useRef<HTMLButtonElement>(null)
+  const wasStopping = useRef(false)
+  // The heading, not a button: a held Enter must not walk through the steps of a stop.
+  useLayoutEffect(() => {
+    if (stopping) root.current?.querySelector<HTMLElement>('.decision h2')?.focus()
+    else if (wasStopping.current) stopButton.current?.focus()
+    wasStopping.current = stopping !== null
+  }, [stopping])
   return (
-    <div className="work-detail">
+    <div className="work-detail" ref={root}>
       <DeliveryPlan
         {...detail.plan}
         tasks={detail.plan.tasks.map((task) => ({
@@ -145,7 +156,7 @@ function DeliveryDetail({
             openInspector()
           },
         }))}
-        action={{ label: 'Discuss this work', onClick: () => onDiscuss(row.id) }}
+        {...(discuss && { action: { label: discuss.label, onClick: () => onDiscuss(discuss) } })}
       />
       <section className="work-links">
         <h3>Dependencies</h3>
@@ -156,6 +167,7 @@ function DeliveryDetail({
             {detail.dependencies.map((link) => (
               <li key={link.task}>
                 {link.task} waits for {link.on.join(', ')}
+                {link.more ? `, and ${link.more} more not shown` : ''}
               </li>
             ))}
           </ul>
@@ -180,6 +192,7 @@ function DeliveryDetail({
           {detail.actions.map((action) => (
             <Button
               key={action.kind}
+              ref={action.kind === 'stop' ? stopButton : undefined}
               variant="quiet"
               onClick={() => (action.kind === 'stop' ? setStopping(action) : onAction(action))}
             >
@@ -218,15 +231,29 @@ export interface WorkViewProps {
   selectedTaskId: string | null
   onOpenTask: (id: string) => void
   onAction: (action: WorkAction) => void
-  onDiscuss: (id: string) => void
+  onDiscuss: (action: DiscussAction) => void
   onRetry: () => void
+  /** Set when the list stops short of what the server holds. */
+  partialNote?: string | null
 }
 
-function WorkEntry({ row, props }: { row: WorkRowView; props: WorkViewProps }) {
+function WorkEntry({ row, props, acted }: { row: WorkRowView; props: WorkViewProps; acted: boolean }) {
   const selected = row.id === props.selectedId
+  const { delivery } = props
+  const kept = delivery.status === 'loading' ? null : delivery.data
+  const entry = useRef<HTMLLIElement>(null)
+  const rowButton = useRef<HTMLButtonElement>(null)
+  // A hold or a stop moves the row to another group, and the detail's own read lands apart from
+  // the list's, so this runs on every commit until something else takes focus.
+  useLayoutEffect(() => {
+    if (!acted || document.activeElement !== document.body) return
+    const next = entry.current?.querySelector<HTMLElement>('.work-detail > .actions button')
+    ;(next ?? rowButton.current)?.focus()
+  })
   return (
-    <li className="work-entry">
+    <li className="work-entry" ref={entry}>
       <button
+        ref={rowButton}
         type="button"
         className="work-row"
         aria-current={selected ? 'true' : undefined}
@@ -241,36 +268,52 @@ function WorkEntry({ row, props }: { row: WorkRowView; props: WorkViewProps }) {
         </span>
         <Status tone={row.tone}>{row.stageLabel}</Status>
       </button>
-      {selected && props.delivery.status === 'ready' && (
+      {selected && delivery.status === 'failed' && (
+        <StateNotice
+          kind="error"
+          title="Could not read this delivery"
+          body={kept ? `${delivery.message} What is shown below may be out of date.` : delivery.message}
+          action={{ label: 'Retry', onClick: props.onRetry }}
+        />
+      )}
+      {selected && kept && (
         <DeliveryDetail
           row={row}
-          detail={props.delivery.data}
+          detail={kept}
           selectedTaskId={props.selectedTaskId}
           onOpenTask={props.onOpenTask}
           onAction={props.onAction}
           onDiscuss={props.onDiscuss}
         />
       )}
-      {selected && props.delivery.status === 'loading' && <p className="freshness">Reading this delivery.</p>}
-      {selected && props.delivery.status === 'failed' && (
-        <StateNotice
-          kind="error"
-          title="Could not read this delivery"
-          body={props.delivery.message}
-          action={{ label: 'Retry', onClick: props.onRetry }}
-        />
-      )}
+      {selected && delivery.status === 'loading' && <p className="freshness">Reading this delivery.</p>}
     </li>
   )
 }
 
 export function WorkView(props: WorkViewProps) {
   const { surface, groups } = props
+  /** The delivery last acted on. It keeps focus through a regroup until a pointer goes elsewhere. */
+  const [acted, setActed] = useState<string | null>(null)
+  useEffect(() => {
+    if (acted === null) return
+    const release = () => setActed(null)
+    document.addEventListener('pointerdown', release, true)
+    return () => document.removeEventListener('pointerdown', release, true)
+  }, [acted])
+  const tracked: WorkViewProps = {
+    ...props,
+    onAction: (action) => {
+      setActed(action.workItemId)
+      props.onAction(action)
+    },
+  }
   return (
     <div className="page">
       <PageHeader title="Work" subtitle="Every delivery, by stage." action={<GlossaryButton />} />
       <RepoScope options={props.repoOptions} value={props.repoValue} onChange={props.onRepo} />
       <ReadNotice surface={surface} noun="work" onRetry={props.onRetry} />
+      {props.partialNote && <p className="freshness">{props.partialNote}</p>}
       {surface.state === 'empty' && (
         <EmptyState
           title="No deliveries yet"
@@ -286,7 +329,7 @@ export function WorkView(props: WorkViewProps) {
             </h2>
             <ul>
               {group.rows.map((row) => (
-                <WorkEntry key={row.id} row={row} props={props} />
+                <WorkEntry key={row.id} row={row} props={tracked} acted={row.id === acted} />
               ))}
             </ul>
           </section>

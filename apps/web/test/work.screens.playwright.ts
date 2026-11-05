@@ -3,7 +3,8 @@ import { expect, type Page, test } from '@playwright/test'
 /**
  * The work surfaces against fixtures/work-harness.html: fixture, real decoder, work-model, real
  * components. The numbers in the test names are the prototype defects the design audit found.
- * Time zone and locale are pinned so the baselines do not depend on the machine.
+ * Time zone, locale and the clock are pinned so the baselines do not depend on the machine or the
+ * day: a time on another day names its date.
  */
 
 const VIEWPORTS = [
@@ -17,6 +18,7 @@ const HARNESS = '/test/fixtures/work-harness.html'
 test.use({ timezoneId: 'UTC', locale: 'en-GB' })
 
 async function harness(page: Page, hash = 'work', query = ''): Promise<void> {
+  await page.clock.setFixedTime('2026-11-05T10:00:00.000Z')
   await page.goto(`${HARNESS}?${query}#${hash}`)
   await expect(page.locator('.shell')).toBeVisible()
 }

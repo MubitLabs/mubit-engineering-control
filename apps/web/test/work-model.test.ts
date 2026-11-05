@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { decodeNeedsPage, decodeTaskDetail, decodeWorkDetail, decodeWorkPage } from '../src/inspection-decode'
-import type { NeedItem, Page, SearchHit, TaskDetail, WorkRow } from '../src/next/inspection-wire'
+import type { NeedItem, Page, SearchHit, TaskDetail, TaskRow, WorkRow } from '../src/next/inspection-wire'
 import {
   approvalProps,
   approvalScope,
@@ -8,15 +8,20 @@ import {
   deliveryDetail,
   needsCount,
   needsList,
+  pendingScope,
   questionProps,
   type Read,
   readSurface,
+  readsCurrent,
   repoFilterOptions,
   searchRows,
   searchTarget,
   selectionInScope,
   stageGroup,
+  staleScope,
+  taskInspector,
   taskScope,
+  threadQuestions,
   workActions,
   workGroups,
   workRowView,
@@ -30,8 +35,10 @@ import {
   needsPage,
   OLD_HEAD,
   searchPage,
+  storedLines,
   TASK_HEAD,
   taskDetails,
+  wakeLines,
   workDetails,
   workPage,
   workRows,
@@ -240,6 +247,7 @@ describe('inspector scope', () => {
       checks: {
         headSha: OLD_HEAD,
         results: [{ name: 'Old', state: 'passed', headSha: OLD_HEAD, detail: null, artifactRef: null }],
+        truncated: 0,
       },
     })
     expect(moved.checks.state).toBe('not-run')
@@ -254,6 +262,7 @@ describe('inspector scope', () => {
           { name: 'A', state: 'passed', headSha: TASK_HEAD, detail: null, artifactRef: null },
           { name: 'B', state: 'failed', headSha: TASK_HEAD, detail: null, artifactRef: null },
         ],
+        truncated: 0,
       },
     })
     expect(scope.checks.state).toBe('failed')
@@ -267,6 +276,7 @@ describe('inspector scope', () => {
       checks: {
         headSha: CARD_HEAD,
         results: [{ name: 'Card', state: 'passed', headSha: CARD_HEAD, detail: null, artifactRef: null }],
+        truncated: 0,
       },
     })
     expect(scope.checks.state).toBe('not-run')
@@ -481,6 +491,161 @@ describe('search', () => {
   })
 })
 
+describe('live data', () => {
+  const held = decodeWorkDetail(workDetails.work_held)
+  const working = decodeWorkDetail(workDetails.work_working)
+
+  it('an absent card detail cannot be approved and names nothing false', () => {
+    const absent = { ...cardEvidence.card_pending, absent: true as const, what: 'Evidence not served' }
+    const view = approvalProps(needs.pending, absent, null)
+    expect(view.canApprove).toBe(false)
+    expect(view.title).toBe('Push approval')
+    expect(view.consequences).toEqual([])
+    expect(view.evidence.map((fact) => fact.label)).toEqual(['Repository'])
+  })
+
+  it('a stored message with no kind is the person’s, and its acknowledgement follows', () => {
+    const view = conversationView({ row: null, detail: null, messages: storedLines })
+    expect(view.entries.map((entry) => entry.kind)).toEqual(['user', 'agent', 'user', 'note'])
+  })
+
+  it('a wake is no one’s message: its text goes and its acknowledgement stays', () => {
+    const view = conversationView({ row: null, detail: null, messages: wakeLines, work: rows })
+    expect(view.entries).toEqual([
+      {
+        id: 'msg_wake_0a1b2c:ack',
+        kind: 'agent',
+        text: expect.stringContaining('search for the console'),
+      },
+      { id: 'msg_said', kind: 'user', text: 'question answered' },
+    ])
+  })
+
+  it('an acknowledgement names work by title, never by id', () => {
+    const view = conversationView({ row: null, detail: null, messages: storedLines, work: rows })
+    const ack = view.entries.find((entry) => entry.kind === 'agent')
+    expect(ack?.text).toContain('search for the console')
+    expect(ack?.text).not.toContain('work_working')
+  })
+
+  it('left-out tasks are said, never silently complete', () => {
+    expect(deliveryDetail({ ...working, tasksTruncated: 3 }, ALL).plan.subtitle).toContain('3 more not shown')
+    expect(deliveryDetail(working, ALL).plan.subtitle).not.toContain('not shown')
+  })
+
+  it('left-out dependencies are said', () => {
+    const [first, second, third] = working.tasks as [TaskRow, TaskRow, TaskRow]
+    const cut = { ...second, dependsOnTruncated: 2 }
+    const detail = deliveryDetail({ ...working, tasks: [first, cut, third] }, ALL)
+    expect(detail.dependencies.find((link) => link.task === cut.title)?.more).toBe(2)
+  })
+
+  it('left-out attempts, checks and files are said', () => {
+    const scope = task('task_done', {
+      attemptsTruncated: 4,
+      checks: { ...taskDetails.task_done.checks, truncated: 5 },
+      diff: { ...taskDetails.task_done.diff, truncated: 6 },
+    })
+    expect(scope.activity.note).toContain('4 older attempts not shown')
+    expect(scope.checks.detail).toContain('5 more results not shown')
+    expect(scope.diff.summary).toContain('6 more files not shown')
+  })
+
+  it('a list with more to read has no count, because the count must equal it', () => {
+    const list = needsList(ready({ ...page(items), nextCursor: 'more' }), rows, ALL)
+    expect(list.count).toBeNull()
+    expect(list.partial).toBe(true)
+    expect(needsList(ready(page(items)), rows, ALL).partial).toBe(false)
+  })
+
+  it('a card that settled elsewhere drops an earlier hold', () => {
+    const hold = describeApproval({ status: 'pending', reason: 'ci_pending' })
+    expect(approvalProps(needs.pending, cardEvidence.card_pending, hold).hold).toContain('still running')
+    const settled = { ...needs.pending, status: 'approved' as const }
+    expect(approvalProps(settled, cardEvidence.card_pending, hold).hold).toBeNull()
+  })
+
+  it('an answer that did not land keeps the question open and says so', () => {
+    const view = questionProps(needs.question, { kind: 'failed', message: 'Not sent' })
+    expect(view.status.state).toBe('open')
+    expect(view.failure).toBe('Not sent')
+    expect(questionProps(needs.question, null).failure).toBeNull()
+    expect(questionProps(needs.answered, { kind: 'failed', message: 'Not sent' }).failure).toBeNull()
+  })
+
+  it('newest work leads its group, whatever order the server pages in', () => {
+    const older = { ...rows[0], id: 'older', updatedAt: '2026-11-01T00:00:00.000Z' } as WorkRow
+    const newer = { ...rows[0], id: 'newer', updatedAt: '2026-11-02T00:00:00.000Z' } as WorkRow
+    const [group] = workGroups([older, newer], ALL).filter((entry) => entry.count > 0)
+    expect(group?.rows.map((row) => row.id)).toEqual(['newer', 'older'])
+  })
+
+  it('a registered repository with no work is still a filter', () => {
+    const options = repoFilterOptions([], [], [{ id: 'repo_new', label: 'fresh' }])
+    expect(options.map((option) => option.label)).toEqual(['All repositories', 'fresh'])
+  })
+
+  it('discussing is offered only on work a person can still follow up', () => {
+    expect(deliveryDetail(working, ALL).discuss).toEqual({
+      label: 'Discuss this work in sample-console',
+      workItemId: 'work_working',
+      repoId: 'repo_a',
+    })
+    expect(deliveryDetail(working, { kind: 'repo', repoId: 'repo_a' }).discuss?.label).toBe(
+      'Discuss this work',
+    )
+    expect(deliveryDetail({ ...held, repoId: null, repoLabel: null }, ALL).discuss).toBeNull()
+    const ended = decodeWorkDetail({ ...workDetails.work_working, ...workRows.completed })
+    expect(deliveryDetail(ended, ALL).discuss).toBeNull()
+  })
+
+  it('a message in another repository opens its work, because the thread here is not its own', () => {
+    const hit: SearchHit = {
+      kind: 'message',
+      id: 'm',
+      title: 't',
+      repoLabel: 'other',
+      workItemId: 'work_x',
+    }
+    expect(searchTarget(hit, 'sample-console').route).toBe('work')
+    expect(searchTarget(hit, 'other').route).toBe('chat')
+  })
+
+  it('a detail that could not be read says so in its inspector, and keeps its own id', () => {
+    const scope = pendingScope('task_x', 'Parent work', 'Reading this task')
+    expect(scope.id).toBe('task:task_x')
+    expect(scope.checks.state).toBe('unavailable')
+    expect(scope.title).toBe('Reading this task')
+  })
+
+  it('a selection shows its own task, from its own delivery, or nothing', () => {
+    const read = ready(decodeTaskDetail(taskDetails.task_done))
+    expect(taskInspector('task_done', read, 'work_working', 'Parent')?.title).toBe(
+      taskDetails.task_done.title,
+    )
+    expect(taskInspector('task_other', read, 'work_working', 'Parent')).toBeNull()
+    expect(taskInspector('task_done', read, 'work_held', 'Parent')).toBeNull()
+  })
+
+  it('a task that cannot be read says why, and a kept one is labelled stale', () => {
+    const failed: Read<TaskDetail> = { status: 'failed', message: 'Down', data: null, readAt: null }
+    expect(taskInspector('task_done', failed, 'work_working', 'Parent')?.title).toBe('Down')
+    const kept: Read<TaskDetail> = {
+      status: 'failed',
+      message: 'Down',
+      data: decodeTaskDetail(taskDetails.task_done),
+      readAt: READ_AT,
+    }
+    expect(taskInspector('task_done', kept, 'work_working', 'Parent')?.context).toContain('Stale')
+  })
+
+  it('kept evidence is labelled stale', () => {
+    const scope = staleScope(task('task_done'), 'Stale. Last read 10:00')
+    expect(scope.context).toContain('Stale. Last read 10:00')
+    expect(scope.id).toBe(task('task_done').id)
+  })
+})
+
 describe('surface state', () => {
   const empty = (value: readonly unknown[]) => value.length === 0
 
@@ -503,5 +668,129 @@ describe('surface state', () => {
     const surface = readSurface({ status: 'failed', message: 'down', data: null, readAt: null }, empty)
     expect(surface.hasContent).toBe(false)
     expect(surface.freshness).toBeNull()
+  })
+})
+
+describe('a repository the page could not resolve', () => {
+  const unresolved: NeedItem = { ...needs.pending, repoId: null, repoLabel: 'acme/alpha' }
+  const alpha = { kind: 'repo', repoId: 'repo_a' } as const
+
+  it('an open card with only a label stays waiting under every filter, and is counted', () => {
+    for (const filter of [ALL, alpha, { kind: 'repo', repoId: 'repo_b' }, { kind: 'unassigned' }] as const) {
+      const list = needsList(ready(page([unresolved])), rows, filter)
+      expect(list.waiting.map((item) => item.id)).toEqual(['card_pending'])
+      expect(needsCount(list)).toBe(1)
+    }
+  })
+
+  it('a settled card with only a label does not follow a filter to another repository', () => {
+    const settled: NeedItem = { ...unresolved, status: 'approved' }
+    expect(needsList(ready(page([settled])), rows, alpha).settled).toEqual([])
+  })
+
+  it('a card on another repository, and legacy work, stay out of a repository filter', () => {
+    const list = needsList(ready(page([needs.otherRepo, needs.legacy])), rows, alpha)
+    expect(list.waiting).toEqual([])
+  })
+})
+
+describe('questions in the thread', () => {
+  const none = () => null
+
+  it('shows an open question in this repository and nothing else', () => {
+    const shown = threadQuestions(items, 'repo_a', none).map((view) => view.id)
+    expect(shown).toEqual(['question_open'])
+  })
+
+  it('keeps a question answered on this page, with the answer', () => {
+    const settled: NeedItem = { ...needs.question, status: 'answered', answer: 'yes' }
+    const [view] = threadQuestions([settled], 'repo_a', () => ({ kind: 'answered', answer: 'yes' }))
+    expect(view?.status).toEqual({ state: 'resolved', label: 'Answered', detail: 'yes' })
+  })
+
+  it('tells the loser of a race that it lost', () => {
+    const [view] = threadQuestions([needs.question], 'repo_a', () => ({ kind: 'already-answered' }))
+    expect(view?.status).toMatchObject({ state: 'resolved', label: 'Already answered' })
+  })
+
+  it('a failed answer keeps the question open and is not a settled one', () => {
+    const [view] = threadQuestions([needs.question], 'repo_a', () => ({ kind: 'failed', message: 'no' }))
+    expect(view?.status.state).toBe('open')
+    expect(view?.failure).toBe('no')
+  })
+})
+
+describe('a settled card without its evidence', () => {
+  const settled: NeedItem = needs.resolved
+
+  it('that was never read says so and offers a retry', () => {
+    const view = approvalProps(settled, null, null)
+    expect(view.summary).toBe('The evidence for this card has not loaded.')
+    expect(view.retryEvidence).toBe(true)
+  })
+
+  it('the server holds none for says that, with nothing to retry', () => {
+    const absent = { ...cardEvidence.card_resolved, absent: true as const }
+    const view = approvalProps(settled, absent, null)
+    expect(view.summary).toBe('The workbench holds no evidence for this card.')
+    expect(view.retryEvidence).toBe(false)
+  })
+
+  it('read reads like any other card', () => {
+    const view = approvalProps(settled, cardEvidence.card_resolved, null)
+    expect(view.title).toBe(cardEvidence.card_resolved.what)
+    expect(view.retryEvidence).toBe(false)
+  })
+
+  it('an open card keeps its own retry path, not this one', () => {
+    expect(approvalProps(needs.pending, null, null).retryEvidence).toBe(false)
+  })
+})
+
+describe('times', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const at = (now: string) => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(now))
+  }
+  const expires = (expiresAt: string) => {
+    const { status } = approvalProps({ ...needs.pending, expiresAt }, null, null)
+    return status.state === 'open' ? status.expires : ''
+  }
+
+  it('today is the time alone', () => {
+    at('2026-11-05T09:00:00.000')
+    expect(expires('2026-11-05T19:36:00.000')).not.toMatch(/Nov/)
+  })
+
+  it('a card that expires tomorrow names the day', () => {
+    at('2026-11-05T09:00:00.000')
+    const label = expires('2026-11-06T19:36:00.000')
+    expect(label).toMatch(/^Expires at /)
+    expect(label).toMatch(/Nov/)
+    expect(label).toMatch(/6/)
+  })
+
+  it('old activity names its day', () => {
+    at('2026-11-07T09:00:00.000')
+    const read = { status: 'ready', data: 1, readAt: '2026-11-05T00:00:00.000' } as const
+    expect(readSurface(read, () => false).freshness).toMatch(/Nov/)
+  })
+
+  it('another year names the year', () => {
+    at('2027-01-02T09:00:00.000')
+    expect(expires('2026-12-30T19:36:00.000')).toMatch(/2026/)
+  })
+})
+
+describe('whether what is shown is current', () => {
+  const failed: Read<number> = { status: 'failed', message: 'x', data: 1, readAt: READ_AT }
+
+  it('is true only while no read has failed', () => {
+    expect(readsCurrent([ready(1), { status: 'loading' }])).toBe(true)
+    expect(readsCurrent([ready(1), failed])).toBe(false)
   })
 })

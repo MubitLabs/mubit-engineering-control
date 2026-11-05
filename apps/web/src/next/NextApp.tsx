@@ -10,10 +10,6 @@ import { EmptyState, ReturnToClassic } from './states'
  * owner's real work: not "nothing is waiting", only "not shown here".
  */
 const UNAVAILABLE: Partial<Record<Route, { title: string; body: string }>> = {
-  needs: {
-    title: 'Decisions are not shown here yet',
-    body: 'Anything waiting for you is still in the classic workbench. This preview cannot approve or deny.',
-  },
   slots: {
     title: 'Connections are not connected here yet',
     body: 'Connection health and usage are not read in this preview. Nothing has changed.',

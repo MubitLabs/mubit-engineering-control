@@ -327,7 +327,7 @@ export function newIdempotencyKey(): string {
   return crypto.randomUUID()
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // §22 CSRF discipline: the custom header every mutating call must carry; a
   // cross-origin page cannot add it without a preflight this server never answers.
   const withHeader: RequestInit = {

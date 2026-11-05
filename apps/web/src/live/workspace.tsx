@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
-import { api, type ChatMessage, type RepositoryEntry, subscribeMerged, type WorkItem } from '../api'
+import { api, type ChatMessage, type RepositoryEntry, type ServerEvent, type WorkItem } from '../api'
+import { inspectApi } from '../api-inspect'
+import { decodeChatLines } from '../inspection-decode'
 import { type Address, addressHash, parseAddress } from '../next/address'
+import type { ChatLine } from '../next/inspection-wire'
+import type { Read } from '../next/work-model'
 import { repositoryName } from '../repo-target'
+import { type StreamHooks, subscribeResumable } from './events'
 
 /**
  * The next shell's data. One scope at a time: a repository's id, or Unassigned for legacy rows.
@@ -18,6 +23,8 @@ const REFETCH_INTERVAL_MS = 10_000
 export interface Feed<T> {
   status: 'loading' | 'ready' | 'error'
   rows: T[]
+  /** When the rows were read. A failed read keeps both. */
+  readAt?: string
 }
 
 export interface WorkspaceState {
@@ -27,26 +34,64 @@ export interface WorkspaceState {
   scope: string | null
   chat: Feed<ChatMessage>
   work: Feed<WorkItem>
+  /** The inspection routes' own repository labels, which search hits and rows carry. */
+  labels: Readonly<Record<string, string>>
+  /** The event history moved on and a new snapshot replaced it. Null once said and dismissed. */
+  resetAt: string | null
+}
+
+export interface WorkspaceSnapshot {
+  cursors: Record<string, number>
+  labels: Record<string, string>
 }
 
 export interface WorkspaceClient {
   repositories(): Promise<RepositoryEntry[]>
   chat(scope: string, signal?: AbortSignal): Promise<ChatMessage[]>
   work(scope: string, signal?: AbortSignal): Promise<WorkItem[]>
+  /** One consistent read of the event cursors, so a new connection replays no history. */
+  snapshot(): Promise<WorkspaceSnapshot>
   subscribe(
     subscriptions: ReadonlyArray<{ stream: string; after: number }>,
-    onEvent: (event: { seq: number } & Record<string, unknown>) => void,
+    onEvent: (event: ServerEvent) => void,
+    hooks?: StreamHooks,
   ): () => void
 }
 
 export const liveClient: WorkspaceClient = {
   repositories: () => api.repositories(),
-  chat: (scope, signal) => api.chat(scope, signal),
+  // Checked on the way in, so a shape the page cannot read ends in the failed state.
+  chat: (scope, signal) =>
+    api.chat(scope, signal).then((rows) => {
+      decodeChatLines(rows)
+      return rows
+    }),
   work: (scope, signal) => api.work(scope, signal),
-  subscribe: subscribeMerged,
+  snapshot: () =>
+    inspectApi.snapshot().then(({ cursors, repositories }) => ({
+      cursors,
+      labels: Object.fromEntries(
+        repositories.flatMap(({ id, label }) => (label === null ? [] : [[id, label]])),
+      ),
+    })),
+  subscribe: subscribeResumable,
 }
 
 export const loading = <T,>(): Feed<T> => ({ status: 'loading', rows: [] })
+
+/**
+ * The thread in the shape every surface reads. The rows were checked when they arrived. A failed
+ * repositories read makes it stale too: the page cannot say this repository is still current.
+ */
+export function chatRead(feed: Feed<ChatMessage>, repositories: Feed<RepositoryEntry>): Read<ChatLine[]> {
+  if (feed.status === 'loading') return { status: 'loading' }
+  const data = decodeChatLines(feed.rows)
+  const readAt = feed.readAt ?? null
+  if (feed.status === 'ready' && repositories.status !== 'error') {
+    return { status: 'ready', data, readAt: readAt ?? '' }
+  }
+  return { status: 'failed', message: 'The workbench did not answer.', data, readAt }
+}
 
 /** No perpetual loading: a read that never answers ends in the error state with its retry. */
 function within<T>(read: Promise<T>): Promise<T> {
@@ -67,6 +112,8 @@ export function createWorkspace(client: WorkspaceClient) {
     scope: null,
     chat: loading(),
     work: loading(),
+    labels: {},
+    resetAt: null,
   }
   const watchers = new Set<() => void>()
   /** The read in flight. Anything answering under an older controller is from another scope. */
@@ -74,15 +121,24 @@ export function createWorkspace(client: WorkspaceClient) {
   let streamKey = ''
   let unsubscribe: () => void = () => {}
   let debounce: ReturnType<typeof setTimeout> | undefined
-  const cursors: Record<string, number> = {}
+  let cursors: Record<string, number> = {}
+  /** Streams the snapshot named, every repository's, followed alongside this scope's. */
+  let followed: readonly string[] = []
+  let snapshotting = false
+  let running = false
+  /** A reset waits here until a snapshot lands, so one failed read cannot drop it. */
+  let resetPending = false
+  const refreshed = new Set<() => void>()
 
   const set = (patch: Partial<WorkspaceState>) => {
     state = { ...state, ...patch }
     for (const watcher of watchers) watcher()
   }
 
-  const follow = (rows: readonly WorkItem[]) => {
-    const streams = [...rows.map((row) => `work:${row.id}`), 'repositories']
+  const follow = () => {
+    if (resetPending) return
+    const scoped = state.work.rows.map((row) => `work:${row.id}`)
+    const streams = [...new Set([...scoped, ...followed, 'repositories'])]
     const next = streams.join(',')
     if (next === streamKey) return
     streamKey = next
@@ -94,7 +150,40 @@ export function createWorkspace(client: WorkspaceClient) {
         clearTimeout(debounce)
         debounce = setTimeout(refresh, REFETCH_DEBOUNCE_MS)
       },
+      { onReset, onReopen: refresh },
     )
+  }
+
+  function takeSnapshot() {
+    if (snapshotting) return
+    snapshotting = true
+    client
+      .snapshot()
+      .then(({ cursors: served, labels }) => {
+        snapshotting = false
+        if (!running) return
+        // A reset's history is gone, so its cursors replace ours even when they are lower.
+        const reset = resetPending
+        cursors = reset ? { ...served } : { ...served, ...cursors }
+        followed = Object.keys(served)
+        streamKey = ''
+        set({ labels, ...(reset && { resetAt: new Date().toISOString() }) })
+        resetPending = false
+        follow()
+        if (reset) refresh()
+      })
+      .catch(() => {
+        // The scope's own streams and the interval still cover this; `refresh` tries a reset again.
+        snapshotting = false
+        if (running) follow()
+      })
+  }
+
+  function onReset() {
+    unsubscribe = () => {}
+    streamKey = ''
+    resetPending = true
+    takeSnapshot()
   }
 
   const read = (scope: string) => {
@@ -107,29 +196,32 @@ export function createWorkspace(client: WorkspaceClient) {
       controller.abort()
       const { chat, work } = state
       set({
-        chat: chat.status === 'loading' ? { status: 'error', rows: chat.rows } : chat,
-        work: work.status === 'loading' ? { status: 'error', rows: work.rows } : work,
+        chat: chat.status === 'loading' ? { ...chat, status: 'error' } : chat,
+        work: work.status === 'loading' ? { ...work, status: 'error' } : work,
       })
     }, READ_TIMEOUT_MS)
 
     const chat = client
       .chat(scope, controller.signal)
       .then((rows) => {
-        if (live()) set({ chat: { status: 'ready', rows: rows.filter((row) => inScope(scope, row)) } })
+        if (live()) {
+          const kept = rows.filter((row) => inScope(scope, row))
+          set({ chat: { status: 'ready', rows: kept, readAt: new Date().toISOString() } })
+        }
       })
       .catch(() => {
-        if (live()) set({ chat: { status: 'error', rows: state.chat.rows } })
+        if (live()) set({ chat: { ...state.chat, status: 'error' } })
       })
     const work = client
       .work(scope, controller.signal)
       .then((rows) => {
         if (!live()) return
         const kept = rows.filter((row) => inScope(scope, row))
-        set({ work: { status: 'ready', rows: kept } })
-        follow(kept)
+        set({ work: { status: 'ready', rows: kept, readAt: new Date().toISOString() } })
+        follow()
       })
       .catch(() => {
-        if (live()) set({ work: { status: 'error', rows: state.work.rows } })
+        if (live()) set({ work: { ...state.work, status: 'error' } })
       })
     void Promise.allSettled([chat, work]).then(() => clearTimeout(timer))
   }
@@ -150,8 +242,10 @@ export function createWorkspace(client: WorkspaceClient) {
   }
 
   function refresh() {
+    if (resetPending) takeSnapshot()
     readRepositories()
     if (state.scope !== null) read(state.scope)
+    for (const watcher of refreshed) watcher()
   }
 
   return {
@@ -164,9 +258,20 @@ export function createWorkspace(client: WorkspaceClient) {
       }
     },
 
-    start(): () => void {
-      refresh()
+    /** Everything that reads alongside this feed, on the same triggers. */
+    onRefresh(watcher: () => void): () => void {
+      refreshed.add(watcher)
       return () => {
+        refreshed.delete(watcher)
+      }
+    },
+
+    start(): () => void {
+      running = true
+      refresh()
+      takeSnapshot()
+      return () => {
+        running = false
         reading?.abort()
         reading = null
         clearTimeout(debounce)
@@ -186,6 +291,10 @@ export function createWorkspace(client: WorkspaceClient) {
     },
 
     refresh,
+
+    clearReset(): void {
+      if (state.resetAt !== null) set({ resetAt: null })
+    },
   }
 }
 
@@ -205,8 +314,10 @@ export function resolveRepository(input: {
   stored: string | null
   repositories: readonly RepositoryEntry[]
   unassigned: boolean | null
+  /** False when these rows were kept from a failed read, which cannot prove anything has gone. */
+  fresh?: boolean
 }): ResolvedRepository {
-  const { addressed, stored, repositories, unassigned } = input
+  const { addressed, stored, repositories, unassigned, fresh = true } = input
   const known = (id: string | null) => repositories.find((repo) => repo.id === id)
   if (addressed === UNASSIGNED && unassigned === null) return { id: null, notice: null }
   if (addressed === UNASSIGNED && unassigned) return { id: UNASSIGNED, notice: null }
@@ -215,9 +326,26 @@ export function resolveRepository(input: {
   const lost = addressed !== null || (stored !== null && !known(stored))
   const fallback = known(stored) ?? (repositories.length === 1 ? repositories[0] : undefined)
   if (!lost) return { id: fallback?.id ?? null, notice: null }
+  if (!fresh) return { id: null, notice: null }
   const next =
     fallback === undefined ? 'Choose another to continue.' : `Showing ${repositoryName(fallback.url)}.`
   return { id: fallback?.id ?? null, notice: `That repository is no longer registered. ${next}` }
+}
+
+/** The same answer from the feed: rows a failed read kept are still known, and nothing is before a read. */
+export function resolveActive(input: {
+  addressed: string | null
+  stored: string | null
+  repositories: Feed<RepositoryEntry>
+  unassigned: boolean | null
+}): ResolvedRepository {
+  const { repositories } = input
+  if (repositories.status === 'loading') return { id: null, notice: null }
+  return resolveRepository({
+    ...input,
+    repositories: repositories.rows,
+    fresh: repositories.status === 'ready',
+  })
 }
 
 const subscribeHash = (notify: () => void) => {

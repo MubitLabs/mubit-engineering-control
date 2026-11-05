@@ -51,3 +51,13 @@ The builder ran the same steps once as a check on its own work. That is not the 
 | 9 | Zero repos: a Setup message is accepted over HTTP, and classic's Send says why. Setup was not walked end to end in the browser. |
 | 10 | POST with no `repoId`: 400, nothing written. |
 | 11 | `?ui=classic` returns, and clearing the flag leaves classic the default. |
+
+## Fix after verification: reload on Unassigned
+
+The verifier found that reloading `#repo/unassigned/chat` showed a false "Repository not found" notice. `state.unassigned` started false, LiveApp resolved as soon as repositories were ready, and the notice then stayed until navigation. Base c87e4db.
+
+- Failing first, `pnpm exec vitest run apps/web/test/workspace.test.ts`: 3 failed, 19 passed (`expected false to be null`, and a notice where none was expected). After: 22 passed.
+- Failing first, `playwright test -g "reload on Unassigned|retry banner"`: 3 failed, including the false notice and the old banner text. After: all 143 screens passed. No baseline moved.
+- Mutants: `python3 tools/mutants/run.py tools/mutants/repo-workspace.json`: 29 of 29 killed, 5 of them new. `--self-check` behaved as it should.
+- `pnpm check`: exit 1 from the one baseline failure only. 1921 tests: 1905 passed, 1 failed (`login-cards.test.ts`, the known environment problem), 15 skipped.
+- Not rerun on a real server: this fix ran against route mocks and unit tests. The behaviour verifier has not rerun it yet.

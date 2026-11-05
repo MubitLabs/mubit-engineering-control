@@ -193,10 +193,7 @@ export function QuestionCard({ question }: { question: Question }) {
       onKeyDown={onKeyDown}
     >
       <div className="decision-main">
-        <p className="decision-eyebrow">
-          {question.eyebrow}
-          {question.demo === true ? <span className="mark"> demo — not served by the server yet</span> : null}
-        </p>
+        <p className="decision-eyebrow">{question.eyebrow}</p>
         <p className="decision-what">{question.what}</p>
         <p className="decision-why">{question.why}</p>
         {/* biome-ignore lint/a11y/useSemanticElements: a labelled group of choice buttons is the prototype's markup (§7 Tray); there is no native element for this. */}
@@ -222,6 +219,9 @@ export function QuestionCard({ question }: { question: Question }) {
         ) : (
           <p className="expires muted">{question.sideNote ?? 'Nothing else waits on this'}</p>
         )}
+        {wb.actionErrors[question.id] ? (
+          <p className="expires muted">{wb.actionErrors[question.id]}</p>
+        ) : null}
       </div>
     </li>
   )

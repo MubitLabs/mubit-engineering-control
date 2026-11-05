@@ -386,19 +386,14 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
           `Answered: ${option}. The asker continues.`,
         )
       } catch (error) {
-        if (isNotServed(error)) {
-          // The demo card resolves in this session only — honestly labelled on the card.
-          resolve(
-            question.id,
-            { kind: 'answered', note: `Answered: ${option}`, picked: option },
-            `Answered: ${option} (demo — question answering is not served by the server yet).`,
-          )
-        } else {
-          setActionErrors((current) => ({
-            ...current,
-            [question.id]: 'could not reach the runtime — try again',
-          }))
-        }
+        // 404 (no such question) and 409 (answered elsewhere) arrive with the server's own reason.
+        setActionErrors((current) => ({
+          ...current,
+          [question.id]:
+            error instanceof HttpError && error.reason !== undefined
+              ? error.reason
+              : 'could not reach the runtime — try again',
+        }))
       }
     },
     [navigate, resolve, resolutions],

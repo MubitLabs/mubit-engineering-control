@@ -3,25 +3,15 @@
  * this module; the server contract is the one in docs/handoff (status, chat,
  * inbox, work, events).
  *
- * Everything the server does not serve yet carries a numbered marker (10 in
- * total, the API additions 04_UI_DESIGN_SPEC.md §7 lists). Each such function first
- * tries the real endpoint and only falls back to the §23 demo fixture in
- * mocks.ts when the route is absent (404) — the day the endpoint lands, real
- * data flows with no client change. Demo payloads carry `demo: true`, which the
- * UI surfaces as an honest "not served by the server yet" label. Operations
- * that would fake an effect (hold/stop/pause, answering, backups) never fall
- * back: they report the gap instead.
+ * Reads the server really serves go through the decoders in api-decode.ts (the real shapes are
+ * pinned by test/web-contract.test.ts). Reads it does not serve yet reject with NotServedError
+ * (a JSON 404 from the server) and the view shows an honest, finite "not served" state: this
+ * module holds no demo data and never invents a payload. Operations that would fake an effect
+ * (hold/stop/pause, backups) report the gap instead. Screens supply their own mocks in
+ * test/screens.playwright.ts.
  */
 
-import {
-  demoBackups,
-  demoDecisionDetails,
-  demoModelTiers,
-  demoPromptParts,
-  demoQuestions,
-  demoTaskDetails,
-  demoWorkItemDetails,
-} from './mocks'
+import { decodeBackups, decodeModels, decodePrompts, decodeQuestions } from './api-decode'
 
 export type PartState = 'ok' | 'degraded' | 'error'
 export type PartEntry = { state: PartState; detail?: string }
@@ -80,14 +70,13 @@ export type InboxItem = { id: string; cls: string; operationHash: string; expire
  * consequences of either answer, and the diff summary.
  *
  * TODO(server) #1 of 10: decision what/why/facts/consequences/checks/findings/diff —
- * the inbox serves {id, cls, operationHash, expiresAt} today; the detail comes
- * from the §23 demo fixture (labelled) until the endpoint exists.
+ * the inbox serves {id, cls, operationHash, expiresAt}; the detail route serves release cards,
+ * and any other card says the evidence is not served.
  */
 export type DecisionCheck = { name: string; state: 'passed' | 'failed' | 'running' | 'none'; note?: string }
 export type DecisionFinding = { title: string; disposition: string }
 export type DecisionDetail = {
-  demo?: true
-  /** True when this is the honest placeholder for an id the §23 fixture does not know. */
+  /** True when this is the honest placeholder: the server does not serve this evidence. */
   absent?: true
   what: string
   /** The effect in words for the confirm button; a served card names its own. */
@@ -106,11 +95,11 @@ export type DecisionDetail = {
  * A specialist's question as a card with choices (§5 "A question from a
  * specialist").
  *
- * TODO(server) #2 of 10: questions-as-cards with options — the demo question is
- * labelled as such wherever it renders.
+ * Decoded from the server's question records (decodeQuestions): the record has the
+ * question, its options and a `why`; the asker's role, side note and evidence code are
+ * not recorded yet, so those fields stay absent.
  */
 export type Question = {
-  demo?: true
   id: string
   eyebrow: string
   what: string
@@ -137,12 +126,11 @@ export type WorkItem = {
 
 /**
  * TODO(server) #3 of 10: work-item detail — the pane's full record (mandate,
- * policy hash, bundle revision, tasks, handoffs, "so far"). The §23 fixture
- * fills the known ids; anything else falls back to the honest /api/work row.
+ * policy hash, bundle revision, tasks, handoffs, "so far"). Not served yet: the
+ * pane says so instead of inventing a record.
  */
 export type WorkItemDetail = {
-  demo?: true
-  /** True when this is the honest fallback for an id the §23 fixture does not know. */
+  /** True when this is the honest placeholder: the server does not serve this detail. */
   absent?: true
   title: string
   stage: string
@@ -162,8 +150,7 @@ export type WorkItemDetail = {
  * slot, head, state, report summary.
  */
 export type TaskDetail = {
-  demo?: true
-  /** True when this is the honest fallback for an id the §23 fixture does not know. */
+  /** True when this is the honest placeholder: the server does not serve this detail. */
   absent?: true
   name: string
   kv: Array<{ label: string; value: string; mono?: boolean }>
@@ -263,7 +250,6 @@ export type PromptPart = {
  * own words, per provider.
  */
 export type ModelTiers = {
-  demo?: true
   providers: string[]
   rows: Array<{ tier: string; cells: Array<{ text: string; note?: string } | undefined> }>
   note: string
@@ -272,7 +258,7 @@ export type ModelTiers = {
 /**
  * TODO(server) #10 of 10: backups — the last run and what it excludes.
  */
-export type BackupsStatus = { demo?: true; lastAt?: string; note: string; excluded: string }
+export type BackupsStatus = { lastAt?: string; note: string; excluded: string }
 
 /** A non-2xx response from the workbench server. */
 export class HttpError extends Error {
@@ -365,15 +351,14 @@ async function requestOrNotServed<T>(path: string, init?: RequestInit): Promise<
 }
 
 /**
- * The demo fallback for a read the server does not serve: only a missing route
- * (NotServedError) falls back to the §23 fixture, flagged `demo: true`. Any
- * other failure propagates — a 500 is a real error, not a demo.
+ * A read the server does not serve (NotServedError: a JSON 404) degrades to the honest `absent`
+ * placeholder, which says so in words. Any other failure propagates — a 500 is a real error.
  */
-async function withDemo<T>(call: () => Promise<T>, demo: () => T): Promise<T> {
+async function orAbsent<T>(call: () => Promise<T>, absent: () => T): Promise<T> {
   try {
     return await call()
   } catch (error) {
-    if (error instanceof NotServedError) return demo()
+    if (error instanceof NotServedError) return absent()
     throw error
   }
 }
@@ -429,35 +414,32 @@ export const api = {
     return request<SlotEntry[]>('/api/slots')
   },
 
-  /** The card's evidence in words (demo-labelled until the server serves it). */
+  /** The card's evidence in words (an honest "not served" placeholder when the server has none). */
   decisionDetail(id: string): Promise<DecisionDetail> {
-    return withDemo(
+    return orAbsent(
       () => requestOrNotServed<DecisionDetail>(`/api/inbox/${encodeURIComponent(id)}/detail`),
-      () => demoDecisionDetails[id] ?? absentDecisionDetail(id),
+      () => absentDecisionDetail(id),
     )
   },
 
-  /** Open questions as cards (demo-labelled until the server serves them). */
-  questions(): Promise<Question[]> {
-    return withDemo(
-      () => requestOrNotServed<Question[]>('/api/questions'),
-      () => demoQuestions,
-    )
+  /** Open questions as cards, decoded from the server's question records. */
+  async questions(): Promise<Question[]> {
+    return decodeQuestions(await request<unknown>('/api/questions'))
   },
 
   /** The pane's work-item record; unknown ids degrade to the honest /api/work row. */
   workItemDetail(id: string): Promise<WorkItemDetail> {
-    return withDemo(
+    return orAbsent(
       () => requestOrNotServed<WorkItemDetail>(`/api/work/${encodeURIComponent(id)}`),
-      () => demoWorkItemDetails[id] ?? absentWorkItemDetail(id),
+      () => absentWorkItemDetail(id),
     )
   },
 
   /** The pane's task / attempt record. */
   taskDetail(id: string): Promise<TaskDetail> {
-    return withDemo(
+    return orAbsent(
       () => requestOrNotServed<TaskDetail>(`/api/tasks/${encodeURIComponent(id)}`),
-      () => demoTaskDetails[id] ?? absentTaskDetail(id),
+      () => absentTaskDetail(id),
     )
   },
 
@@ -559,35 +541,29 @@ export const api = {
     return request<{ slotId: string | null }>('/api/wizard/meta-slot')
   },
 
-  /** The prompt parts by layer (demo-labelled until the server serves them). */
-  prompts(): Promise<PromptPart[]> {
-    return withDemo(
-      () => requestOrNotServed<PromptPart[]>('/api/prompts'),
-      () => demoPromptParts,
-    )
+  /** The prompt parts by layer, decoded from `{revision, parts, overrides}`. */
+  async prompts(): Promise<PromptPart[]> {
+    return decodePrompts(await request<unknown>('/api/prompts'))
   },
 
-  /** The tier ladder with the vendor's own words (demo-labelled until served). */
-  models(): Promise<ModelTiers> {
-    return withDemo(
-      () => requestOrNotServed<ModelTiers>('/api/models'),
-      () => demoModelTiers,
-    )
+  /** The tier ladder with the vendor's own words, decoded from the capability table. */
+  async models(): Promise<ModelTiers> {
+    return decodeModels(await request<unknown>('/api/models'))
   },
 
-  /**
-   * TODO(server) #9 of 10: question-answer + hold/stop/pause — the operator
-   * commands beyond approve/deny. None is served today, so each reports the
-   * gap honestly instead of pretending the effect happened.
-   */
-  answerQuestion(id: string, option: string): Promise<{ status: string }> {
-    return requestOrNotServed<{ status: string }>(`/api/questions/${encodeURIComponent(id)}/answer`, {
+  /** POST /api/questions/:id/answer — the server's body key is `answer`; 404/409 are real answers, not "not served". */
+  answerQuestion(id: string, answer: string): Promise<{ status: string }> {
+    return request<{ status: string }>(`/api/questions/${encodeURIComponent(id)}/answer`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ option }),
+      body: JSON.stringify({ answer }),
     })
   },
 
+  /**
+   * TODO(server) #9 of 10: hold/stop/pause — the operator commands beyond approve/deny. None is
+   * served today, so each reports the gap honestly instead of pretending the effect happened.
+   */
   holdWorkItem(id: string): Promise<{ status: string }> {
     return requestOrNotServed<{ status: string }>(`/api/work/${encodeURIComponent(id)}/hold`, {
       method: 'POST',
@@ -604,12 +580,9 @@ export const api = {
     return requestOrNotServed<{ status: string }>('/api/processing/pause', { method: 'POST' })
   },
 
-  /** #10 read side: the backups record (demo-labelled until served). */
-  backups(): Promise<BackupsStatus> {
-    return withDemo(
-      () => requestOrNotServed<BackupsStatus>('/api/backups'),
-      () => demoBackups,
-    )
+  /** #10 read side: the backups record; rejects with NotServedError until the server serves one. */
+  async backups(): Promise<BackupsStatus> {
+    return decodeBackups(await requestOrNotServed<unknown>('/api/backups'))
   },
 
   backupNow(): Promise<{ status: string }> {
@@ -618,12 +591,11 @@ export const api = {
 }
 
 /**
- * The honest placeholders for ids the §23 fixture does not know: they never
+ * The honest placeholders for what the server does not serve yet: they never
  * invent evidence, they say the server does not serve it.
  */
 function absentDecisionDetail(id: string): DecisionDetail {
   return {
-    demo: true,
     absent: true,
     what: 'This confirmation’s evidence is not served by the server yet.',
     why: `The inbox serves only the class, the operation hash and the expiry today; the card’s what, why, facts, checks, findings and diff arrive with the decision-detail endpoint.`,
@@ -645,7 +617,6 @@ function absentDecisionDetail(id: string): DecisionDetail {
 
 function absentWorkItemDetail(id: string): WorkItemDetail {
   return {
-    demo: true,
     absent: true,
     title: id,
     stage: 'unknown — work-item detail is not served by the server yet',
@@ -657,7 +628,6 @@ function absentWorkItemDetail(id: string): WorkItemDetail {
 
 function absentTaskDetail(id: string): TaskDetail {
   return {
-    demo: true,
     absent: true,
     name: id,
     kv: [

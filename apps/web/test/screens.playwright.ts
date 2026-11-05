@@ -1,26 +1,37 @@
 import { expect, type Page, type Route, test } from '@playwright/test'
 import {
   demoChatMessages,
+  demoDecisionDetails,
   demoEngines,
   demoInbox,
   demoLogins,
   demoRepositories,
   demoSlots,
   demoStatus,
+  demoTaskDetails,
   demoWork,
-} from '../src/mocks'
+  demoWorkItemDetails,
+  serverModels,
+  serverPrompts,
+  serverQuestions,
+} from './mocks'
 
 /**
  * Screenshot + behaviour suite against the §23 worked example, served through
  * page.route so the app speaks its real API shapes (04_UI_DESIGN_SPEC.md §10).
- * Endpoints the server does not serve yet answer 404 here too, so the honest
- * demo fallbacks are exercised exactly as they run against the real server.
+ * The app holds no demo data: every payload below is supplied HERE, explicitly, in the shape the
+ * real server serves (questions, prompts and models in their wire shapes, which the app's decoders
+ * map). Anything not listed answers a JSON 404 — exactly what the real server does.
  */
 
 const ROUTES = ['chat', 'needs', 'work', 'slots', 'setup', 'settings'] as const
 const THEMES = ['light', 'dark'] as const
 
-async function stubApi(page: Page, broken: { detail: boolean }): Promise<void> {
+async function stubApi(
+  page: Page,
+  broken: { detail: boolean },
+  overrides: Record<string, { status: number; body: unknown }> = {},
+): Promise<void> {
   const extraMessages: Array<Record<string, unknown>> = []
   const handler = async (route: Route): Promise<void> => {
     const url = new URL(route.request().url())
@@ -28,6 +39,8 @@ async function stubApi(page: Page, broken: { detail: boolean }): Promise<void> {
     const method = route.request().method()
     const json = async (body: unknown, status = 200): Promise<void> =>
       route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
+    const override = overrides[`${method} ${path}`]
+    if (override !== undefined) return json(override.body, override.status)
 
     if (path === '/api/status') return json(demoStatus)
     if (path === '/api/chat/messages' && method === 'GET')
@@ -48,7 +61,27 @@ async function stubApi(page: Page, broken: { detail: boolean }): Promise<void> {
     if (broken.detail && /^\/api\/inbox\/[^/]+\/detail$/.test(path)) return json({ error: 'boom' }, 500)
     if (/^\/api\/inbox\/[^/]+\/resolve$/.test(path) && method === 'POST')
       return json({ id: 'conf_71', status: 'approved' })
-    if (path === '/api/questions' && method === 'POST') return json({ status: 'answered' })
+    if (path === '/api/questions' && method === 'GET') return json(serverQuestions)
+    if (path === '/api/prompts' && method === 'GET') return json(serverPrompts)
+    if (path === '/api/models' && method === 'GET') return json(serverModels)
+    // Detail reads: the worked example, supplied by the test.
+    const inboxDetail = /^\/api\/inbox\/([^/]+)\/detail$/.exec(path)
+    if (inboxDetail !== null) {
+      const detail = demoDecisionDetails[decodeURIComponent(inboxDetail[1] ?? '')]
+      return detail === undefined ? json({ error: 'not found' }, 404) : json(detail)
+    }
+    const workDetail = /^\/api\/work\/([^/]+)$/.exec(path)
+    if (workDetail !== null && method === 'GET') {
+      const detail = demoWorkItemDetails[decodeURIComponent(workDetail[1] ?? '')]
+      return detail === undefined ? json({ error: 'not found' }, 404) : json(detail)
+    }
+    const taskDetail = /^\/api\/tasks\/([^/]+)$/.exec(path)
+    if (taskDetail !== null) {
+      const detail = demoTaskDetails[decodeURIComponent(taskDetail[1] ?? '')]
+      return detail === undefined ? json({ error: 'not found' }, 404) : json(detail)
+    }
+    if (path === '/api/backups' && method === 'GET')
+      return json({ lastAt: '03:00 today', note: 'Credentials excluded by rule.', excluded: 'credentials' })
     if (/^\/api\/questions\/[^/]+\/answer$/.test(path) && method === 'POST')
       return json({ status: 'answered' })
     if (path === '/api/work') return json(demoWork)
@@ -61,8 +94,7 @@ async function stubApi(page: Page, broken: { detail: boolean }): Promise<void> {
     if (path === '/api/events')
       return route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' })
     if (path === '/api/slots/login/current') return json({ error: 'no login card running' }, 404)
-    // Everything the server does not serve yet answers 404 — the app falls back
-    // to its honest demo payloads, exactly as against the real server.
+    // Everything the server does not serve yet answers a JSON 404, as the real server does.
     return json({ error: 'not found' }, 404)
   }
   await page.route('**/api/**', handler)
@@ -73,11 +105,12 @@ async function openWorkbench(
   route: (typeof ROUTES)[number],
   theme: (typeof THEMES)[number] = 'light',
   broken: { detail: boolean } = { detail: false },
+  overrides: Record<string, { status: number; body: unknown }> = {},
 ): Promise<void> {
   await page.addInitScript((choice) => {
     localStorage.setItem('mec-theme', choice)
   }, theme)
-  await stubApi(page, broken)
+  await stubApi(page, broken, overrides)
   await page.goto(`#${route}`)
   // Gate on the data having landed: the runtime line comes from /api/status and
   // the slot dots from /api/slots — capturing mid-fetch produces two recurring
@@ -307,4 +340,61 @@ test('Esc walks the chain: palette → armed approval → pane', async ({ page }
   await expect(page.locator('.context')).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page.locator('.context')).toBeHidden()
+})
+
+// ── Recovery: a failing view leaves the shell usable ──────────────────────────────────────
+
+test('Settings: a failing prompts read ends in an error with Retry; the shell stays usable', async ({
+  page,
+}) => {
+  await openWorkbench(
+    page,
+    'settings',
+    'light',
+    { detail: false },
+    {
+      'GET /api/prompts': { status: 500, body: { error: 'boom' } },
+      'GET /api/models': { status: 404, body: { error: 'not found' } },
+    },
+  )
+  const alert = page.locator('#settings-prompts [data-load-failed]')
+  await expect(alert).toContainText('Could not load the prompt parts')
+  await expect(page.getByText('Loading the parts…')).toBeHidden()
+
+  // Models: the JSON 404 is "not served", also a finite state, never demo data.
+  await page.getByRole('button', { name: 'Models' }).click()
+  await expect(page.locator('#settings-models [data-load-failed]')).toContainText('HTTP 404')
+  await expect(page.locator('table.tiers')).toHaveCount(0)
+
+  // The rest of the shell still works.
+  await page.getByRole('link', { name: /Work/ }).first().click()
+  await expect(page.locator('#pane-work')).toBeVisible()
+})
+
+test('a view that throws while drawing is contained to its pane', async ({ page }) => {
+  await openWorkbench(
+    page,
+    'settings',
+    'light',
+    { detail: false },
+    {
+      'GET /api/chat/messages': {
+        status: 200,
+        body: [
+          {
+            id: 'm1',
+            text: 'x',
+            createdAt: '2026-11-04T14:02:00Z',
+            kind: 'agent',
+            plan: { tasks: 'broken' },
+          },
+        ],
+      },
+    },
+  )
+  await page.goto('#chat')
+  await expect(page.getByRole('heading', { name: 'This view could not be shown' })).toBeVisible()
+  await expect(page.locator('.rail')).toBeVisible()
+  await page.getByRole('link', { name: /Slots/ }).first().click()
+  await expect(page.locator('#pane-slots')).toBeVisible()
 })

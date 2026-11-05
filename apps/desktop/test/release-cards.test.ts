@@ -47,6 +47,8 @@ type World = {
   defaultBranch: string
   repoView?: GhResult
   prView?: GhResult
+  /** Milliseconds every gh read takes; a real gh is never instant, so answers can overlap. */
+  latency?: number
 }
 
 const world = (over: Partial<World> = {}): World => ({
@@ -68,6 +70,7 @@ function fakeGh(state: World): { run: GhRun; calls: Array<readonly string[]> } {
   const calls: Array<readonly string[]> = []
   const run: GhRun = async (args) => {
     calls.push(args)
+    if (state.latency !== undefined) await new Promise((done) => setTimeout(done, state.latency))
     const text = args.join(' ')
     if (text.includes('/git/ref/heads/')) return state.head
     if (args[0] === 'repo' && args[1] === 'view') {
@@ -233,15 +236,18 @@ describe('the UI resolve path acts (§13: a settled approval is never a no-op)',
     })
   })
 
-  it('two approvals racing act once: the second is already handled', async () => {
-    const { run, calls } = fakeGh(world())
+  it('two approvals racing act once: both pass the pre-flight, the second is already handled', async () => {
+    const state = world()
+    const { run, calls } = fakeGh(state)
     const h = await harness(run)
     const id = await openMerge(h)
+    state.latency = 20
     const answers = await Promise.allSettled([
       h.web.api.resolve(id, 'approve'),
       h.web.api.resolve(id, 'approve'),
     ])
     expect(answers.map((answer) => answer.status).sort()).toEqual(['fulfilled', 'rejected'])
+    expect(calls.filter((args) => args[1] === 'checks')).toHaveLength(2)
     expect(merges(calls)).toHaveLength(1)
   })
 

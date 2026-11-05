@@ -30,7 +30,7 @@
   {
     "name": "drop head binding in the CAS (stale PR and push cards settle approved)",
     "file": "apps/desktop/src/release.ts",
-    "find": "...((currentHead ?? fresh.inputSha) !== undefined && {\n      expectedInputSha: currentHead ?? fresh.inputSha,\n    }),",
+    "find": "...((currentHead ?? fresh.inputSha) !== undefined && { expectedInputSha: currentHead ?? fresh.inputSha }),",
     "replace": "expectedInputSha: fresh.inputSha,",
     "tests": ["apps/desktop/test/release-cards.test.ts"]
   },

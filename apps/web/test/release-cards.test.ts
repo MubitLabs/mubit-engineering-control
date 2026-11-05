@@ -6,8 +6,11 @@ describe('canApprove: a card with no evidence on screen cannot be approved', () 
     expect(canApprove(null)).toBe(false)
   })
 
-  it('opens once the server has answered, including that a card has no detail', () => {
-    expect(canApprove({ absent: true } as never)).toBe(true)
+  it('stays shut when the server answers that it has no evidence for the card', () => {
+    expect(canApprove({ absent: true } as never)).toBe(false)
+  })
+
+  it('opens once the server has served the evidence', () => {
     expect(canApprove({ what: 'Push' } as never)).toBe(true)
   })
 })

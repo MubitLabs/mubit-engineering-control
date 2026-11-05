@@ -10,6 +10,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { HealthBoard, HealthClaim, Store, StoreDoc } from '@mec/contracts'
+import { fakeBrain, MetaAgentService, type MetaDecision } from '@mec/meta'
 import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { GhResult, GhRun, GitExec, ReleaseDeps } from '../src/release'
@@ -116,12 +117,14 @@ const fakeHealth: HealthBoard = {
 type WebApi = {
   api: {
     resolve(id: string, answer: 'approve' | 'deny'): Promise<Record<string, unknown>>
+    decisionDetail(id: string): Promise<never>
   }
   isAlreadyHandled(error: unknown): boolean
 }
 
 /** The workbench's real client module; a computed path because the desktop project's tsc stops at its rootDir. */
 const WEB_API = new URL('../../web/src/api.ts', import.meta.url).href
+const WEB_CARDS = new URL('../../web/src/release-cards.ts', import.meta.url).href
 
 const cleanups: Array<() => Promise<void> | void> = []
 const realFetch = globalThis.fetch
@@ -1107,6 +1110,110 @@ describe('the card shows exactly what is approved (§13 "the exact diff or comma
     })
     expect((await h.get('/api/inbox/conf_install/detail')).status).toBe(404)
     expect((await h.get('/api/inbox/conf_missing/detail')).status).toBe(404)
+  })
+
+  describe('a card the meta agent opened with request_confirmation (§13 hard invariant 2)', () => {
+    const REPO_ID = 'repo_main'
+    const openPlannerCard = async (
+      h: Harness,
+      draft: Partial<NonNullable<MetaDecision['confirmations']>[number]>,
+    ): Promise<string> => {
+      const id = 'conf_planner1'
+      h.store.atomic(() => {
+        h.store.engines.save({
+          id: REPO_ID,
+          url: 'https://example.test/main',
+          bootstrap: [],
+          checks: [],
+          trust: true,
+        })
+      })
+      const service = new MetaAgentService({
+        store: h.store,
+        effects: h.store.effects,
+        brain: fakeBrain({
+          ack: 'On it.',
+          confirmations: [
+            {
+              id,
+              cls: 'frontier_model',
+              operationHash: 'f'.repeat(64),
+              expiresAt: '2999-01-01T00:00:00.000Z',
+              operation: { class: 'frontier_model', model: 'the-frontier-model' },
+              evidence: { reason: 'The migration needs it', tasks: ['t1', 't2'] },
+              ...draft,
+            },
+          ],
+        }),
+      })
+      await service.onUserMessage({ messageId: 'msg_1', text: 'plan it', repoId: REPO_ID })
+      expect(h.store.confirmations.get(id)?.status).toBe('pending')
+      return id
+    }
+    const approvable = async (h: Harness, id: string): Promise<boolean> => {
+      const cards = (await import(/* @vite-ignore */ WEB_CARDS)) as { canApprove(detail: unknown): boolean }
+      return cards.canApprove(await h.web.api.decisionDetail(id))
+    }
+
+    it('serves the operation and evidence it was opened with, so it stays approvable', async () => {
+      const { run } = fakeGh(world())
+      const h = await harness(run)
+      const id = await openPlannerCard(h, {})
+      const res = await h.get(`/api/inbox/${id}/detail`)
+      expect(res.status).toBe(200)
+      expect(res.body).toMatchObject({
+        what: 'The meta agent asks for: frontier model',
+        verb: 'approve',
+        operation: 'f'.repeat(64),
+        requestedBy: 'The meta agent',
+      })
+      expect(factsOf(res.body)).toMatchObject({
+        Class: 'frontier_model',
+        'Operation: model': 'the-frontier-model',
+        'Evidence: reason': 'The migration needs it',
+        'Evidence: tasks': '["t1","t2"]',
+      })
+      expect(factsOf(res.body)).not.toHaveProperty('Operation: class')
+      expect(await approvable(h, id)).toBe(true)
+      expect((await h.web.api.resolve(id, 'approve')).status).toBe('approved')
+    })
+
+    it('an always-confirm class says nothing here can run it, and the approve stays refused', async () => {
+      const { run, calls } = fakeGh(world())
+      const h = await harness(run)
+      const id = await openPlannerCard(h, { cls: 'push', operation: { class: 'push', branch: 'main' } })
+      const res = await h.get(`/api/inbox/${id}/detail`)
+      expect(res.status).toBe(200)
+      expect(JSON.stringify(res.body.consequences)).toContain('Nothing here can run')
+      const approve = await h.post(`/api/inbox/${id}/resolve`, { answer: 'approve' })
+      expect(approve.status).toBe(422)
+      expect(calls).toEqual([])
+    })
+
+    it('never shows a key-shaped string the agent put in its evidence', async () => {
+      const { run } = fakeGh(world())
+      const h = await harness(run)
+      const id = await openPlannerCard(h, { evidence: { pasted: `key ${SECRET}` } })
+      expect(JSON.stringify((await h.get(`/api/inbox/${id}/detail`)).body)).not.toContain(SECRET)
+    })
+
+    it('a card that carries no evidence has none to serve: not approvable, still deniable', async () => {
+      const { run } = fakeGh(world())
+      const h = await harness(run)
+      const id = await openPlannerCard(h, { operation: { class: 'frontier_model' }, evidence: {} })
+      expect((await h.get(`/api/inbox/${id}/detail`)).status).toBe(404)
+      expect(await approvable(h, id)).toBe(false)
+      expect((await h.web.api.resolve(id, 'deny')).status).toBe('denied')
+    })
+  })
+
+  it('a server failure on the evidence stays a failure to retry, never the no-evidence answer', async () => {
+    const { run } = fakeGh(world())
+    const h = await harness(run)
+    const served = globalThis.fetch
+    globalThis.fetch = (async () => new Response('{}', { status: 503 })) as typeof fetch
+    await expect(h.web.api.decisionDetail('conf_any')).rejects.toThrow()
+    globalThis.fetch = served
   })
 
   it('a key-shaped string in a PR title or body never becomes durable', async () => {

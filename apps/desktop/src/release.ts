@@ -14,7 +14,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import type { Effects, Json, Store, StoreDoc } from '@mec/contracts'
 import { type PrEvent, type PrState, prTransition, yieldToDuplicate } from '@mec/integration'
-import { type ConfirmationRecord, openConfirmation, resolveConfirmation } from '@mec/policy'
+import { ALWAYS_CONFIRM, type ConfirmationRecord, openConfirmation, resolveConfirmation } from '@mec/policy'
 import { redact } from '@mec/slots'
 
 export type GhResult = { code: number; stdout: string; stderr: string }
@@ -1031,9 +1031,57 @@ export async function resolveReleaseCard(
   return { id, cls, status: statusNow(), ...out }
 }
 
+const isFields = (value: unknown): value is Record<string, Json> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+/** One labelled fact per field: text as written, anything else as JSON, a key shape never shown. */
+function factsFrom(section: string, fields: Record<string, Json>): Array<{ label: string; value: string }> {
+  return Object.entries(fields).map(([key, value]) => ({
+    label: `${section}: ${key}`,
+    value: redact(typeof value === 'string' ? value : JSON.stringify(value), [], []),
+  }))
+}
+
+/**
+ * The evidence of a card the meta agent opened with request_confirmation (§13: the card states
+ * what is approved, and hard invariant 2 leaves the answer to a person). Undefined when the card
+ * names nothing beyond its class: there is nothing to approve, and the workbench lets it be denied.
+ */
+function plannerCardDetail(doc: StoreDoc): Record<string, Json> | undefined {
+  const payload = doc.payload as Record<string, unknown> | undefined
+  if (!isFields(payload) || !isFields(payload.operation) || !isFields(payload.evidence)) return undefined
+  const { class: _class, ...operation } = payload.operation
+  const facts = [...factsFrom('Operation', operation), ...factsFrom('Evidence', payload.evidence)]
+  if (facts.length === 0) return undefined
+  const cls = String(doc.cls ?? '')
+  return {
+    what: `The meta agent asks for: ${cls.replaceAll('_', ' ')}`,
+    verb: 'approve',
+    why: 'The meta agent cannot approve its own requests, so this one waits for you.',
+    facts: [
+      { label: 'Class', value: cls, mono: true },
+      ...(typeof doc.workItemId === 'string'
+        ? [{ label: 'Work item', value: doc.workItemId, mono: true }]
+        : []),
+      ...facts,
+    ],
+    operation: String(doc.operationHash ?? ''),
+    requestedBy: 'The meta agent',
+    consequences: {
+      approve: (ALWAYS_CONFIRM as readonly string[]).includes(cls)
+        ? 'Nothing here can run this card, so an approve is refused. Deny it.'
+        : 'MEC records your approval of exactly this operation. The click itself runs nothing.',
+      deny: 'MEC records the denial. Nothing runs.',
+    },
+    checks: [],
+    findings: [],
+    diff: { summary: 'not served for this card', files: [] },
+  }
+}
+
 /** A decision card's evidence in the workbench's `DecisionDetail` shape (§13 "the exact diff or command"). */
 export function cardDetail(doc: StoreDoc): Record<string, Json> | undefined {
-  if (!isReleaseCard(doc)) return undefined
+  if (!isReleaseCard(doc)) return plannerCardDetail(doc)
   const payload = doc.payload as Record<string, Json>
   const head = String(doc.inputSha ?? 'not bound')
   const repo = { label: 'Repository', value: String(payload.repo) }

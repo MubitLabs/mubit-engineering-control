@@ -87,7 +87,7 @@ export function DecisionCard({ item }: { item: InboxItem }) {
             label: 'Evidence',
             value:
               detail !== null
-                ? 'not served by the server yet'
+                ? 'none is served for this card, so it cannot be approved. Deny it.'
                 : detailFailed
                   ? 'could not be read, so this card cannot be approved yet'
                   : 'loading',

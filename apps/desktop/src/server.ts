@@ -773,7 +773,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     }
   })
 
-  // The evidence a release card states (§13): what the owner is approving, never a bare hash.
+  // The evidence a card states (§13): what the owner is approving, never a bare hash.
   app.get('/api/inbox/:id/detail', async (request, reply) => {
     const id = String((request.params as { id?: string }).id ?? '')
     const doc = releaseDeps.store.confirmations.get(id)

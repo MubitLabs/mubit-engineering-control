@@ -166,6 +166,21 @@ describe('MetaAgentService (plan §6/§12)', () => {
     expect(store.events.read('work:wi_live').map((event) => event.type)).toEqual(['message_attached'])
   })
 
+  it('an explicit New request starts a second work item beside live work', async () => {
+    const { service, store } = rig({ ack: 'On it', plan: { tasks: [] } } as MetaDecision)
+    seedWork(store, 'wi_live', 'executing')
+    store.workItems.save({ ...store.workItems.get('wi_live'), id: 'wi_live', repoId: REPO })
+    const outcome = await service.onUserMessage({
+      messageId: 'msg_1',
+      text: 'Another thing',
+      repoId: REPO,
+      explicitNew: true,
+    })
+    expect(outcome.workItemId).toBeDefined()
+    expect(outcome.workItemId).not.toBe('wi_live')
+    expect(store.messages.get('msg_1')?.routing).toBe('new_work')
+  })
+
   it('conversation: a reference-less message with live work present acks as context only', async () => {
     const { service, store } = rig(twoTaskPlan)
     seedWork(store, 'wi_live', 'executing')

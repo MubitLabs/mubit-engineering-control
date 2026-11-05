@@ -277,6 +277,214 @@ describe('repo identity at the chat route', () => {
   })
 })
 
+describe('submission intent at the chat route', () => {
+  const post = (
+    app: ReturnType<typeof buildServer>,
+    payload: Record<string, unknown>,
+    headers: Record<string, string> = {},
+  ) => app.inject({ method: 'POST', url: '/api/chat/messages', payload, headers })
+  const key = { 'x-idempotency-key': 'key-1' }
+
+  it('same key different repo stays 400 repo_mismatch', async () => {
+    const { app } = makeServer()
+    track(app)
+    const repoA = await registerRepo(app, 'a')
+    const repoB = await registerRepo(app, 'b')
+    await postMessage(app, { text: 'x', repoId: repoA }, key)
+    const res = await post(app, { text: 'x', repoId: repoB }, key)
+    expect(res.statusCode).toBe(400)
+    expect(res.json()).toMatchObject({ error: 'repo_mismatch' })
+  })
+
+  it('same key different text is 409', async () => {
+    const { store, app } = makeServer()
+    track(app)
+    const repo = await registerRepo(app, 'a')
+    await postMessage(app, { text: 'x', repoId: repo }, key)
+    const res = await post(app, { text: 'y', repoId: repo }, key)
+    expect(res.statusCode).toBe(409)
+    expect(res.json()).toMatchObject({ error: 'idempotency_mismatch' })
+    expect(store.messages.list()).toHaveLength(1)
+  })
+
+  it('same key different intent or reference is 409', async () => {
+    const { app } = makeServer()
+    track(app)
+    const repo = await registerRepo(app, 'a')
+    const first = await postMessage(app, { text: 'x', repoId: repo, intent: 'new' }, key)
+    const absent = await post(app, { text: 'x', repoId: repo }, key)
+    expect(absent.statusCode).toBe(409)
+
+    const followKey = { 'x-idempotency-key': 'key-2' }
+    const reference = { referencesWorkItem: first.workItemId, intent: 'follow_up' }
+    await postMessage(app, { text: 'z', repoId: repo, ...reference }, followKey)
+    const other = await postMessage(app, { text: 'w', repoId: repo, intent: 'new' })
+    const moved = await post(
+      app,
+      { text: 'z', repoId: repo, intent: 'follow_up', referencesWorkItem: other.workItemId },
+      followKey,
+    )
+    expect(moved.statusCode).toBe(409)
+    expect(moved.json()).toMatchObject({ error: 'idempotency_mismatch' })
+  })
+
+  it('same key same payload replays', async () => {
+    const { store, app } = makeServer()
+    track(app)
+    const repo = await registerRepo(app, 'a')
+    const first = await postMessage(app, { text: ' x ', repoId: repo, intent: 'new' }, key)
+    const again = await postMessage(app, { text: 'x', repoId: repo, intent: 'new' }, key)
+    expect(again).toMatchObject({ messageId: first.messageId, routing: 'duplicate' })
+    expect(store.messages.list()).toHaveLength(1)
+  })
+
+  it('the mismatch check holds on the composed path', async () => {
+    const store: Store = new MemoryRepositories()
+    const app = track(
+      buildServer({
+        store,
+        effects: store.effects,
+        health: new FakeHealthBoard(),
+        policyText: '{"preAuthorised":{}}',
+        now: () => new Date(AT),
+        metaAgent: {
+          onUserMessage: async (input) => {
+            store.atomic(() =>
+              store.messages.save({ id: input.messageId, text: input.text, repoId: input.repoId as string }),
+            )
+            return { acknowledged: 'On it', tasksCreated: 0, launchesEnqueued: [], escalated: false }
+          },
+        },
+      }),
+    )
+    const repo = await registerRepo(app, 'a')
+    await postMessage(app, { text: 'x', repoId: repo, intent: 'new' }, key)
+    expect((await post(app, { text: 'x', repoId: repo }, key)).statusCode).toBe(409)
+  })
+
+  it('new intent starts work beside live work in the same repo', async () => {
+    const { store, app } = makeServer()
+    track(app)
+    const repo = await registerRepo(app, 'a')
+    const first = await postMessage(app, { text: 'one', repoId: repo })
+    expect((await postMessage(app, { text: 'context', repoId: repo })).routing).toBe('conversation')
+    const second = await postMessage(app, { text: 'two', repoId: repo, intent: 'new' })
+    expect(second.routing).toBe('new_work')
+    expect(second.workItemId).not.toBe(first.workItemId)
+    expect(store.workItems.list()).toHaveLength(2)
+  })
+
+  it('the composed path passes an explicit new request to the meta agent', async () => {
+    const seen: (boolean | undefined)[] = []
+    const store: Store = new MemoryRepositories()
+    const app = track(
+      buildServer({
+        store,
+        effects: store.effects,
+        health: new FakeHealthBoard(),
+        policyText: '{"preAuthorised":{}}',
+        now: () => new Date(AT),
+        metaAgent: {
+          onUserMessage: async (input) => {
+            seen.push(input.explicitNew)
+            return { acknowledged: 'On it', tasksCreated: 0, launchesEnqueued: [], escalated: false }
+          },
+        },
+      }),
+    )
+    const repo = await registerRepo(app, 'a')
+    await postMessage(app, { text: 'a', repoId: repo, intent: 'new' })
+    await postMessage(app, { text: 'b', repoId: repo })
+    expect(seen).toEqual([true, false])
+  })
+
+  it('follow_up without a reference is 400', async () => {
+    const { store, app } = makeServer()
+    track(app)
+    const repo = await registerRepo(app, 'a')
+    const res = await post(app, { text: 'x', repoId: repo, intent: 'follow_up' })
+    expect(res.statusCode).toBe(400)
+    expect(res.json()).toMatchObject({ error: 'follow_up_needs_reference' })
+    expect(store.messages.list()).toHaveLength(0)
+  })
+
+  it('new with a reference is 400, and an unknown intent is 400', async () => {
+    const { store, app } = makeServer()
+    track(app)
+    const repo = await registerRepo(app, 'a')
+    const first = await postMessage(app, { text: 'one', repoId: repo })
+    const refused = await post(app, {
+      text: 'x',
+      repoId: repo,
+      intent: 'new',
+      referencesWorkItem: first.workItemId,
+    })
+    expect(refused.statusCode).toBe(400)
+    expect(refused.json()).toMatchObject({ error: 'new_refuses_reference' })
+    expect((await post(app, { text: 'x', repoId: repo, intent: 'later' })).statusCode).toBe(400)
+    expect(store.messages.list()).toHaveLength(1)
+  })
+})
+
+describe('repo reads', () => {
+  it('GET work and chat filter by repo', async () => {
+    const { app } = makeServer()
+    track(app)
+    const repoA = await registerRepo(app, 'a')
+    const repoB = await registerRepo(app, 'b')
+    const a = await postMessage(app, { text: 'in a', repoId: repoA })
+    const b = await postMessage(app, { text: 'in b', repoId: repoB })
+    const get = async (url: string) => (await app.inject({ method: 'GET', url })).json() as { id: string }[]
+    expect((await get(`/api/work?repoId=${repoB}`)).map((row) => row.id)).toEqual([b.workItemId])
+    expect((await get(`/api/chat/messages?repoId=${repoA}`)).map((row) => row.id)).toEqual([a.messageId])
+  })
+
+  it('unknown repoId on GET is 400', async () => {
+    const { app } = makeServer()
+    track(app)
+    for (const url of ['/api/work?repoId=repo_nope', '/api/chat/messages?repoId=repo_nope']) {
+      const res = await app.inject({ method: 'GET', url })
+      expect(res.statusCode).toBe(400)
+      expect(res.json()).toMatchObject({ error: 'unknown_repo' })
+    }
+  })
+
+  it('repoId=unassigned returns only rows with no repo', async () => {
+    const { store, app } = makeServer()
+    track(app)
+    const repo = await registerRepo(app, 'a')
+    await postMessage(app, { text: 'in a', repoId: repo })
+    store.atomic(() => {
+      store.messages.save({ id: 'msg_legacy', text: 'old', createdAt: AT })
+      store.workItems.save({ id: 'wi_legacy', state: 'stopped', originMessageId: 'msg_legacy' })
+    })
+    const get = async (url: string) => (await app.inject({ method: 'GET', url })).json() as { id: string }[]
+    expect((await get('/api/work?repoId=unassigned')).map((row) => row.id)).toEqual(['wi_legacy'])
+    expect((await get('/api/chat/messages?repoId=unassigned')).map((row) => row.id)).toEqual(['msg_legacy'])
+  })
+
+  it('a work row is titled from the first line of its origin message', async () => {
+    const { app } = makeServer()
+    track(app)
+    const repo = await registerRepo(app, 'a')
+    await postMessage(app, { text: `  ${'y'.repeat(100)}\nsecond line`, repoId: repo, intent: 'new' })
+    await postMessage(app, { text: 'Fix the login\n\nIt fails on Safari', repoId: repo, intent: 'new' })
+    const rows = (await app.inject({ method: 'GET', url: `/api/work?repoId=${repo}` })).json() as {
+      title?: string
+    }[]
+    expect(rows.map((row) => row.title)).toEqual(['y'.repeat(80), 'Fix the login'])
+  })
+
+  it('a work row with no origin message has no title rather than an id', async () => {
+    const { store, app } = makeServer()
+    track(app)
+    store.atomic(() => store.workItems.save({ id: 'wi_bare', state: 'admitted' }))
+    const [row] = (await app.inject({ method: 'GET', url: '/api/work' })).json() as { title?: string }[]
+    expect(row).toBeDefined()
+    expect(row?.title).toBeUndefined()
+  })
+})
+
 describe('buildServer', () => {
   it('GET /healthz answers ok', async () => {
     const { app } = makeServer()

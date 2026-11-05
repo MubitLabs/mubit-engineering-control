@@ -258,6 +258,8 @@ export class MetaAgentService {
     referencesWorkItem?: string
     /** §12.1, decision #10: the repository's conversation. Absent is Unassigned. */
     repoId?: string
+    /** §12.1: the owner asked for a New request, so it starts work beside any live work. */
+    explicitNew?: boolean
   }): Promise<TurnOutcome> {
     assertRepoAdmission(this.#store, input)
     const prior = this.#store.messages.get(input.messageId)
@@ -271,6 +273,7 @@ export class MetaAgentService {
     const routing = routeMessage({
       referencesWorkItem: input.referencesWorkItem,
       liveWork: this.#routingWork(input.repoId),
+      explicitNew: input.explicitNew,
     })
     switch (routing.action) {
       case 'attach':

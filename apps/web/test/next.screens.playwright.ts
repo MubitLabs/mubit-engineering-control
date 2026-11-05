@@ -61,6 +61,37 @@ const workRow = (id: string, repoId: string | undefined, title: string): MockRow
   updatedAt: '2026-11-05T12:00:00Z',
 })
 
+/** A mock row as the inspection routes serve it, so the live Work path reads what it really reads. */
+const wireRow = (row: MockRow) => ({
+  id: row.id,
+  title: row.title ?? null,
+  repoId: row.repoId ?? null,
+  repoLabel: row.repoId ?? null,
+  readOnly: row.repoId === undefined,
+  state: 'executing',
+  stage: { key: 'working', label: 'Working', waitingOn: 'none' },
+  reason: null,
+  nextAction: null,
+  taskCounts: { total: 0, byStatus: {} },
+  lastActivityAt: null,
+  updatedAt: '2026-11-05T12:00:00Z',
+})
+
+const wireDetail = (row: MockRow) => ({
+  ...wireRow(row),
+  originMessageId: null,
+  goal: null,
+  hold: null,
+  planRevision: null,
+  tasks: [],
+  tasksTruncated: 0,
+  delegation: [],
+  delivery: { stage: 'none', branch: null, headSha: null, prNumber: null, prUrl: null },
+  coverage: { reports: false, checks: false, diff: false, activity: false, usage: false, delivery: false },
+  cursors: {},
+  cursorsTruncated: 0,
+})
+
 /** The server's real shapes, in memory: `repoId` filters reads and a key admits one message. */
 async function mockServer(
   page: Page,
@@ -83,6 +114,15 @@ async function mockServer(
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
     if (url.pathname === '/api/repositories') return json(repositories)
     if (url.pathname === '/api/work') return json(scoped(work, repoId))
+    if (url.pathname === '/api/inspect/work') {
+      return json({ items: work.map(wireRow), nextCursor: null, observedAt: '' })
+    }
+    if (url.pathname.startsWith('/api/inspect/work/')) {
+      const id = decodeURIComponent(url.pathname.slice('/api/inspect/work/'.length))
+      const row = work.find((entry) => entry.id === id)
+      return row ? json(wireDetail(row)) : route.fulfill({ status: 404, body: '{"error":"not found"}' })
+    }
+    if (url.pathname === '/api/inspect/needs') return json({ items: [], nextCursor: null, observedAt: '' })
     if (url.pathname === '/api/chat/messages' && method === 'GET') return json(scoped(messages, repoId))
     if (url.pathname === '/api/chat/messages' && method === 'POST') {
       const body = route.request().postDataJSON() as MockPost['body']
@@ -342,12 +382,12 @@ test.describe('the repo workspace', () => {
 
   const followUp = async (page: Page) => {
     await page
-      .locator('.task-list')
+      .locator('.work-group')
       .getByRole('button', { name: /Fix the login/ })
       .click()
     await page.keyboard.press('Escape')
     await expect(page.getByText('Following up')).toHaveCount(0)
-    await page.getByRole('button', { name: 'Follow up on this work' }).click()
+    await page.getByRole('button', { name: 'Discuss this work' }).click()
     await expect(page.getByText('Following up on Fix the login')).toBeVisible()
   }
 
@@ -375,10 +415,10 @@ test.describe('the repo workspace', () => {
   test('reload restores address and intent', async ({ page }) => {
     await twoRepos(page, { work: [workRow('wi_a', REPO_A.id, 'Fix the login')] })
     await start(page, `repo/${REPO_A.id}/work/wi_a`)
-    await expect(page.getByRole('button', { name: 'Follow up on this work' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Discuss this work' })).toBeVisible()
     await page.reload()
-    await expect(page.getByRole('button', { name: 'Follow up on this work' })).toBeVisible()
-    await page.getByRole('button', { name: 'Follow up on this work' }).click()
+    await expect(page.getByRole('button', { name: 'Discuss this work' })).toBeVisible()
+    await page.getByRole('button', { name: 'Discuss this work' }).click()
     await page.reload()
     await expect(page.getByText('Following up on Fix the login')).toBeVisible()
     await page.getByRole('button', { name: 'New request' }).click()

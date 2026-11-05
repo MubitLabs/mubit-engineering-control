@@ -27,6 +27,8 @@ export interface ConversationViewProps {
   readOnly?: boolean
   /** The message a search chose. */
   foundId?: string | null
+  /** Keeps the newest message in view as the thread grows. */
+  follow?: boolean
 }
 
 function Entry({ entry }: { entry: ConversationEntry }) {
@@ -36,7 +38,7 @@ function Entry({ entry }: { entry: ConversationEntry }) {
 }
 
 export function ConversationView(props: ConversationViewProps) {
-  const { surface, view, sending, foundId } = props
+  const { surface, view, sending, foundId, follow } = props
   const { openInspector } = useShellActions()
   const end = useRef<HTMLDivElement>(null)
   const found = useRef<HTMLDivElement>(null)
@@ -45,8 +47,8 @@ export function ConversationView(props: ConversationViewProps) {
 
   useEffect(() => {
     if (foundId) found.current?.scrollIntoView?.({ block: 'center' })
-    else if (newest !== undefined || isSending) end.current?.scrollIntoView?.({ block: 'end' })
-  }, [foundId, newest, isSending])
+    else if (follow && (newest !== undefined || isSending)) end.current?.scrollIntoView?.({ block: 'end' })
+  }, [foundId, follow, newest, isSending])
 
   return (
     <div className="conversation">

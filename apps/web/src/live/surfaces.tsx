@@ -1,5 +1,7 @@
+import { useEffect } from 'react'
 import type { RepositoryEntry, WorkItem } from '../api'
 import { ChevronIcon } from '../next/primitives'
+import { useShellActions } from '../next/Shell'
 import { EmptyState, ReturnToClassic, StateNotice } from '../next/states'
 import { repositoryName } from '../repo-target'
 
@@ -52,6 +54,17 @@ export function RepositoryChoices({
       </ul>
     </div>
   )
+}
+
+/** Opens the inspector for a task reached from outside the page, such as a search result. */
+export function InspectorRequest({ request, onDone }: { request: boolean; onDone: () => void }) {
+  const { openInspector } = useShellActions()
+  useEffect(() => {
+    if (!request) return
+    openInspector()
+    onDone()
+  }, [request, onDone, openInspector])
+  return null
 }
 
 export function NoRepositories() {

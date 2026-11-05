@@ -53,7 +53,15 @@ import { repositoryName } from '../repo-target'
 import { createDrafts, type Intent, resolveIntent } from './drafts'
 import { createInspection, liveInspectionClient } from './inspection'
 import { createSubmissions, draftScope, type Frozen, type Submission } from './submission'
-import { isOpenWork, Loading, NoRepositories, ReadFailed, RepositoryChoices, workTitle } from './surfaces'
+import {
+  InspectorRequest,
+  isOpenWork,
+  Loading,
+  NoRepositories,
+  ReadFailed,
+  RepositoryChoices,
+  workTitle,
+} from './surfaces'
 import {
   createWorkspace,
   type Feed,
@@ -146,6 +154,8 @@ export function LiveApp() {
   const [cardId, setCardId] = useState<string | null>(null)
   const [searching, setSearching] = useState(false)
   const [foundMessageId, setFoundMessageId] = useState<string | null>(null)
+  const [inspectorRequest, setInspectorRequest] = useState(false)
+  const clearInspectorRequest = useCallback(() => setInspectorRequest(false), [])
   const repositoriesReady = state.repositories.status === 'ready'
   const repositories = state.repositories.rows
   const resolved = repositoriesReady
@@ -395,6 +405,7 @@ export function LiveApp() {
     }
     const workId = target.workItemId
     go({ route: 'work', repoId: workRepo(workId), workId, taskId: target.taskId })
+    if (target.taskId !== null) setInspectorRequest(true)
   }
 
   const commands = [
@@ -424,6 +435,16 @@ export function LiveApp() {
 
   const retryRead = () => workspace.refresh()
   const surface = () => {
+    const nothingAnywhere =
+      repositoriesReady && repositories.length === 0 && rows.length === 0 && items.length === 0
+    if ((address.route === 'work' || address.route === 'needs') && nothingAnywhere) {
+      return (
+        <div className="page">
+          <PageHeader title={ROUTE_LABELS[address.route]} />
+          <NoRepositories />
+        </div>
+      )
+    }
     if (address.route === 'work') {
       return (
         <WorkView
@@ -498,6 +519,7 @@ export function LiveApp() {
         sending={submission?.state === 'pending' ? submission.frozen.text : null}
         readOnly={readOnly}
         foundId={foundMessageId}
+        follow
       />
     )
   }
@@ -532,42 +554,45 @@ export function LiveApp() {
         {lostRepository}
         {commandNotice}
         {resetNotice}
+        <InspectorRequest request={inspectorRequest} onDone={clearInspectorRequest} />
         {body}
       </>
     )
 
   return (
-    <NextApp
-      route={address.route}
-      onNavigate={navigate}
-      theme={theme}
-      onTheme={setTheme}
-      repositories={repositories.map(toOption)}
-      repositoryId={repoId}
-      onSwitchRepository={switchRepository}
-      // §18: a count must equal the list it links to, so it is that list's own, filter included.
-      needsCount={needsCount(needs)}
-      {...(state.unassigned && {
-        unassigned: {
-          current: readOnly,
-          onOpen: () => go({ route: 'chat', repoId: UNASSIGNED, workId: null, taskId: null }),
-        },
-      })}
-      recent={work.rows.slice(0, RECENT_LIMIT).map((row) => ({
-        id: row.id,
-        title: workTitle(row),
-        current: row.id === address.workId,
-      }))}
-      onOpenRecent={openWork}
-      footnote="Conversation, Work and Needs you are live"
-      taskInspector={taskView}
-      approvalInspector={approvalInspector}
-      initialInspectorOpen={address.taskId !== null}
-      composer={address.route === 'chat' ? composer : null}
-      commands={commands}
-      search={{ onOpen: () => setSearching(true) }}
-    >
-      {page}
+    <>
+      <NextApp
+        route={address.route}
+        onNavigate={navigate}
+        theme={theme}
+        onTheme={setTheme}
+        repositories={repositories.map(toOption)}
+        repositoryId={repoId}
+        onSwitchRepository={switchRepository}
+        // §18: a count must equal the list it links to, so it is that list's own, filter included.
+        needsCount={needsCount(needs)}
+        {...(state.unassigned && {
+          unassigned: {
+            current: readOnly,
+            onOpen: () => go({ route: 'chat', repoId: UNASSIGNED, workId: null, taskId: null }),
+          },
+        })}
+        recent={work.rows.slice(0, RECENT_LIMIT).map((row) => ({
+          id: row.id,
+          title: workTitle(row),
+          current: row.id === address.workId,
+        }))}
+        onOpenRecent={openWork}
+        footnote="Conversation, Work and Needs you are live"
+        taskInspector={taskView}
+        approvalInspector={approvalInspector}
+        initialInspectorOpen={address.taskId !== null}
+        composer={address.route === 'chat' ? composer : null}
+        commands={commands}
+        search={{ onOpen: () => setSearching(true) }}
+      >
+        {page}
+      </NextApp>
       {searching && (
         <SearchSheet
           query={inspected.query}
@@ -579,6 +604,6 @@ export function LiveApp() {
           onClose={() => setSearching(false)}
         />
       )}
-    </NextApp>
+    </>
   )
 }

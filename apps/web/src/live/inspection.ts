@@ -186,6 +186,7 @@ export function createInspection(client: InspectionClient) {
   let searching: AbortController | null = null
   let searchTimer: ReturnType<typeof setTimeout> | undefined
   const settling = new Set<string>()
+  const settledAsked = new Set<string>()
 
   const set = (patch: Partial<InspectionState>) => {
     state = { ...state, ...patch }
@@ -295,6 +296,18 @@ export function createInspection(client: InspectionClient) {
 
     refresh,
     readEvidence,
+
+    /**
+     * Settled cards on show, each read once and one at a time: their evidence cannot change, and
+     * a refresh only rereads the open ones. A read that fails waits for the card's own Retry.
+     */
+    async readSettledEvidence(ids: readonly string[]): Promise<void> {
+      for (const id of ids) {
+        if (settledAsked.has(id) || state.evidence[id] !== undefined) continue
+        settledAsked.add(id)
+        await readEvidence(id)
+      }
+    },
 
     selectWork(id: string | null): void {
       if (id === state.delivery.id) return

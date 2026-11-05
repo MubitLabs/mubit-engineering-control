@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, RepositoryEntry, WorkItem } from '../src/api'
-import { createWorkspace, resolveRepository, UNASSIGNED, type WorkspaceClient } from '../src/live/workspace'
+import {
+  chatRead,
+  createWorkspace,
+  type Feed,
+  resolveActive,
+  resolveRepository,
+  UNASSIGNED,
+  type WorkspaceClient,
+} from '../src/live/workspace'
 
 const repo = (id: string): RepositoryEntry => ({
   id,
@@ -300,5 +308,104 @@ describe('resolveRepository', () => {
     expect(resolveRepository({ ...base, stored: 'repo_a', unassigned: null }).id).toBe('repo_a')
     const lost = resolveRepository({ ...base, addressed: 'repo_gone', stored: 'repo_a', unassigned: null })
     expect(lost.notice).toContain('no longer')
+  })
+})
+
+describe('a repositories read that failed', () => {
+  const repositories = [repo('repo_a'), repo('repo_b')]
+  const failed: Feed<RepositoryEntry> = { status: 'error', rows: repositories }
+  const none = { addressed: null, stored: null, unassigned: false }
+
+  it('keeps the active repository from the rows it kept', () => {
+    const resolved = resolveActive({ ...none, addressed: 'repo_b', repositories: failed })
+    expect(resolved).toEqual({ id: 'repo_b', notice: null })
+  })
+
+  it('keeps the stored repository too', () => {
+    const resolved = resolveActive({ ...none, stored: 'repo_a', repositories: failed })
+    expect(resolved).toEqual({ id: 'repo_a', notice: null })
+  })
+
+  it('proves nothing has gone: no notice, and the stored choice stands', () => {
+    for (const input of [{ addressed: 'repo_c' }, { stored: 'repo_c' }]) {
+      const resolved = resolveActive({ ...none, ...input, repositories: failed })
+      expect(resolved).toEqual({ id: null, notice: null })
+    }
+  })
+
+  it('a repository the server has dropped is still said once a read answers', () => {
+    const answered: Feed<RepositoryEntry> = { status: 'ready', rows: repositories }
+    const resolved = resolveActive({ ...none, addressed: 'repo_c', repositories: answered })
+    expect(resolved.notice).toContain('no longer registered')
+  })
+
+  it('nothing is known while the first read is out', () => {
+    const resolved = resolveActive({
+      ...none,
+      stored: 'repo_a',
+      repositories: { status: 'loading', rows: [] },
+    })
+    expect(resolved).toEqual({ id: null, notice: null })
+  })
+
+  it('Unassigned history is still reachable with no repository to keep', () => {
+    const resolved = resolveActive({
+      addressed: UNASSIGNED,
+      stored: null,
+      unassigned: true,
+      repositories: { status: 'error', rows: [] },
+    })
+    expect(resolved.id).toBe(UNASSIGNED)
+  })
+
+  it('a feed keeps its rows, so the next render still has them', async () => {
+    let down = false
+    const workspace = createWorkspace({
+      repositories: async () => {
+        if (down) throw new Error('down')
+        return repositories
+      },
+      chat: async () => [],
+      work: async () => [],
+      snapshot: async () => ({ cursors: {}, labels: {} }),
+      subscribe: () => () => {},
+    })
+    workspace.refresh()
+    await vi.waitFor(() => expect(workspace.getState().repositories.status).toBe('ready'))
+    down = true
+    workspace.refresh()
+    await vi.waitFor(() => expect(workspace.getState().repositories.status).toBe('error'))
+    expect(workspace.getState().repositories.rows).toEqual(repositories)
+  })
+})
+
+describe('the thread as a read', () => {
+  const line = message('m1', 'repo_a')
+  const read: Feed<ChatMessage> = { status: 'ready', rows: [line], readAt: '2026-11-05T10:00:00.000Z' }
+  const healthy: Feed<RepositoryEntry> = { status: 'ready', rows: [] }
+
+  it('is ready while both reads are', () => {
+    expect(chatRead(read, healthy).status).toBe('ready')
+  })
+
+  it('a failed repositories read makes it stale, with its lines and its time', () => {
+    expect(chatRead(read, { status: 'error', rows: [] })).toMatchObject({
+      status: 'failed',
+      data: [{ id: 'm1' }],
+      readAt: '2026-11-05T10:00:00.000Z',
+    })
+  })
+
+  it('a failed chat read keeps its lines', () => {
+    expect(chatRead({ ...read, status: 'error' }, healthy)).toMatchObject({
+      status: 'failed',
+      data: [{ id: 'm1' }],
+    })
+  })
+
+  it('is loading until it has anything to say', () => {
+    expect(chatRead({ status: 'loading', rows: [] }, { status: 'error', rows: [] })).toEqual({
+      status: 'loading',
+    })
   })
 })

@@ -2,11 +2,13 @@ import { expect, type Page, test } from '@playwright/test'
 import {
   cardEvidence,
   chatLines,
+  needs,
   needsPage,
   searchPage,
   taskDetails,
   workDetails,
   workPage,
+  workRows,
 } from './fixtures/inspection-fixtures'
 
 /**
@@ -20,8 +22,11 @@ const REPOSITORIES = [
   { id: 'repo_b', url: '/sample/sample-billing', bootstrap: [], checks: [], trust: true },
 ]
 const OBSERVED = '2026-11-05T10:00:00.000Z'
+const STOPPED = { key: 'ended/stopped', label: 'Stopped', waitingOn: 'none' }
 
 type Reply = { status: number; body: unknown }
+
+const inRepoA = (line: (typeof chatLines)[number]) => ({ ...line, repoId: 'repo_a' })
 
 interface Over {
   work?: () => Reply
@@ -29,6 +34,13 @@ interface Over {
   resolve?: (answer: string) => Reply
   answer?: () => Reply
   evidence?: (id: string) => Reply
+  repositories?: () => Reply
+  chat?: () => Reply
+  workDetail?: (id: string) => Reply
+  /** Runs before the answer, so the next read sees what the post changed. */
+  posted?: (path: string) => void
+  /** The stream's body on each connection. */
+  events?: () => string
 }
 
 async function server(page: Page, over: Over = {}) {
@@ -48,6 +60,7 @@ async function server(page: Page, over: Over = {}) {
     if (request.method() === 'POST') {
       const body = request.postDataJSON() as { answer?: string } | null
       posts.push({ path: pathname, body })
+      over.posted?.(pathname)
       if (pathname.endsWith('/resolve')) {
         return send(over.resolve?.(body?.answer ?? '') ?? { status: 200, body: { status: 'denied' } })
       }
@@ -64,15 +77,23 @@ async function server(page: Page, over: Over = {}) {
 
     if (pathname === '/api/events') {
       streams.push(url.search)
-      return route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' })
+      return route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body: over.events?.() ?? '',
+      })
     }
     reads.push(pathname)
-    if (pathname === '/api/repositories') return ok(REPOSITORIES)
+    if (pathname === '/api/repositories') {
+      return send(over.repositories?.() ?? { status: 200, body: REPOSITORIES })
+    }
     if (pathname === '/api/work') {
       const scoped = workPage.items.filter((row) => row.repoId === repoId)
       return ok(scoped.map((row) => ({ ...row, title: row.title ?? undefined, stage: row.state })))
     }
     if (pathname === '/api/chat/messages') {
+      const override = repoId === null ? undefined : over.chat?.()
+      if (override) return send(override)
       return ok(repoId === 'repo_a' ? chatLines.map((line) => ({ ...line, repoId })) : [])
     }
     if (pathname === '/api/inspect/snapshot') {
@@ -91,7 +112,10 @@ async function server(page: Page, over: Over = {}) {
     if (pathname === '/api/inspect/needs') return send(over.needs?.() ?? { status: 200, body: needsPage })
     if (pathname === '/api/inspect/search') return ok(searchPage)
     const work = /^\/api\/inspect\/work\/(.+)$/.exec(pathname)
-    if (work) return ok(workDetails[decodeURIComponent(work[1] as string) as keyof typeof workDetails])
+    if (work) {
+      const id = decodeURIComponent(work[1] as string)
+      return send(over.workDetail?.(id) ?? { status: 200, body: workDetails[id as keyof typeof workDetails] })
+    }
     const task = /^\/api\/inspect\/tasks\/(.+)$/.exec(pathname)
     if (task) return ok(taskDetails[decodeURIComponent(task[1] as string) as keyof typeof taskDetails])
     const detail = /^\/api\/inbox\/(.+)\/detail$/.exec(pathname)
@@ -232,6 +256,8 @@ test.describe('Needs you', () => {
     await open(page, 'repo/repo_a/needs')
     const waiting = page.locator('.decision[data-state="open"]')
     await expect(waiting.first()).toBeVisible()
+    // Evidence loads one card at a time, and a card still waiting for it is neither selector.
+    await expect(page.locator('.decision-missing')).toHaveCount(0)
     const shown = await waiting.count()
     const blocked = await page.locator('.page > .notice-blocked').count()
     await expect(needsLink(page)).toContainText(String(shown + blocked))
@@ -354,6 +380,339 @@ test.describe('Conversation and search', () => {
     await page.getByRole('option', { name: 'Search' }).click()
     await expect(page.getByRole('searchbox')).toBeFocused()
   })
+})
+
+test.describe('a repositories read that fails on Conversation', () => {
+  const line = 'SAMPLE-ONLY add console search with clear empties'
+  const failing = { status: 500, body: { error: 'down' } }
+
+  for (const [name, wholeServer] of [
+    ['the repositories route alone', false],
+    ['the whole server', true],
+  ] as const) {
+    test(`keeps the thread, the draft and the address: ${name}`, async ({ page }) => {
+      let down = false
+      await server(page, {
+        repositories: () => (down ? failing : { status: 200, body: REPOSITORIES }),
+        ...(wholeServer && {
+          chat: () => (down ? failing : { status: 200, body: chatLines.map(inRepoA) }),
+        }),
+      })
+      await open(page, 'repo/repo_a/chat')
+      await expect(page.getByText(line).first()).toBeVisible()
+      const box = page.getByRole('textbox', { name: 'Message the meta agent' })
+      await box.fill('a draft worth keeping')
+
+      down = true
+      await refetch(page)
+      await expect(page.getByRole('alert')).toContainText('Could not read this conversation')
+      await expect(page.getByRole('alert')).toContainText('last good read')
+      await expect(page.locator('.freshness[data-stale="true"]')).toContainText('Stale. Last read')
+      await expect(page.getByText(line).first()).toBeVisible()
+      await expect(page.getByText('New request in sample-console')).toBeVisible()
+      await expect(box).toHaveValue('a draft worth keeping')
+      await expect(page.getByText('Could not load your repositories')).toHaveCount(0)
+
+      await page.locator('.rail').getByRole('button', { name: 'Work' }).click()
+      await expect(page).toHaveURL(/#repo\/repo_a\/work$/)
+      await page.locator('.rail').getByRole('button', { name: 'Conversation' }).click()
+      await expect(page).toHaveURL(/#repo\/repo_a\/chat$/)
+
+      down = false
+      await page.getByRole('button', { name: 'Retry', exact: true }).click()
+      await expect(page.getByRole('alert')).toHaveCount(0)
+      await expect(page.locator('.freshness[data-stale="false"]')).toBeVisible()
+      await expect(box).toHaveValue('a draft worth keeping')
+    })
+  }
+
+  test('a repository the page still knows can be switched to during the failure', async ({ page }) => {
+    let down = false
+    await server(page, {
+      repositories: () => (down ? failing : { status: 200, body: REPOSITORIES }),
+    })
+    await open(page, 'repo/repo_a/chat')
+    await expect(page.getByText(line).first()).toBeVisible()
+    down = true
+    await refetch(page)
+    await expect(page.getByRole('alert')).toContainText('Could not read this conversation')
+    await page.evaluate(() => {
+      window.location.hash = 'repo/repo_b/chat'
+    })
+    await expect(page.getByText('New request in sample-billing')).toBeVisible()
+    await expect(page.getByText(line)).toHaveCount(0)
+    await expect(page.getByRole('alert')).toContainText('Could not read this conversation')
+  })
+
+  test('a first read that fails has nothing to keep, and says so', async ({ page }) => {
+    await server(page, { repositories: () => failing })
+    await open(page, 'repo/repo_a/chat')
+    await expect(page.getByRole('alert')).toContainText('Could not load your repositories')
+    await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible()
+  })
+})
+
+test.describe('an open card with no repository id', () => {
+  const unresolved = { ...needs.pending, repoId: null, repoLabel: 'acme/alpha' }
+  const replies = () => ({ status: 200, body: { ...needsPage, items: [unresolved] } })
+
+  test('stays on Needs you and in the count under a repository filter', async ({ page }) => {
+    await server(page, { needs: replies })
+    await open(page, 'repo/repo_a/needs')
+    await expect(needsLink(page)).toContainText('1')
+    await page.getByRole('combobox', { name: 'Repository' }).selectOption('repo_a')
+    await expect(page.locator('article.decision')).toContainText('acme/alpha')
+    await expect(needsLink(page)).toContainText('1')
+    await page.getByRole('combobox', { name: 'Repository' }).selectOption('repo_b')
+    await expect(page.locator('article.decision')).toContainText('acme/alpha')
+  })
+})
+
+for (const [width, height] of [
+  [1440, 900],
+  [390, 844],
+] as const) {
+  test.describe(`focus after an action at ${width}`, () => {
+    test.use({ viewport: { width, height } })
+
+    /** A delivery that really changes group, so the row remounts as it does on a server. */
+    function delivery() {
+      let state: 'working' | 'held' | 'stopped' = 'working'
+      const moved = <T extends { id: string }>(row: T): T => {
+        if (row.id !== 'work_working' || state === 'working') return row
+        return state === 'held'
+          ? { ...row, stage: workRows.held.stage, hold: { since: OBSERVED, reason: null } }
+          : { ...row, state: 'stopped', stage: STOPPED }
+      }
+      return {
+        posted: (path: string) => {
+          if (path.endsWith('/hold')) state = 'held'
+          if (path.endsWith('/lift')) state = 'working'
+          if (path.endsWith('/stop')) state = 'stopped'
+        },
+        work: () => ({ status: 200, body: { ...workPage, items: workPage.items.map(moved) } }),
+        workDetail: (id: string) => {
+          const detail = workDetails[id as keyof typeof workDetails]
+          return { status: 200, body: moved(detail) }
+        },
+      }
+    }
+    const press = async (page: Page, name: RegExp) => {
+      await page.getByRole('button', { name }).focus()
+      await page.keyboard.press('Enter')
+    }
+
+    test('hold and lift stay on the next action as the row changes group', async ({ page }) => {
+      await server(page, delivery())
+      await open(page, 'repo/repo_a/work/work_working')
+      await press(page, /^Hold/)
+      await expect(page.getByRole('region', { name: 'Held' })).toContainText('search for the console')
+      await expect(page.getByRole('button', { name: /^Lift hold/ })).toBeFocused()
+      await press(page, /^Lift hold/)
+      await expect(page.getByRole('region', { name: 'Working' })).toContainText('search for the console')
+      await expect(page.getByRole('button', { name: /^Hold/ })).toBeFocused()
+    })
+
+    test('stop opens on its heading, keep it returns, and a stopped row keeps focus', async ({ page }) => {
+      await server(page, delivery())
+      await open(page, 'repo/repo_a/work/work_working')
+      await press(page, /^Stop/)
+      await expect(page.getByRole('heading', { name: /^Stop / })).toBeFocused()
+      await press(page, /^Keep it$/)
+      await expect(page.getByRole('button', { name: /^Stop/ })).toBeFocused()
+
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('heading', { name: /^Stop / })).toBeFocused()
+      await press(page, /^Stop/)
+      await press(page, /^Confirm: stop this delivery/)
+      await expect(page.getByRole('region', { name: 'Ended' })).toContainText('search for the console')
+      await expect(page.locator('.work-row', { hasText: 'search for the console' })).toBeFocused()
+    })
+
+    test('a click on the page is not undone by a later refresh', async ({ page }) => {
+      const { reads: countRead } = await server(page, delivery())
+      await open(page, 'repo/repo_a/work/work_working')
+      await press(page, /^Hold/)
+      await expect(page.getByRole('button', { name: /^Lift hold/ })).toBeFocused()
+      await page.locator('h1').click()
+      await expect(page.getByRole('button', { name: /^Lift hold/ })).not.toBeFocused()
+      // A focused element that goes away is the case to hold: nothing may pull focus back to the row.
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+      const reads = countRead.length
+      await refetch(page)
+      await expect.poll(() => countRead.length).toBeGreaterThan(reads)
+      await page.evaluate(() => new Promise(requestAnimationFrame))
+      await expect(page.getByRole('button', { name: /^Lift hold/ })).not.toBeFocused()
+    })
+
+    /** A card that moves to Settled once its answer lands, as `/api/inspect/needs` does. */
+    function settling() {
+      const settled = new Set<string>()
+      return {
+        posted: (path: string) => {
+          const id = /\/api\/(?:inbox|questions)\/([^/]+)\//.exec(path)?.[1]
+          if (id) settled.add(id)
+        },
+        needs: () => ({
+          status: 200,
+          body: {
+            ...needsPage,
+            items: needsPage.items.map((item) => {
+              if (!settled.has(item.id)) return item
+              return item.kind === 'question'
+                ? { ...item, status: 'answered', answer: 'picked' }
+                : { ...item, status: 'denied' }
+            }),
+          },
+        }),
+      }
+    }
+    const settledHeading = (page: Page, title: string) =>
+      page.getByRole('region', { name: 'Settled' }).getByRole('heading', { name: title })
+
+    test('answering lands on the settled card’s heading', async ({ page }) => {
+      await server(page, settling())
+      await open(page, 'repo/repo_a/needs')
+      const card = page.locator('article.decision', { hasText: 'include archived rows' })
+      await card.getByRole('radio').first().check()
+      await card.getByRole('button', { name: 'Send answer' }).focus()
+      await page.keyboard.press('Enter')
+      await expect(settledHeading(page, 'SAMPLE-ONLY include archived rows?')).toBeFocused()
+    })
+
+    test('confirming a card lands on the settled card’s heading', async ({ page }) => {
+      await server(page, {
+        ...settling(),
+        resolve: () => ({ status: 200, body: { status: 'approved' } }),
+      })
+      await open(page, 'repo/repo_a/needs')
+      const card = page.locator('article.decision', { hasText: 'push search to sample-console' })
+      await card.getByRole('button', { name: 'Approve' }).focus()
+      await page.keyboard.press('Enter')
+      await card.getByRole('button', { name: /^Confirm/ }).focus()
+      await page.keyboard.press('Enter')
+      await expect(settledHeading(page, 'SAMPLE-ONLY push search to sample-console')).toBeFocused()
+    })
+
+    test('denying a card with no evidence lands on the settled card’s heading', async ({ page }) => {
+      await server(page, {
+        ...settling(),
+        evidence: () => ({ status: 404, body: { error: 'no detail for this confirmation' } }),
+      })
+      await open(page, 'repo/repo_a/needs')
+      const missing = page.locator('.decision-missing').first()
+      await missing.getByRole('button', { name: 'Deny' }).focus()
+      await page.keyboard.press('Enter')
+      await expect(page.locator('article.decision h2:focus')).toHaveCount(1)
+    })
+  })
+}
+
+test.describe('a question answered in Conversation', () => {
+  const oneQuestion = (status: 'open' | 'answered') => ({
+    status: 200,
+    body: {
+      ...needsPage,
+      items: [status === 'open' ? needs.question : { ...needs.question, status, answer: 'someone else' }],
+    },
+  })
+
+  test('stays in the thread with the answer', async ({ page }) => {
+    let answered = false
+    await server(page, {
+      needs: () => oneQuestion(answered ? 'answered' : 'open'),
+      posted: () => {
+        answered = true
+      },
+    })
+    await open(page, 'repo/repo_a/chat')
+    const card = page.locator('article.decision', { hasText: 'include archived rows' })
+    await card.getByRole('radio').first().check()
+    await card.getByRole('button', { name: 'Send answer' }).click()
+    await expect(card.locator('.settled-label')).toHaveText('Answered')
+    await expect(card).toContainText('SAMPLE-ONLY include them')
+    await refetch(page)
+    await expect(page.locator('.freshness').first()).toBeVisible()
+    await expect(card.locator('.settled-label')).toHaveText('Answered')
+  })
+
+  test('the loser of a race is told, not left with a card that vanished', async ({ page }) => {
+    let answered = false
+    await server(page, {
+      needs: () => oneQuestion(answered ? 'answered' : 'open'),
+      posted: () => {
+        answered = true
+      },
+      answer: () => ({ status: 409, body: { error: 'already_answered' } }),
+    })
+    await open(page, 'repo/repo_a/chat')
+    const card = page.locator('article.decision', { hasText: 'include archived rows' })
+    await card.getByRole('radio').first().check()
+    await card.getByRole('button', { name: 'Send answer' }).click()
+    await expect(card.locator('.settled-label')).toHaveText('Already answered')
+  })
+})
+
+test.describe('a settled card', () => {
+  test('shows its own evidence after a reload', async ({ page }) => {
+    await server(page)
+    await open(page, 'repo/repo_a/needs')
+    const settled = page.getByRole('region', { name: 'Settled' })
+    await expect(settled).toContainText('SAMPLE-ONLY push the theme')
+    await expect(settled).not.toContainText('has not loaded')
+  })
+
+  test('that the server holds nothing for says so, once', async ({ page }) => {
+    await server(page, {
+      evidence: () => ({ status: 404, body: { error: 'no detail for this confirmation' } }),
+    })
+    await open(page, 'repo/repo_a/needs')
+    const settled = page.getByRole('region', { name: 'Settled' })
+    await expect(settled).toContainText('The workbench holds no evidence for this card.')
+  })
+
+  test('with a failed evidence read offers a retry that works', async ({ page }) => {
+    let down = true
+    await server(page, {
+      evidence: (id) =>
+        down
+          ? { status: 500, body: { error: 'down' } }
+          : { status: 200, body: cardEvidence[id as keyof typeof cardEvidence] },
+    })
+    await open(page, 'repo/repo_a/needs')
+    const settled = page.getByRole('region', { name: 'Settled' })
+    await expect(settled).toContainText('has not loaded')
+    down = false
+    await settled.getByRole('button', { name: 'Retry' }).first().click()
+    await expect(settled).toContainText('SAMPLE-ONLY push the theme')
+  })
+})
+
+test('the reset notice does not outlast a failure it would contradict', async ({ page }) => {
+  let down = false
+  let resetNext = false
+  await server(page, {
+    work: () => (down ? { status: 503, body: { error: 'down' } } : { status: 200, body: workPage }),
+    events: () => {
+      const body = resetNext ? 'event: reset\ndata: {}\n\n' : ''
+      resetNext = false
+      return body
+    },
+  })
+  await open(page, 'repo/repo_a/work')
+  await expect(page.getByRole('region', { name: 'Ended' })).toBeVisible()
+  // The stream's empty body ends the connection, so the next one the page opens carries this.
+  resetNext = true
+  const notice = page.getByText('Read again from the start')
+  await expect(notice).toBeVisible()
+  down = true
+  await refetch(page)
+  await expect(page.getByRole('alert')).toContainText('Could not read work')
+  await expect(notice).toHaveCount(0)
+  down = false
+  await page.getByRole('button', { name: 'Retry', exact: true }).click()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  await expect(notice).toHaveCount(0)
 })
 
 test('the events connection starts from the snapshot’s cursors', async ({ page }) => {

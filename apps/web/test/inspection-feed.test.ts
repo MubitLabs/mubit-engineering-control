@@ -123,6 +123,22 @@ describe('reads', () => {
     })
   })
 
+  it('still rereads an open card’s evidence on every refresh', async () => {
+    const asked: string[] = []
+    const { inspection, settle } = rig({
+      needs: async () => needsOf([needs.pending]),
+      evidence: async (id) => {
+        asked.push(id)
+        return cardEvidence.card_pending as CardEvidence
+      },
+    })
+    inspection.refresh()
+    await settle()
+    inspection.refresh()
+    await settle()
+    expect(asked).toEqual(['card_pending', 'card_pending'])
+  })
+
   it('an older refresh never overwrites a newer one', async () => {
     const answers: ((page: Page<WorkRow>) => void)[] = []
     const { inspection, settle } = rig({
@@ -176,6 +192,53 @@ describe('reads', () => {
     await settle()
     expect(asked).toEqual([needs.pending.id])
     expect(inspection.getState().evidence[needs.pending.id]).toBe(cardEvidence.card_pending)
+  })
+
+  it('reads the settled cards on show, so a reload does not lose them', async () => {
+    const { inspection } = rig()
+    await inspection.readSettledEvidence([needs.resolved.id])
+    expect(inspection.getState().evidence[needs.resolved.id]).toBe(cardEvidence.card_resolved)
+  })
+
+  it('reads a settled card once, one at a time, and skips what it holds', async () => {
+    const asked: string[] = []
+    let inFlight = 0
+    let most = 0
+    const { inspection } = rig({
+      evidence: async (id) => {
+        asked.push(id)
+        inFlight += 1
+        most = Math.max(most, inFlight)
+        await Promise.resolve()
+        inFlight -= 1
+        return cardEvidence[id as keyof typeof cardEvidence] as CardEvidence
+      },
+    })
+    await inspection.readEvidence(needs.expired.id)
+    const ids = [needs.resolved.id, needs.expired.id, needs.pending.id]
+    await inspection.readSettledEvidence(ids)
+    await inspection.readSettledEvidence(ids)
+    expect(asked).toEqual([needs.expired.id, needs.resolved.id, needs.pending.id])
+    expect(most).toBe(1)
+  })
+
+  it('a settled read that fails waits for its Retry, and never loops', async () => {
+    let fail = true
+    let reads = 0
+    const { inspection } = rig({
+      evidence: async () => {
+        reads += 1
+        if (fail) throw new Error('down')
+        return cardEvidence.card_resolved
+      },
+    })
+    await inspection.readSettledEvidence([needs.resolved.id])
+    await inspection.readSettledEvidence([needs.resolved.id])
+    expect(reads).toBe(1)
+    expect(inspection.getState().evidence[needs.resolved.id]).toBeUndefined()
+    fail = false
+    await inspection.readEvidence(needs.resolved.id)
+    expect(inspection.getState().evidence[needs.resolved.id]).toBe(cardEvidence.card_resolved)
   })
 
   it('a failed evidence read leaves nothing to approve on, then retries', async () => {

@@ -8,11 +8,10 @@ import {
   useSyncExternalStore,
 } from 'react'
 import { api, type ChatMessage, HttpError, newIdempotencyKey, type WorkItem } from '../api'
-import { decodeChatLines } from '../inspection-decode'
 import type { Address } from '../next/address'
 import { PageHeader } from '../next/Conversation'
 import { ConversationView } from '../next/ConversationView'
-import type { ChatLine } from '../next/inspection-wire'
+import type { NeedItem } from '../next/inspection-wire'
 import { NeedsView } from '../next/NeedsView'
 import { NextApp } from '../next/NextApp'
 import { ROUTE_LABELS } from '../next/routes'
@@ -33,18 +32,18 @@ import {
   needCard,
   needsCount,
   needsList,
-  type QuestionView,
-  type Read,
   type RepoFilter,
   type RepoFilterOption,
   readData,
   readSurface,
+  readsCurrent,
   repoFilterOptions,
   type SearchRowView,
   searchRows,
   searchTarget,
   selectionInScope,
   taskInspector,
+  threadQuestions,
   usableEvidence,
   workGroups,
   workRowView,
@@ -64,10 +63,10 @@ import {
 } from './surfaces'
 import {
   createWorkspace,
-  type Feed,
   liveClient,
   loading,
-  resolveRepository,
+  resolveActive,
+  chatRead as threadRead,
   UNASSIGNED,
   useAddress,
   useWorkspaceUpkeep,
@@ -122,14 +121,7 @@ function failureText(submission: Submission): string {
   return 'This may not have been sent. Retry sends the original text and cannot send it twice.'
 }
 
-/** The conversation feed in the shape every surface reads. The rows were checked when they arrived. */
-function feedRead(feed: Feed<ChatMessage>): Read<ChatLine[]> {
-  if (feed.status === 'loading') return { status: 'loading' }
-  const data = decodeChatLines(feed.rows)
-  const readAt = feed.readAt ?? null
-  if (feed.status === 'ready') return { status: 'ready', data, readAt: readAt ?? '' }
-  return { status: 'failed', message: 'The workbench did not answer.', data, readAt }
-}
+const cardIds = (item: NeedItem): string[] => (item.kind === 'card' ? [item.id] : [])
 
 const toOption = (repo: { id: string; url: string }): RepositoryOption => ({
   id: repo.id,
@@ -158,20 +150,18 @@ export function LiveApp() {
   const clearInspectorRequest = useCallback(() => setInspectorRequest(false), [])
   const repositoriesReady = state.repositories.status === 'ready'
   const repositories = state.repositories.rows
-  const resolved = repositoriesReady
-    ? resolveRepository({
-        addressed: address.repoId,
-        stored: drafts.activeRepo(),
-        repositories,
-        unassigned: state.unassigned,
-      })
-    : { id: null, notice: null }
+  const resolved = resolveActive({
+    addressed: address.repoId,
+    stored: drafts.activeRepo(),
+    repositories: state.repositories,
+    unassigned: state.unassigned,
+  })
   const activeId = resolved.id
   const readOnly = activeId === UNASSIGNED
   const repoId = activeId !== null && !readOnly ? activeId : null
 
   useEffect(() => {
-    if (repositoriesReady) workspace.setScope(activeId)
+    if (repositoriesReady || activeId !== null) workspace.setScope(activeId)
   }, [activeId, repositoriesReady, workspace])
 
   // A lost repository is said once and forgotten, so the choice that replaces it can stand.
@@ -367,17 +357,27 @@ export function LiveApp() {
       (id) => inspected.outcomes[id] ?? null,
       (id) => inspected.answers[id] ?? null,
     )
+  // Evidence for what is on show: a reload has none of it, and Work and Conversation need none.
+  const settledCards = address.route === 'needs' ? needs.settled.flatMap(cardIds) : []
+  const settledKey = settledCards.join(',')
+  useEffect(() => {
+    if (settledKey !== '') void inspection.readSettledEvidence(settledKey.split(','))
+  }, [settledKey, inspection])
+
   const chosenCard = [...needs.waiting, ...needs.settled].find((item) => item.id === cardId)
   const chosenEvidence = chosenCard ? usableEvidence(inspected.evidence[chosenCard.id] ?? null) : null
   const approvalInspector =
     chosenCard?.kind === 'card' && chosenEvidence ? approvalScope(chosenCard, chosenEvidence) : null
 
-  const chatQuestions = items
-    .filter((item) => item.kind === 'question' && item.repoId === repoId)
-    .map((item) => card(item).view as QuestionView)
-    .filter((view) => view.status.state === 'open')
+  const chatQuestions = threadQuestions(items, repoId, (id) => inspected.answers[id] ?? null)
 
-  const chatRead = feedRead(chat)
+  const chatRead = threadRead(chat, state.repositories)
+  // "Current" is a claim about now, so a later failure withdraws it for good.
+  const current = readsCurrent([chatRead, inspected.work, inspected.needs])
+  useEffect(() => {
+    if (!current) workspace.clearReset()
+  }, [current, workspace])
+
   const conversation = conversationView({
     row: conversationRow,
     detail: onChat ? deliveryData : null,

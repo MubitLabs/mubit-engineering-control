@@ -48,10 +48,15 @@ export function mapRead<T, U>(read: Read<T>, map: (data: T) => U): Read<U> {
   return { ...read, data: read.data === null ? null : map(read.data) }
 }
 
+/** The time alone means today: any other day says which, or a date tomorrow reads as now. */
 function timeLabel(at: string): string {
   const date = new Date(at)
   if (Number.isNaN(date.getTime())) return at
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const time = { hour: '2-digit', minute: '2-digit' } as const
+  const now = new Date()
+  if (date.toDateString() === now.toDateString()) return date.toLocaleTimeString([], time)
+  const year = date.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' as const }
+  return date.toLocaleString([], { month: 'short', day: 'numeric', ...year, ...time })
 }
 
 /** One answer for every surface: ready, empty or failed, never a failure dressed as empty. */
@@ -74,6 +79,10 @@ export function readSurface<T>(read: Read<T>, isEmpty: (data: T) => boolean): Su
     freshness: read.readAt === null ? null : `Stale. Last read ${timeLabel(read.readAt)}`,
   }
 }
+
+/** What a page may call current: nothing on it has failed since it was last read. */
+export const readsCurrent = (reads: readonly Read<unknown>[]): boolean =>
+  reads.every((read) => read.status !== 'failed')
 
 // ── Repository scope ─────────────────────────────────────────────────────────────────────
 
@@ -576,13 +585,22 @@ function tasksWaiting(row: WorkRow | undefined): number {
 
 const needAge = (item: NeedItem) => (item.kind === 'question' ? (item.askedAt ?? '') : item.expiresAt)
 
+/**
+ * A card can carry a repository's label and no id, and a label cannot be matched to a registered
+ * repository. An open one stays under every filter, labelled as itself, because nothing waiting
+ * on a person may be hidden. A settled one follows the filter, so it never reads as another's.
+ */
+function needInFilter(item: NeedItem, filter: RepoFilter): boolean {
+  return inFilter(item, filter) || (isOpen(item) && item.repoId === null && item.repoLabel !== null)
+}
+
 /** One list, one filter: the sidebar count and the page are the same array. */
 export function needsList(
   read: Read<Page<NeedItem>>,
   rows: readonly WorkRow[],
   filter: RepoFilter,
 ): NeedsList {
-  const items = (readData(read)?.items ?? []).filter((item) => inFilter(item, filter))
+  const items = (readData(read)?.items ?? []).filter((item) => needInFilter(item, filter))
   const byId = new Map(rows.map((row) => [row.id, row]))
   const downstream = (item: NeedItem) => tasksWaiting(byId.get(item.workItemId ?? ''))
   const waiting = items
@@ -638,6 +656,8 @@ export type ApprovalView = Omit<ApprovalProps, 'onConfirm' | 'onDeny' | 'onInspe
   canApprove: boolean
   actionable: boolean
   hold: string | null
+  /** A settled card whose evidence did not arrive. An open one has its own way back. */
+  retryEvidence: boolean
 }
 
 /** A card the server serves no evidence for is the same as one whose evidence never arrived. */
@@ -656,7 +676,11 @@ export function approvalProps(
     id: item.id,
     label: cardLabel(item.cls),
     title: evidence?.what ?? cardLabel(item.cls),
-    summary: evidence?.why ?? 'The evidence for this card has not loaded.',
+    summary:
+      evidence?.why ??
+      (served === null
+        ? 'The evidence for this card has not loaded.'
+        : 'The workbench holds no evidence for this card.'),
     evidence: [
       { label: 'Repository', value: repository },
       ...(evidence?.facts.filter((f) => !f.mono) ?? []),
@@ -674,6 +698,7 @@ export function approvalProps(
     canApprove: evidence !== null,
     actionable: !unassigned(item),
     hold: outcome !== null && !outcome.closes && item.status === 'pending' ? outcome.toast : null,
+    retryEvidence: served === null && item.status !== 'pending',
   }
 }
 
@@ -733,6 +758,20 @@ export function needCard(
   return item.kind === 'question'
     ? { kind: 'question', view: questionProps(item, answerOutcome(item.id)) }
     : { kind: 'card', view: approvalProps(item, evidence(item.id), cardOutcome(item.id)) }
+}
+
+/** Open questions, and any this page answered, so an answer never just removes the card. */
+export function threadQuestions(
+  items: readonly NeedItem[],
+  repoId: string | null,
+  answerOutcome: (id: string) => AnswerOutcome | null,
+): readonly QuestionView[] {
+  return items.flatMap((item) => {
+    if (item.kind !== 'question' || item.repoId !== repoId) return []
+    const outcome = answerOutcome(item.id)
+    const view = questionProps(item, outcome)
+    return view.status.state === 'open' || outcome !== null ? [view] : []
+  })
 }
 
 // ── Conversation ─────────────────────────────────────────────────────────────────────────

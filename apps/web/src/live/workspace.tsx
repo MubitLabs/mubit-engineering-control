@@ -3,6 +3,8 @@ import { api, type ChatMessage, type RepositoryEntry, type ServerEvent, type Wor
 import { inspectApi } from '../api-inspect'
 import { decodeChatLines } from '../inspection-decode'
 import { type Address, addressHash, parseAddress } from '../next/address'
+import type { ChatLine } from '../next/inspection-wire'
+import type { Read } from '../next/work-model'
 import { repositoryName } from '../repo-target'
 import { type StreamHooks, subscribeResumable } from './events'
 
@@ -76,6 +78,20 @@ export const liveClient: WorkspaceClient = {
 }
 
 export const loading = <T,>(): Feed<T> => ({ status: 'loading', rows: [] })
+
+/**
+ * The thread in the shape every surface reads. The rows were checked when they arrived. A failed
+ * repositories read makes it stale too: the page cannot say this repository is still current.
+ */
+export function chatRead(feed: Feed<ChatMessage>, repositories: Feed<RepositoryEntry>): Read<ChatLine[]> {
+  if (feed.status === 'loading') return { status: 'loading' }
+  const data = decodeChatLines(feed.rows)
+  const readAt = feed.readAt ?? null
+  if (feed.status === 'ready' && repositories.status !== 'error') {
+    return { status: 'ready', data, readAt: readAt ?? '' }
+  }
+  return { status: 'failed', message: 'The workbench did not answer.', data, readAt }
+}
 
 /** No perpetual loading: a read that never answers ends in the error state with its retry. */
 function within<T>(read: Promise<T>): Promise<T> {
@@ -298,8 +314,10 @@ export function resolveRepository(input: {
   stored: string | null
   repositories: readonly RepositoryEntry[]
   unassigned: boolean | null
+  /** False when these rows were kept from a failed read, which cannot prove anything has gone. */
+  fresh?: boolean
 }): ResolvedRepository {
-  const { addressed, stored, repositories, unassigned } = input
+  const { addressed, stored, repositories, unassigned, fresh = true } = input
   const known = (id: string | null) => repositories.find((repo) => repo.id === id)
   if (addressed === UNASSIGNED && unassigned === null) return { id: null, notice: null }
   if (addressed === UNASSIGNED && unassigned) return { id: UNASSIGNED, notice: null }
@@ -308,9 +326,26 @@ export function resolveRepository(input: {
   const lost = addressed !== null || (stored !== null && !known(stored))
   const fallback = known(stored) ?? (repositories.length === 1 ? repositories[0] : undefined)
   if (!lost) return { id: fallback?.id ?? null, notice: null }
+  if (!fresh) return { id: null, notice: null }
   const next =
     fallback === undefined ? 'Choose another to continue.' : `Showing ${repositoryName(fallback.url)}.`
   return { id: fallback?.id ?? null, notice: `That repository is no longer registered. ${next}` }
+}
+
+/** The same answer from the feed: rows a failed read kept are still known, and nothing is before a read. */
+export function resolveActive(input: {
+  addressed: string | null
+  stored: string | null
+  repositories: Feed<RepositoryEntry>
+  unassigned: boolean | null
+}): ResolvedRepository {
+  const { repositories } = input
+  if (repositories.status === 'loading') return { id: null, notice: null }
+  return resolveRepository({
+    ...input,
+    repositories: repositories.rows,
+    fresh: repositories.status === 'ready',
+  })
 }
 
 const subscribeHash = (notify: () => void) => {

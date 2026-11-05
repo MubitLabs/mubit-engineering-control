@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { decodeNeedsPage, decodeTaskDetail, decodeWorkDetail, decodeWorkPage } from '../src/inspection-decode'
 import type { NeedItem, Page, SearchHit, TaskDetail, TaskRow, WorkRow } from '../src/next/inspection-wire'
 import {
@@ -12,6 +12,7 @@ import {
   questionProps,
   type Read,
   readSurface,
+  readsCurrent,
   repoFilterOptions,
   searchRows,
   searchTarget,
@@ -20,6 +21,7 @@ import {
   staleScope,
   taskInspector,
   taskScope,
+  threadQuestions,
   workActions,
   workGroups,
   workRowView,
@@ -653,5 +655,129 @@ describe('surface state', () => {
     const surface = readSurface({ status: 'failed', message: 'down', data: null, readAt: null }, empty)
     expect(surface.hasContent).toBe(false)
     expect(surface.freshness).toBeNull()
+  })
+})
+
+describe('a repository the page could not resolve', () => {
+  const unresolved: NeedItem = { ...needs.pending, repoId: null, repoLabel: 'acme/alpha' }
+  const alpha = { kind: 'repo', repoId: 'repo_a' } as const
+
+  it('an open card with only a label stays waiting under every filter, and is counted', () => {
+    for (const filter of [ALL, alpha, { kind: 'repo', repoId: 'repo_b' }, { kind: 'unassigned' }] as const) {
+      const list = needsList(ready(page([unresolved])), rows, filter)
+      expect(list.waiting.map((item) => item.id)).toEqual(['card_pending'])
+      expect(needsCount(list)).toBe(1)
+    }
+  })
+
+  it('a settled card with only a label does not follow a filter to another repository', () => {
+    const settled: NeedItem = { ...unresolved, status: 'approved' }
+    expect(needsList(ready(page([settled])), rows, alpha).settled).toEqual([])
+  })
+
+  it('a card on another repository, and legacy work, stay out of a repository filter', () => {
+    const list = needsList(ready(page([needs.otherRepo, needs.legacy])), rows, alpha)
+    expect(list.waiting).toEqual([])
+  })
+})
+
+describe('questions in the thread', () => {
+  const none = () => null
+
+  it('shows an open question in this repository and nothing else', () => {
+    const shown = threadQuestions(items, 'repo_a', none).map((view) => view.id)
+    expect(shown).toEqual(['question_open'])
+  })
+
+  it('keeps a question answered on this page, with the answer', () => {
+    const settled: NeedItem = { ...needs.question, status: 'answered', answer: 'yes' }
+    const [view] = threadQuestions([settled], 'repo_a', () => ({ kind: 'answered', answer: 'yes' }))
+    expect(view?.status).toEqual({ state: 'resolved', label: 'Answered', detail: 'yes' })
+  })
+
+  it('tells the loser of a race that it lost', () => {
+    const [view] = threadQuestions([needs.question], 'repo_a', () => ({ kind: 'already-answered' }))
+    expect(view?.status).toMatchObject({ state: 'resolved', label: 'Already answered' })
+  })
+
+  it('a failed answer keeps the question open and is not a settled one', () => {
+    const [view] = threadQuestions([needs.question], 'repo_a', () => ({ kind: 'failed', message: 'no' }))
+    expect(view?.status.state).toBe('open')
+    expect(view?.failure).toBe('no')
+  })
+})
+
+describe('a settled card without its evidence', () => {
+  const settled: NeedItem = needs.resolved
+
+  it('that was never read says so and offers a retry', () => {
+    const view = approvalProps(settled, null, null)
+    expect(view.summary).toBe('The evidence for this card has not loaded.')
+    expect(view.retryEvidence).toBe(true)
+  })
+
+  it('the server holds none for says that, with nothing to retry', () => {
+    const absent = { ...cardEvidence.card_resolved, absent: true as const }
+    const view = approvalProps(settled, absent, null)
+    expect(view.summary).toBe('The workbench holds no evidence for this card.')
+    expect(view.retryEvidence).toBe(false)
+  })
+
+  it('read reads like any other card', () => {
+    const view = approvalProps(settled, cardEvidence.card_resolved, null)
+    expect(view.title).toBe(cardEvidence.card_resolved.what)
+    expect(view.retryEvidence).toBe(false)
+  })
+
+  it('an open card keeps its own retry path, not this one', () => {
+    expect(approvalProps(needs.pending, null, null).retryEvidence).toBe(false)
+  })
+})
+
+describe('times', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const at = (now: string) => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(now))
+  }
+  const expires = (expiresAt: string) => {
+    const { status } = approvalProps({ ...needs.pending, expiresAt }, null, null)
+    return status.state === 'open' ? status.expires : ''
+  }
+
+  it('today is the time alone', () => {
+    at('2026-11-05T09:00:00.000')
+    expect(expires('2026-11-05T19:36:00.000')).not.toMatch(/Nov/)
+  })
+
+  it('a card that expires tomorrow names the day', () => {
+    at('2026-11-05T09:00:00.000')
+    const label = expires('2026-11-06T19:36:00.000')
+    expect(label).toMatch(/^Expires at /)
+    expect(label).toMatch(/Nov/)
+    expect(label).toMatch(/6/)
+  })
+
+  it('old activity names its day', () => {
+    at('2026-11-07T09:00:00.000')
+    const read = { status: 'ready', data: 1, readAt: '2026-11-05T00:00:00.000' } as const
+    expect(readSurface(read, () => false).freshness).toMatch(/Nov/)
+  })
+
+  it('another year names the year', () => {
+    at('2027-01-02T09:00:00.000')
+    expect(expires('2026-12-30T19:36:00.000')).toMatch(/2026/)
+  })
+})
+
+describe('whether what is shown is current', () => {
+  const failed: Read<number> = { status: 'failed', message: 'x', data: 1, readAt: READ_AT }
+
+  it('is true only while no read has failed', () => {
+    expect(readsCurrent([ready(1), { status: 'loading' }])).toBe(true)
+    expect(readsCurrent([ready(1), failed])).toBe(false)
   })
 })

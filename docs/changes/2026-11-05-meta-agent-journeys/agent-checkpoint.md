@@ -1,6 +1,6 @@
 # Meta-agent journey checkpoint
 
-Updated 5 November 2026. **Execution authorized by the owner and in progress (5 November 2026).** Authority is bounded by the Execution contract below and `docs/DECISIONS.md` #14-23.
+Updated 5 November 2026. **Execution authorized by the owner and in progress (5 November 2026).** Authority is bounded by the Execution contract below and `docs/DECISIONS.md` #14-36.
 
 ## Goal and decisions
 
@@ -51,4 +51,4 @@ Live deliverable preview: `http://127.0.0.1:54318/ui-overhaul-preview.html`; par
 
 ## Wave status
 
-Wave 0 scouting complete at base a102313. Baseline: `pnpm check` has one environment failure only (node-pty spawn-helper lacks execute bit in fresh installs); `test:screens` 21 passed. Scout finding: the card path did not work, because UI approve burned cards without running gh, push had no card, and cards hid their payload; the bootstrap PR therefore repairs the whole path, not only the squash flag. Decisions #19-22 answered four open spec questions. Wave 1 running on local branches, nothing pushed: `fix/release-cards` (bootstrap, carries blockers-only review), `fix/http-recovery` (M1.1), `feat/visual-foundation` (VF0, default off). Next: the operator resolves cards by script on a scratch server running the unmerged fix (#23). M1.4a gets one blockers-only review because it changes who holds authority.
+Wave 0 scouting complete at base a102313. Baseline: `pnpm check` has one environment failure only (node-pty spawn-helper lacks execute bit in fresh installs); `test:screens` 21 passed. Scout finding: the card path did not work, because UI approve burned cards without running gh, push had no card, and cards hid their payload; the bootstrap PR therefore repairs the whole path, not only the squash flag. Decisions #19-22 answered four open spec questions. Wave 1 running on local branches, nothing pushed: `fix/release-cards` (bootstrap, carries blockers-only review), `fix/http-recovery` (M1.1), `feat/visual-foundation` (VF0, default off). Next: the operator resolves cards by script on a scratch server running the unmerged fix (#23). M1.4a gets one blockers-only review because it changes who holds authority. Waves 1 and 2 are verified on local branches; decisions #24-36 are recorded; the five base branches are landing serially through scripted cards.

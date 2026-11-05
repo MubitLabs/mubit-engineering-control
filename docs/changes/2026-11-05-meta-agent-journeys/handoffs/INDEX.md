@@ -1,5 +1,7 @@
 # Overhaul handoff index
 
+**Decisions #24-36 in `docs/DECISIONS.md` answer the open questions in these handoffs. Follow them, and treat each handoff's recommendation as decided unless a decision says otherwise. Update the spec line the decision names.**
+
 Give an agent one row. Every row assumes `00-README.md`. Base gates: **R** `fix/release-cards`, **H** `fix/http-recovery`, **V** `feat/visual-foundation`, **I** `feat/repo-identity`, **E** `fix/effects-double-run`. These five are the coordinator's and are not handoffs. M1.1 is H, M1.2 is I, VF0 is V.
 
 | File | Branch | Start when on `origin/main` | Can run alongside | Size | Review | Engine runs |

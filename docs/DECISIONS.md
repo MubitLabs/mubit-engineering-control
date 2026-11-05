@@ -47,3 +47,16 @@ The owner authorized execution of the overhaul. These rows bind the overhaul in 
 | 21 | Pause persistence (spec §20) | Pause processing is stored and survives restart until the owner resumes; the UI shows the paused state at startup. |
 | 22 | Settings home for §18 items | Check profiles and isolation profiles live under Repositories. Pause is a persistent global control beside Needs you. Everything in spec §18 stays reachable and the spec line is updated to match. |
 | 23 | Card approval speed (supersedes #16 and #17) | Owner, 5 November: "no need to wait for my click, you can skip it and build and ship as fast as possible, also get rid of all potential slow down stuff". Cards still open, settle and journal on a scratch-state server, and the operator resolves them by script without per-card owner approval. The bootstrap PR merges through its own repaired squash card; no raw merge. Required checks are never bypassed. The exclusions in #15, the cap in #18 and separate approval for any SQL migration or stored-data deletion stand. |
+| 24 | What counts as a run (#18) | One bounded request counts as one run per engine involved, however many processes it starts. |
+| 25 | Repo checks and the sandbox (spec §8.4) | Unsandboxed repo checks are allowed only on scratch repositories and mec-sandbox, with a scrubbed environment and no tools token. The runner flag stays off for real repositories until the owner decides again. |
+| 26 | Failed attempts (spec §10, §17) | Attempts get a terminal `failed` state reachable from queued and running, with one §10 line. |
+| 27 | Chat during Pause (spec §20) | Record only: a message is stored and its planner turn runs after resume, so nothing spends quota while paused. |
+| 28 | Hold on a running turn (spec §10, §12.5) | The running turn finishes and receives no new input. Stop is the way to halt it. |
+| 29 | When work is done (spec §10, #12) | Work stays integrating, shown as Ready for review, until GitHub confirms the merge or the owner closes it. |
+| 30 | Mid-turn input on Claude (spec §9, §12.3) | Use stream-json as the spec says. If unreliable on the pinned version, deliver at turn end through --resume in the same slot, marked delivered only then. |
+| 31 | Engine server scope (spec §9, §8.1) | One engine server per attempt for this release, with a matching spec §9 change. |
+| 32 | Routine acceptance (spec §10, §15, #13) | Passing registered checks on the exact head accepts a routine task. Sensitive tasks also need the one blockers-only review. Spec §15 gets a matching line. |
+| 33 | Sensitive classification (spec §15, #13) | A planner-set flag now, plus a deterministic per-repo path list once that repo field exists. No invented classifier. |
+| 34 | Repositories with no required checks | A PR may be ready on local combined checks with that limit stated. The merge card stays held until the owner decides for that repo. |
+| 35 | UI default and releases (spec §18, §21) | Flip to the new UI in 0.3.0 once one engine path is proven end to end, with unproven engines shown as unavailable. `?ui=classic` stays for one verified install, then 0.3.1 removes classic. |
+| 36 | Remaining open questions | The owner accepted every other recommendation in the "Open questions" sections of the files in `docs/changes/2026-11-05-meta-agent-journeys/handoffs/`, as written on 5 November 2026. |

@@ -1800,12 +1800,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     // returns after that commit and never waits on a turn (§1's gap).
     if (deps.metaAgent?.onQuestionAnswered !== undefined) {
       const result = await deps.metaAgent.onQuestionAnswered(raw, answer)
-      if (result.status === 'missing') {
-        reply.code(404).send({ error: 'question not found' })
-        return
-      }
-      if (result.status === 'not_open') {
-        reply.code(409).send({ error: 'already_answered', status: result.status })
+      if (result.status !== 'answered') {
+        if (result.status === 'missing') reply.code(404).send({ error: 'question not found' })
+        else reply.code(409).send({ error: 'already_answered', status: result.status })
         return
       }
       return { id: raw, status: 'answered', answer: result.answer }

@@ -2,9 +2,10 @@ import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { MetaBrain, MetaDecision } from '@mec/meta'
 import { MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import Database from 'better-sqlite3'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { startServer } from '../src/composition'
 
 const AT = '2026-11-05T12:00:00.000Z'
@@ -218,6 +219,252 @@ describe('the launch gate (§13, §20)', () => {
   }, 12_000)
 })
 
+const effectRow = (db: Database.Database, kind: string, key: string) =>
+  db.prepare('SELECT state, attempts, last_error FROM effects WHERE kind = ? AND key = ?').get(kind, key) as
+    | { state: string; attempts: number; last_error: string | null }
+    | undefined
+
+/** What a crash mid-planning leaves: the work and the message committed, no receipt. */
+const seedInterrupted = (store: SqliteStore, n = 1): void => {
+  store.atomic(() => {
+    store.engines.save({
+      id: 'repo_a',
+      url: 'https://example.test/a',
+      bootstrap: [],
+      checks: [],
+      trust: true,
+    })
+    store.workItems.save({
+      id: `wi_${n}`,
+      state: 'planning',
+      repoId: 'repo_a',
+      pin: { repoId: 'repo_a' },
+      mandate: { originMessageId: `msg_${n}` },
+    })
+    store.messages.save({
+      id: `msg_${n}`,
+      text: `request ${n}`,
+      repoId: 'repo_a',
+      routing: 'new_work',
+      workItemId: `wi_${n}`,
+      createdAt: `${AT.slice(0, -2)}${n}Z`,
+    })
+  })
+}
+
+/** A brain that stays on its await until the test answers. */
+const heldBrain = () => {
+  const answers: ((decision: MetaDecision) => void)[] = []
+  const seen: string[] = []
+  const brain: MetaBrain = (context) => {
+    seen.push(context.messageText)
+    return new Promise((resolve) => answers.push(resolve))
+  }
+  return { brain, seen, answer: (decision: MetaDecision) => answers.shift()!(decision) }
+}
+
+const untilSeen = async (seen: string[], count: number): Promise<void> => {
+  await vi.waitFor(() => expect(seen).toHaveLength(count), { timeout: 4000 })
+}
+
+describe('truthful launch (§17, decision #26)', () => {
+  it('unsupported launch never settles as success', async () => {
+    const dataDir = scratch()
+    const { db, store } = openStore(dataDir)
+    seedLaunch(store)
+
+    const handle = await startServer({ dataDir })
+    await sleep(100)
+    const status = (await (await fetch(`${handle.url}/api/status`)).json()) as {
+      parts: Record<string, { state: string; detail?: string }>
+    }
+
+    expect(effectRow(db, 'launch', 'att_1:1')).toMatchObject({
+      state: 'pending',
+      attempts: 1,
+      last_error: expect.stringContaining('no_runner'),
+    })
+    expect(store.attempts.get('att_1')).toMatchObject({ state: 'failed', terminal_reason: 'no_runner' })
+    expect(store.workItems.get('wi_1')).toMatchObject({ state: 'blocked', blockedReason: 'no_runner' })
+    expect(status.parts['effects:launch']?.state).toBe('error')
+    await handle.close()
+    db.close()
+  }, 12_000)
+
+  it('unsupported launch blocks the work once across retries', async () => {
+    const dataDir = scratch()
+    const { db, store } = openStore(dataDir)
+    seedLaunch(store)
+
+    const handle = await startServer({ dataDir })
+    await vi.waitFor(() => expect(effectRow(db, 'launch', 'att_1:1')?.attempts).toBe(2), { timeout: 6000 })
+
+    const types = store.events.read('work:wi_1').map((event) => event.type)
+    expect(types).toEqual(['work_blocked'])
+    expect(store.events.read('attempt:att_1').map((event) => event.type)).toEqual(['attempt.failed'])
+    await handle.close()
+    db.close()
+  }, 12_000)
+
+  it('a held launch with no runner still only waits', async () => {
+    const dataDir = scratch()
+    const { db, store } = openStore(dataDir)
+    seedLaunch(store, { hold: { reason: 'wait', at: AT } })
+
+    const handle = await startServer({ dataDir })
+    await sleep(100)
+
+    expect(store.attempts.get('att_1')?.state).toBe('queued')
+    expect(store.workItems.get('wi_1')?.state).toBe('executing')
+    await handle.close()
+    db.close()
+  }, 12_000)
+
+  it('an effect kind with no handler throws', async () => {
+    const dataDir = scratch()
+    const { db, store } = openStore(dataDir)
+    for (const kind of ['deliver', 'note', 'reply', 'external', 'probe'] as const) {
+      store.effects.enqueue(kind, 'k1', {})
+    }
+
+    const handle = await startServer({ dataDir })
+    await sleep(100)
+
+    for (const kind of ['deliver', 'note', 'reply', 'external', 'probe']) {
+      expect(effectRow(db, kind, 'k1')).toMatchObject({
+        attempts: 1,
+        last_error: `unsupported effect: ${kind}`,
+      })
+    }
+    await handle.close()
+    db.close()
+  }, 12_000)
+})
+
+describe('relays and boot resume (§6, §17, §20)', () => {
+  it('a relay with no meta agent waits', async () => {
+    const dataDir = scratch()
+    const { db, store } = openStore(dataDir)
+    store.effects.enqueue('relay', 'wake:q', { reason: 'r', causationId: 'q' })
+
+    const handle = await startServer({ dataDir })
+    await sleep(100)
+
+    expect(effectRow(db, 'relay', 'wake:q')).toMatchObject({ state: 'waiting', attempts: 0 })
+    await handle.close()
+    db.close()
+  }, 12_000)
+
+  it('boot resumes a receipt-less message through the queue', async () => {
+    const dataDir = scratch()
+    const { db, store } = openStore(dataDir)
+    seedInterrupted(store)
+    const held = heldBrain()
+
+    const handle = await startServer({ dataDir, brain: held.brain })
+    await untilSeen(held.seen, 1)
+    expect(store.messages.get('msg_1')?.ackText).toBeUndefined()
+    held.answer({ ack: 'Resumed' })
+    await handle.close()
+
+    expect(held.seen).toEqual(['request 1'])
+    expect(store.messages.get('msg_1')).toMatchObject({ ackText: 'Resumed', workItemId: 'wi_1' })
+    expect(store.workItems.list()).toHaveLength(1)
+    expect(effectRow(db, 'relay', 'resume:msg_1')).toBeUndefined()
+    db.close()
+  }, 12_000)
+
+  it('a pause holds the turn until resume, which runs it (decision #27)', async () => {
+    const dataDir = scratch()
+    const { db, store } = openStore(dataDir)
+    seedPause(store, new Date(Date.now() - 3_600_000).toISOString())
+    seedInterrupted(store)
+    const held = heldBrain()
+
+    const handle = await startServer({ dataDir, brain: held.brain })
+    await sleep(100)
+    expect(held.seen).toEqual([])
+
+    handle.resume()
+    await untilSeen(held.seen, 1)
+    held.answer({ ack: 'After the pause' })
+    await handle.close()
+
+    expect(store.messages.get('msg_1')?.ackText).toBe('After the pause')
+    db.close()
+  }, 12_000)
+})
+
+describe('bounded shutdown (§20)', () => {
+  it('close is bounded with a stuck turn', async () => {
+    const dataDir = scratch()
+    const { db, store } = openStore(dataDir)
+    seedInterrupted(store)
+    const held = heldBrain()
+    const handle = await startServer({ dataDir, brain: held.brain, closeBoundMs: 100 })
+    await untilSeen(held.seen, 1)
+
+    await handle.close()
+
+    expect(effectRow(db, 'relay', 'resume:msg_1')?.state).toBe('running')
+    // The lock is free, and the turn answering after the close fails quietly.
+    held.answer({ ack: 'Too late' })
+    await sleep(20)
+    expect(store.messages.get('msg_1')?.ackText).toBeUndefined()
+    const next = heldBrain()
+    const second = await startServer({ dataDir, brain: next.brain, closeBoundMs: 100 })
+    await untilSeen(next.seen, 1)
+    next.answer({ ack: 'Resumed' })
+    await second.close()
+    expect(store.messages.get('msg_1')?.ackText).toBe('Resumed')
+    db.close()
+  }, 12_000)
+
+  it('a chat request stuck on a turn does not hold close open', async () => {
+    const dataDir = scratch()
+    const { db, store } = openStore(dataDir)
+    seedInterrupted(store)
+    store.atomic(() => {
+      const work = store.workItems.get('wi_1')!
+      store.workItems.save({ ...work, state: 'stopped' })
+    })
+    const held = heldBrain()
+    const handle = await startServer({ dataDir, brain: held.brain, closeBoundMs: 100 })
+
+    const request = fetch(`${handle.url}/api/chat/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'new work', repoId: 'repo_a' }),
+    }).catch(() => undefined)
+    await untilSeen(held.seen, 1)
+
+    await handle.close()
+    await request
+    held.answer({ ack: 'Too late' })
+    await sleep(20)
+    db.close()
+  }, 12_000)
+
+  it('close starts no new planner turn', async () => {
+    const dataDir = scratch()
+    const { db, store } = openStore(dataDir)
+    seedInterrupted(store, 1)
+    seedInterrupted(store, 2)
+    const held = heldBrain()
+    const handle = await startServer({ dataDir, brain: held.brain })
+    await untilSeen(held.seen, 1)
+
+    const closing = handle.close()
+    held.answer({ ack: 'First' })
+    await closing
+
+    expect(held.seen).toEqual(['request 1'])
+    expect(store.messages.get('msg_1')?.ackText).toBe('First')
+    expect(effectRow(db, 'relay', 'resume:msg_2')?.state).toBe('pending')
+    db.close()
+  }, 12_000)
+})
+
 const tempDirs: string[] = []
 
 afterEach(() => {
@@ -302,11 +549,12 @@ describe('startServer', () => {
 
 describe('§26 restart reconciliation and capability drift (composition)', () => {
   it('an effect left running by a crash is resumed once at boot and drained', async () => {
+    process.env.MEC_FAKE_ENGINE = '1'
     const dataDir = mkdtempSync(join(tmpdir(), 'mec-composition-'))
     tempDirs.push(dataDir)
     const seed = new Database(join(dataDir, 'mec.db'))
     migrate(seed, MIGRATIONS_v1)
-    new SqliteStore(seed).effects.enqueue('note', 'wi_crashed', { text: 'left running' })
+    new SqliteStore(seed).effects.enqueue('relay', 'wake:left-running', { reason: 'left running' })
     seed.prepare("UPDATE effects SET state = 'running'").run()
     seed.close()
 

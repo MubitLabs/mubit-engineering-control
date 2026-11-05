@@ -55,7 +55,7 @@ import {
 } from '@mec/slots'
 import type { InspectionReads } from '@mec/store'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
-import { type BackupControl, registerConfigRoutes, repositoryRevision } from './config-routes'
+import { type BackupControl, liveSlot, registerConfigRoutes, repositoryRevision } from './config-routes'
 import { buildDoctorReport } from './doctor'
 import type { HealthSnapshot, PartEntry } from './health'
 import { registerInspectionRoutes } from './inspection'
@@ -1186,10 +1186,15 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       VALIDATE_TIMEOUT_MS,
     )
 
+    // provider_unreachable: no transition, no event — the slot keeps its state (§5.8).
+    if (outcome === 'provider_unreachable') return { ok: false, reason: 'provider_unreachable' }
+
     const at = now().toISOString()
-    if (outcome === 'healthy') {
-      store.atomic(() => {
-        const next: StoreDoc = { ...doc, state: 'healthy', last_probe_at: at, updatedAt: at }
+    const saved = store.atomic(() => {
+      const fresh = liveSlot(store, id)
+      if (fresh === undefined) return false
+      if (outcome === 'healthy') {
+        const next: StoreDoc = { ...fresh, state: 'healthy', last_probe_at: at, updatedAt: at }
         delete next.state_reason
         store.slots.save(next)
         appendEvent(
@@ -1199,13 +1204,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
           { slotId: id, probe: probeTarget.label, at },
           at,
         )
-      })
-      return { ok: true }
-    }
-    if (outcome === 'key_rejected') {
-      store.atomic(() => {
+      } else {
         store.slots.save({
-          ...doc,
+          ...fresh,
           state: 'degraded',
           state_reason: 'key_rejected',
           last_probe_at: at,
@@ -1218,11 +1219,14 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
           { slotId: id, reason: 'key_rejected', at },
           at,
         )
-      })
-      return { ok: false, reason: 'key_rejected' }
+      }
+      return true
+    })
+    if (!saved) {
+      reply.code(409).send({ error: 'slot is retired' })
+      return
     }
-    // provider_unreachable: no transition, no event — the slot keeps its state (§5.8).
-    return { ok: false, reason: 'provider_unreachable' }
+    return outcome === 'healthy' ? { ok: true } : { ok: false, reason: 'key_rejected' }
   })
 
   // §5.7 "deleting a slot shreds its keystore": the key file's bytes are scrambled and

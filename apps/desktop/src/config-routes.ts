@@ -101,6 +101,15 @@ export function repositoryRevision(doc: StoreDoc): string {
   return createHash('sha256').update(profile, 'utf8').digest('hex')
 }
 
+/**
+ * The slot a finished check may write to, read inside its transaction. A check awaits an engine or
+ * a provider, and a retire can land in that wait: its verdict must not bring the slot back.
+ */
+export function liveSlot(store: Store, id: string): StoreDoc | undefined {
+  const fresh = store.slots.get(id)
+  return fresh?.state === STATE_RETIRED ? undefined : fresh
+}
+
 function appendEvent(store: Store, stream: string, type: string, body: Json, at: string): void {
   const seq = (store.events.read(stream).at(-1)?.seq ?? 0) + 1
   store.events.append(stream, { stream, seq, at, type, body })
@@ -243,9 +252,11 @@ export function registerConfigRoutes(
     const outcome =
       doc.engine === 'claude' ? await probeClaude(probeCmd, doc) : await probeCodex(probeCmd, doc)
     const at = now().toISOString()
-    store.atomic(() => {
+    const saved = store.atomic(() => {
+      const fresh = liveSlot(store, id)
+      if (fresh === undefined) return false
       const next: StoreDoc = {
-        ...doc,
+        ...fresh,
         state: outcome.state,
         last_probe_at: at,
         updatedAt: at,
@@ -262,7 +273,12 @@ export function registerConfigRoutes(
         { slotId: id, ...(outcome.reason !== undefined && { reason: outcome.reason }), at },
         at,
       )
+      return true
     })
+    if (!saved) {
+      reply.code(409).send({ error: 'slot is retired' })
+      return
+    }
     return {
       ok: outcome.state === 'healthy',
       state: outcome.state,
@@ -321,13 +337,14 @@ export function registerConfigRoutes(
       appendEvent(store, `slot:${String(doc.label)}`, 'slot_key_rotated', { slotId: id, fingerprint, at }, at)
     })
     const probed = await app.inject({ method: 'POST', url: `/api/slots/${encodeURIComponent(id)}/validate` })
-    const verdict = probed.json() as { ok?: boolean; reason?: string }
+    const verdict = probed.json() as { ok?: boolean; reason?: string; error?: string }
+    const reason = verdict.reason ?? verdict.error
     return {
       id,
       fingerprint: { provider: fingerprint.provider, last4: fingerprint.last4 },
       probe: {
         ok: verdict.ok === true,
-        ...(verdict.reason !== undefined && { reason: verdict.reason }),
+        ...(reason !== undefined && { reason }),
       },
     }
   })

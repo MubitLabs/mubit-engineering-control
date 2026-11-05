@@ -299,5 +299,68 @@
     "find": "      rows.push(lines[at] as DiffLine)\n",
     "replace": "",
     "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "a check's write ignores a retire",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "  return fresh?.state === STATE_RETIRED ? undefined : fresh\n",
+    "replace": "  return fresh\n",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "a local probe writes without re-reading",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "      const fresh = liveSlot(store, id)\n      if (fresh === undefined) return false\n      const next: StoreDoc = {\n        ...fresh,\n        state: outcome.state,",
+    "replace": "      const fresh = doc\n      const next: StoreDoc = {\n        ...fresh,\n        state: outcome.state,",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "a local probe builds on the captured doc",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "        ...fresh,\n        state: outcome.state,",
+    "replace": "        ...doc,\n        state: outcome.state,",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "a local probe answers 200 on a retired slot",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "    if (!saved) {\n      reply.code(409).send({ error: 'slot is retired' })\n      return\n    }\n    return {\n      ok: outcome.state === 'healthy',",
+    "replace": "    return {\n      ok: outcome.state === 'healthy',",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "a provider check writes without re-reading",
+    "file": "apps/desktop/src/server.ts",
+    "find": "      const fresh = liveSlot(store, id)\n      if (fresh === undefined) return false\n      if (outcome === 'healthy') {",
+    "replace": "      const fresh = doc\n      if (outcome === 'healthy') {",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "a healthy check builds on the captured doc",
+    "file": "apps/desktop/src/server.ts",
+    "find": "const next: StoreDoc = { ...fresh, state: 'healthy', last_probe_at: at, updatedAt: at }",
+    "replace": "const next: StoreDoc = { ...doc, state: 'healthy', last_probe_at: at, updatedAt: at }",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "a provider check answers 200 on a retired slot",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    if (!saved) {\n      reply.code(409).send({ error: 'slot is retired' })\n      return\n    }\n    return outcome === 'healthy' ?",
+    "replace": "    return outcome === 'healthy' ?",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "a key replacement hides that the slot was retired",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "    const reason = verdict.reason ?? verdict.error\n",
+    "replace": "    const reason = verdict.reason\n",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "a rejected check builds on the captured doc",
+    "file": "apps/desktop/src/server.ts",
+    "find": "          ...fresh,\n          state: 'degraded',",
+    "replace": "          ...doc,\n          state: 'degraded',",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
   }
 ]

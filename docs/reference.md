@@ -79,11 +79,11 @@ Additive routes for the overhaul's views; `/api/work` and the other routes above
 | GET | `/api/slots` | — | All slots — fingerprints only, never keys. |
 | GET | `/api/connections` | — | `{ rows, options }`: one row per live slot from saved facts (engine version, identity, state and reason, last check). `usage`, `pin` and `pair` are `null` until something records them. `options` lists each engine's real add paths: `link`, `sign_in`, `api_key`. |
 | POST | `/api/slots/dedicated` | `{ engine, label }` | Creates the slot a sign-in fills, `home_ready`, for `claude` or `codex`. 409 for a label in use. |
-| POST | `/api/slots/:id/probe` | — | A signed-in slot's local status command in its own environment, at no token cost: `{ ok, state, reason? }`. Records version and non-secret identity. API-key slots use `validate`. |
+| POST | `/api/slots/:id/probe` | — | A signed-in slot's local status command in its own environment, at no token cost: `{ ok, state, reason? }`. Records version and non-secret identity. API-key slots use `validate`. 409 and no write if the slot is retired, even while the check runs. |
 | GET | `/api/slots/:id/impact` | — | `{ slotId, label, running, queued, metaSlot, keyStored }`: what a retire touches, from saved docs. |
-| POST | `/api/slots/:id/key` | `{ key }` | Replaces the key in place (same shape gate as `api-key`), then re-probes. Answers `{ id, fingerprint, probe }`, never the key. 400 for a slot with no key, 409 for a retired one. |
+| POST | `/api/slots/:id/key` | `{ key }` | Replaces the key in place (same shape gate as `api-key`), then re-probes. Answers `{ id, fingerprint, probe }`, never the key. 400 for a slot with no key, 409 for a retired one. A retire during the re-probe keeps the 200, with `probe: { ok: false, reason: 'slot is retired' }`. |
 | POST | `/api/slots/api-key` | `{ label, provider, key }` | The only way an API key enters MEC: key goes from the request straight into the slot keystore (0600); the store keeps the fingerprint; provider must be `anthropic-api` in v0. |
-| POST | `/api/slots/:id/validate` | — | Zero-token validity probe (`GET /v1/models`): 200 → healthy; 401 → degraded `key_rejected`; network failure → `provider_unreachable`, state unchanged. |
+| POST | `/api/slots/:id/validate` | — | Zero-token validity probe (`GET /v1/models`): 200 → healthy; 401 → degraded `key_rejected`; network failure → `provider_unreachable`, state unchanged. 409 and no write if the slot is retired, even while the check runs. |
 | POST | `/api/slots/:id/retire` | `{ label }` | Shreds the slot's keystore file and marks the slot retired. The body must repeat the slot's exact label, or it answers 400 `label_mismatch` and destroys nothing. `mec slot retire` is the owner's own terminal and takes no such step. |
 
 ### Setup and configuration

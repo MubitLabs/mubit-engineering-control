@@ -334,5 +334,47 @@
     "find": "    promptsRoot: join(opts.dataDir, 'prompts'),\n",
     "replace": "",
     "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "18 the intent is not stored with the key",
+    "file": "packages/meta/src/service.ts",
+    "find": "      ...(intent !== undefined && { intent }),\n",
+    "replace": "",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "18b the reference is not stored with the key",
+    "file": "packages/meta/src/service.ts",
+    "find": "      ...(referencesWorkItem !== undefined && { referencesWorkItem }),\n      ...(fields.workItemId",
+    "replace": "      ...(fields.workItemId",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "18c a later save drops the intent",
+    "file": "packages/meta/src/service.ts",
+    "find": "    const intent = input.intent ?? (prior?.intent as SubmissionIntent | undefined)\n",
+    "replace": "    const intent = input.intent\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "18d a later save drops the reference",
+    "file": "packages/meta/src/service.ts",
+    "find": "    const referencesWorkItem =\n      input.referencesWorkItem ??\n      (typeof prior?.referencesWorkItem === 'string' ? prior.referencesWorkItem : undefined)\n",
+    "replace": "    const referencesWorkItem = input.referencesWorkItem\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "18e the route keeps the submission from the service",
+    "file": "apps/desktop/src/server.ts",
+    "find": "        text,\n        ...submitted,\n        explicitNew,\n",
+    "replace": "        text,\n        ...(referencesWorkItem !== undefined && { referencesWorkItem }),\n        explicitNew,\n",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "18f the route stops stamping what the seam may not store",
+    "file": "apps/desktop/src/server.ts",
+    "find": "          if (doc !== undefined) store.messages.save({ ...doc, ...submitted, idempotencyKey })\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/server.test.ts"]
   }
 ]

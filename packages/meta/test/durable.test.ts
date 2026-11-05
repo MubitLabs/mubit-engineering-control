@@ -524,6 +524,28 @@ describe('chat during Pause (decision #27, §20)', () => {
     expect(store.messages.get('msg_1')).toMatchObject({ workItemId, ackText: 'On it' })
   })
 
+  it('the resumed turn keeps the intent and reference the message was sent with', async () => {
+    const next = countingBrain(plan)
+    const { service, store } = paused(next.brain)
+    await service.onUserMessage({
+      messageId: 'msg_1',
+      text: 'go',
+      idempotencyKey: 'k1',
+      intent: 'new',
+      referencesWorkItem: 'wi_gone',
+    })
+    store.atomic(() => saveProcessing(store, { paused: false }, NOW))
+
+    service.enqueueResumes()
+    await service.runRelay(rowsOf(store, 'relay')[0]!.payload)
+
+    expect(store.messages.get('msg_1')).toMatchObject({
+      ackText: 'On it',
+      intent: 'new',
+      referencesWorkItem: 'wi_gone',
+    })
+  })
+
   it('a relay caught mid-flight by a pause still finishes its turn', async () => {
     const { store } = await crashedAdmission()
     const next = countingBrain(plan)

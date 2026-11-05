@@ -904,10 +904,7 @@ export class MetaAgentService {
       allowed(this.#store.tasks.get(cancel.taskId)?.workItemId),
     )
     const sizes = (d: MetaDecision): number =>
-      [d.routes, d.spawns, d.reports, d.stops, d.cancels].reduce(
-        (sum, rows) => sum + (rows?.length ?? 0),
-        0,
-      )
+      [d.routes, d.spawns, d.reports, d.stops, d.cancels].reduce((sum, rows) => sum + (rows?.length ?? 0), 0)
     const scoped = { ...decision, routes, spawns, reports, stops, cancels }
     const dropped = sizes(decision) - sizes(scoped)
     if (dropped > 0) {

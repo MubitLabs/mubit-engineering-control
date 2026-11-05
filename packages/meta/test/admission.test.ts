@@ -195,6 +195,23 @@ describe('repo admission and canonical identity', () => {
     expect(store.attempts.list()).toHaveLength(1)
   })
 
+  it('a replan does not launch a cancelled key that never had an attempt', async () => {
+    const { service, store } = rig(fakeBrain(plan(['task_1', []], ['task_2', ['task_1']])))
+    const { workItemId } = await service.onUserMessage({ messageId: 'msg_a', text: 'a', repoId: 'repo_a' })
+    const first = taskByKey(store, workItemId!, 'task_1')!
+    const second = taskByKey(store, workItemId!, 'task_2')!
+    store.atomic(() => {
+      store.tasks.save({ ...first, status: 'integrated' })
+      store.tasks.save({ ...second, status: 'cancelled' })
+    })
+
+    const replan = await service.onWake({ reason: 'report', workItemId: workItemId! })
+
+    expect(replan.launchesEnqueued).toEqual([])
+    expect(store.attempts.list({ taskId: second.id })).toHaveLength(0)
+    expect(taskByKey(store, workItemId!, 'task_2')?.status).toBe('cancelled')
+  })
+
   it('spawn gets a task_ id and inherits repo', async () => {
     const { service, store } = rig(fakeBrain(plan(['task_1', []])))
     const { workItemId } = await service.onUserMessage({ messageId: 'msg_a', text: 'a', repoId: 'repo_a' })
@@ -274,7 +291,7 @@ describe('repo admission and canonical identity', () => {
     seedRepo(store, 'repo_c', false)
     const hash = async (messageId: string, repoId: string) => {
       const { workItemId } = await service.onUserMessage({ messageId, text: 'x', repoId })
-      return (store.workItems.get(workItemId!)?.pin as { profileHash: string }).profileHash
+      return (store.workItems.get(workItemId!)!.pin as { profileHash: string }).profileHash
     }
     const a = await hash('msg_a', 'repo_a')
     const b = await hash('msg_b', 'repo_b')

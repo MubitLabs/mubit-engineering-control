@@ -143,7 +143,7 @@ describe('repo identity at the chat route', () => {
     expect(note.routing).toBe('conversation')
     expect(store.workItems.get(b.workItemId!)).toMatchObject({ repoId: repoB })
     expect(store.messages.get(note.messageId)).toMatchObject({ repoId: repoA })
-    expect((store.workItems.get(a.workItemId!)?.pin as { url?: string }).url).toBe('https://example.test/a')
+    expect((store.workItems.get(a.workItemId!)!.pin as { url?: string }).url).toBe('https://example.test/a')
   })
 
   it('a reference across repos is a 400', async () => {

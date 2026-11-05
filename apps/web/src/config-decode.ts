@@ -349,6 +349,7 @@ export function decodeDrafts(raw: unknown): DraftView[] {
       createdAt: str(path, draft.createdAt, 'draft.createdAt'),
       ...optional('cls', draft.cls),
       ...(draft.preview !== undefined && { preview: decodeDraftPreview(path, draft.preview) }),
+      ...(draft.trustIgnored === true && { trustIgnored: true }),
     }
   })
 }

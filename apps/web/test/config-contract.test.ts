@@ -171,6 +171,26 @@ describe('the configuration client against the real routes', () => {
     expect((await configApi.policy()).text).toBe(draft?.preview?.changes[0]?.after)
   })
 
+  it('reads that a proposal carried a trust setting it cannot apply', async () => {
+    const save = (id: string, patch: Record<string, unknown>) =>
+      store.engines.save({
+        id: `draft/${id}`,
+        draftId: id,
+        target: 'repository',
+        patch: { label: id, url_or_path: '/tmp', ...patch } as never,
+        reason: 'a reason',
+        diff: 'a diff',
+        status: 'pending',
+        conversationId: 'setup',
+        createdAt: AT.toISOString(),
+      })
+    save('d4', { trust: true })
+    save('d5', {})
+    const drafts = await configApi.drafts()
+    expect(drafts.find((draft) => draft.id === 'd4')?.trustIgnored).toBe(true)
+    expect(drafts.find((draft) => draft.id === 'd5')?.trustIgnored).toBeUndefined()
+  })
+
   it('a refused models table says which line', async () => {
     const models = await configApi.modelsText()
     const said = await refusalOf(configApi.saveModels('tiers: [fast', models.sha256))

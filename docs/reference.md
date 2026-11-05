@@ -94,7 +94,7 @@ Readiness is read from saved facts: walking through Setup changes none of them. 
 | --- | --- | --- | --- |
 | GET | `/api/setup/readiness` | — | The five steps with their next action, the engines found, `metaCandidates` with the server's verdict on each, `finish`, and `completion` naming the repository and meta slot once the first four steps hold. |
 | POST | `/api/setup/skip` | `{ step, skipped? }` | Notes that the owner moved on. A saved fact outranks it. |
-| GET | `/api/setup/drafts` | — | Setup-agent proposals. A pending policy, models or prompts proposal carries `preview`: `{ base, changes: [{ label, before, after }] }`, the current text and the text Apply would save. `base` is the version `before` was read at. A repository proposal has none, and neither does one whose stored text no longer loads. |
+| GET | `/api/setup/drafts` | — | Setup-agent proposals. A pending policy, models or prompts proposal carries `preview`: `{ base, changes: [{ label, before, after }] }`, the current text and the text Apply would save. `base` is the version `before` was read at. A repository proposal has none, and neither does one whose stored text no longer loads. A repository proposal that carried `trust` has `trustIgnored: true`: applying one always stores it untrusted. |
 | POST | `/api/setup/drafts/:id/apply` | `{ base }` | Applies a proposal through the manual save's validation and stale check. `base` is the hash or revision the owner was looking at, which is `preview.base` when there is one; a repository draft needs none. |
 | POST | `/api/setup/drafts/:id/dismiss` | — | Marks it `denied`. It can never apply. |
 | GET | `/api/policy` | — | `{ text, sha256, revision, source, activeSha256, restartRequired, updatedAt? }`. |

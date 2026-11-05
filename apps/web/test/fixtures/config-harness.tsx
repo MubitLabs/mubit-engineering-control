@@ -15,6 +15,7 @@ const server = sampleServer({
   fail: params.get('fail')?.split(',') ?? [],
   empty: params.has('empty'),
   noChecks: params.has('nochecks'),
+  longProposals: params.has('longproposals'),
 })
 
 declare global {

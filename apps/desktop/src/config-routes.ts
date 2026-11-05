@@ -542,6 +542,9 @@ export function registerConfigRoutes(
           // A stored text that no longer loads costs the comparison, never the list of proposals.
           preview = undefined
         }
+        // The card prints the patch verbatim, so a trust the proposal cannot set has to be answered.
+        const patch = doc.patch as { trust?: unknown } | undefined
+        const trustIgnored = doc.target === 'repository' && (patch?.trust ?? false) !== false
         return {
           id,
           target: String(doc.target ?? ''),
@@ -551,6 +554,7 @@ export function registerConfigRoutes(
           status,
           createdAt: String(doc.createdAt ?? ''),
           ...(preview !== undefined && { preview }),
+          ...(trustIgnored && { trustIgnored }),
         }
       }),
   )

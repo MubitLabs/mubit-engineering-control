@@ -9,6 +9,7 @@ import {
   draftsFor,
   type Editor,
   editDraft,
+  foldDiff,
   impactLines,
   lineDiff,
   loadEditor,
@@ -301,5 +302,48 @@ describe('compare', () => {
       { kind: 'added', text: 'x' },
       { kind: 'same', text: 'c' },
     ])
+  })
+
+  const table = Array.from({ length: 88 }, (_, index) => `line ${index}`)
+  const edited = (...at: number[]) => table.map((line, index) => (at.includes(index) ? `${line} new` : line))
+  const shown = (before: string[], after: string[]) => foldDiff(lineDiff(before.join('\n'), after.join('\n')))
+  const isFold = (row: ReturnType<typeof shown>[number]) => row.kind === 'fold'
+
+  it('folds the unchanged run before a change, so the change is near the top', () => {
+    const rows = shown(table, edited(80))
+    expect(rows.findIndex((row) => row.kind === 'removed')).toBe(4)
+    expect(rows.slice(0, 4).map((row) => row.kind)).toEqual(['fold', 'same', 'same', 'same'])
+    expect(rows.filter(isFold)).toHaveLength(2)
+  })
+
+  it('keeps every line: a fold holds what it hides, in order', () => {
+    const lines = lineDiff(table.join('\n'), edited(5, 60).join('\n'))
+    const unfolded = foldDiff(lines).flatMap((row) => (row.kind === 'fold' ? row.lines : [row]))
+    expect(unfolded).toEqual(lines)
+  })
+
+  it('never folds a changed line, and keeps context on both sides of each change', () => {
+    const rows = shown(table, edited(20, 60))
+    for (const row of rows) {
+      if (row.kind === 'fold') expect(row.lines.every((line) => line.kind === 'same')).toBe(true)
+    }
+    expect(rows.map((row) => row.kind)).toEqual([
+      'fold',
+      ...['same', 'same', 'same', 'removed', 'added', 'same', 'same', 'same'],
+      'fold',
+      ...['same', 'same', 'same', 'removed', 'added', 'same', 'same', 'same'],
+      'fold',
+    ])
+  })
+
+  it('leaves a short comparison whole: folding one line saves nothing', () => {
+    expect(shown(['a', 'b', 'c', 'd', 'e'], ['a', 'b', 'c', 'd', 'x']).some(isFold)).toBe(false)
+    expect(shown(['a', 'b', 'c', 'd', 'e', 'f'], ['a', 'b', 'c', 'd', 'e', 'x']).some(isFold)).toBe(true)
+  })
+
+  it('folds a comparison with no change into one row', () => {
+    const rows = shown(table, table)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.kind).toBe('fold')
   })
 })

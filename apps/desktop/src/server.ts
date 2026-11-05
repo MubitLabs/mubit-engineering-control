@@ -1866,7 +1866,6 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       registerRepositoryDoc(input.label, input.urlOrPath, {
         ...(input.bootstrap !== undefined && { bootstrap: input.bootstrap }),
         ...(input.checks !== undefined && { checks: input.checks }),
-        ...(input.trust !== undefined && { trust: input.trust }),
       }),
     setMetaSlot: (slotId) => {
       const slot = store.slots.get(slotId)
@@ -1884,7 +1883,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   /**
    * Repository registration through the setup seam: the same rules the POST route
    * enforces — https-without-credentials or an existing local path, argv-only bootstrap
-   * and check strings — applied only when a DRAFT the user approved says so (§7).
+   * and check strings — applied only when a DRAFT the user approved says so (§7). It always
+   * stores untrusted: trust changes which repository config an engine honours (§22), so the
+   * two-step control in Settings is the only way in, and the proposal card says so.
    */
   const registerRepositoryDoc = async (
     label: string,
@@ -1925,7 +1926,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     }
     const id = registerRepository(
       store,
-      { url: urlOrPath, bootstrap, checks, trust: patch.trust === true, label, origin: 'setup_agent' },
+      { url: urlOrPath, bootstrap, checks, trust: false, label, origin: 'setup_agent' },
       now(),
     )
     return { ok: true, id }

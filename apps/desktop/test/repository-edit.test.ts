@@ -138,3 +138,81 @@ describe('PATCH /api/repositories/:id', () => {
     expect(unknown.statusCode).toBe(404)
   })
 })
+
+describe('a setup proposal and trust (§22, requirement 13)', () => {
+  const proposal = (ctx: ConfigServer, id: string, patch: Record<string, unknown>) => {
+    const path = join(ctx.dir, id)
+    mkdirSync(path, { recursive: true })
+    ctx.store.engines.save({
+      id: `draft/${id}`,
+      draftId: id,
+      target: 'repository',
+      patch: { label: id, url_or_path: path, ...patch } as never,
+      reason: 'register it',
+      diff: 'target: repository',
+      status: 'pending',
+      conversationId: 'setup',
+      createdAt: '2026-11-05T10:00:00.000Z',
+    })
+    return path
+  }
+  const rowAt = async (ctx: ConfigServer, url: string) =>
+    ((await ctx.get('/api/repositories')).json() as Repo[]).find((row) => row.url === url)
+  const cardOf = async (ctx: ConfigServer, id: string) =>
+    ((await ctx.get('/api/setup/drafts')).json() as Array<{ id: string; trustIgnored?: boolean }>).find(
+      (entry) => entry.id === id,
+    )
+
+  it('a proposal cannot trust a repository', async () => {
+    const ctx = await withRepository()
+    const path = proposal(ctx, 'wants_trust', { trust: true })
+    expect((await ctx.post('/api/setup/drafts/wants_trust/apply', {})).statusCode).toBe(200)
+    const row = await rowAt(ctx, path)
+    expect(row?.trust).toBe(false)
+
+    // Settings stays the way in: the same repository takes trust from the two-step control's route.
+    const edited = await ctx.patch(`/api/repositories/${row?.id}`, {
+      base_revision: row?.revision,
+      trusted: true,
+    })
+    expect(edited.statusCode).toBe(200)
+    expect((await rowAt(ctx, path))?.trust).toBe(true)
+  })
+
+  it('says so on the card when a proposal carried trust, and only then', async () => {
+    const ctx = await withRepository()
+    proposal(ctx, 'wants_trust', { trust: true })
+    proposal(ctx, 'wants_string', { trust: 'true' })
+    proposal(ctx, 'plain', {})
+    proposal(ctx, 'declines', { trust: false })
+    expect((await cardOf(ctx, 'wants_trust'))?.trustIgnored).toBe(true)
+    expect((await cardOf(ctx, 'wants_string'))?.trustIgnored).toBe(true)
+    expect((await cardOf(ctx, 'plain'))?.trustIgnored).toBeUndefined()
+    expect((await cardOf(ctx, 'declines'))?.trustIgnored).toBeUndefined()
+  })
+
+  it("the setup agent's own tool cannot trust a repository either", async () => {
+    const ctx = makeConfigServer({
+      setupDecide: async ({ text }) => ({
+        calls: [{ tool: 'register_repository', args: { label: 'tool', url_or_path: text, trust: 'true' } }],
+      }),
+    })
+    servers.push(ctx)
+    expect((await ctx.post('/api/chat/messages', { setup: true, text: ctx.dir })).statusCode).toBe(200)
+    expect((await rowAt(ctx, ctx.dir))?.trust).toBe(false)
+  })
+
+  it("the owner's own form still chooses trust", async () => {
+    const ctx = await withRepository()
+    const path = join(ctx.dir, 'form')
+    mkdirSync(path, { recursive: true })
+    const res = await ctx.post('/api/repositories', {
+      urlOrPath: path,
+      bootstrapCmds: [],
+      checkCmds: [],
+      trusted: true,
+    })
+    expect(res.statusCode).toBe(200)
+    expect((await rowAt(ctx, path))?.trust).toBe(true)
+  })
+})

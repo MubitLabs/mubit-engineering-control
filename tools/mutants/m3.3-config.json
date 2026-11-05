@@ -229,5 +229,75 @@
     "find": "      ...(draft.preview !== undefined && { preview: decodeDraftPreview(path, draft.preview) }),\n",
     "replace": "",
     "tests": ["apps/web/test/config-contract.test.ts"]
+  },
+  {
+    "name": "a proposal trusts a repository",
+    "file": "apps/desktop/src/server.ts",
+    "find": "{ url: urlOrPath, bootstrap, checks, trust: false, label, origin: 'setup_agent' }",
+    "replace": "{ url: urlOrPath, bootstrap, checks, trust: patch.trust === true, label, origin: 'setup_agent' }",
+    "tests": ["apps/desktop/test/repository-edit.test.ts"]
+  },
+  {
+    "name": "the card keeps quiet about trust",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "          ...(trustIgnored && { trustIgnored }),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/repository-edit.test.ts"]
+  },
+  {
+    "name": "only a boolean trust reaches the card",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "(patch?.trust ?? false) !== false",
+    "replace": "patch?.trust === true",
+    "tests": ["apps/desktop/test/repository-edit.test.ts"]
+  },
+  {
+    "name": "every repository proposal reads as asking for trust",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "(patch?.trust ?? false) !== false",
+    "replace": "true",
+    "tests": ["apps/desktop/test/repository-edit.test.ts"]
+  },
+  {
+    "name": "the decoder drops the trust note",
+    "file": "apps/web/src/config-decode.ts",
+    "find": "      ...(draft.trustIgnored === true && { trustIgnored: true }),\n",
+    "replace": "",
+    "tests": ["apps/web/test/config-contract.test.ts"]
+  },
+  {
+    "name": "nothing folds",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "if (run.length - head - tail > 1) {",
+    "replace": "if (run.length < 0) {",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "a fold loses its context",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "const DIFF_CONTEXT = 3",
+    "replace": "const DIFF_CONTEXT = 0",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "a fold of one line",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "if (run.length - head - tail > 1) {",
+    "replace": "if (run.length - head - tail > 0) {",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "a leading run keeps context it does not need",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "const head = start === 0 ? 0 : DIFF_CONTEXT",
+    "replace": "const head = DIFF_CONTEXT",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "a fold swallows the change after it",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "      rows.push(lines[at] as DiffLine)\n",
+    "replace": "",
+    "tests": ["apps/web/test/config-model.test.ts"]
   }
 ]

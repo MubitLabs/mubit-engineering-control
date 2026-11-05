@@ -6,6 +6,7 @@ import {
   type DiffLine,
   type DraftView,
   type Editor,
+  foldDiff,
   lineDiff,
   type ModelsText,
   type PolicyView,
@@ -113,6 +114,12 @@ export function Proposals({
               </div>
             ))
           )}
+          {draft.trustIgnored === true && (
+            <p className="field-note">
+              This proposal asks to set trust, and Apply will not. It starts untrusted. Trust it here under
+              Repositories, in two steps.
+            </p>
+          )}
           <p className="field-note">Nothing has changed. Apply checks this the way a save does.</p>
           <div className="form-actions">
             <Button variant="quiet" disabled={busyId === draft.id} onClick={() => onDismiss(draft.id)}>
@@ -219,17 +226,44 @@ export function ModelsBlock({
   )
 }
 
+function DiffText({ line }: { line: DiffLine }) {
+  return (
+    <span className={`diff-${line.kind}`}>
+      {line.kind === 'added' ? '+ ' : line.kind === 'removed' ? '- ' : '  '}
+      {line.text}
+      {'\n'}
+    </span>
+  )
+}
+
+function DiffFold({ lines }: { lines: readonly DiffLine[] }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <button type="button" className="diff-fold" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {open ? 'Hide' : 'Show'} {lines.length} unchanged lines
+      </button>
+      {open &&
+        lines.map((line, index) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: a diff's lines repeat and never reorder.
+          <DiffText key={index} line={line} />
+        ))}
+    </>
+  )
+}
+
 function DiffView({ lines }: { lines: readonly DiffLine[] }) {
   return (
     <pre className="code-block diff">
-      {lines.map((line, index) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: a diff's lines repeat and never reorder.
-        <span key={index} className={`diff-${line.kind}`}>
-          {line.kind === 'added' ? '+ ' : line.kind === 'removed' ? '- ' : '  '}
-          {line.text}
-          {'\n'}
-        </span>
-      ))}
+      {foldDiff(lines).map((row, index) =>
+        row.kind === 'fold' ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: a diff's rows repeat and never reorder.
+          <DiffFold key={index} lines={row.lines} />
+        ) : (
+          // biome-ignore lint/suspicious/noArrayIndexKey: a diff's rows repeat and never reorder.
+          <DiffText key={index} line={row} />
+        ),
+      )}
     </pre>
   )
 }

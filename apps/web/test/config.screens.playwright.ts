@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test'
+import { expect, type Locator, type Page, test } from '@playwright/test'
 
 /**
  * Setup, Connections and Settings through the whole live path, against the sample server in
@@ -235,6 +235,58 @@ test('compare shows what differs from the default', async ({ page }) => {
   await page.getByRole('button', { name: 'Compare with default' }).click()
   await expect(page.locator('.diff-removed')).toHaveText('- line two\n')
   await expect(page.locator('.diff-added')).toHaveText('+ line changed\n')
+})
+
+/** The first changed line is inside the block's first view, with nothing scrolled. */
+async function firstChangeInFirstView(block: Locator): Promise<void> {
+  await expect(block.locator('.diff-removed, .diff-added').first()).toBeVisible()
+  const view = await block.evaluate((element) => {
+    const first = element.querySelector('.diff-removed, .diff-added')
+    return {
+      scrollTop: element.scrollTop,
+      viewHeight: element.clientHeight,
+      offset: (first?.getBoundingClientRect().top ?? 0) - element.getBoundingClientRect().top,
+    }
+  })
+  expect(view.scrollTop).toBe(0)
+  expect(view.offset).toBeLessThan(view.viewHeight)
+}
+
+test("a one-line change in a long table shows in the comparison's first view", async ({ page }) => {
+  await open(page, 'settings', 'longproposals=1')
+  await page.getByRole('button', { name: 'Models', exact: true }).click()
+  const block = page.locator('.proposal .diff')
+  await firstChangeInFirstView(block)
+  await expect(block.locator('.diff-removed')).toHaveText(/model_81: fast/)
+  await expect(block.locator('.diff-added')).toHaveText(/model_81: balanced/)
+})
+
+test('a folded comparison opens and closes, and hides no changed line', async ({ page }) => {
+  await open(page, 'settings', 'longproposals=1')
+  await page.getByRole('button', { name: 'Models', exact: true }).click()
+  const block = page.locator('.proposal .diff')
+  const fold = block.getByRole('button', { name: 'Show 78 unchanged lines' })
+  await expect(block.getByText('model_0: fast')).toHaveCount(0)
+  await fold.click()
+  await expect(block.getByText('model_0: fast')).toBeVisible()
+  await block.getByRole('button', { name: 'Hide 78 unchanged lines' }).click()
+  await expect(block.getByText('model_0: fast')).toHaveCount(0)
+})
+
+test('a prompts comparison folds the same way', async ({ page }) => {
+  await open(page, 'settings', 'longproposals=1')
+  await page.getByRole('button', { name: 'Prompts' }).click()
+  const text = page.getByLabel('rules text')
+  await text.fill((await text.inputValue()).replace('model_81: fast', 'model_81: balanced'))
+  await page.getByRole('button', { name: 'Compare with default' }).click()
+  await firstChangeInFirstView(page.locator('.diff'))
+})
+
+test('a repository proposal that carried trust says it starts untrusted', async ({ page }) => {
+  await open(page, 'settings', 'longproposals=1')
+  await page.getByRole('button', { name: 'Repositories', exact: true }).click()
+  const card = page.locator('.proposal').filter({ hasText: 'asks to be trusted' })
+  await expect(card.getByText('It starts untrusted')).toBeVisible()
 })
 
 test('setup shows what is true, and Finish says why it is shut', async ({ page }) => {

@@ -144,6 +144,8 @@ export interface DraftView {
   cls?: string
   /** Absent when there is nothing to compare with, as for a new repository. */
   preview?: DraftPreview
+  /** A repository proposal carried a trust setting, which only Settings can set. */
+  trustIgnored?: boolean
 }
 export interface BackupsRecord {
   lastAt?: string
@@ -373,4 +375,37 @@ export function lineDiff(before: string, after: string): DiffLine[] {
     }
   }
   return lines
+}
+
+/** Unchanged lines kept on each side of a change. */
+const DIFF_CONTEXT = 3
+
+export type DiffRow = DiffLine | { kind: 'fold'; lines: DiffLine[] }
+
+/**
+ * Folds the unchanged runs, so the first change sits near the top of a block whatever the text's
+ * length. A fold keeps the lines it hides, and one hidden line is shown: its fold would be no shorter.
+ */
+export function foldDiff(lines: readonly DiffLine[]): DiffRow[] {
+  const rows: DiffRow[] = []
+  let at = 0
+  while (at < lines.length) {
+    const start = at
+    while (lines[at]?.kind === 'same') at += 1
+    const run = lines.slice(start, at)
+    const head = start === 0 ? 0 : DIFF_CONTEXT
+    const tail = at === lines.length ? 0 : DIFF_CONTEXT
+    if (run.length - head - tail > 1) {
+      rows.push(...run.slice(0, head))
+      rows.push({ kind: 'fold', lines: run.slice(head, run.length - tail) })
+      rows.push(...run.slice(run.length - tail))
+    } else {
+      rows.push(...run)
+    }
+    if (at < lines.length) {
+      rows.push(lines[at] as DiffLine)
+      at += 1
+    }
+  }
+  return rows
 }

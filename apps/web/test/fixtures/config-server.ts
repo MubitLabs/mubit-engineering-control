@@ -11,14 +11,20 @@ type Slot = Record<string, unknown> & { id: string; label: string; state: string
 
 const ALWAYS_CONFIRM = "class 'pr_merge' is always-confirm (§13) and can never be pre-authorised"
 
+/** The default table is 88 lines: a one-line change at line 82 sits far below the block's fold. */
+const LONG_TABLE = Array.from({ length: 88 }, (_, index) => `  model_${index}: fast`).join('\n')
+const LONG_TABLE_EDITED = LONG_TABLE.replace('model_81: fast', 'model_81: balanced')
+
 export function sampleServer({
   fail,
   empty,
   noChecks = false,
+  longProposals = false,
 }: {
   fail: string[]
   empty: boolean
   noChecks?: boolean
+  longProposals?: boolean
 }) {
   let policyText = '{\n  "preAuthorised": {}\n}\n'
   let policyRevision = 0
@@ -98,6 +104,27 @@ export function sampleServer({
           status: 'pending',
           createdAt: '2026-11-05T09:00:00.000Z',
         },
+        ...(longProposals
+          ? [
+              {
+                id: 'draft_models',
+                target: 'models',
+                reason: 'Sample one-line change near the end of a long table',
+                diff: 'target: models',
+                status: 'pending',
+                createdAt: '2026-11-05T09:00:00.000Z',
+              },
+              {
+                id: 'draft_repository',
+                target: 'repository',
+                reason: 'Sample repository that asks to be trusted',
+                diff: 'target: repository\npatch:\n  trust: true',
+                status: 'pending',
+                createdAt: '2026-11-05T09:00:00.000Z',
+                trustIgnored: true,
+              },
+            ]
+          : []),
       ]
   const options = [
     {
@@ -116,7 +143,7 @@ export function sampleServer({
     },
   ]
   const parts = [
-    { path: 'shared/rules.md', layer: 'shared', name: 'rules', text: `${MARK} shared text\nline two` },
+    { path: 'shared/rules.md', layer: 'shared', name: 'rules', text: longProposals ? LONG_TABLE : `${MARK} shared text\nline two` },
     { path: 'roles/sample.md', layer: 'role', name: 'sample', text: `${MARK} role text` },
   ]
 
@@ -197,19 +224,31 @@ export function sampleServer({
 
   // Drawn from the policy as it stands, as the real route draws it, unless a test froze the answer.
   const draftsNow = () =>
-    drafts.map((draft) => ({
-      ...draft,
-      preview: {
-        base: hash(policyText),
-        changes: [
-          {
-            label: 'Policy file',
-            before: policyText.trimEnd(),
-            after: '{\n  "preAuthorised": {\n    "install": [\n      "repo_prop"\n    ]\n  }\n}',
+    drafts.map((draft) => {
+      if (draft.target === 'repository') return draft
+      if (draft.target === 'models') {
+        return {
+          ...draft,
+          preview: {
+            base: hash(modelsYaml),
+            changes: [{ label: 'Capability table', before: LONG_TABLE, after: LONG_TABLE_EDITED }],
           },
-        ],
-      },
-    }))
+        }
+      }
+      return {
+        ...draft,
+        preview: {
+          base: hash(policyText),
+          changes: [
+            {
+              label: 'Policy file',
+              before: policyText.trimEnd(),
+              after: '{\n  "preAuthorised": {\n    "install": [\n      "repo_prop"\n    ]\n  }\n}',
+            },
+          ],
+        },
+      }
+    })
   let frozenDrafts: ReturnType<typeof draftsNow> | null = null
 
   return {

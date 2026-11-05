@@ -1434,6 +1434,12 @@ button.choice:hover,
   color: var(--red);
 }
 
+.diff-fold {
+  display: block;
+  color: var(--secondary);
+  text-decoration: underline;
+}
+
 .field-note {
   font-size: 13px;
   color: var(--secondary);

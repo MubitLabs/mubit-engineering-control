@@ -401,13 +401,13 @@ export function validateModelsTable(parsed: unknown): CapabilityTable {
   throw new ModelsTableError(`the models table does not match the capability-table schema — ${details}`)
 }
 
-/** The shipped default (§3), verbatim. THREE candidate locations (issue #16): the
- *  module's sibling `defaults/` (source), `dist/prompts-defaults/` beside the esbuild
- *  bundle (the artifact ships it there — scripts/pack-tarball copies it), and the
- *  repo-relative path from `apps/desktop/dist` (dev bundles). First existing wins. */
+/** The shipped default (§3), verbatim. THREE candidate locations (issue #16), the same as
+ *  the loader's: `dist/prompts-defaults/` beside the esbuild bundle (the artifact ships it
+ *  there — scripts/pack-tarball copies it), the module's sibling `defaults/` (source), and
+ *  the repo-relative path from `apps/desktop/dist` (dev bundles). First existing wins. */
 const DEFAULT_MODELS_YAML_CANDIDATES = [
+  new URL('./prompts-defaults/models.yaml', import.meta.url),
   new URL('../defaults/models.yaml', import.meta.url),
-  new URL('../prompts-defaults/models.yaml', import.meta.url),
   new URL('../../../packages/prompts/defaults/models.yaml', import.meta.url),
 ]
 const DEFAULT_MODELS_YAML_URL = DEFAULT_MODELS_YAML_CANDIDATES.find((u) => existsSync(fileURLToPath(u)))
@@ -415,8 +415,15 @@ export const DEFAULT_MODELS_YAML_PATH = fileURLToPath(
   DEFAULT_MODELS_YAML_URL ?? DEFAULT_MODELS_YAML_CANDIDATES[0]!,
 )
 
-/** Where the user's table lives; `~/.mec/models.yaml` by default (§5.4 keystore root). */
-export const userModelsPath = (root = join(homedir(), '.mec')) => join(root, 'models.yaml')
+/**
+ * §5.4 keystore root: the same rule `bin/mec.js` gives the store, so a server on a scratch
+ * `MEC_DATA_DIR` keeps its keystore, models table and prompts there and never reaches `~/.mec`.
+ * Read on every call, because the environment is the caller's to set.
+ */
+export const mecRoot = (): string => process.env.MEC_DATA_DIR ?? join(homedir(), '.mec')
+
+/** Where the user's table lives; `<keystore root>/models.yaml` by default (§5.4). */
+export const userModelsPath = (root = mecRoot()) => join(root, 'models.yaml')
 
 /**
  * Loads the capability table with provenance: the user's `~/.mec/models.yaml` when it

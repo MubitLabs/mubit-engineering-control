@@ -22,7 +22,7 @@ import {
   saveProcessing,
 } from '@mec/meta'
 import { loadPolicy } from '@mec/policy'
-import { loadModelsTable } from '@mec/prompts'
+import { defaultsRoot, loadModelsTable } from '@mec/prompts'
 import { parkFromEvents } from '@mec/runtime'
 import { probeModelAvailabilitySync } from '@mec/slots'
 import type { EffectHandler, HealthClaim, Json } from '@mec/store'
@@ -76,6 +76,8 @@ export async function startServer(opts: {
    *  MEC_META_SLOT as the override (review 2026-11-04 §3.2 — the env var stops being the way). */
   metaSlotDir?: string
 }): Promise<RunningServer> {
+  // Fail fast: a build without its prompts never starts, before it takes the lock (§16).
+  defaultsRoot()
   const lock = DirLock.acquire(opts.dataDir)
   mkdirSync(opts.dataDir, { recursive: true })
   const db = new Database(join(opts.dataDir, 'mec.db'))

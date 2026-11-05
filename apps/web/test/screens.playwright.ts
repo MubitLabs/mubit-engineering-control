@@ -227,6 +227,24 @@ test('§23 worked example: the chat screen tells the whole story', async ({ page
 
 // ── Keyboard only: no mouse from load to theme change ─────────────────────────────────────
 
+test('a card the server has no evidence for cannot be approved, and can be denied', async ({ page }) => {
+  await openWorkbench(page, 'chat', 'light', undefined, {
+    'GET /api/inbox/conf_71/detail': { status: 404, body: { error: 'no detail for this confirmation' } },
+  })
+  const card = page.locator('[data-decision="conf_71"]')
+
+  await expect(card).toContainText('it cannot be approved')
+  await expect(card.getByRole('button', { name: 'Read the evidence again' })).toHaveCount(0)
+  await expect(card.getByRole('button', { name: 'Approve' })).toBeDisabled()
+
+  await card.focus()
+  await page.keyboard.press('a')
+  await expect(card.getByRole('button', { name: /^Confirm/ })).toHaveCount(0)
+
+  await card.getByRole('button', { name: 'Deny' }).click()
+  await expect(card).toHaveClass(/is-resolved/)
+})
+
 test('a card whose evidence did not load cannot be approved, by click or by key', async ({ page }) => {
   const broken = { detail: true }
   await openWorkbench(page, 'chat', 'light', broken)

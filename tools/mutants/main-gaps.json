@@ -1,0 +1,191 @@
+[
+  {
+    "name": "repo: bracket forms read as no filter",
+    "file": "apps/desktop/src/server.ts",
+    "find": "  if (bracketed || (repoId !== undefined && typeof repoId !== 'string')) {\n",
+    "replace": "  if (repoId !== undefined && typeof repoId !== 'string') {\n",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "repo: a repeated repoId is not refused here",
+    "file": "apps/desktop/src/server.ts",
+    "find": "  if (bracketed || (repoId !== undefined && typeof repoId !== 'string')) {\n",
+    "replace": "  if (bracketed) {\n",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "repo: only the empty bracket form is refused",
+    "file": "apps/desktop/src/server.ts",
+    "find": "key.startsWith('repoId[')",
+    "replace": "key === 'repoId[]'",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "card: absent evidence approvable",
+    "file": "apps/web/src/release-cards.ts",
+    "find": "return detail !== null && detail.absent !== true",
+    "replace": "return detail !== null",
+    "tests": ["apps/web/test/release-cards.test.ts", "apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "card: loading evidence approvable",
+    "file": "apps/web/src/release-cards.ts",
+    "find": "return detail !== null && detail.absent !== true",
+    "replace": "return detail?.absent !== true",
+    "tests": ["apps/web/test/release-cards.test.ts"]
+  },
+  {
+    "name": "card: planner cards serve no evidence",
+    "file": "apps/desktop/src/release.ts",
+    "find": "if (!isReleaseCard(doc)) return plannerCardDetail(doc)",
+    "replace": "if (!isReleaseCard(doc)) return undefined",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "card: a card with nothing to show still serves detail",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (facts.length === 0) return undefined\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "card: evidence shown unredacted",
+    "file": "apps/desktop/src/release.ts",
+    "find": "    value: redact(typeof value === 'string' ? value : JSON.stringify(value), [], []),\n",
+    "replace": "    value: typeof value === 'string' ? value : JSON.stringify(value),\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "card: structured evidence loses its shape",
+    "file": "apps/desktop/src/release.ts",
+    "find": "redact(typeof value === 'string' ? value : JSON.stringify(value), [], [])",
+    "replace": "redact(String(value), [], [])",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "card: an always-confirm class claims an approve records",
+    "file": "apps/desktop/src/release.ts",
+    "find": "      approve: (ALWAYS_CONFIRM as readonly string[]).includes(cls)\n",
+    "replace": "      approve: false\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "card: the class counts as evidence",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  const { class: _class, ...operation } = payload.operation\n",
+    "replace": "  const operation = payload.operation\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "prompts: loader skips the tree beside the bundle",
+    "file": "packages/prompts/src/loader.ts",
+    "find": "  new URL('./prompts-defaults', import.meta.url),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts"]
+  },
+  {
+    "name": "prompts: loader skips the dev bundle path",
+    "file": "packages/prompts/src/loader.ts",
+    "find": "  new URL('../../../packages/prompts/defaults', import.meta.url),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts"]
+  },
+  {
+    "name": "prompts: loader prefers the source path over the tree beside the bundle",
+    "file": "packages/prompts/src/loader.ts",
+    "find": "  new URL('./prompts-defaults', import.meta.url),\n  new URL('../defaults', import.meta.url),\n",
+    "replace": "  new URL('../defaults', import.meta.url),\n  new URL('./prompts-defaults', import.meta.url),\n",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts"]
+  },
+  {
+    "name": "prompts: no tree answers the first candidate instead of throwing",
+    "file": "packages/prompts/src/loader.ts",
+    "find": "    throw new Error(`the shipped prompt defaults are missing: looked in ${candidates.join(', ')}`)\n",
+    "replace": "    return candidates[0] as string\n",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts", "packages/prompts/test/parts.test.ts"]
+  },
+  {
+    "name": "prompts: a candidate with no protocol counts",
+    "file": "packages/prompts/src/loader.ts",
+    "find": "existsSync(join(dir, 'roles', 'meta_agent', 'protocol.md'))",
+    "replace": "existsSync(dir)",
+    "tests": ["packages/prompts/test/parts.test.ts"]
+  },
+  {
+    "name": "prompts: models table misses the tree beside the bundle",
+    "file": "packages/prompts/src/models.ts",
+    "find": "new URL('./prompts-defaults/models.yaml', import.meta.url)",
+    "replace": "new URL('../prompts-defaults/models.yaml', import.meta.url)",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts"]
+  },
+  {
+    "name": "planner: skips the tree beside the bundle",
+    "file": "packages/meta/src/brain.ts",
+    "find": "  new URL('./prompts-defaults', import.meta.url),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts"]
+  },
+  {
+    "name": "planner: skips the dev bundle path",
+    "file": "packages/meta/src/brain.ts",
+    "find": "  new URL('../../../packages/prompts/defaults', import.meta.url),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts"]
+  },
+  {
+    "name": "planner: prefers the source path over the tree beside the bundle",
+    "file": "packages/meta/src/brain.ts",
+    "find": "  new URL('./prompts-defaults', import.meta.url),\n  new URL('../../prompts/defaults', import.meta.url),\n",
+    "replace": "  new URL('../../prompts/defaults', import.meta.url),\n  new URL('./prompts-defaults', import.meta.url),\n",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts"]
+  },
+  {
+    "name": "planner: no tree reads as empty",
+    "file": "packages/meta/src/brain.ts",
+    "find": "    throw new Error(`the shipped prompt defaults are missing: looked in ${DEFAULTS_CANDIDATES.join(', ')}`)\n",
+    "replace": "    return '/nowhere'\n",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts"]
+  },
+  {
+    "name": "startup: no check for the defaults",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  defaultsRoot()\n  const lock",
+    "replace": "  const lock",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts"]
+  },
+  {
+    "name": "root: MEC_DATA_DIR ignored",
+    "file": "packages/prompts/src/models.ts",
+    "find": "export const mecRoot = (): string => process.env.MEC_DATA_DIR ?? join(homedir(), '.mec')",
+    "replace": "export const mecRoot = (): string => join(homedir(), '.mec')",
+    "tests": ["apps/desktop/test/keystore-root.test.ts"]
+  },
+  {
+    "name": "root: unset no longer ~/.mec",
+    "file": "packages/prompts/src/models.ts",
+    "find": "export const mecRoot = (): string => process.env.MEC_DATA_DIR ?? join(homedir(), '.mec')",
+    "replace": "export const mecRoot = (): string => process.env.MEC_DATA_DIR ?? join(homedir(), 'mec')",
+    "tests": ["apps/desktop/test/keystore-root.test.ts"]
+  },
+  {
+    "name": "root: the planner table stays on ~/.mec",
+    "file": "packages/prompts/src/models.ts",
+    "find": "export const userModelsPath = (root = mecRoot())",
+    "replace": "export const userModelsPath = (root = join(homedir(), '.mec'))",
+    "tests": ["apps/desktop/test/keystore-root.test.ts"]
+  },
+  {
+    "name": "root: the planner protocol stays on ~/.mec",
+    "file": "packages/meta/src/brain.ts",
+    "find": "join(process.env.MEC_DATA_DIR ?? join(homedir(), '.mec'), 'prompts')",
+    "replace": "join(homedir(), '.mec', 'prompts')",
+    "tests": ["apps/desktop/test/keystore-root.test.ts"]
+  },
+  {
+    "name": "root: an explicit keystoreRoot loses to the environment",
+    "file": "apps/desktop/src/server.ts",
+    "find": "const keystoreRoot = deps.keystoreRoot ?? mecRoot()",
+    "replace": "const keystoreRoot = mecRoot()",
+    "tests": ["apps/desktop/test/keystore-root.test.ts"]
+  }
+]

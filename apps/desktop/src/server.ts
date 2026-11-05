@@ -12,7 +12,6 @@ import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { Socket } from 'node:net'
-import { homedir } from 'node:os'
 import { extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Effects, HealthBoard, HealthName, Json, ProviderId, Store, StoreDoc } from '@mec/contracts'
@@ -38,7 +37,7 @@ import {
 } from '@mec/meta'
 import type { ConfirmationRecord } from '@mec/policy'
 import { ALWAYS_CONFIRM, loadPolicy, resolveConfirmation } from '@mec/policy'
-import { defaultParts, PromptStore, StaleBaseError, UnknownPartError } from '@mec/prompts'
+import { defaultParts, mecRoot, PromptStore, StaleBaseError, UnknownPartError } from '@mec/prompts'
 import {
   API_KEY_PROBE_TARGETS,
   claudeHome,
@@ -84,7 +83,8 @@ export type ServerDeps = {
    * §5.4 root the engines tree hangs off: slot homes land at
    * `<keystoreRoot>/engines/<engine>/<slot>` and key files at
    * `<keystoreRoot>/engines/<engine>/<slot>/keys/<provider>.key` (0600, nowhere else).
-   * Defaults to `~/.mec`, so keys live under `~/.mec/engines/…` exactly as §5.4 states.
+   * Defaults to `MEC_DATA_DIR` when set, else `~/.mec`, so keys live under `~/.mec/engines/…`
+   * exactly as §5.4 states.
    */
   keystoreRoot?: string
   /** The built web app to serve; defaults to the bundled or repo `dist`. A test seam. */
@@ -199,9 +199,6 @@ function freshId(prefix: string): string {
   idCounter += 1
   return `${prefix}${Date.now().toString(36)}${idCounter.toString(36)}${randomBytes(4).toString('hex')}`
 }
-
-/** §5.4 default keystore root: the engines tree under `~/.mec`. */
-const DEFAULT_KEYSTORE_ROOT = join(homedir(), '.mec')
 
 /** §5.8 zero-token validity probe for Anthropic API keys: GET /v1/models costs no tokens. */
 const VALIDATE_TIMEOUT_MS = 15_000
@@ -403,11 +400,18 @@ function toPartEntry(entry: { state: string; detail?: string }): PartEntry {
 
 /**
  * The optional `repoId` read filter: every row when absent, and a 400 for an id that is not
- * registered, the same answer the chat route gives.
+ * registered, the same answer the chat route gives. A repeated `repoId` arrives as an array,
+ * and `repoId[]=` or `repoId[0]=` arrive under their literal keys: none of those names one
+ * repository, so each is the same 400 and never the unfiltered list.
  */
 function repoFilterOf(store: Store, request: FastifyRequest): { repoId?: string } {
-  const repoId = (request.query as { repoId?: unknown }).repoId
-  if (typeof repoId !== 'string') return {}
+  const query = request.query as Record<string, unknown>
+  const repoId = query.repoId
+  const bracketed = Object.keys(query).some((key) => key.startsWith('repoId['))
+  if (bracketed || (repoId !== undefined && typeof repoId !== 'string')) {
+    throw new RepoAdmissionError('unknown_repo', 'repoId must be one registered repository id')
+  }
+  if (repoId === undefined) return {}
   assertRepoAdmission(store, { repoId })
   return { repoId }
 }
@@ -450,7 +454,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // tests inject one with a fake pty, everyone else gets the default manager.
   const loginCards = deps.loginCards ?? new LoginCardManager()
   // §5.4 where slot homes (and only they) hold keys; §5.8 transport for the zero-token probe.
-  const keystoreRoot = deps.keystoreRoot ?? DEFAULT_KEYSTORE_ROOT
+  const keystoreRoot = deps.keystoreRoot ?? mecRoot()
   // §21.3 wizard probes: local, capped, never throwing; tests inject fixtures.
   const probeCmd = deps.probeCmd ?? defaultProbeCmd
   const validateFetch = deps.validateFetch ?? globalThis.fetch
@@ -766,7 +770,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     }
   })
 
-  // The evidence a release card states (§13): what the owner is approving, never a bare hash.
+  // The evidence a card states (§13): what the owner is approving, never a bare hash.
   app.get('/api/inbox/:id/detail', async (request, reply) => {
     const id = String((request.params as { id?: string }).id ?? '')
     const doc = releaseDeps.store.confirmations.get(id)

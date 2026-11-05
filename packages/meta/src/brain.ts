@@ -10,8 +10,9 @@
  * The protocol text is READ FROM DISK, not a seam: `readMetaProtocol` loads T4's
  * `roles/meta_agent/protocol.md` (+ `planning.md`, §5.3's editable planning rules) — the
  * user's prompt store first (`~/.mec/prompts/`), the shipped defaults second
- * (`packages/prompts/defaults/`) — and falls back to the built-in nine-tool text only when
- * neither exists (an honest fallback, never an invented table). `readProtocol` stays
+ * (`packages/prompts/defaults/`). A build that shipped no defaults throws rather than plan on
+ * less than the shipped prompt; the built-in nine-tool text remains only for a caller that names
+ * its own roots and they hold neither part. `readProtocol` stays
  * injectable so tests pin the protocol text without touching the filesystem. The bundle is
  * compiled with the same revisioned component machinery RealClaudeBrain uses, so the turn
  * still pins a revision.
@@ -493,11 +494,28 @@ const META_PROTOCOL_PARTS = {
   planning: 'roles/meta_agent/planning.md',
 } as const
 
-/** The shipped defaults' root, beside the prompts package this module already imports. */
-const DEFAULTS_ROOT = fileURLToPath(new URL('../../prompts/defaults', import.meta.url))
+/**
+ * Where the shipped defaults can be, in the order `@mec/prompts`' loader looks: beside the bundle
+ * (`dist/prompts-defaults/` in the tarball), in the source tree, and from `apps/desktop/dist`.
+ * This package does not depend on `@mec/prompts`, so it keeps its own copy of the list.
+ */
+const DEFAULTS_CANDIDATES: readonly string[] = [
+  new URL('./prompts-defaults', import.meta.url),
+  new URL('../../prompts/defaults', import.meta.url),
+  new URL('../../../packages/prompts/defaults', import.meta.url),
+].map((url) => fileURLToPath(url))
 
-/** The user's prompt store — §16.1's `~/.mec/prompts/`. */
-const userPromptsRoot = (): string => join(homedir(), '.mec', 'prompts')
+/** The first candidate holding the protocol. None is a broken build, and it says so. */
+function shippedDefaultsRoot(): string {
+  const root = DEFAULTS_CANDIDATES.find((dir) => existsSync(join(dir, META_PROTOCOL_PARTS.protocol)))
+  if (root === undefined) {
+    throw new Error(`the shipped prompt defaults are missing: looked in ${DEFAULTS_CANDIDATES.join(', ')}`)
+  }
+  return root
+}
+
+/** The user's prompt store — §16.1's `~/.mec/prompts/`, under `MEC_DATA_DIR` when that is set. */
+const userPromptsRoot = (): string => join(process.env.MEC_DATA_DIR ?? join(homedir(), '.mec'), 'prompts')
 
 function readPart(root: string, part: string): string | undefined {
   const file = join(root, part)
@@ -515,16 +533,20 @@ function readPart(root: string, part: string): string | undefined {
  * (`~/.mec/prompts/roles/meta_agent/protocol.md` — the editable, revisioned copy), the
  * shipped defaults second (`packages/prompts/defaults/roles/meta_agent/…`). The first root
  * that carries `protocol.md` wins, and its `planning.md` (§5.3's tier-choice rules) is
- * appended when present. Returns '' when neither root has the part — the caller falls back
- * to `DEFAULT_PLANNER_PROTOCOL` and the bundle revision records exactly what ran.
+ * appended when present. With no user part and no shipped tree it throws. Returns '' only when
+ * the caller named a `defaultsRoot` without the part — that caller falls back to
+ * `DEFAULT_PLANNER_PROTOCOL` and the bundle revision records exactly what ran.
  */
 export function readMetaProtocol(opts: { promptsRoot?: string; defaultsRoot?: string } = {}): string {
-  const roots = [opts.promptsRoot ?? userPromptsRoot(), opts.defaultsRoot ?? DEFAULTS_ROOT]
-  for (const root of roots) {
+  const fromRoot = (root: string): string | undefined => {
     const protocol = readPart(root, META_PROTOCOL_PARTS.protocol)
-    if (protocol === undefined) continue
+    if (protocol === undefined) return undefined
     const planning = readPart(root, META_PROTOCOL_PARTS.planning)
     return planning === undefined ? protocol : `${protocol}\n\n${planning}`
   }
-  return ''
+  return (
+    fromRoot(opts.promptsRoot ?? userPromptsRoot()) ??
+    fromRoot(opts.defaultsRoot ?? shippedDefaultsRoot()) ??
+    ''
+  )
 }

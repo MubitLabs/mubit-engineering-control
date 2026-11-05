@@ -2,10 +2,11 @@ import type { DecisionDetail, ResolveResult } from './api'
 
 /**
  * §13: an approval is the action, so it waits until the server has said what it approves.
- * `null` is evidence still loading or failed to load; deny needs no evidence and stays live.
+ * `null` is evidence still loading or failed to load; `absent` is the server's 404, a card with
+ * no evidence to show. Neither can be approved; deny needs no evidence and stays live.
  */
 export function canApprove(detail: DecisionDetail | null): boolean {
-  return detail !== null
+  return detail !== null && detail.absent !== true
 }
 
 /**

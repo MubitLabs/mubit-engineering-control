@@ -70,8 +70,8 @@ export type InboxItem = { id: string; cls: string; operationHash: string; expire
  * consequences of either answer, and the diff summary.
  *
  * TODO(server) #1 of 10: decision what/why/facts/consequences/checks/findings/diff —
- * the inbox serves {id, cls, operationHash, expiresAt}; the detail route serves release cards,
- * and any other card says the evidence is not served.
+ * the inbox serves {id, cls, operationHash, expiresAt}; the detail route serves release cards and
+ * the meta agent's cards, and any other card says the evidence is not served.
  */
 export type DecisionCheck = { name: string; state: 'passed' | 'failed' | 'running' | 'none'; note?: string }
 export type DecisionFinding = { title: string; disposition: string }

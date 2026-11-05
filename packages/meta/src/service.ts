@@ -48,6 +48,7 @@ import { Later } from '@mec/contracts'
 import type { AttemptState, Caps, SchedulableTask, SlotView, WorkItemState } from '@mec/domain'
 import {
   ACTIVE_ATTEMPT_STATES,
+  ATTEMPT_MACHINE,
   BUILTIN_ROLE_NAMES,
   canTransition,
   createMandate,
@@ -1356,15 +1357,22 @@ export class MetaAgentService {
     }
     for (const stop of decision.stops ?? []) {
       const doc = this.#store.attempts.get(stop.attemptId)
-      if (doc !== undefined) {
-        this.#store.attempts.save({ ...doc, state: 'interrupted', updatedAt: at })
-        this.#appendEvent(
-          `attempt:${stop.attemptId}`,
-          'attempt.interrupt_requested',
-          { attemptId: stop.attemptId, at },
-          at,
-        )
+      if (doc === undefined) continue
+      // A queued attempt has no process to confirm the end of. A running one stays running until
+      // the runner has stopped its group and says so (§8.1).
+      if (doc.state === 'queued') {
+        this.#store.attempts.save({
+          ...doc,
+          state: transition(ATTEMPT_MACHINE, 'queued', 'interrupt_confirmed'),
+          updatedAt: at,
+        })
       }
+      this.#appendEvent(
+        `attempt:${stop.attemptId}`,
+        'attempt.interrupt_requested',
+        { attemptId: stop.attemptId, at },
+        at,
+      )
     }
     for (const cancel of decision.cancels ?? []) {
       const doc = this.#store.tasks.get(cancel.taskId)

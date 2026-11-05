@@ -38,7 +38,8 @@ export type LaunchDropReason =
   | 'repo_mismatch'
   | 'attempt_not_queued'
 
-export type LaunchFailureReason = 'no_runner'
+/** `no_runner`, or what a real launch reports: the attempt's stated reason, already redacted. */
+export type LaunchFailureReason = string
 
 /** What the launch gate decides: `defer` keeps the row, `drop` lets it drain unlaunched. */
 export type LaunchAuthority =

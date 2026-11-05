@@ -81,6 +81,8 @@ export async function cachedDefaultTip(gitDir: string): Promise<string> {
 /**
  * Hides `pattern` from `git add` in this worktree and its siblings. `info/exclude` is common to
  * a bare clone's worktrees, so the file sits in the cache, out of the worktree's own reach.
+ * Exclude a directory's contents (`.mec/*`), not the directory: with the directory ignored,
+ * `commitAll`'s `git add --all -- ':!.mec'` exits 1 even though it staged everything else.
  */
 export async function excludeFromWorktree(worktree: string, pattern: string): Promise<void> {
   const { stdout } = await git(['rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'], {

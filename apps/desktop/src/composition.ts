@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { LaunchSpec, Store } from '@mec/contracts'
 import { Later } from '@mec/contracts'
+import { headSha } from '@mec/git'
 import { BridgeImpl, MecToolsServer } from '@mec/mec-tools'
 import {
   failLaunch,
@@ -26,13 +27,16 @@ import {
 } from '@mec/meta'
 import { loadPolicy } from '@mec/policy'
 import { defaultsRoot, loadModelsTable, userModelsPath } from '@mec/prompts'
-import { parkFromEvents } from '@mec/runtime'
+import { parkFromEvents, redactEvent } from '@mec/runtime'
 import { probeModelAvailabilitySync } from '@mec/slots'
 import type { EffectHandler, HealthClaim, Json } from '@mec/store'
 import { DirLock, HealthBoardImpl, InspectionReads, MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import { FakeEngine } from '@mec/testkit'
 import Database from 'better-sqlite3'
+import { AttemptLauncher } from './attempt-launch'
+import { StoreFacts } from './core-facts'
 import { buildHealthSnapshot, buildServer } from './server'
+import { specialistBridge, specialistTools } from './specialist-tools'
 
 /** A minimal valid policy: nothing is pre-authorised (§13); the user's file replaces it. */
 const DEFAULT_POLICY_TEXT = '{"preAuthorised":{}}'
@@ -52,8 +56,8 @@ const CLOSE_BOUND_MS = 10_000
 const BRAIN_CLOSE_GRACE_MS = 1000
 
 /**
- * The safe-side decider both engines and mec-tools see in this milestone. Composition
- * point: once the confirmation inbox backs the bridge, this callback becomes
+ * The safe-side decider for what is not a specialist: the fake path and the tools server's own
+ * surface. Composition point: once the confirmation inbox backs the bridge, this callback becomes
  * `openConfirmation` + wait-for-resolution (plan §9/§13); until then an ask answers deny.
  */
 const DENY_BRIDGE = new BridgeImpl(async () => 'deny')
@@ -104,7 +108,16 @@ export async function startServer(opts: {
 
   // The relay handler reads this late: rows can wait for a meta agent, and one may never come.
   let metaAgent: MetaAgentService | undefined
-  registerEffectHandlers(store, health, policy.versionHash, () => metaAgent)
+  // The launch handler reads this late too: the launcher needs the tools server, which is up
+  // before the first queue pass. It stays undefined with the runner flag off.
+  let launcher: AttemptLauncher | undefined
+  registerEffectHandlers(
+    store,
+    health,
+    policy.versionHash,
+    () => metaAgent,
+    () => launcher,
+  )
 
   // §26 Restart mid-attempt: a previous process's attempts stuck in 'running' reconcile to
   // 'stalled' with a recovery note — one live attempt per task, no duplicate dispatch (the
@@ -158,13 +171,6 @@ export async function startServer(opts: {
   // paused, resume does this instead, and it comes after the deadline shift.
   if (!paused) metaAgent?.enqueueResumes()
 
-  const queueTimer = setInterval(() => {
-    if (paused) return
-    void store.effects.run().catch(() => {})
-  }, PASS_INTERVAL_MS)
-  queueTimer.unref()
-  if (!paused) void store.effects.run().catch(() => {})
-
   // The §21.2 snapshot writer: `mec status` reads <dataDir>/health.json (B0's main reads
   // ~/.mec/health.json — the dataDir IS that root). Rewritten when the board changes and at
   // least every 2s, so a stale file can only ever be one tick old.
@@ -180,17 +186,49 @@ export async function startServer(opts: {
   const healthTimer = setInterval(writeHealth, PASS_INTERVAL_MS)
   healthTimer.unref()
 
-  // mec-tools (A3) on an ephemeral port with a per-process secret. Composition point: the
-  // scheduler mints attempt-scoped tokens (`issueToken`) at launch (plan §6); no tokens are
-  // issued here — the transport being up is what this milestone proves.
+  // mec-tools (A3) on an ephemeral port with a per-process secret; the launcher mints an
+  // attempt-scoped token per launch (plan §6). `MEC_REAL_RUNNER=1` grants no authority: mandate,
+  // hold and repo checks run on every launch, with or without it.
+  const toolsSecret = randomBytes(32).toString('hex')
+  const facts = new StoreFacts(
+    store,
+    <T>(attemptId: string, value: T): T =>
+      redactEvent(value as never, launcher?.fingerprints() ?? [], launcher?.exactsFor(attemptId) ?? []) as T,
+  )
   const tools = new MecToolsServer({
-    secret: randomBytes(32).toString('hex'),
+    secret: toolsSecret,
     bridge: DENY_BRIDGE,
-    onCall: async () => {
-      throw new Error('mec-tools: tool execution is not wired at this composition milestone')
-    },
+    onCall: specialistTools({ store, facts, headOf: headSha }),
   })
-  await tools.start()
+  const { url: toolsUrl } = await tools.start()
+  const realRunner = process.env.MEC_REAL_RUNNER === '1'
+  if (realRunner && process.env.MEC_FAKE_ENGINE !== '1') {
+    launcher = new AttemptLauncher({
+      store,
+      dataDir: opts.dataDir,
+      policyText: opts.policyText ?? DEFAULT_POLICY_TEXT,
+      facts,
+      tools: {
+        url: toolsUrl,
+        secret: toolsSecret,
+        bumpGeneration: (attemptId) => tools.bumpGeneration(attemptId),
+      },
+      bridge: specialistBridge(store),
+      gate: (payload) => launchAuthority(store, payload, new Date().toISOString(), policy.versionHash),
+      drop: (payload, { reason }) => {
+        store.atomic(() => refuseLaunch(store, payload, reason, new Date().toISOString()))
+      },
+    })
+  }
+
+  // The first pass waits for the tools server: a launch needs its URL. Rows a previous process
+  // left running went back to pending above, before this.
+  const queueTimer = setInterval(() => {
+    if (paused) return
+    void store.effects.run().catch(() => {})
+  }, PASS_INTERVAL_MS)
+  queueTimer.unref()
+  if (!paused) void store.effects.run().catch(() => {})
 
   const app = buildServer({
     store,
@@ -216,11 +254,14 @@ export async function startServer(opts: {
     clearInterval(queueTimer)
     clearInterval(healthTimer)
     planner?.quiesce()
+    launcher?.quiesce()
     // The final snapshot answers `not running` (instances 0, not answering) so `mec status`
     // never reports a dead server as healthy.
     const final = buildHealthSnapshot(store, health)
     final.runtime = { state: 'paused', instances: 0, answering: false }
     writeFileSync(healthPath, `${JSON.stringify(final, null, 2)}\n`)
+    // Before the tools go: an engine that loses its tools mid-turn fails instead of stopping.
+    if (launcher !== undefined) await within(opts.closeBoundMs ?? CLOSE_BOUND_MS, launcher.close())
     await tools.stop()
     // §20, decision #36: only work already in flight finishes, within the bound. A drain would
     // start paid planner turns on the way out; pending rows are for the next start. Past the
@@ -448,13 +489,14 @@ function registerEffectHandlers(
   health: HealthBoardImpl,
   policyHash: string,
   metaAgent: () => MetaAgentService | undefined,
+  launcher: () => AttemptLauncher | undefined,
 ): void {
   for (const kind of EFFECT_KINDS) {
     const claim = health.claim(`effects:${kind}`)
     claim.ready()
     const run: EffectHandler =
       kind === 'launch'
-        ? launchHandler(store, policyHash)
+        ? launchHandler(store, policyHash, launcher)
         : kind === 'relay'
           ? relayHandler(metaAgent)
           : unsupportedHandler(kind)
@@ -496,7 +538,11 @@ function unsupportedHandler(kind: string): EffectHandler {
   }
 }
 
-function launchHandler(store: SqliteStore, policyHash: string): EffectHandler {
+function launchHandler(
+  store: SqliteStore,
+  policyHash: string,
+  launcher: () => AttemptLauncher | undefined,
+): EffectHandler {
   return async (payload) => {
     // A failed attempt stays failed: the row keeps failing until the queue gives up on it, where
     // the gate below would drain it as refused.
@@ -516,8 +562,15 @@ function launchHandler(store: SqliteStore, policyHash: string): EffectHandler {
       await runFakeLaunch(store, payload)
       return
     }
-    // No real runtime is wired at this milestone, and a launch that cannot run says so. Not
-    // `Later`: a future runner would pick up stale work.
+    // Returns once the engine runs: a monitor owns the attempt, so this job does not hold one
+    // of the kind's two places, and `settle` does not wait out an attempt.
+    const real = launcher()
+    if (real !== undefined) {
+      await real.launch(payload)
+      return
+    }
+    // The flag is off, and a launch that cannot run says so. Not `Later`: a runner turned on
+    // later would pick up stale work.
     store.atomic(() => failLaunch(store, payload, 'no_runner', at))
     throw new Error('launch failed: no_runner')
   }

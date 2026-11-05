@@ -15,7 +15,7 @@ import type {
   Report,
 } from '@mec/contracts'
 import { buildClaudeArgv } from './argv'
-import { classifyClaudeError, parseClaudeStream } from './stream'
+import { classifyClaudeError, createClaudeEventParser } from './stream'
 
 /**
  * Wires the pure parts to a real process. The runtime owns the environment, worktree,
@@ -67,7 +67,14 @@ type Launch = {
   inputs: Input[]
 }
 
-export type ClaudeAdapterDeps = { spawnFn?: SpawnFn }
+export type ClaudeAdapterDeps = {
+  spawnFn?: SpawnFn
+  /**
+   * The absolute path of the engine. The attempt's PATH starts with its shim directory, which
+   * holds a `claude` that fails by name (§8.3), so a bare name would start the shim.
+   */
+  binary?: string
+}
 
 export class ClaudeAdapter implements EngineAdapter {
   private readonly spawns: Map<string, Launch> = new Map()
@@ -124,6 +131,7 @@ export class ClaudeAdapter implements EngineAdapter {
         ?.split(',')
         .filter(Boolean),
     })
+    if (this.deps.binary !== undefined) argv[0] = this.deps.binary
     const proc = spawnFn(argv, { cwd: spec.cwd, env: spec.env })
     const handle: AttemptHandle = {
       attempt_id: spec.brief.attempt_id,
@@ -152,22 +160,20 @@ export class ClaudeAdapter implements EngineAdapter {
   async *events(handle: AttemptHandle): AsyncIterable<EngineEvent> {
     const launch = this.spawns.get(handle.attempt_id)
     if (!launch) throw new Error(`claude adapter: unknown attempt ${handle.attempt_id}`)
-    const raw: string[] = []
-    for await (const line of launch.proc.stdout) {
-      raw.push(line)
-    }
-    const exitCode = await launch.proc.exited
-    const bodies: EngineEventBody[] = parseClaudeStream(raw, { exitCode })
+    const parser = createClaudeEventParser()
     let seq = 1
-    for (const body of bodies) {
-      yield {
-        ...body,
-        seq: seq++,
-        at: new Date().toISOString(),
-        attempt_id: handle.attempt_id,
-        generation: handle.generation,
-      }
+    const stamped = (body: EngineEventBody): EngineEvent => ({
+      ...body,
+      seq: seq++,
+      at: new Date().toISOString(),
+      attempt_id: handle.attempt_id,
+      generation: handle.generation,
+    })
+    for await (const line of launch.proc.stdout) {
+      for (const body of parser.push(line)) yield stamped(body)
     }
+    // The exit event carries the real exit code, so it is the one thing that waits for the end.
+    for (const body of parser.finish(await launch.proc.exited)) yield stamped(body)
   }
 
   classify(error: unknown): ErrorClass {

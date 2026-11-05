@@ -80,8 +80,8 @@ describe('RepoCache and task branches', () => {
       createBranch: true,
     })
 
-    await excludeFromWorktree(worktree, '.mec/')
-    await excludeFromWorktree(worktree, '.mec/')
+    await excludeFromWorktree(worktree, '.mec/*')
+    await excludeFromWorktree(worktree, '.mec/*')
     mkdirSync(join(worktree, '.mec'))
     writeFileSync(join(worktree, '.mec', 'mcp.json'), '{}\n')
     writeFileSync(join(worktree, 'plain.txt'), 'x\n')

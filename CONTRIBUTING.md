@@ -38,6 +38,8 @@ pnpm check          # typecheck + lint + the whole test suite — every mileston
 pnpm test:a         # core-side suite (contracts and conformance run in both)
 pnpm test:b         # engine/runtime-side suite
 pnpm -s exec vitest run <file>   # one file while iterating
+python3 tools/mutants/run.py tools/mutants/<pr>.json   # a PR's mutants; commit first, it refuses dirty files
+python3 tools/mutants/run.py --self-check tools/mutants/<pr>.json   # proves the runner's own verdicts
 ```
 
 **Commit hygiene:** subject ≤ 72 characters, the narrative in the body — long-form detail

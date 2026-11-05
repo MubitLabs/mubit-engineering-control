@@ -250,6 +250,17 @@ export function stableMessageId(idempotencyKey: string): string {
   return `msg_${digest(idempotencyKey)}`
 }
 
+/** Every string in a value, keys included, with key shapes gone. */
+function redactDeep<T>(value: T): T {
+  const walk = (item: unknown): unknown => {
+    if (typeof item === 'string') return redact(item, [], [])
+    if (Array.isArray(item)) return item.map(walk)
+    if (typeof item !== 'object' || item === null) return item
+    return Object.fromEntries(Object.entries(item).map(([key, entry]) => [redact(key, [], []), walk(entry)]))
+  }
+  return walk(value) as T
+}
+
 /** A brain that always answers with `scripted` — the seam tests and composition wire first. */
 export function fakeBrain(scripted: MetaDecision): MetaBrain {
   return async () => scripted
@@ -1291,7 +1302,15 @@ export class MetaAgentService {
    * planner sends can lift a hold (#20), and a hold or stop is the user's, so a wake turn's
    * route is refused (§10, §13 invariant 4).
    */
-  #persistExtras(workItemId: string, decision: MetaDecision, at: string, wake: boolean): void {
+  #persistExtras(workItemId: string, unredacted: MetaDecision, at: string, wake: boolean): void {
+    // §13 invariant 3: what a planner writes is outside text, and redaction comes before durability.
+    const { questions, confirmations, routes, reports } = redactDeep({
+      questions: unredacted.questions,
+      confirmations: unredacted.confirmations,
+      routes: unredacted.routes,
+      reports: unredacted.reports,
+    })
+    const decision = { ...unredacted, questions, confirmations, routes, reports }
     for (const question of decision.questions ?? []) {
       this.#store.engines.save({
         id: `question/${question.id}`,

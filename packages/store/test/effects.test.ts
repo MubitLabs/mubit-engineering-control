@@ -268,6 +268,39 @@ const gate = (): { wait: Promise<void>; release: () => void } => {
   return { wait, release }
 }
 
+describe('a pause shifts deadlines, not what it held back (§20)', () => {
+  const hour = 3600
+
+  it('a row written during the pause is due at resume, and holds no later relay', async () => {
+    const ran: string[] = []
+    queue.handle('relay', async (payload) => {
+      ran.push(String(payload))
+    })
+    // Paused for an hour; the owner answers halfway through it.
+    advance(hour / 2)
+    queue.enqueue('relay', 'wake:answer', 'answer')
+    advance(hour / 2)
+    queue.enqueue('relay', 'wake:later', 'later')
+
+    queue.shiftWaiting(hour * 1000)
+    await queue.drain()
+
+    expect(ran).toEqual(['answer', 'later'])
+  })
+
+  it('a deadline still ahead at resume moves later by the pause', () => {
+    queue.handle('launch', async () => {
+      throw new Later('not yet')
+    })
+    queue.enqueue('launch', 'a', {})
+    return queue.run().then(() => {
+      const before = Date.parse(queue.snapshot('launch', 'a')?.nextRunAt ?? '')
+      queue.shiftWaiting(hour * 1000)
+      expect(Date.parse(queue.snapshot('launch', 'a')?.nextRunAt ?? '')).toBe(before + hour * 1000)
+    })
+  })
+})
+
 describe('overlapping passes', () => {
   it('a running job is not re-picked by an overlapping pass', async () => {
     const held = gate()

@@ -114,13 +114,17 @@ export class EffectsQueue implements Effects {
     this.health = opts?.health
   }
 
-  /** §26 Pause: every pending/waiting job's deadline moves later by ms. */
+  /**
+   * §26 Pause: a deadline still ahead moves later by ms. A row that fell due during the pause is
+   * due now: moving it would make an answer given in the pause wake up that much late, and an
+   * ordered kind's head holds every row behind it.
+   */
   shiftWaiting(ms: number): void {
     this.db
       .prepare(
-        `UPDATE effects SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', julianday(next_run_at) + (? / 86400000.0)) WHERE state IN ('pending', 'waiting')`,
+        `UPDATE effects SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', julianday(next_run_at) + (? / 86400000.0)) WHERE state IN ('pending', 'waiting') AND next_run_at > ?`,
       )
-      .run(ms)
+      .run(ms, this.now().toISOString())
   }
 
   /**

@@ -854,6 +854,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       reply.code(422).send({ error: 'no_executor', detail: `nothing here can run a '${cls}' card` })
       return
     }
+    // §13: an approval is of what the card states. One that states nothing can only be denied.
+    if (body.answer === 'approve' && cardDetail(doc) === undefined) {
+      reply.code(422).send({ error: 'no_evidence', detail: 'this card states nothing to approve' })
+      return
+    }
     const pending = doc as unknown as ConfirmationRecord
     try {
       const { outcome } = resolveConfirmation(pending, {

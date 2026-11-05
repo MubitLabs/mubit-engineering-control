@@ -1034,26 +1034,32 @@ export async function resolveReleaseCard(
 const isFields = (value: unknown): value is Record<string, Json> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-/** One labelled fact per field: text as written, anything else as JSON, a key shape never shown. */
+const shownSafe = (text: string): string => redact(text, [], [])
+
+/**
+ * One labelled fact per field: text as written, anything else as JSON, a key shape never shown in
+ * either half. An older card was stored before its write was redacted, so this is the last gate.
+ */
 function factsFrom(section: string, fields: Record<string, Json>): Array<{ label: string; value: string }> {
   return Object.entries(fields).map(([key, value]) => ({
-    label: `${section}: ${key}`,
-    value: redact(typeof value === 'string' ? value : JSON.stringify(value), [], []),
+    label: `${section}: ${shownSafe(key)}`,
+    value: shownSafe(typeof value === 'string' ? value : JSON.stringify(value)),
   }))
 }
 
 /**
  * The evidence of a card the meta agent opened with request_confirmation (§13: the card states
  * what is approved, and hard invariant 2 leaves the answer to a person). Undefined when the card
- * names nothing beyond its class: there is nothing to approve, and the workbench lets it be denied.
+ * carries no evidence: there is nothing to approve, and the workbench lets it be denied.
  */
 function plannerCardDetail(doc: StoreDoc): Record<string, Json> | undefined {
   const payload = doc.payload as Record<string, unknown> | undefined
   if (!isFields(payload) || !isFields(payload.operation) || !isFields(payload.evidence)) return undefined
   const { class: _class, ...operation } = payload.operation
-  const facts = [...factsFrom('Operation', operation), ...factsFrom('Evidence', payload.evidence)]
-  if (facts.length === 0) return undefined
-  const cls = String(doc.cls ?? '')
+  const evidence = factsFrom('Evidence', payload.evidence)
+  if (evidence.length === 0) return undefined
+  const facts = [...factsFrom('Operation', operation), ...evidence]
+  const cls = shownSafe(String(doc.cls ?? ''))
   return {
     what: `The meta agent asks for: ${cls.replaceAll('_', ' ')}`,
     verb: 'approve',

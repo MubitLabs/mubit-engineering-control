@@ -72,6 +72,36 @@ const seedWork = (store: MemoryRepositories, id: string, state: string): void =>
   })
 }
 
+describe('a turn writes nothing key-shaped (§13 invariant 3)', () => {
+  const KEY = `sk-ant-${'a1B2c3D4'.repeat(6)}`
+
+  it('redacts operation, evidence, class, questions, notes and reports before any write', async () => {
+    const decision: MetaDecision = {
+      ack: 'On it',
+      confirmations: [
+        {
+          id: 'conf_1',
+          cls: `frontier ${KEY}`,
+          operationHash: 'f'.repeat(64),
+          expiresAt: '2999-01-01T00:00:00.000Z',
+          operation: { class: 'frontier_model', pasted: KEY, [`field ${KEY}`]: [{ deep: KEY }] },
+          evidence: { reason: `because ${KEY}` },
+        },
+      ],
+      questions: [{ id: 'q_1', question: `Use ${KEY}?`, options: [KEY], at: NOW() }],
+      reports: [{ workItemId: 'wi_x', summary: `done ${KEY}`, artifacts: [{ kind: 'k', ref: KEY }], at: NOW() }],
+    }
+    const { service, store } = rig(decision)
+    const outcome = await service.onUserMessage({ messageId: 'msg_1', text: 'go', repoId: REPO })
+
+    expect(JSON.stringify(store.confirmations.get('conf_1'))).not.toContain(KEY)
+    expect(JSON.stringify(store.engines.get('question/q_1'))).not.toContain(KEY)
+    const streams = [`work:${outcome.workItemId}`, 'work:wi_x', 'question/q_1']
+    for (const stream of streams) expect(JSON.stringify(store.events.read(stream))).not.toContain(KEY)
+    expect(store.confirmations.get('conf_1')?.operationHash).toBe('f'.repeat(64))
+  })
+})
+
 describe('MetaAgentService (plan §6/§12)', () => {
   beforeEach(() => {
     process.env.MEC_FAKE_ENGINE = '1'

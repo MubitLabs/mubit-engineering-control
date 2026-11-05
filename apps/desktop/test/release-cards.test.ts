@@ -293,6 +293,7 @@ describe('the UI resolve path acts (§13: a settled approval is never a no-op)',
       status: 'pending',
       createdAt: '2026-11-05T00:00:00.000Z',
       expiresAt: '2999-01-01T00:00:00.000Z',
+      payload: { operation: { command: 'pnpm add x' }, evidence: { reason: 'the task needs it' } },
     })
     const out = await h.post('/api/inbox/conf_install/resolve', { answer: 'approve' })
     expect(out.status).toBe(200)
@@ -1194,6 +1195,28 @@ describe('the card shows exactly what is approved (§13 "the exact diff or comma
       const { run } = fakeGh(world())
       const h = await harness(run)
       const id = await openPlannerCard(h, { evidence: { pasted: `key ${SECRET}` } })
+      expect(JSON.stringify((await h.get(`/api/inbox/${id}/detail`)).body)).not.toContain(SECRET)
+    })
+
+    it('field names and the class are redacted too, on a card stored before writes were', async () => {
+      const { run } = fakeGh(world())
+      const h = await harness(run)
+      const id = await openPlannerCard(h, {
+        cls: `frontier ${SECRET}`,
+        operation: { class: 'frontier_model', [`op ${SECRET}`]: 'x' },
+        evidence: { [`why ${SECRET}`]: 'y' },
+      })
+      // The service redacts on the way in, so this is the row an older build left.
+      const stored = h.store.confirmations.get(id)
+      h.store.confirmations.save({
+        ...stored,
+        id,
+        cls: `frontier ${SECRET}`,
+        payload: {
+          operation: { class: 'frontier_model', [`op ${SECRET}`]: 'x' },
+          evidence: { [`why ${SECRET}`]: 'y' },
+        },
+      })
       expect(JSON.stringify((await h.get(`/api/inbox/${id}/detail`)).body)).not.toContain(SECRET)
     })
 

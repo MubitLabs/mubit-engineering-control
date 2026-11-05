@@ -71,13 +71,18 @@ function makeServer(metaFor?: (store: Store) => ServerDeps['metaAgent']): {
   return { store, app: buildServer(deps) }
 }
 
+const CARD_PAYLOAD = { operation: { command: 'pnpm add left-pad' }, evidence: { reason: 'the task needs it' } }
+
 function pendingConfirmation(id: string): ConfirmationRecord {
-  return openConfirmation({
-    id,
-    cls: 'install',
-    operationHash: 'f'.repeat(64),
-    expiresAt: '2999-01-01T00:00:00.000Z',
-  })
+  return {
+    ...openConfirmation({
+      id,
+      cls: 'install',
+      operationHash: 'f'.repeat(64),
+      expiresAt: '2999-01-01T00:00:00.000Z',
+    }),
+    payload: CARD_PAYLOAD,
+  } as ConfirmationRecord
 }
 
 async function postMessage(
@@ -668,6 +673,30 @@ describe('buildServer', () => {
     expect(store.confirmations.get('conf_install_1')?.status).toBe('approved')
   })
 
+  it('an approve of a card with no evidence answers 422 and leaves it pending (§13)', async () => {
+    const { store, app } = makeServer()
+    const server = track(app)
+    const { payload: _payload, ...bare } = pendingConfirmation('conf_empty') as unknown as StoreDoc
+    store.confirmations.save({ ...bare, payload: { operation: { model: 'x' }, evidence: {} } })
+
+    const approve = await server.inject({
+      method: 'POST',
+      url: '/api/inbox/conf_empty/resolve',
+      payload: { answer: 'approve' },
+    })
+    expect(approve.statusCode).toBe(422)
+    expect(approve.json()).toMatchObject({ error: 'no_evidence' })
+    expect(store.confirmations.get('conf_empty')?.status).toBe('pending')
+
+    const deny = await server.inject({
+      method: 'POST',
+      url: '/api/inbox/conf_empty/resolve',
+      payload: { answer: 'deny' },
+    })
+    expect(deny.statusCode).toBe(200)
+    expect(store.confirmations.get('conf_empty')?.status).toBe('denied')
+  })
+
   it('rejects a resolve with a bad answer or an unknown id', async () => {
     const { app } = makeServer()
     const server = track(app)
@@ -777,6 +806,7 @@ describe('inbox resolve binds to the card input (audit #5)', () => {
         status: 'pending',
         createdAt: '2026-11-03T10:00:00.000Z',
         expiresAt: '2999-01-01T00:00:00.000Z',
+        payload: CARD_PAYLOAD,
       })
     })
     const res = await app.inject({

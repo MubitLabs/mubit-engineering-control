@@ -245,10 +245,15 @@ describe('Chat Setup mode (T7)', () => {
         }),
       },
     })
+    const repository = await app.inject({
+      method: 'POST',
+      url: '/api/repositories',
+      payload: { urlOrPath: 'https://example.test/a', trusted: true, bootstrapCmds: [], checkCmds: [] },
+    })
     const response = await app.inject({
       method: 'POST',
       url: '/api/chat/messages',
-      payload: { text: 'add the audit view' },
+      payload: { text: 'add the audit view', repoId: (repository.json() as { id: string }).id },
       headers: { 'x-mec-client': '1', origin: 'http://127.0.0.1:5173' },
     })
     const body = (await response.json()) as Record<string, unknown>

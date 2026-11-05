@@ -119,6 +119,7 @@ export type ServerDeps = {
       text: string
       referencesWorkItem?: string
       repoId?: string
+      explicitNew?: boolean
     }): Promise<{
       acknowledged: string
       workItemId?: string
@@ -398,11 +399,14 @@ function toPartEntry(entry: { state: string; detail?: string }): PartEntry {
   return { state: 'ok', ...(entry.detail !== undefined && { detail: entry.detail }) }
 }
 
+/** Legacy rows belong to no repository; every repository id starts `repo_`, so this cannot clash. */
+const UNASSIGNED = 'unassigned'
+
 /**
- * The optional `repoId` read filter: every row when absent, and a 400 for an id that is not
- * registered, the same answer the chat route gives. A repeated `repoId` arrives as an array,
- * and `repoId[]=` or `repoId[0]=` arrive under their literal keys: none of those names one
- * repository, so each is the same 400 and never the unfiltered list.
+ * The optional `repoId` read filter: every row when absent, and a 400 for an id that is neither
+ * registered nor `unassigned`, the same answer the chat route gives. A repeated `repoId`
+ * arrives as an array, and `repoId[]=` or `repoId[0]=` arrive under their literal keys: none
+ * of those names one repository, so each is the same 400 and never the unfiltered list.
  */
 function repoFilterOf(store: Store, request: FastifyRequest): { repoId?: string } {
   const query = request.query as Record<string, unknown>
@@ -412,8 +416,28 @@ function repoFilterOf(store: Store, request: FastifyRequest): { repoId?: string 
     throw new RepoAdmissionError('unknown_repo', 'repoId must be one registered repository id')
   }
   if (repoId === undefined) return {}
-  assertRepoAdmission(store, { repoId })
+  if (repoId !== UNASSIGNED) assertRepoAdmission(store, { repoId })
   return { repoId }
+}
+
+/** One repository's rows, the Unassigned rows, or all of them (`repoFilterOf`). */
+function rowsInScope(rows: Store['workItems'], store: Store, request: FastifyRequest): StoreDoc[] {
+  const filter = repoFilterOf(store, request)
+  if (filter.repoId === UNASSIGNED) {
+    return rows.list().filter((doc) => typeof doc.repoId !== 'string')
+  }
+  return rows.list(filter)
+}
+
+const WORK_TITLE_LENGTH = 80
+
+/** §18: work reads by words, not ids. No §10 title exists yet, so the request names it. */
+function workTitleOf(store: Store, work: StoreDoc): string | undefined {
+  const origin =
+    typeof work.originMessageId === 'string' ? store.messages.get(work.originMessageId) : undefined
+  if (typeof origin?.text !== 'string') return undefined
+  const line = origin.text.trim().split('\n', 1)[0] ?? ''
+  return Array.from(line.trim()).slice(0, WORK_TITLE_LENGTH).join('') || undefined
 }
 
 /** Live work for routing (§12.1): this repository's work items, neither done nor stopped. */
@@ -530,6 +554,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       referencesWorkItem?: unknown
       setup?: unknown
       repoId?: unknown
+      intent?: unknown
     }
     const text = typeof body.text === 'string' ? body.text.trim() : ''
     if (text === '') {
@@ -540,7 +565,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       reply.code(400).send({ error: 'repoId must be a non-empty string' })
       return
     }
-    // §12.1, decision #10: absent is Unassigned; unknown or crossing is refused before any write.
+    // §12.1, decision #10: unknown or crossing is refused before any write.
     const repoId = typeof body.repoId === 'string' ? body.repoId : undefined
     const repo: { repoId?: string } = repoId !== undefined ? { repoId } : {}
     const referencesWorkItem =
@@ -610,6 +635,34 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       }
     }
 
+    // §12.1, decision #10: every message belongs to a repository's conversation. Setup and the
+    // secret guard answer above this line, so Setup works with zero repositories.
+    if (repoId === undefined) {
+      reply.code(400).send({ error: 'repo_required' })
+      return
+    }
+
+    // §12.1: a follow-up names its work and a New request names none, so the routing rules
+    // never have to guess which of the two the owner meant.
+    if (body.intent !== undefined && body.intent !== 'new' && body.intent !== 'follow_up') {
+      reply.code(400).send({ error: "intent must be 'new' or 'follow_up'" })
+      return
+    }
+    const intent = body.intent
+    if (intent === 'follow_up' && referencesWorkItem === undefined) {
+      reply.code(400).send({ error: 'follow_up_needs_reference' })
+      return
+    }
+    if (intent === 'new' && referencesWorkItem !== undefined) {
+      reply.code(400).send({ error: 'new_refuses_reference' })
+      return
+    }
+    const explicitNew = intent === 'new'
+    const submitted = {
+      ...(intent !== undefined && { intent }),
+      ...(referencesWorkItem !== undefined && { referencesWorkItem }),
+    }
+
     // Clients send `x-idempotency-key` (the web api module); the bare form is accepted too.
     const header = request.headers['x-idempotency-key'] ?? request.headers['idempotency-key']
     const headerText = Array.isArray(header) ? header[0] : header
@@ -621,6 +674,15 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       if (replay !== undefined) {
         if (replay.repoId !== repoId) {
           throw new RepoAdmissionError('repo_mismatch', 'that idempotency key belongs to another repository')
+        }
+        // A key names one exact request: an edited payload must never read as delivered.
+        if (
+          replay.text !== text ||
+          replay.intent !== intent ||
+          replay.referencesWorkItem !== referencesWorkItem
+        ) {
+          reply.code(409).send({ error: 'idempotency_mismatch' })
+          return
         }
         return {
           messageId: String(replay.id),
@@ -636,11 +698,17 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     // Composed path: the meta-agent service owns message persistence, routing, the ack,
     // the plan and the launch enqueues (§6). The route only adds the idempotency key.
     if (deps.metaAgent !== undefined) {
-      const outcome = await deps.metaAgent.onUserMessage({ messageId, text, referencesWorkItem, ...repo })
+      const outcome = await deps.metaAgent.onUserMessage({
+        messageId,
+        text,
+        referencesWorkItem,
+        explicitNew,
+        ...repo,
+      })
       if (idempotencyKey !== undefined) {
         store.atomic(() => {
           const doc = store.messages.get(messageId)
-          if (doc !== undefined) store.messages.save({ ...doc, idempotencyKey })
+          if (doc !== undefined) store.messages.save({ ...doc, ...submitted, idempotencyKey })
         })
       }
       return {
@@ -664,11 +732,15 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         text,
         createdAt: at,
         ...repo,
-        ...(referencesWorkItem !== undefined && { referencesWorkItem }),
+        ...submitted,
         ...(idempotencyKey !== undefined && { idempotencyKey }),
       }
 
-      const decision = routeMessage({ referencesWorkItem, liveWork: liveWorkOf(store, repoId) })
+      const decision = routeMessage({
+        referencesWorkItem,
+        liveWork: liveWorkOf(store, repoId),
+        explicitNew,
+      })
 
       let workItemId: string | undefined
       if (decision.action === 'new_work') {
@@ -698,7 +770,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   })
 
   app.get('/api/chat/messages', async (request) => {
-    const messages = store.messages.list(repoFilterOf(store, request))
+    const messages = rowsInScope(store.messages, store, request)
     return [...messages].sort(
       (a, b) =>
         String(a.createdAt).localeCompare(String(b.createdAt)) || String(a.id).localeCompare(String(b.id)),
@@ -783,7 +855,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   })
 
   app.get('/api/work', async (request) =>
-    store.workItems.list(repoFilterOf(store, request)).map((doc) => {
+    rowsInScope(store.workItems, store, request).map((doc) => {
       const id = String(doc.id)
       const tasks = store.tasks.list({ workItemId: id })
       const byStatus: Record<string, number> = {}
@@ -792,9 +864,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         byStatus[status] = (byStatus[status] ?? 0) + 1
       }
       const state = typeof doc.state === 'string' ? doc.state : 'admitted'
+      const title = workTitleOf(store, doc)
       return {
         id,
         ...(typeof doc.repoId === 'string' && { repoId: doc.repoId }),
+        ...(title !== undefined && { title }),
         state,
         // The §10 first-match stage projection lands with the scheduler milestone; until
         // then the work item's own lifecycle state is the honest stage.

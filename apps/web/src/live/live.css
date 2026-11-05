@@ -1,0 +1,23 @@
+/* Only what the live surfaces add to the next shell's own stylesheets. */
+
+.composer-failure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--red);
+  font-size: 13px;
+}
+
+.live-notice {
+  margin-bottom: 16px;
+}
+
+.work-actions {
+  padding: 4px 16px 12px;
+}
+
+.repo-choices {
+  max-width: 440px;
+}

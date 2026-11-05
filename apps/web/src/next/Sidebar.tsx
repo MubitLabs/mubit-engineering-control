@@ -46,6 +46,8 @@ export interface SidebarProps {
   onNavigate: (route: Route) => void
   /** null when the count is unknown: that is different from nothing waiting. */
   needsCount: number | null
+  /** Legacy rows with no repository, offered read-only while any exist. */
+  unassigned?: { current: boolean; onOpen: () => void }
   recent: readonly RecentItem[]
   onOpenRecent: (id: string) => void
   footnote: string
@@ -61,7 +63,8 @@ export function Sidebar(props: SidebarProps) {
   const repository = props.repositories.find((entry) => entry.id === props.repositoryId) ?? null
   const [choosing, setChoosing] = useState(false)
   const repoButton = useRef<HTMLButtonElement>(null)
-  const canSwitch = props.repositories.length > 1
+  const canSwitch = props.repositories.length > 1 || (props.repositories.length === 1 && repository === null)
+  const repoLabel = repository ?? { name: 'Choose a repository', detail: 'None chosen yet' }
 
   const navItem = (target: Route) => {
     const NavIcon = ROUTE_ICONS[target]
@@ -106,17 +109,17 @@ export function Sidebar(props: SidebarProps) {
         )}
       </div>
 
-      {canSwitch && repository ? (
+      {canSwitch ? (
         <button
           ref={repoButton}
           type="button"
           className="repo-switch"
           aria-haspopup="dialog"
           aria-expanded={choosing}
-          aria-label={`Repository: ${repository.name}. Switch repository`}
+          aria-label={repository ? `Repository: ${repository.name}. Switch repository` : repoLabel.name}
           onClick={() => setChoosing(true)}
         >
-          <RepositoryLabel name={repository.name} detail={repository.detail} />
+          <RepositoryLabel name={repoLabel.name} detail={repoLabel.detail} />
           <UpDownIcon />
         </button>
       ) : (
@@ -130,6 +133,17 @@ export function Sidebar(props: SidebarProps) {
 
       <nav className="nav-stack" aria-label="Workspace">
         {WORK_ROUTES.map(navItem)}
+        {props.unassigned && (
+          <button
+            type="button"
+            className="nav-item"
+            aria-current={props.unassigned.current ? 'page' : undefined}
+            onClick={props.unassigned.onOpen}
+          >
+            <WorkIcon />
+            Unassigned
+          </button>
+        )}
       </nav>
 
       {recent.length > 0 && (

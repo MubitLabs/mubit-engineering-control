@@ -49,7 +49,12 @@ export type ChatMessage = {
   id: string
   text: string
   createdAt: string
+  repoId?: string
   workItemId?: string
+  /** The meta agent's acknowledgement, stored on the message it answers. */
+  ackText?: string
+  /** The server redacted this message: it looked like a key. */
+  secretGuard?: boolean
   kind?: ChatMessageKind
   /** Who said it, e.g. "Meta agent on max-1" / "You". */
   meta?: string
@@ -57,6 +62,10 @@ export type ChatMessage = {
   /** A notice's optional action, e.g. { label: "See slots", route: "slots" }. */
   noticeRoute?: { label: string; route: string }
 }
+
+/** §12.1: a New request starts work; a follow-up names the work it binds to. */
+export type ChatIntent = 'new' | 'follow_up'
+export type ChatTarget = { repoId: string; referencesWorkItem?: string; intent?: ChatIntent }
 
 /** POST /api/chat/messages response. */
 export type SendChatResult = { messageId: string; workItemId?: string }
@@ -114,10 +123,13 @@ export type WorkTaskCounts = { total: number; byStatus: Record<string, number> }
 /**
  * GET /api/work — one row per work item, exactly as the server serves it:
  * {id, state, stage, held, taskCounts: {total, byStatus}, updatedAt} (stage is the
- * item's own lifecycle state until the §10 projection lands).
+ * item's own lifecycle state until the §10 projection lands). `repoId` is absent on legacy
+ * rows, which are read-only. `title` is the origin message's first line.
  */
 export type WorkItem = {
   id: string
+  repoId?: string
+  title?: string
   state: string
   stage: string
   held?: boolean
@@ -364,19 +376,19 @@ async function orAbsent<T>(call: () => Promise<T>, absent: () => T): Promise<T> 
   }
 }
 
+const repoQuery = (repoId?: string): string =>
+  repoId === undefined ? '' : `?repoId=${encodeURIComponent(repoId)}`
+
 export const api = {
   status(): Promise<StatusSnapshot> {
     return request<StatusSnapshot>('/api/status')
   },
 
-  async sendChat(
-    text: string,
-    referencesWorkItem?: string,
-    idempotencyKey?: string,
-  ): Promise<SendChatResult> {
+  async sendChat(text: string, target: ChatTarget, idempotencyKey?: string): Promise<SendChatResult> {
     const key = idempotencyKey ?? newIdempotencyKey()
-    const body: Record<string, string> = { text }
-    if (referencesWorkItem !== undefined) body.referencesWorkItem = referencesWorkItem
+    const body: Record<string, string> = { text, repoId: target.repoId }
+    if (target.referencesWorkItem !== undefined) body.referencesWorkItem = target.referencesWorkItem
+    if (target.intent !== undefined) body.intent = target.intent
     return request<SendChatResult>('/api/chat/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-idempotency-key': key },
@@ -384,8 +396,9 @@ export const api = {
     })
   },
 
-  chat(): Promise<ChatMessage[]> {
-    return request<ChatMessage[]>('/api/chat/messages')
+  /** Everything with no `repoId`, one repository's rows with one, `unassigned` for legacy rows. */
+  chat(repoId?: string, signal?: AbortSignal): Promise<ChatMessage[]> {
+    return request<ChatMessage[]>(`/api/chat/messages${repoQuery(repoId)}`, { signal })
   },
 
   inbox(): Promise<InboxItem[]> {
@@ -407,8 +420,9 @@ export const api = {
     }
   },
 
-  work(): Promise<WorkItem[]> {
-    return request<WorkItem[]>('/api/work')
+  /** Same scopes as `chat`. */
+  work(repoId?: string, signal?: AbortSignal): Promise<WorkItem[]> {
+    return request<WorkItem[]>(`/api/work${repoQuery(repoId)}`, { signal })
   },
 
   slots(): Promise<SlotEntry[]> {

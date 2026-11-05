@@ -11,6 +11,9 @@
  * Resemblance to an existing work item is the meta agent's context, never an attachment;
  * genuine ambiguity is confirmed with the user — cheaply, once (§12.1) — not decided here.
  *
+ * **An explicit New request is new work**, even beside live work: the owner said so, which is
+ * the "explicit" authorisation §12.1 gives chat. It never overrides a reference.
+ *
  * A reference that resolves to nothing in the given work set does not bind either; the
  * message falls through to the reference-absent rules, and the caller resolves the
  * dangling reference as ambiguity.
@@ -31,6 +34,7 @@ export type RoutingDecision =
 export function routeMessage(input: {
   referencesWorkItem?: string
   liveWork: readonly LiveWork[]
+  explicitNew?: boolean
 }): RoutingDecision {
   const reference = input.referencesWorkItem
   if (reference !== undefined) {
@@ -41,5 +45,6 @@ export function routeMessage(input: {
         : { action: 'attach', workItemId: target.workItemId }
     }
   }
+  if (input.explicitNew === true) return { action: 'new_work' }
   return input.liveWork.some((w) => !w.stopped) ? { action: 'conversation' } : { action: 'new_work' }
 }

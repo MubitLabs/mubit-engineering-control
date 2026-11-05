@@ -38,8 +38,8 @@ Every route in `apps/desktop/src/server.ts`. **Auth model: loopback only** — t
 
 | Method | Path | Body | What it does |
 | --- | --- | --- | --- |
-| POST | `/api/chat/messages` | `{ text, referencesWorkItem?, repoId? }` (+ `x-idempotency-key` header) | Sends one message. `repoId` names the repository's conversation: unknown (`unknown_repo`) or crossing (`repo_mismatch`) is a 400 before any write; absent is Unassigned, which plans but never launches. Key-shaped text is stored **redacted** and answered with a Slots pointer; the meta-agent path returns the acknowledgement, routing (`conversation`/`new_work`/`attach`) and launch count; a replayed idempotency key returns the first answer verbatim. |
-| GET | `/api/chat/messages` | `?repoId=` | All messages, oldest first, or one repository's. An unknown id is a 400. |
+| POST | `/api/chat/messages` | `{ text, repoId, referencesWorkItem?, intent?, setup? }` (+ `x-idempotency-key` header) | Sends one message. `repoId` names the repository's conversation: absent is `repo_required`, unknown (`unknown_repo`) or crossing (`repo_mismatch`) is a 400 before any write. `setup: true` and key-shaped text need no `repoId`: Setup talks to the setup agent, and key-shaped text is stored **redacted** and answered with a Slots pointer. `intent: 'new'` starts work even beside live work and refuses a reference (`new_refuses_reference`); `intent: 'follow_up'` needs one (`follow_up_needs_reference`). With no `intent`, §12.1 routing decides. The meta-agent path returns the acknowledgement, routing (`conversation`/`new_work`/`attach`) and launch count. A follow-up to stopped work is refused with routing `conversation` here; the signal is `stopped_refused` on the stored message, not this field. A replayed idempotency key returns the first answer verbatim; the same key with a different text, intent or reference is a 409 `idempotency_mismatch`, and with a different repository a 400 `repo_mismatch`. |
+| GET | `/api/chat/messages` | `?repoId=` | All messages, oldest first, or one repository's. `unassigned` returns the rows with no repository. An unknown id is a 400. |
 
 ### Inbox (confirmations)
 
@@ -52,7 +52,7 @@ Every route in `apps/desktop/src/server.ts`. **Auth model: loopback only** — t
 
 | Method | Path | Body | What it does |
 | --- | --- | --- | --- |
-| GET | `/api/work` | `?repoId=` | Work items with state, stage, `held` and task counts by status, or one repository's. A row with no `repoId` is Unassigned. An unknown id is a 400. |
+| GET | `/api/work` | `?repoId=` | Work items with title (the origin message's first line, 80 characters), state, stage, `held` and task counts by status, or one repository's. `unassigned` returns the rows with no repository, which are read-only. An unknown id is a 400. |
 | POST | `/api/work/:id/hold` | `{ reason? }` | Holds the work: `{ id, status: 'held' }`. A hold survives restart, a plan finishing during it is saved with no launches, and launches already queued wait. 404 unknown, 409 `{ error }`: `terminal`, or `read_only` for legacy Unassigned work. |
 | POST | `/api/work/:id/lift` | — | The only release of a hold. Revalidates the mandate, lifts, and launches saved ready tasks that have no attempt: `{ id, status: 'lifted', launches }`. A launch queued before the hold restarts within 30 s. Work not held answers `status: 'free'` and writes nothing. 404 unknown, 409 `{ error }` with the hold kept: `mandate_withdrawn`, `mandate_expired`, `mandate_policy_changed`, `read_only`, or `no_meta_agent`. |
 | POST | `/api/work/:id/stop` | — | Ends the work, withdraws its mandate, interrupts queued attempts and records an interrupt request for running ones: `{ id, status: 'stopped' }`. Final: only a new request starts the work again. Idempotent, works with no meta agent and on legacy work. 404 unknown, 409 `{ error: 'done' }` on finished work. |

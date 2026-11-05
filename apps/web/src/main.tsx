@@ -13,7 +13,7 @@ if (search !== window.location.search) {
 // thing as an if, into one preload list and hands classic's CSS to both shells
 // (test/shell-split.test.ts).
 const SHELLS = {
-  next: () => import('./next/entry'),
+  next: () => import('./live/entry'),
   classic: () => import('./classic-entry'),
 }
 

@@ -27,6 +27,16 @@ describe('routeMessage (plan §12.1)', () => {
     expect(routeMessage({ liveWork: [work('wi-1')] })).toEqual({ action: 'conversation' })
   })
 
+  it('explicitNew starts new work with live work present', () => {
+    expect(routeMessage({ explicitNew: true, liveWork: [work('wi-1')] })).toEqual({ action: 'new_work' })
+  })
+
+  it('explicitNew never overrides a stopped reference', () => {
+    expect(
+      routeMessage({ explicitNew: true, referencesWorkItem: 'wi-1', liveWork: [work('wi-1', true)] }),
+    ).toEqual({ action: 'stopped_refused', workItemId: 'wi-1' })
+  })
+
   it('no reference with nothing live is new work', () => {
     expect(routeMessage({ liveWork: [] })).toEqual({ action: 'new_work' })
   })

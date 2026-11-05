@@ -10,9 +10,11 @@ export {
 } from './claude/stream'
 // Codex app-server (plan §9): one `codex app-server` per slot, one thread per attempt.
 export {
+  CODEX_FLAGS_VERIFIED,
   CODEX_PERMISSION_DEADLINE_MS,
   CodexAdapter,
   type CodexAdapterDeps,
+  type CodexConnection,
   type CodexLoginStatus,
   type CodexNotifications,
   type CodexPost,

@@ -1,9 +1,11 @@
-import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { EngineEvent, PermissionBridge } from '@mec/contracts'
 import { describe, expect, it } from 'vitest'
+import { startCodexClient } from '../../runtime/src/codex-client'
+import { ownedSpawn } from '../../runtime/src/owned-spawn'
+import { Supervisor } from '../../runtime/src/supervisor'
 import { CodexAdapter } from '../src/codex/adapter'
 
 /**
@@ -17,102 +19,20 @@ import { CodexAdapter } from '../src/codex/adapter'
 const REAL = process.env.MEC_REAL_CODEX === '1'
 const SLOT = process.env.MEC_CODEX_SLOT ?? join(process.env.HOME ?? '', '.mec/engines/codex/codex-1')
 
-/** One real `codex app-server` child, wired into the adapter's injectable deps (argv-only spawn). */
-type RealClient = {
-  post: (payload: unknown) => Promise<unknown>
-  notifications: () => AsyncIterable<string>
-  processExitCode: () => number | undefined
-  stop: () => Promise<void>
-}
+/** One real `codex app-server`, through the runtime's client, in its own process group. */
+type RealClient = ReturnType<typeof startCodexClient> & { stop: () => Promise<void> }
 
 function startAppServer(): RealClient {
-  const child = spawn('codex', ['app-server'], {
-    env: { ...process.env, CODEX_HOME: SLOT },
-    stdio: ['pipe', 'pipe', 'pipe'],
+  const supervisor = new Supervisor()
+  const owner = { attemptId: 'canary', generation: 1 }
+  const client = startCodexClient({
+    binary: 'codex',
+    args: ['app-server'],
+    cwd: tmpdir(),
+    env: { ...process.env, CODEX_HOME: SLOT } as Record<string, string>,
+    spawn: ownedSpawn(supervisor, owner, { stdin: true }),
   })
-  const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
-  const queue: string[] = []
-  const wakeups: (() => void)[] = []
-  let ended = false
-  let exitCode: number | undefined
-  child.stdout.setEncoding('utf8')
-  let buf = ''
-  child.stdout.on('data', (chunk: string) => {
-    buf += chunk
-    for (let nl = buf.indexOf('\n'); nl >= 0; nl = buf.indexOf('\n')) {
-      const line = buf.slice(0, nl)
-      buf = buf.slice(nl + 1)
-      if (line.trim() === '') continue
-      let msg: Record<string, unknown>
-      try {
-        msg = JSON.parse(line) as Record<string, unknown>
-      } catch {
-        continue
-      }
-      if (
-        msg.method === undefined &&
-        msg.id !== undefined &&
-        (msg.result !== undefined || msg.error !== undefined)
-      ) {
-        const waiter = pending.get(Number(msg.id))
-        if (waiter) {
-          pending.delete(Number(msg.id))
-          msg.error !== undefined
-            ? waiter.reject(new Error(JSON.stringify(msg.error)))
-            : waiter.resolve(msg.result)
-          continue
-        }
-      }
-      // notifications AND server→client requests (approval asks) feed the adapter
-      queue.push(line)
-      for (const wake of wakeups.splice(0)) wake()
-    }
-  })
-  child.on('exit', (code) => {
-    ended = true
-    exitCode = code === null ? 137 : code
-    for (const wake of wakeups.splice(0)) wake()
-  })
-  return {
-    post: (payload) =>
-      new Promise((resolve, reject) => {
-        const message = payload as { id?: number | string; method?: string }
-        if (message.method === undefined || message.id === undefined) {
-          // a notification (no id) or a RESPONSE to a server request (no method): nothing comes back
-          child.stdin.write(`${JSON.stringify(payload)}\n`)
-          resolve({})
-          return
-        }
-        pending.set(Number(message.id), { resolve, reject })
-        child.stdin.write(`${JSON.stringify(payload)}\n`)
-      }),
-    notifications: () => ({
-      [Symbol.asyncIterator]() {
-        return {
-          async next(): Promise<IteratorResult<string>> {
-            while (queue.length === 0 && !ended) {
-              await new Promise<void>((r) => wakeups.push(r))
-            }
-            return queue.length > 0
-              ? { value: queue.shift() as string, done: false }
-              : { value: undefined, done: true }
-          },
-        }
-      },
-    }),
-    processExitCode: () => exitCode,
-    stop: async () => {
-      child.kill('SIGTERM')
-      await new Promise<void>((r) => {
-        if (ended) return r()
-        child.on('exit', () => r())
-        setTimeout(() => {
-          child.kill('SIGKILL')
-          r()
-        }, 2000)
-      })
-    },
-  }
+  return { ...client, stop: async () => void (await supervisor.stop(owner.attemptId, owner.generation)) }
 }
 
 const brief = (over: {

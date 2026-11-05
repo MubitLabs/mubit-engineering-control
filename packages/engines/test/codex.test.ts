@@ -20,6 +20,7 @@ const NOW = '2026-11-03T15:18:57.000Z'
 const CASES = [
   { scenario: 'smoke', exitCode: 0 },
   { scenario: 'permission_request', exitCode: 0 },
+  { scenario: 'escalation_declined', exitCode: 0 }, // through the runner, under the mec profile
   { scenario: 'auth_expired', exitCode: 137 }, // the recorder SIGKILLed the retrying server
   { scenario: 'rate_limit_rejected', exitCode: 1 },
 ] as const
@@ -132,13 +133,77 @@ describe('CodexAdapter launch/send/interrupt', () => {
     const none = JSON.parse(JSON.stringify(spec({ read_only: true }))) as LaunchSpec
     none.brief.isolation.permission_mode = 'none'
     await adapter.launch(none)
-    expect(posts[5]).toMatchObject({
+    // One process takes one handshake, so a later launch goes straight to its thread.
+    expect(posts.filter((post) => (post as { method?: string }).method === 'initialize')).toHaveLength(1)
+    expect(posts[3]).toMatchObject({
       method: 'thread/start',
       params: { sandbox: 'read-only', approvalPolicy: 'never' },
     })
     const resumed = await adapter.launch(spec({ resume: { session_id: 'th_t9' } }))
     expect(resumed.session_id).toBe('th_t9')
-    expect(posts[8]).toMatchObject({ method: 'thread/resume', params: { threadId: 'th_t9' } })
+    expect(posts[4]).toMatchObject({ method: 'thread/resume', params: { threadId: 'th_t9' } })
+  })
+
+  it('with a profile, thread/start leaves sandbox out, and a thread without it refuses', async () => {
+    const posts: unknown[] = []
+    const started = (active: unknown) =>
+      new CodexAdapter({
+        profile: 'mec',
+        post: async (payload) => {
+          posts.push(payload)
+          return (payload as { method?: string }).method === 'thread/start'
+            ? { thread: { id: 'th_1' }, activePermissionProfile: active }
+            : {}
+        },
+      })
+    await started({ id: 'mec', extends: null }).launch(spec())
+    expect(posts[2]).toMatchObject({ method: 'thread/start' })
+    expect((posts[2] as { params: object }).params).not.toHaveProperty('sandbox')
+    await expect(started(null).launch(spec())).rejects.toThrow('sandbox profile is not active')
+  })
+
+  it('a launch through connect starts the turn with the brief, and send stays unsupported', async () => {
+    const posts: { method?: string; params?: unknown }[] = []
+    const post = async (payload: unknown) => {
+      posts.push(payload as { method?: string })
+      return (payload as { method?: string }).method === 'thread/start' ? { thread: { id: 'th_1' } } : {}
+    }
+    const adapter = new CodexAdapter({
+      connect: async () => ({
+        post,
+        notifications: async function* () {},
+        processExitCode: () => undefined,
+      }),
+    })
+    const handle = await adapter.launch(spec())
+    expect(posts.at(-1)).toMatchObject({
+      method: 'turn/start',
+      params: { input: [{ type: 'text', text: 'Add the audit log view' }] },
+    })
+    await expect(adapter.send(handle, { id: 'inp_1', kind: 'message', text: 'more' })).rejects.toThrow(
+      'send is not proven',
+    )
+  })
+
+  it('the stream ends at the turn end through connect: the server never exits by itself', async () => {
+    const adapter = new CodexAdapter({
+      connect: async () => ({
+        post: async (payload) =>
+          (payload as { method?: string }).method === 'thread/start' ? { thread: { id: 'th_1' } } : {},
+        notifications: async function* () {
+          yield JSON.stringify({
+            method: 'turn/completed',
+            params: { turn: { status: 'completed' } },
+          })
+          await new Promise(() => {}) // the real one stays up with nothing to say
+        },
+        processExitCode: () => undefined,
+      }),
+    })
+    const handle = await adapter.launch(spec())
+    const events = []
+    for await (const event of adapter.events(handle)) events.push(event)
+    expect(events.at(-1)).toMatchObject({ type: 'exit', terminal_reason: 'completed' })
   })
 
   it('send posts turn/start with input items, then turn/steer with the active turn id', async () => {
@@ -348,6 +413,42 @@ describe('CodexAdapter permission bridge', () => {
   })
 })
 
+describe('CodexAdapter answers every server request', () => {
+  const answered = async (line: Record<string, unknown>, decision: 'allow' | 'deny') => {
+    const posts: { id?: unknown; result?: unknown; error?: unknown }[] = []
+    const adapter = new CodexAdapter({
+      post: async (payload) => {
+        posts.push(payload as { id?: unknown })
+        return (payload as { method?: string }).method === 'thread/start' ? { thread: { id: 'th_1' } } : {}
+      },
+      notifications: async function* () {
+        yield JSON.stringify(line)
+      },
+      processExitCode: () => 0,
+    })
+    const handle = await adapter.launch(spec({ bridge: { request: async () => decision } }))
+    for await (const _ of adapter.events(handle)) {
+      // drained for its side effects
+    }
+    return posts.find((post) => post.id === line.id)
+  }
+
+  it('a request with no bridge mapping gets a JSON-RPC error, or the turn would hang', async () => {
+    const answer = await answered({ id: 'x1', method: 'item/tool/call', params: {} }, 'deny')
+    expect(answer?.error).toMatchObject({ code: -32601 })
+  })
+
+  it('an MCP elicitation is declined in its own vocabulary', async () => {
+    const line = { id: 'x2', method: 'mcpServer/elicitation/request', params: { serverName: 'other' } }
+    expect((await answered(line, 'deny'))?.result).toEqual({ action: 'decline', content: null, _meta: null })
+  })
+
+  it('a permissions request grants nothing, even on an allow', async () => {
+    const line = { id: 'x3', method: 'item/permissions/requestApproval', params: { reason: 'more' } }
+    expect((await answered(line, 'allow'))?.result).toEqual({ permissions: {}, scope: 'turn' })
+  })
+})
+
 describe('classifyCodexError', () => {
   it('maps the real and documented failure shapes', () => {
     // the real auth-expired shape: the message alone says nothing (docs/engines.md)
@@ -397,6 +498,10 @@ describe('CodexAdapter.probe', () => {
     expect(capabilities.usage_mode).toBe('cumulative')
     expect(capabilities.tool_approval).toBe(true)
     expect(capabilities.sandbox).toBe(true)
-    expect(capabilities.restricted_mode).toBe(true)
+    // What the runner proved, not what the protocol offers (§9).
+    expect(capabilities.restricted_mode).toBe(false)
+    expect(capabilities.resume).toBe(false)
+    expect(capabilities.interrupt).toBe(false)
+    expect(capabilities.questions).toBe(false)
   })
 })

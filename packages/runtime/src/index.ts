@@ -8,6 +8,19 @@ export type {
 export { AttemptRunner, NotWiredError } from './attempt-runner'
 export type { CheckOutcome, CheckSpec } from './checks'
 export { LOG_TAIL_BYTES, runCheck, runChecks } from './checks'
+export type {
+  CodexAttemptOptions,
+  CodexClient,
+  CodexClientOptions,
+  CodexServerRef,
+} from './codex-client'
+export {
+  CODEX_PROFILE,
+  CODEX_TOKEN_VAR,
+  codexAttemptArgs,
+  codexOtherServers,
+  startCodexClient,
+} from './codex-client'
 export type { DriftCheck } from './drift'
 export { checkDrift } from './drift'
 export type { AgentEnvInput } from './env'

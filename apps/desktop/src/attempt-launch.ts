@@ -21,6 +21,8 @@ import { pathToFileURL } from 'node:url'
 import type {
   AttemptBrief,
   AttemptRef,
+  EngineAdapter,
+  EngineId,
   Input,
   IsolationProfile,
   Json,
@@ -30,7 +32,6 @@ import type {
 } from '@mec/contracts'
 import { AttemptBrief as AttemptBriefSchema, Later, ModelRequest } from '@mec/contracts'
 import { BUILTIN_ROSTER, type BuiltinRole } from '@mec/domain'
-import { ClaudeAdapter } from '@mec/engines'
 import {
   cachedDefaultTip,
   commitAll,
@@ -53,7 +54,6 @@ import {
   type AttemptPlan,
   AttemptRunner,
   buildAgentEnv,
-  buildAttemptSettings,
   type CheckSpec,
   ModelResolutionError,
   ownedSpawn,
@@ -61,42 +61,13 @@ import {
   resolveModel,
   runCheck,
   Supervisor,
-  serialiseAttemptSettings,
   writeAttemptGitconfig,
   writeShimDir,
 } from '@mec/runtime'
 import { redact } from '@mec/slots'
+import { bridgeOf, driftOf, ENGINE_ROWS, type EngineRow, lacksHome, type Prepared } from './engine-registry'
 
-/** The engines this build may launch. Codex and OpenCode arrive with M2.4. */
-const LAUNCHABLE_ENGINES: readonly string[] = ['claude']
-
-/** The one slot kind whose login needs no key in the environment (§5.2, §5.12). */
-const LAUNCHABLE_KINDS: readonly string[] = ['claude-sub']
-
-/**
- * §5.3, the probe's rule: a linked slot runs with `CLAUDE_CONFIG_DIR` unset and any other runs
- * under its home. Without a home it has nowhere to run but the default login, which is not its own.
- */
-const lacksHome = (slot: StoreDoc): boolean =>
-  slot.linkedDefault !== true && (typeof slot.home !== 'string' || slot.home === '')
-
-/** Whether a launch of this slot could start at all: engine, kind and home, health aside. */
-export function isLaunchableSlot(slot: StoreDoc): boolean {
-  return (
-    LAUNCHABLE_ENGINES.includes(String(slot.engine)) &&
-    LAUNCHABLE_KINDS.includes(String(slot.kind)) &&
-    !lacksHome(slot)
-  )
-}
-
-/** The engine's own domains (H1's allowance) and nothing else: §14's registry field is unbuilt. */
-const ENGINE_DOMAINS: readonly string[] = ['claude.ai', 'api.claude.com']
-
-/**
- * §13's always-confirm commands, refused by the engine itself. A linked slot runs under the
- * user's own settings, whose allow rules can answer a Bash ask before `mcp__mec__confirm` hears it.
- */
-const ENGINE_DENIED_TOOLS = 'Bash(git push:*),Bash(gh:*)'
+export { isLaunchableSlot } from './engine-registry'
 
 /** Decision #36 (§11): until policy carries a value. */
 const DEFAULT_WALL_CLOCK_MS = 30 * 60_000
@@ -111,15 +82,6 @@ const PASSING = /\b(408|429|5\d\d)\b|ECONNRESET|ETIMEDOUT|timed out|could not re
 const SWEEP_MS = 500
 
 const STDERR_TAIL_CHARS = 2000
-
-/** §5.12's engine hygiene; the home variable stays what the slot says. */
-const claudeHygiene = (attemptId: string): Record<string, string> => ({
-  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-  DISABLE_TELEMETRY: '1',
-  CLAUDE_CODE_MCP_ALLOWLIST_ENV: '1',
-  CLAUDE_CODE_PROJECT_DIR_NAME: attemptId,
-  CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
-})
 
 /** What keeps the launch from running, for the record. Nothing was spent. */
 class LaunchRefused extends Error {}
@@ -216,6 +178,7 @@ export class AttemptLauncher {
   readonly #plans = new Map<string, AttemptPlan>()
   readonly #tokens = new Map<string, string>()
   readonly #stderr = new Map<string, (chunk: string) => void>()
+  readonly #prepared = new Map<string, Prepared & { binary: string; secrets: Record<string, string> }>()
   readonly #passing = new Map<string, number>()
   readonly #swept = new Map<string, number>()
   readonly #sweep: NodeJS.Timeout
@@ -300,12 +263,16 @@ export class AttemptLauncher {
     const { attemptId } = fields
     const generation = Number(attempt.generation ?? 1)
     const engine = String(slot.engine)
-    if (!LAUNCHABLE_ENGINES.includes(engine)) throw refuse(`engine_not_launchable: ${engine}`)
-    if (!LAUNCHABLE_KINDS.includes(String(slot.kind))) throw refuse(`slot_kind_unsupported: ${slot.kind}`)
+    const row = ENGINE_ROWS[engine]
+    if (row === undefined) throw refuse(`engine_not_launchable: ${engine}`)
+    if (!row.kinds.includes(String(slot.kind))) throw refuse(`slot_kind_unsupported: ${slot.kind}`)
     if (lacksHome(slot)) throw refuse(`slot_home_missing: ${fields.slotId} is not linked and has no home`)
     if (slot.state !== 'healthy') throw new Later(`slot ${fields.slotId} is ${String(slot.state)}`)
     const binary = resolveBinary(engine, process.env.PATH)
     if (binary === undefined) throw refuse(`engine_missing: ${engine} is not on PATH`)
+    const home = process.env.HOME ?? '/tmp'
+    const probeEnv = { PATH: process.env.PATH ?? '', HOME: home, ...slotEnv(slot) }
+    await this.#probe(row, slot, binary, probeEnv)
     // A repair or a review is its own role on the task's own record (§15).
     const roleName = String(attempt.role ?? task.role)
     const continuation = attempt.continuation as Continuation | undefined
@@ -332,28 +299,29 @@ export class AttemptLauncher {
     const identity = await commitIdentity(registered, gitDir)
     const { binDir } = writeShimDir(worktree)
     const gitconfig = writeAttemptGitconfig(worktree, { userName: identity.name, userEmail: identity.email })
-    const home = process.env.HOME ?? '/tmp'
     const isolation: IsolationProfile = {
-      sandbox: 'required',
+      sandbox: row.sandbox,
       read_only: role.readOnly,
       allow_write: [],
       deny_read: [],
-      allowed_domains: [...ENGINE_DOMAINS],
+      allowed_domains: [...row.domains],
       blocked_commands: [],
       background_cap_ms: DEFAULT_WALL_CLOCK_MS,
       permission_mode: 'bridge',
       repo_trusted: repo.trust === true,
     }
-    const settings = buildAttemptSettings(isolation, {
+    const prepared = await row.prepare({
+      attemptId,
       worktree,
       tempDir,
-      allowedDomains: [],
       homeDir: home,
       dataDir,
       sharedClone: realpathSync(gitDir),
+      isolation,
+      toolsUrl: tools.url,
+      binary,
+      probeEnv,
     })
-    const settingsPath = join(worktree, '.mec', 'claude-settings.json')
-    writeFileSync(settingsPath, serialiseAttemptSettings(settings))
 
     // The repo's commands run with a scrubbed env, no shims to trust and no token (decision #25).
     const hostEnv = buildAgentEnv({
@@ -380,7 +348,10 @@ export class AttemptLauncher {
       }
     }
 
-    const resolvedModel = this.#model(task, slot)
+    const resolvedModel = this.#model(task, slot, engine)
+    if (resolvedModel === undefined && row.modelRequired) {
+      throw refuse(`model_refused: ${engine} inherits no model, and this task names none`)
+    }
     const originId = originMessageOf(task, work)
     const originText = String(store.messages.get(originId)?.text ?? '')
     const environment = [
@@ -389,11 +360,7 @@ export class AttemptLauncher {
       `Pinned base: ${baseSha}`,
       `Temp dir: ${tempDir}`,
       `Attempt: ${attemptId}`,
-      'Your shell is sandboxed: write only to the worktree and temp dir. The shared clone behind the worktree',
-      'is read-only to your shell, so anything that writes to git fails there, and that is expected.',
-      'Do not run git add or git commit: reading with git status, diff and log works.',
-      'Leave your work in the worktree; MEC commits it when you finish and then runs the repository checks',
-      'on that commit. A run that is stopped or runs out of turns gets no commit.',
+      ...row.notes,
     ].join('\n')
     const bundle = new PromptStore(join(dataDir, 'prompts')).assemble(roleName, engine, {
       generated: [
@@ -418,20 +385,24 @@ export class AttemptLauncher {
     const token = issueToken({ attemptId, generation, role: 'specialist', secret: tools.secret })
     this.#tokens.set(attemptId, token)
     const mcpPath = join(worktree, '.mec', 'mcp.json')
-    writeFileSync(
-      mcpPath,
-      `${JSON.stringify({
-        mcpServers: { mec: { type: 'http', url: tools.url, headers: { Authorization: `Bearer ${token}` } } },
-      })}\n`,
-      { mode: 0o600 },
-    )
-    chmodSync(mcpPath, 0o600)
+    if (row.tokenFile) {
+      writeFileSync(
+        mcpPath,
+        `${JSON.stringify({
+          mcpServers: {
+            mec: { type: 'http', url: tools.url, headers: { Authorization: `Bearer ${token}` } },
+          },
+        })}\n`,
+        { mode: 0o600 },
+      )
+      chmodSync(mcpPath, 0o600)
+    }
 
     const env = buildAgentEnv({
       inherited: process.env as Record<string, string | undefined>,
       home,
       shimPath: binDir,
-      slot: { ...claudeHygiene(attemptId), ...slotEnv(slot) },
+      slot: { ...row.hygiene(attemptId), ...slotEnv(slot) },
       attempt: {
         MEC_ATTEMPT_ID: attemptId,
         MEC_WORKTREE: worktree,
@@ -443,6 +414,7 @@ export class AttemptLauncher {
         GIT_CONFIG_GLOBAL: gitconfig,
         GIT_CONFIG_NOSYSTEM: '1',
         GIT_TERMINAL_PROMPT: '0',
+        ...prepared.env,
       },
     })
     // A plan stores `wallClockMs`; a row seeded in the brief's spelling still reads.
@@ -474,32 +446,30 @@ export class AttemptLauncher {
       },
       bundle_revision: bundle.revision,
       tools: { url: tools.url, token },
-      env: {
-        MEC_SETTINGS_PATH: settingsPath,
-        MEC_MCP_CONFIG_PATH: mcpPath,
-        MEC_ALLOWED_TOOLS: 'mcp__mec__*',
-        MEC_DISALLOWED_TOOLS: ENGINE_DENIED_TOOLS,
-      },
+      env: prepared.briefEnv ?? {},
       isolation,
     })
 
     const checks = (Array.isArray(repo.checks) ? repo.checks : []) as { name: string; cmd: string }[]
+    const secrets = row.secretsOf?.(slot) ?? {}
+    this.#prepared.set(attemptId, { ...prepared, binary, secrets })
     let stderr = ''
     this.#plans.set(attemptId, {
       env,
       cwd: worktree,
-      bridge: this.#deps.bridge,
+      bridge: bridgeOf(row, this.#deps.bridge, facts, facts.atomic.bind(facts)),
       ...(resolvedModel !== undefined && {
         model: {
           id: resolvedModel.model,
           ...(resolvedModel.effort !== undefined && { effort: resolvedModel.effort }),
+          ...(resolvedModel.variant !== undefined && { variant: resolvedModel.variant }),
         },
       }),
       slotId: fields.slotId,
       checks: checks.map((check) => repoCommand(check.name, check.cmd)),
       identity,
       fingerprints: this.fingerprints(),
-      exacts: [token],
+      exacts: [token, ...Object.values(secrets)],
       seal: () => rmSync(mcpPath, { force: true }),
       stderrTail: () => stderr,
       // Derived, not read back: a resumed worktree's `.git` has been in a worker's hands. Git names
@@ -539,24 +509,56 @@ export class AttemptLauncher {
     await this.#start({ attempt_id: attemptId, generation }, brief, mcpPath)
   }
 
-  /** The start itself; a failure seals the token file, because nothing else will. */
+  /**
+   * The start itself. A failure seals the token file, because nothing else will, and stops a
+   * server that came up: an engine whose handshake failed has no monitor to stop it.
+   */
   async #start(attempt: AttemptRef, brief: AttemptBrief, mcpPath: string): Promise<void> {
     try {
       await this.#runner.launchAttempt(attempt, brief)
     } catch (error) {
       rmSync(mcpPath, { force: true })
+      const { attempt_id, generation } = attempt
+      if (this.#supervisor.owns(attempt_id, generation)) {
+        await this.#supervisor.stop(attempt_id, generation).catch(() => {})
+      }
       throw error
+    } finally {
+      this.#prepared.delete(attempt.attempt_id)
     }
   }
 
-  #adapterFor(brief: AttemptBrief): ClaudeAdapter {
+  #adapterFor(brief: AttemptBrief): EngineAdapter {
+    const prepared = this.#prepared.get(brief.attempt_id)
+    const row = ENGINE_ROWS[brief.engine]
+    if (prepared === undefined || row === undefined) throw new Error(`no launch for ${brief.attempt_id}`)
     const owner = { attemptId: brief.attempt_id, generation: brief.generation }
     const onStderr = this.#stderr.get(brief.attempt_id)
-    return new ClaudeAdapter({
-      binary: resolveBinary('claude', process.env.PATH),
-      streamInput: true,
-      spawnFn: ownedSpawn(this.#supervisor, owner, { ...(onStderr !== undefined && { onStderr }) }),
+    return row.adapter({
+      binary: prepared.binary,
+      cwd: brief.worktree,
+      prepared,
+      secrets: prepared.secrets,
+      spawn: ({ stdin }) =>
+        ownedSpawn(this.#supervisor, owner, { stdin, ...(onStderr !== undefined && { onStderr }) }),
     })
+  }
+
+  /** §26: an engine that moved under its slot, or lost its login, starts nothing and spends nothing. */
+  async #probe(row: EngineRow, slot: StoreDoc, binary: string, env: Record<string, string>): Promise<void> {
+    if (row.probe === undefined) return
+    const probe = await row.probe(binary, env)
+    const drift = driftOf(row, probe)
+    const reason = drift === undefined ? undefined : 'engine_unsupported'
+    if (reason !== undefined) {
+      const { store } = this.#deps
+      store.atomic(() => {
+        const at = new Date().toISOString()
+        store.slots.save({ ...slot, state: 'degraded', state_reason: reason, updatedAt: at })
+      })
+      throw refuse(`${reason}: ${drift}`)
+    }
+    if (!probe.auth.logged_in) throw refuse(`auth_required: ${probe.auth.detail ?? row.engine}`)
   }
 
   #planOf(brief: AttemptBrief): AttemptPlan {
@@ -629,7 +631,7 @@ export class AttemptLauncher {
     return typeof head === 'string' ? head : pinned
   }
 
-  #model(task: StoreDoc, slot: StoreDoc): ResolvedModel | undefined {
+  #model(task: StoreDoc, slot: StoreDoc, engine: string): ResolvedModel | undefined {
     if (task.modelRequest === undefined) return undefined
     const request = ModelRequest.safeParse(task.modelRequest)
     if (!request.success) throw refuse(`model_refused: ${request.error.message}`)
@@ -638,7 +640,7 @@ export class AttemptLauncher {
       const provider = typeof slot.provider === 'string' ? slot.provider : undefined
       return resolveModel(
         request.data,
-        { engine: 'claude', ...(provider !== undefined && { provider }) },
+        { engine: engine as EngineId, ...(provider !== undefined && { provider }) },
         table,
       )
     } catch (error) {

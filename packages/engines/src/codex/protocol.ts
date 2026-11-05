@@ -115,6 +115,9 @@ function permissionRequestOf(
   } else if (method === 'item/permissions/requestApproval') {
     kind = 'other'
     summary = str(params.reason) || 'permission approval request'
+  } else if (method === 'mcpServer/elicitation/request') {
+    kind = 'other' // an MCP server asking through the engine: no worker tool of ours does
+    summary = str(params.message) || `elicitation from ${str(params.serverName) || 'an MCP server'}`
   } else if (method === 'item/tool/requestUserInput') {
     kind = 'other' // a question for the user, not an operation on the worktree
     const questions = Array.isArray(params.questions) ? (params.questions as AnyRecord[]) : []
@@ -150,6 +153,9 @@ function permissionBody(
   }
 }
 
+/** A turn item that did not run: the bridge declined it, or it failed before it started. */
+const refused = (item: AnyRecord): boolean => ['declined', 'failed'].includes(str(item.status))
+
 function mapCodexNotification(
   method: string,
   params: AnyRecord,
@@ -183,7 +189,18 @@ function mapCodexNotification(
         tool: 'commandExecution',
         input: clone({ command: item.command, cwd: item.cwd }) as never,
         output: item.aggregatedOutput === null ? undefined : clone(item.aggregatedOutput),
-        ok: exitCode === undefined ? undefined : exitCode === 0,
+        ok: exitCode === undefined ? (refused(item) ? false : undefined) : exitCode === 0,
+        duration_ms: num(item.durationMs),
+      })
+    } else if (itemType === 'fileChange' && refused(item)) {
+      // An applied change shows in the head; one that was refused shows nowhere else.
+      events.push({ type: 'tool_call', tool: 'fileChange', input: null, ok: false })
+    } else if (itemType === 'mcpToolCall') {
+      events.push({
+        type: 'tool_call',
+        tool: `mcp__${str(item.server)}__${str(item.tool)}`,
+        input: clone(item.arguments ?? null) as never,
+        ok: str(item.status) === 'completed',
         duration_ms: num(item.durationMs),
       })
     }
@@ -290,11 +307,14 @@ export type CodexEventParser = {
   activeTurnId(): string | undefined
   /** The native JSON-RPC request behind a permission_request id (id type + method), for answering. */
   nativeRequest(requestId: string): { id: string | number; method: string } | undefined
+  /** Server requests with no bridge mapping, since the last call. Unanswered, they hang the turn. */
+  takeUnhandled(): { id: string | number; method: string }[]
 }
 
 export function createCodexEventParser(): CodexEventParser {
   const state = { started: false, exited: false }
   const nativeRequests = new Map<string, { id: string | number; method: string }>()
+  const unhandled: { id: string | number; method: string }[] = []
   let turnId: string | undefined
   return {
     push(line: string): EngineEventBody[] {
@@ -338,6 +358,7 @@ export function createCodexEventParser(): CodexEventParser {
           nativeRequests.set(approval.requestId, { id: record.id as string | number, method })
           return [approval.body]
         }
+        unhandled.push({ id: record.id as string | number, method })
         return []
       }
 
@@ -363,6 +384,9 @@ export function createCodexEventParser(): CodexEventParser {
     },
     nativeRequest(requestId: string): { id: string | number; method: string } | undefined {
       return nativeRequests.get(requestId)
+    },
+    takeUnhandled(): { id: string | number; method: string }[] {
+      return unhandled.splice(0)
     },
   }
 }

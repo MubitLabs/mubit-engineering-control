@@ -917,7 +917,7 @@ describe('what a launch refuses, before any spend', { timeout: 60_000 }, () => {
       { task: { repoId: 'repo_b' } },
       /launch_mismatch/,
     ],
-    ['a non-registry engine', { slot: { engine: 'codex' } }, /engine_not_launchable: codex/],
+    ['a non-registry engine', { slot: { engine: 'gemini' } }, /engine_not_launchable: gemini/],
     ['a key-based slot', { slot: { kind: 'claude-api' } }, /slot_kind_unsupported/],
     [
       'a slot of its own with no home, as the startup probe saves one',

@@ -236,5 +236,12 @@
     "find": "    const slotViews = this.#placementSlots()\n",
     "replace": "    const slotViews = slotViewsFromStore(this.#store, this.#marks?.())\n",
     "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "brief promises a read-only clone",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "\"the shared clone behind the worktree, which holds other attempts' branches, so leave its refs alone.\",\n",
+    "replace": "\"the shared clone behind the worktree is read-only.\",\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
   }
 ]

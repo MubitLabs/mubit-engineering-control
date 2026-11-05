@@ -46,5 +46,9 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
     rules, and the sandbox stays the boundary.
   - One data dir holds every attempt's worktree, so a sibling attempt's shell can read
     `.mec/mcp.json` while that attempt runs. The sandbox does not separate attempts from each other.
-  - An attempt's commit happens after the engine exits: the shared clone behind a worktree is
-    outside the sandbox's write list, so `git commit` inside an attempt fails.
+  - The sandbox lets git write to the shared clone. `git branch` from a real attempt wrote a ref into
+    `<dataDir>/repos/*.git`, which `allowWrite` does not list. Claude's own sandbox adds a linked
+    worktree's common git dir to the write list. A worker could still change a sibling's `mec/*` ref
+    with a plain file write. `confirm` refuses `git branch -d` and `git update-ref` by name only, and
+    shell text is a heuristic. The worker's brief says to leave those refs alone. MEC still commits
+    the leftover tree after the engine exits.

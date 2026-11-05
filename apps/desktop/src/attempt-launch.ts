@@ -326,9 +326,10 @@ export class AttemptLauncher {
       `Pinned base: ${baseSha}`,
       `Temp dir: ${tempDir}`,
       `Attempt: ${attemptId}`,
-      'Your shell is sandboxed: writes go to the worktree and temp dir only, and the shared clone behind',
-      'the worktree is read-only. Leave your work in the worktree; MEC commits it when you finish and',
-      'then runs the repository checks on that commit.',
+      'Your shell is sandboxed: write only to the worktree and temp dir. The sandbox lets git itself write to',
+      "the shared clone behind the worktree, which holds other attempts' branches, so leave its refs alone.",
+      'Leave your work in the worktree; MEC commits it when you finish and then runs the repository checks',
+      'on that commit.',
     ].join('\n')
     const bundle = new PromptStore(join(dataDir, 'prompts')).assemble(roleName, engine, {
       generated: [

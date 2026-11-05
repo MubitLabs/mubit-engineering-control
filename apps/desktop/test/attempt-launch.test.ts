@@ -394,6 +394,13 @@ describe('the launch path', { timeout: 60_000 }, () => {
     expect(argv).toContain('Bash(git push:*)')
     expect(argv).toContain('Bash(gh:*)')
 
+    // The brief is true about the shared clone: the sandbox lets git write there, and that clone
+    // holds other attempts' branches, so the rule is stated rather than promised as read-only.
+    const prompt = argv.join('\n')
+    expect(prompt).toContain('Your shell is sandboxed')
+    expect(prompt).not.toMatch(/shared clone[^.]*read-only/)
+    expect(prompt).toMatch(/shared clone[^.]*other attempts' branches/)
+
     // Its branch, its pinned base, a real commit under the repository's identity.
     const base = gitIn(repo, 'rev-parse', 'HEAD')
     expect(attempt.base_sha).toBe(base)

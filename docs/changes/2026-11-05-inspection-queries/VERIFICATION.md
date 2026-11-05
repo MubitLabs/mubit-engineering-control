@@ -21,7 +21,7 @@ After the implementation the first full run of the desktop file had 3 failures, 
 
 ## Mutants
 
-`python3 tools/mutants/run.py tools/mutants/m3.1-queries.json`: 15 of 15 killed after the fix wave (seven added: open walk stopped at 200, needs byte cap, needs cursor, recent filtered after its cap, and the three task-detail caps).
+`python3 tools/mutants/run.py tools/mutants/m3.1-queries.json`: 14 of 14 killed after the fix wave (six added: open walk stopped at 200, needs cursor, recent filtered after its cap, and the three task-detail caps).
 
 | Mutant | Verdict |
 | --- | --- |
@@ -71,3 +71,5 @@ The keyset itself is instant. The cost is each JSON-field equality (task and att
 ## Fix wave
 
 Failing tests first (5 red): 230 heavy open questions paged under 1 MiB at 50 rows; a fresh beta question behind 235 older ones; 200 expired cards plus one fresh; recent needs scoped to a repository; a 20,000-file task under 1 MiB. Then green. The migration trip wire stays fired and awaits the owner decision: approve the expression-index migration, or rule that 50,000 per kind is not a target. Open needs now walk the whole pending set, which is the cost that decision bears on.
+
+The needs byte-cap mutant (drop the 1 MiB break) survives and is an equivalent mutant today: one need item is at most about 6.5 KB, so 100 rows never reach 1 MiB. The byte guard stays as defence against a future larger item; the 230-heavy-question test proves the row limit and cursor.

@@ -63,13 +63,6 @@
     "tests": ["apps/desktop/test/inspection.test.ts"]
   },
   {
-    "name": "needs page ignores the byte cap",
-    "file": "apps/desktop/src/inspection.ts",
-    "find": "      if (items.length > 0 && bytes + size > MAX_PAGE_BYTES) break\n      bytes += size\n      items.push(item)",
-    "replace": "      bytes += size\n      items.push(item)",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
-  },
-  {
     "name": "needs never returns a cursor",
     "file": "apps/desktop/src/inspection.ts",
     "find": "nextCursor: end < all.length ? encodeCursor(end) : null,",

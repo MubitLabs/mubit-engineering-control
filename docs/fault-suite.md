@@ -43,7 +43,7 @@ Every row of plan §26, what proves it today, and what remains. Written 3 Nov (s
 | Hold | — | hold model + persistence across restart |
 | Stage table | domain state machines (`packages/domain/test/states.test.ts`); STAGE_TABLE first-match (`packages/domain/test/stages.test.ts` · inline state fixtures, **no engine fixture**) | the first-match stage projection table wired to store facts |
 | Wake vs note | meta classifier: 22 cases incl. self-action → note (`packages/meta/test/wakes.test.ts` · **no fixture**) | — |
-| Effects queue | store: coalescing, Later, ordered hold, backoff, health 3-strike (`packages/store/test/effects.test.ts` · **real SQLite store**) | — |
+| Effects queue | store: coalescing, Later, ordered hold, backoff, health 3-strike, no re-pick across overlapping passes, crash resume once at boot (`packages/store/test/effects.test.ts` · **real SQLite store**) | — |
 | Reserved wake slot | scheduling: last free unit deferred (`packages/domain/test/scheduling.test.ts` · **no fixture**) | — |
 | Pause | — | no-launch/deliver/relay during pause; deadlines shift |
 | Model surface | prompts compile budgets (`packages/prompts/test/bundles.test.ts` · **no fixture**) | per-role size budget tests |

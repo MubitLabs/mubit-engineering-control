@@ -425,13 +425,29 @@ describe('overlapping passes', () => {
     queue.enqueue('launch', 'att_1', {})
     const first = queue.run({ now: clock() })
 
-    const drained = queue.drain()
-    await Promise.resolve()
+    let returned = false
+    const drained = queue.drain().then(() => {
+      returned = true
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(returned).toBe(false) // Shutdown closes the database right after the drain.
     held.release()
     await drained
     expect(finished).toBe(true)
     expect(calls).toBe(1)
     await first
+  })
+
+  it('a settled job leaves the guard: the same key runs again when enqueued again', async () => {
+    let calls = 0
+    queue.handle('launch', async () => {
+      calls += 1
+    })
+    queue.enqueue('launch', 'att_1', {})
+    await queue.run({ now: clock() })
+    queue.enqueue('launch', 'att_1', {})
+    await queue.run({ now: clock() })
+    expect(calls).toBe(2)
   })
 })
 

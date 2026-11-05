@@ -717,7 +717,7 @@ export function questionProps(item: QuestionItem, outcome: AnswerOutcome | null)
     choices: item.options,
     freeTextLabel: 'Answer in your own words',
     actionable: !unassigned(item),
-    failure: outcome?.kind === 'failed' ? outcome.message : null,
+    failure: outcome?.kind === 'failed' && item.status === 'open' ? outcome.message : null,
   }
 }
 

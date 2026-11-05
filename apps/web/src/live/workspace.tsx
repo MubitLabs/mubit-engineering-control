@@ -147,13 +147,14 @@ export function createWorkspace(client: WorkspaceClient) {
         snapshotting = false
         if (!running) return
         // A reset's history is gone, so its cursors replace ours even when they are lower.
-        cursors = resetPending ? { ...served } : { ...served, ...cursors }
+        const reset = resetPending
+        cursors = reset ? { ...served } : { ...served, ...cursors }
         followed = Object.keys(served)
         streamKey = ''
-        set({ labels, ...(resetPending && { resetAt: new Date().toISOString() }) })
+        set({ labels, ...(reset && { resetAt: new Date().toISOString() }) })
         resetPending = false
         follow()
-        refresh()
+        if (reset) refresh()
       })
       .catch(() => {
         // The scope's own streams and the interval still cover this; `refresh` tries a reset again.

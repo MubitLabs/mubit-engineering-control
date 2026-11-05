@@ -146,6 +146,23 @@ describe('reads', () => {
     expect(readFailure(new TypeError('fetch failed'))).toContain('did not answer')
   })
 
+  it('evidence that can no longer be read is not kept as if current', async () => {
+    let fail = false
+    const { inspection, settle } = rig({
+      evidence: async () => {
+        if (fail) throw new Error('down')
+        return cardEvidence.card_pending
+      },
+    })
+    inspection.refresh()
+    await settle()
+    expect(inspection.getState().evidence[needs.pending.id]).toBeDefined()
+    fail = true
+    inspection.refresh()
+    await settle()
+    expect(inspection.getState().evidence[needs.pending.id]).toBeUndefined()
+  })
+
   it('reads an open card’s evidence, and not a settled one’s', async () => {
     const asked: string[] = []
     const { inspection, settle } = rig({

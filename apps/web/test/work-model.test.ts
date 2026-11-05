@@ -555,6 +555,7 @@ describe('live data', () => {
     expect(view.status.state).toBe('open')
     expect(view.failure).toBe('Not sent')
     expect(questionProps(needs.question, null).failure).toBeNull()
+    expect(questionProps(needs.answered, { kind: 'failed', message: 'Not sent' }).failure).toBeNull()
   })
 
   it('newest work leads its group, whatever order the server pages in', () => {

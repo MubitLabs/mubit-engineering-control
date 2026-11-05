@@ -199,7 +199,10 @@ export function createInspection(client: InspectionClient) {
       .evidence(id)
       .then((evidence) => set({ evidence: { ...state.evidence, [id]: evidence } }))
       .catch(() => {
-        // No entry is what the card shows: nothing to approve on, with a retry.
+        // Evidence that cannot be confirmed is not kept as if current. No entry is what the card
+        // shows: nothing to approve on, with a retry.
+        const { [id]: _dropped, ...rest } = state.evidence
+        set({ evidence: rest })
       })
 
   /** One at a time: a long list of open cards must not become a burst of reads. */

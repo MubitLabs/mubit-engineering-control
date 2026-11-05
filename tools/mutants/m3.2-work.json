@@ -23,15 +23,15 @@
   {
     "name": "count from a different list",
     "file": "apps/web/src/next/work-model.ts",
-    "find": "count: read.status === 'ready' ? waiting.length : null",
-    "replace": "count: read.status === 'ready' ? items.length : null",
+    "find": "count: read.status === 'ready' && !partial ? waiting.length : null",
+    "replace": "count: read.status === 'ready' && !partial ? items.length : null",
     "tests": ["apps/web/test/work-model.test.ts"]
   },
   {
     "name": "read failure gives needs count 0",
     "file": "apps/web/src/next/work-model.ts",
-    "find": "count: read.status === 'ready' ? waiting.length : null",
-    "replace": "count: read.status === 'ready' ? waiting.length : 0",
+    "find": "count: read.status === 'ready' && !partial ? waiting.length : null",
+    "replace": "count: read.status === 'ready' && !partial ? waiting.length : 0",
     "tests": ["apps/web/test/work-model.test.ts"]
   },
   {
@@ -100,8 +100,8 @@
   {
     "name": "tool activity reaches the chat",
     "file": "apps/web/src/next/work-model.ts",
-    "find": "return kind ? [{ id: line.id, kind, text: line.text }] : []",
-    "replace": "return [{ id: line.id, kind: kind ?? 'note', text: line.text }]",
+    "find": "if (kind === undefined) return []\n",
+    "replace": "if (kind === undefined) return [{ id: line.id, kind: 'note', text: line.text }]\n",
     "tests": ["apps/web/test/work-model.test.ts"]
   },
   {
@@ -120,9 +120,149 @@
   },
   {
     "name": "fixture string reaches the bundle",
-    "file": "apps/web/src/next/NextApp.tsx",
-    "find": "const COMPOSER_UNAVAILABLE = 'Sending is not connected in this preview.'",
-    "replace": "const COMPOSER_UNAVAILABLE = 'SAMPLE-ONLY Sending is not connected in this preview.'",
+    "file": "apps/web/src/next/routes.ts",
+    "find": "chat: 'Conversation',",
+    "replace": "chat: 'SAMPLE-ONLY Conversation',",
     "tests": ["apps/web/test/shell-split.test.ts"]
+  },
+  {
+    "name": "reopen uses the original after",
+    "file": "apps/web/src/live/events.ts",
+    "find": "const after = [...cursors.values()]",
+    "replace": "const after = subscriptions.map((entry) => entry.after)",
+    "tests": ["apps/web/test/sse-resume.test.ts"]
+  },
+  {
+    "name": "a failed connection stays closed",
+    "file": "apps/web/src/live/events.ts",
+    "find": "      timer = setTimeout(open, delay)\n",
+    "replace": "",
+    "tests": ["apps/web/test/sse-resume.test.ts"]
+  },
+  {
+    "name": "a replayed event is applied twice",
+    "file": "apps/web/src/live/events.ts",
+    "find": "        if (event.seq <= (cursors.get(stream) ?? 0)) return\n",
+    "replace": "",
+    "tests": ["apps/web/test/sse-resume.test.ts"]
+  },
+  {
+    "name": "native reconnect left running",
+    "file": "apps/web/src/live/events.ts",
+    "find": "    current.onerror = () => {\n      closeSource()\n",
+    "replace": "    current.onerror = () => {\n",
+    "tests": ["apps/web/test/sse-resume.test.ts"]
+  },
+  {
+    "name": "each reset takes its own snapshot",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "    if (snapshotting) return\n",
+    "replace": "",
+    "tests": ["apps/web/test/sse-resume.test.ts"]
+  },
+  {
+    "name": "a reset keeps the old cursors",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "cursors = reset ? { ...served } : { ...served, ...cursors }",
+    "replace": "cursors = { ...served, ...cursors }",
+    "tests": ["apps/web/test/sse-resume.test.ts"]
+  },
+  {
+    "name": "a reset is not said",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "...(reset && { resetAt: new Date().toISOString() })",
+    "replace": "...(false && { resetAt: new Date().toISOString() })",
+    "tests": ["apps/web/test/sse-resume.test.ts"]
+  },
+  {
+    "name": "an absent card can be approved",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "evidence === null || evidence.absent === true ? null : evidence",
+    "replace": "evidence",
+    "tests": ["apps/web/test/work-model.test.ts", "apps/web/test/inspection-contract.test.ts"]
+  },
+  {
+    "name": "a stored message is dropped from the thread",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "const kind = line.kind === null ? 'user' : ENTRY_KINDS[line.kind]",
+    "replace": "const kind = ENTRY_KINDS[line.kind ?? '']",
+    "tests": ["apps/web/test/work-model.test.ts", "apps/web/test/inspection-contract.test.ts"]
+  },
+  {
+    "name": "a part list is counted",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "count: read.status === 'ready' && !partial ? waiting.length : null",
+    "replace": "count: read.status === 'ready' ? waiting.length : null",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "a deny falls through to approved",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "result.status === 'denied' ? DENIED : describeApproval(result)",
+    "replace": "describeApproval(result)",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "a read stops at its first page",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "for (let page = 0; page < MAX_PAGES; page += 1) {",
+    "replace": "for (let page = 0; page < 1; page += 1) {",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "an older refresh wins",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "        if (live()) set({ work: { status: 'ready', data, readAt: now() } })\n",
+    "replace": "        set({ work: { status: 'ready', data, readAt: now() } })\n",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "a failed read drops what it had",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "    data: previous.status === 'loading' ? null : previous.data,\n",
+    "replace": "    data: null,\n",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "a 409 reads as a failed answer",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "error instanceof HttpError && error.status === 409",
+    "replace": "error instanceof HttpError && error.status === 499",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "a double confirm sends twice",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "      if (settling.has(id)) return\n      settling.add(id)\n      client\n        .resolve",
+    "replace": "      client\n        .resolve",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "over-large reads as a plain error",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "if (error.reason === 'response_too_large') {",
+    "replace": "if (error.reason === 'never') {",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "a cut list decodes as whole",
+    "file": "apps/web/src/inspection-decode.ts",
+    "find": "    tasksTruncated: num(path, body.tasksTruncated, 'tasksTruncated'),\n",
+    "replace": "    tasksTruncated: 0,\n",
+    "tests": ["apps/web/test/inspection-decode.test.ts"]
+  },
+  {
+    "name": "a task from another delivery shows",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "if (data.id !== taskId || data.workItemId !== workId) return null",
+    "replace": "if (data.id !== taskId) return null",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "unreadable evidence is kept as current",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "        set({ evidence: rest })\n",
+    "replace": "",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
   }
 ]

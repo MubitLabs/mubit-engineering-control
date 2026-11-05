@@ -356,16 +356,26 @@ test('the events connection starts from the snapshot’s cursors', async ({ page
   expect(streams.at(-1)).toMatch(/,1$/)
 })
 
-test.describe('390', () => {
-  test.use({ viewport: { width: 390, height: 844 } })
+for (const [width, height] of [
+  [1440, 900],
+  [1024, 768],
+  [390, 844],
+] as const) {
+  for (const theme of ['light', 'dark']) {
+    test.describe(`${width} ${theme}`, () => {
+      test.use({ viewport: { width, height } })
 
-  for (const hash of ['repo/repo_a/chat', 'repo/repo_a/work', 'repo/repo_a/needs']) {
-    test(`no horizontal scroll on ${hash}`, async ({ page }) => {
-      await server(page)
-      await open(page, hash)
-      await expect(page.locator('h1')).toBeVisible()
-      const width = await page.evaluate(() => document.documentElement.scrollWidth)
-      expect(width).toBeLessThanOrEqual(390)
+      for (const hash of ['repo/repo_a/chat', 'repo/repo_a/work/work_working', 'repo/repo_a/needs']) {
+        test(`no horizontal scroll on ${hash}`, async ({ page }) => {
+          await page.addInitScript((value) => localStorage.setItem('mec-next-theme', value), theme)
+          await server(page)
+          await open(page, hash)
+          await expect(page.locator('h1')).toBeVisible()
+          await expect(page.locator('.freshness').first()).toBeVisible()
+          const scroll = await page.evaluate(() => document.documentElement.scrollWidth)
+          expect(scroll).toBeLessThanOrEqual(width)
+        })
+      }
     })
   }
-})
+}

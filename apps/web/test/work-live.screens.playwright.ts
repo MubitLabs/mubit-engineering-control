@@ -160,6 +160,15 @@ test.describe('Work', () => {
     await expect(page.getByRole('combobox', { name: 'Repository' })).toHaveValue('repo_b')
   })
 
+  test('a filter that hides the row drops its inspector and selection', async ({ page }) => {
+    await server(page)
+    await open(page, 'repo/repo_a/work/work_working/task/task_active')
+    await expect(page.locator('.inspector')).toBeVisible()
+    await page.getByRole('combobox', { name: 'Repository' }).selectOption('repo_b')
+    await expect(page.locator('.inspector')).toHaveCount(0)
+    await expect(page.locator('.work-row[aria-current="true"]')).toHaveCount(0)
+  })
+
   test('stop takes two steps and posts the row’s own id under All repositories', async ({ page }) => {
     const { posts } = await server(page)
     await open(page, 'repo/repo_b/work/work_quota')
@@ -353,7 +362,7 @@ test('the events connection starts from the snapshot’s cursors', async ({ page
   await expect(page.getByRole('region', { name: 'Ended' })).toBeVisible()
   await expect.poll(() => streams.length).toBeGreaterThan(0)
   expect(streams.at(-1)).toContain('repositories')
-  expect(streams.at(-1)).toMatch(/,1$/)
+  expect(streams.at(-1)).toMatch(/after=(?:[\d,]*,)?1$/)
 })
 
 for (const [width, height] of [

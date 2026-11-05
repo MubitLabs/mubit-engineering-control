@@ -40,7 +40,7 @@ The first pass, before the verifier's findings: 32 of 33 killed on the first ful
 
 The 11 the handoff lists are 1 to 11. The other 22 cover what this PR added beyond them: the key dropped by a later save, the receipt on stopped work, the in-flight entry clearing, the queue key, a wake with no write, redaction on both paths, second answers, ended work, the failed-attempt retry, a relay with no meta agent, drain on close, stuck connections, boot and resume scans, the pause, replay and the data dir.
 
-Mutant 2 stores the key only with the receipt, which is the behaviour the mutant names. It is a change to `#saveMessage`, because the route no longer has a write to move.
+Mutant 2 stores the key only with the receipt, which is the behaviour the mutant names. It is a change to `#saveMessage`, because the service, not the route's later stamp, is what a retry during planning reads.
 
 ## Gate
 
@@ -52,6 +52,20 @@ Mutant 2 stores the key only with the receipt, which is the behaviour the mutant
 | `biome check .` | 367 files, 17 warnings, 1 info, no errors |
 | `vitest run` | 1937 tests: 1921 passed, 1 failed, 15 skipped |
 | The failure | `apps/desktop/test/login-cards.test.ts > drives a real interactive shell through the seam`, the known environment problem |
+
+## After the rebase onto main at f232933
+
+The numbers above are from before the rebase. On `31ef1c8`:
+
+| Step | Result |
+| --- | --- |
+| `pnpm check` | Exit 1. Typecheck passes, `biome check .` has no errors, `vitest run`: 2203 tests, 2186 passed, 2 failed, 15 skipped |
+| The failures | `login-cards.test.ts > drives a real interactive shell through the seam` (`posix_spawnp failed`, the baseline), and `bundle.test.ts > boots the bundled server and writes health.json`, which ran out of its 6 s under load and passes alone (2 of 2) |
+| Mutants | 54 of 54 killed: the 48 above and 18 to 18f |
+| `pnpm --dir apps/web test:screens` | 208 passed |
+| Real HTTP | A built server on a scratch `MEC_DATA_DIR` with the fake engine. Five parallel posts with one key and `intent: 'new'`: all 200, one `new_work` and four `duplicate`, one message id, one work item, one stored message, `intent` on the doc. The same key with the intent dropped: 409 `idempotency_mismatch` |
+
+The rebase exposed one clash. The key moved into the service's first transaction, and M1.3's intent and reference stayed in the route's write after the turn, so the check read a doc with the key and neither field. Red before the fix: `the mismatch check holds on the composed path` (M1.3's test, unchanged), `a retry during planning compares against the intent and reference it was sent with` (the same request came back 409), and `stores the intent and reference with the key, and keeps them on every later save`.
 
 ## Not verified
 

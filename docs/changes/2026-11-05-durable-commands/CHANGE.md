@@ -26,7 +26,9 @@
 
 A turn cut short rejects with `Later`, and the service rethrows that instead of running `#failTurn`, which would have stopped the user's work for good. No receipt is written, so a message resumes at the next boot. A relay that ends inside the 1 s grace turns `waiting`, due 30 s after its pass started, with no failure counted. One that ends later fails at its next write and stays `running` for `resumeRunning`. A chat request cut short gets an error, and its message resumes at boot.
 
-**Scratch state.** `keystoreRoot: opts.dataDir`, and the planner's models supplier and protocol read the same root. This commit comes first.
+**Scratch state.** `keystoreRoot: opts.dataDir`, and the planner's models supplier and protocol read the same root. `startServer` names that root at each seam; `mecRoot()` from #33 stays the default for a caller that names none. The two agree in production, because `bin/mec.js` passes `MEC_DATA_DIR`, and only the named root covers `startServer` with the variable unset. This commit comes first.
+
+**Submission.** The service stores M1.3's `intent` and `referencesWorkItem` with the key, before the brain runs, so a retry during planning is compared against what was sent. The route keeps its stamp after the turn, because the `metaAgent` seam does not promise to store them.
 
 ## Intended test changes
 

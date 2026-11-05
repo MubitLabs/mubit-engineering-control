@@ -1,3 +1,4 @@
+import { isAbsolute, resolve } from 'node:path'
 import type {
   AttemptHandle,
   AuthHealth,
@@ -16,8 +17,8 @@ import { classifyOpencodeError, createOpenCodeEventParser, OPENCODE_ENGINE_VERSI
 
 /**
  * OpenCode V2 adapter (plan §9, reconciled to the real 2.2.5 server — R2.2).
- * One `opencode serve --hostname 127.0.0.1 --port 0 --stdio` process per slot,
- * MEC-generated `OPENCODE_PASSWORD`, HTTP Basic user `opencode`; the serve
+ * One `opencode serve --hostname 127.0.0.1 --port 0 --stdio` process per attempt
+ * (decision #31), MEC-generated `OPENCODE_PASSWORD`, HTTP Basic user `opencode`; the serve
  * process prints `{"url": "http://127.0.0.1:<port>"}` on stdout line 1 and the
  * runtime connects to that URL; one server session per attempt. The serve
  * process is supervised by the runtime (plan §8.1), so the adapter speaks only
@@ -27,14 +28,19 @@ import { classifyOpencodeError, createOpenCodeEventParser, OPENCODE_ENGINE_VERSI
  * permission reply endpoint and the `GET /api/event` SSE stream. The location
  * directory must exist on disk or every request fails `LocationNotFoundError`.
  * Real agent ids on 2.2.5: `build` (default) and `plan` (read-only).
- * `deps.post` and `deps.sse` are injectable — tests inject fakes, the runtime
- * injects the authenticated client for its spawned serve process; `deps.spawnFn`
- * is the seam that client will use, unused here because no test runs the real
- * binary.
+ * `deps.post` and `deps.sse` are injectable for tests; the runtime passes
+ * `deps.connect`, which starts the attempt's serve process at launch and gives
+ * the authenticated client, so the spawn sees the attempt's env.
  */
+
+/** What a launch relies on, so what a probe says it still has. */
+export const OPENCODE_FLAGS_VERIFIED: readonly string[] = ['--hostname', '--port', '--stdio']
 
 /** How long the bridge may hold a `permission.asked` before the adapter denies it. */
 export const OPENCODE_PERMISSION_DEADLINE_MS = 300_000
+
+/** What a rejected ask tells the model. The rule that refused it is the bridge's to record. */
+const REFUSED = 'MEC refused this. Carry on without it, and say so in your report.'
 
 export type OpenCodePost = (path: string, body?: unknown) => Promise<unknown>
 export type OpenCodeSse = () => AsyncIterable<string>
@@ -44,11 +50,23 @@ export type OpenCodeSpawnFn = (
   opts: { cwd: string; env: Record<string, string> },
 ) => { pid: number | undefined; kill(signal?: string): void }
 
+/** What the runtime's client gives the adapter once its process runs. */
+export type OpenCodeConnection = {
+  post: OpenCodePost
+  sse: OpenCodeSse
+  /** Resolves once the stream is open; `session.created` goes out only once. */
+  ready: () => Promise<void>
+}
+
 export type OpenCodeAdapterDeps = {
   post?: OpenCodePost
   sse?: OpenCodeSse
+  /** Starts the serve process for this launch. A launch through it also sends the brief. */
+  connect?: (spec: LaunchSpec) => Promise<OpenCodeConnection>
   spawnFn?: OpenCodeSpawnFn
   authList?: OpenCodeAuthList
+  /** `opencode --version` — the runtime injects the runner; the default reports the revision. */
+  versionProbe?: () => Promise<string | undefined>
   /**
    * The slot's default model `{id, providerID}` (plan §5.7 — the provider profile
    * owns it; `session.create` without a model does NOT inherit the config-file
@@ -120,12 +138,14 @@ type Launch = {
 
 export class OpenCodeAdapter implements EngineAdapter {
   private readonly launches = new Map<string, Launch>()
+  private connection: OpenCodeConnection | undefined
 
   constructor(private readonly deps: OpenCodeAdapterDeps = {}) {}
 
-  async probe(_slot: SlotRef): Promise<{ capabilities: Capabilities; auth: AuthHealth }> {
+  async probe(_slot?: SlotRef): Promise<{ capabilities: Capabilities; auth: AuthHealth }> {
     const list = this.deps.authList ?? defaultAuthList
     const result = await list()
+    const version = (await this.deps.versionProbe?.())?.trim()
     let entries: Record<string, unknown>[] = []
     try {
       const parsed = JSON.parse(result.stdout.trim() || '[]') as unknown
@@ -142,17 +162,17 @@ export class OpenCodeAdapter implements EngineAdapter {
       .filter((provider) => provider !== '')
     return {
       capabilities: {
-        engine_version: OPENCODE_ENGINE_VERSION,
-        flags_verified: ['--hostname', '--port', '--stdio', 'auth list --format json', 'run --format json'],
+        engine_version: version || OPENCODE_ENGINE_VERSION,
+        flags_verified: [...OPENCODE_FLAGS_VERIFIED],
         structured_stream: true, // GET /api/event SSE
-        questions: true, // ask_user via mec-tools
+        questions: false, // denied by the attempt config: routing them to the user needs M2.2
         tool_approval: true, // permission.asked + reply endpoint
-        interrupt: true, // POST /interrupt
-        resume: true, // server session id in the same data dir
+        interrupt: false, // a stop kills the group; POST /interrupt has not run through the runner
+        resume: false, // a session id has not been resumed through the runner
         usage: true, // session.usage.updated
-        rate_limit_events: true, // provider rate/quota error mapping (protocol.ts)
+        rate_limit_events: false, // the quota fixture is synthetic: no real rejection was recorded
         sandbox: false, // no OS sandbox (plan §8.4); permissions ruleset instead
-        restricted_mode: true, // the read-only `plan` agent (real id on 2.2.5)
+        restricted_mode: false, // the read-only `plan` agent has not run through the runner
         mcp_http: true, // mcp.servers remote entries
         usage_mode: 'cumulative',
       },
@@ -176,7 +196,8 @@ export class OpenCodeAdapter implements EngineAdapter {
     // session is POSTed — subscribing later (at events() time) misses it. The
     // SSE subscription therefore starts HERE and buffers into the launch;
     // events() drains the buffer (2.2.5 finding).
-    const sseFactory = this.deps.sse
+    if (this.deps.connect) this.connection = await this.deps.connect(spec)
+    const sseFactory = this.connection?.sse ?? this.deps.sse
     const stream: Launch['stream'] =
       sseFactory === undefined ? undefined : { bodies: [], ended: false, wake: [] }
     let sessionId = spec.resume?.session_id
@@ -197,8 +218,13 @@ export class OpenCodeAdapter implements EngineAdapter {
               // Launch type's 2.2.5 finding note): bridge → reply post →
               // synthesised permission_result (2.2.5 sends no echo event).
               if (body.type === 'permission_request') {
+                // An edit's target may be relative: the decider judges the real path.
+                const paths = body.operation.paths?.map((path) =>
+                  isAbsolute(path) ? path : resolve(spec.brief.worktree, path),
+                )
                 const corrected = {
                   ...body,
+                  operation: { ...body.operation, ...(paths !== undefined && { paths }) },
                   evidence: { ...body.evidence, worktree: spec.brief.worktree },
                 }
                 stream.bodies[stream.bodies.length - 1] = corrected
@@ -209,8 +235,10 @@ export class OpenCodeAdapter implements EngineAdapter {
                   new Date(Date.parse(now()) + OPENCODE_PERMISSION_DEADLINE_MS).toISOString(),
                 )
                 // allow answers once (never `always`: each approval binds one operation, plan §13)
+                // A reject without a message ends the turn; with one, the model hears it and goes on.
                 await this.post(`/api/session/${sessionId}/permission/${body.request_id}/reply`, {
                   decision: decision === 'allow' ? 'once' : 'reject',
+                  ...(decision !== 'allow' && { message: REFUSED }),
                 })
                 stream.bodies.push({
                   type: 'permission_result',
@@ -229,6 +257,7 @@ export class OpenCodeAdapter implements EngineAdapter {
         }
       })()
     }
+    await this.connection?.ready()
     if (!sessionId) {
       // §8.4: bridge mode routes shell to `ask` so every command outside the
       // bootstrap/check profiles surfaces as a permission request; `none` keeps
@@ -253,10 +282,14 @@ export class OpenCodeAdapter implements EngineAdapter {
     if (!sessionId) throw new Error('opencode adapter: POST /api/session returned no session id')
     handle.session_id = sessionId
     this.launches.set(spec.brief.attempt_id, { handle, spec, sessionId, stream })
+    // The brief is the first turn, as it is on Claude's argv: nobody else starts one.
+    if (this.deps.connect) await this.post(`/api/session/${sessionId}/prompt`, { text: spec.brief.objective })
     return handle
   }
 
   async send(handle: AttemptHandle, input: Input): Promise<void> {
+    // Delivery into a running attempt is 21's `deliver`, and nothing has proven it on this engine.
+    if (this.deps.connect) throw new Error('opencode adapter: send is not proven; it stays unsupported')
     const launch = this.requireLaunch(handle)
     await this.post(`/api/session/${launch.sessionId}/prompt`, { text: input.text })
   }
@@ -320,9 +353,10 @@ export class OpenCodeAdapter implements EngineAdapter {
   }
 
   private post(path: string, body?: unknown): Promise<unknown> {
-    if (!this.deps.post) {
+    const post = this.connection?.post ?? this.deps.post
+    if (!post) {
       throw new Error('opencode adapter: deps.post is not wired to the serve process')
     }
-    return this.deps.post(path, body)
+    return post(path, body)
   }
 }

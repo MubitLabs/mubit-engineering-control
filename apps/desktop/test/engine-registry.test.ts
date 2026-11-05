@@ -14,8 +14,9 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { CodexAdapter } from '@mec/engines'
+import { CodexAdapter, OpenCodeAdapter } from '@mec/engines'
 import { repoFields } from '@mec/meta'
+import { SlotKeystore } from '@mec/slots'
 import { MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -149,11 +150,11 @@ const attempt = (dataDir: string) => peek(dataDir, (store) => store.attempts.get
 
 const SETTLED = ['succeeded', 'checks_failed', 'failed', 'interrupted', 'work_complete']
 
-async function launched(dataDir: string): Promise<Record<string, unknown>> {
+async function launched(dataDir: string, settled = SETTLED): Promise<Record<string, unknown>> {
   process.env.MEC_REAL_RUNNER = '1'
   const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 4000 })
   closers.push(server.close)
-  await until(() => SETTLED.includes(String(attempt(dataDir)?.state)))
+  await until(() => settled.includes(String(attempt(dataDir)?.state)))
   return attempt(dataDir) as Record<string, unknown>
 }
 
@@ -218,7 +219,7 @@ describe('Codex through the runner', { timeout: 60_000 }, () => {
   it('a turn gives a report, a commit on the head, and checks on that head', async () => {
     const { dataDir, repo, seen, root } = scratch('codex', { steps: SUCCESS })
     seed(dataDir, repo, { slot: CODEX_SLOT, checks: CHECKS })
-    const end = await launched(dataDir)
+    const end = await launched(dataDir, ['succeeded', 'checks_failed', 'failed'])
     expect(end.state).toBe('succeeded')
     const worktree = String(end.worktree)
     const head = gitIn(worktree, 'rev-parse', 'HEAD')
@@ -340,9 +341,184 @@ describe('Codex through the runner', { timeout: 60_000 }, () => {
     expect(existsSync(join(bin, 'seen.json'))).toBe(false)
   })
 
+  it('a stop ends interrupted, with the group confirmed gone', async () => {
+    const { dataDir, repo, seen } = scratch('codex', { steps: [{ sleep: 60_000 }] })
+    seed(dataDir, repo, { slot: CODEX_SLOT, task: { budget: { wall_clock_ms: 800 } } })
+    const end = await launched(dataDir)
+    expect(end.state).toBe('interrupted')
+    expect(() => process.kill(seen().pid, 0)).toThrow()
+  })
+
   it('the server dying mid-turn fails the attempt, it does not hang', async () => {
     const { dataDir, repo } = scratch('codex', { steps: [{ exit: 3 }] })
     seed(dataDir, repo, { slot: CODEX_SLOT })
+    const end = await launched(dataDir)
+    expect(end.state).toBe('failed')
+  })
+})
+
+const GLM_SLOT = { engine: 'opencode', kind: 'opencode-glm', provider: 'zai-coding-plan' }
+const GLM_TASK = { modelRequest: { model: 'glm-5.3-flash', reason: 'cheap' } }
+
+const OPENCODE_SUCCESS = [
+  { event: { type: 'session.text.ended', data: { text: 'done' } } },
+  { write: { path: 'made.txt', text: 'made\n' } },
+  { saveToken: true },
+  { call: { tool: 'report', args: { kind: 'ready', summary: 'made the file' } } },
+  { verdict: 'succeeded' },
+]
+
+describe('OpenCode through the runner', { timeout: 60_000 }, () => {
+  const ROW = ENGINE_ROWS.opencode
+  if (ROW === undefined) throw new Error('no opencode row')
+  const WITH_TASK = { slot: GLM_SLOT, task: GLM_TASK }
+
+  it('advertised capabilities equal the probe', async () => {
+    const { capabilities } = await new OpenCodeAdapter({
+      versionProbe: async () => '2.2.5',
+      authList: async () => ({ code: 0, stdout: '[]', stderr: '' }),
+    }).probe()
+    expect(ROW.capabilities).toEqual(capabilities)
+    expect(ROW.pinned).toBe(capabilities.engine_version)
+  })
+
+  it('a turn gives a report, a commit on the head, and checks on that head', async () => {
+    const { dataDir, repo } = scratch('opencode', { steps: OPENCODE_SUCCESS })
+    seed(dataDir, repo, { ...WITH_TASK, checks: CHECKS })
+    const end = await launched(dataDir, ['succeeded', 'checks_failed', 'failed'])
+    expect(end.state).toBe('succeeded')
+    const worktree = String(end.worktree)
+    const head = gitIn(worktree, 'rev-parse', 'HEAD')
+    expect(gitIn(worktree, 'show', '--name-only', '--format=', 'HEAD')).toBe('made.txt')
+    const stored = peek(dataDir, (store) => ({
+      check: store.engines.get('check/att_1/unit'),
+      report: store.engines.get('report/att_1/1'),
+    }))
+    expect(stored.check).toMatchObject({ status: 'passed', sha: head })
+    expect(JSON.stringify(stored.report)).toContain('made the file')
+  })
+
+  it('states there is no sandbox, on the attempt and in the brief', async () => {
+    const { dataDir, repo } = scratch('opencode', { steps: [{ verdict: 'succeeded' }] })
+    seed(dataDir, repo, WITH_TASK)
+    const end = await launched(dataDir)
+    expect(end.sandbox).toBe('off')
+  })
+
+  it('project config stays off, and the attempt config is the one it reads', async () => {
+    const { dataDir, repo, seen } = scratch('opencode', { steps: [{ verdict: 'succeeded' }] })
+    seed(dataDir, repo, WITH_TASK)
+    const end = await launched(dataDir)
+    expect(seen().project_config_off).toBe('1')
+    expect(seen().config_path).toBe(join(String(end.worktree), '.mec', 'opencode.json'))
+  })
+
+  it('token is absent from argv, files, docs and events', async () => {
+    const { dataDir, repo, seen, bin } = scratch('opencode', { steps: OPENCODE_SUCCESS })
+    seed(dataDir, repo, WITH_TASK)
+    const end = await launched(dataDir)
+    const token = readFileSync(join(bin, 'token.txt'), 'utf8')
+    expect(token.length).toBeGreaterThan(20)
+    expect(JSON.stringify(seen())).not.toContain(token)
+    expect(allDurable(dataDir)).not.toContain(token)
+    const config = readFileSync(join(String(end.worktree), '.mec', 'opencode.json'), 'utf8')
+    expect(config).not.toContain(token)
+  })
+
+  it('a pasted key reaches this process only, and is redacted wherever it comes back', async () => {
+    const steps = [
+      { event: { type: 'session.text.ended', data: { text: 'the key is key-value-0123456789' } } },
+      { verdict: 'succeeded' },
+    ]
+    const { dataDir, repo, root, seen } = scratch('opencode', { steps })
+    const home = join(root, 'slot')
+    mkdirSync(home)
+    new SlotKeystore(home).store('zai-coding-plan', 'key-value-0123456789')
+    seed(dataDir, repo, { ...WITH_TASK, slot: { ...GLM_SLOT, home } })
+    await launched(dataDir)
+    expect(seen().env_names).toContain('ZHIPU_API_KEY')
+    expect(allDurable(dataDir)).not.toContain('key-value-0123456789')
+    const journal = readFileSync(join(dataDir, 'journal', 'att_1', 'events.jsonl'), 'utf8')
+    expect(journal).not.toContain('key-value-0123456789')
+  })
+
+  it('every shell ask is refused, because nothing stands behind this engine', async () => {
+    const steps = [
+      { ask: { id: 'per_1', action: 'shell', resources: ['ls'] } },
+      { ask: { id: 'per_2', action: 'shell', resources: ['git push origin main'] } },
+      { verdict: 'succeeded' },
+    ]
+    const { dataDir, repo, lines } = scratch('opencode', { steps })
+    seed(dataDir, repo, WITH_TASK)
+    await launched(dataDir)
+    const answers = lines('answers.jsonl') as unknown as { answer: { decision: string; message?: string } }[]
+    expect(answers.map(({ answer }) => answer.decision)).toEqual(['reject', 'reject'])
+    expect(answers[0]?.answer.message).toContain('MEC refused')
+    const events = peek(dataDir, (store) => store.events.read('attempt:att_1'))
+    expect(events.filter((event) => event.type === 'attempt.permission_requested')).toHaveLength(2)
+  })
+
+  it('an edit inside the worktree is allowed once; outside, or into a control dir, it is not', async () => {
+    const steps = [
+      { ask: { id: 'per_1', action: 'edit', resources: ['src/a.ts'] } },
+      { ask: { id: 'per_2', action: 'edit', resources: ['/etc/passwd'] } },
+      { ask: { id: 'per_3', action: 'edit', resources: ['.mec/opencode.json'] } },
+      { ask: { id: 'per_4', action: 'edit', resources: ['../other/a.ts'] } },
+      { verdict: 'succeeded' },
+    ]
+    const { dataDir, repo, lines } = scratch('opencode', { steps })
+    seed(dataDir, repo, WITH_TASK)
+    await launched(dataDir)
+    const answers = lines('answers.jsonl') as unknown as { answer: { decision: string } }[]
+    expect(answers.map(({ answer }) => answer.decision)).toEqual(['once', 'reject', 'reject', 'reject'])
+  })
+
+  it('a task with no model refuses before any spend: a session inherits none', async () => {
+    const { dataDir, repo, bin } = scratch('opencode', { steps: [] })
+    seed(dataDir, repo, { slot: GLM_SLOT })
+    const end = await launched(dataDir)
+    expect(String(end.terminal_reason)).toContain('model_refused')
+    expect(existsSync(join(bin, 'seen.json'))).toBe(false)
+  })
+
+  it('a drifted version degrades the slot and spends nothing', async () => {
+    const { dataDir, repo, bin } = scratch('opencode', { version: 'opencode v2.3.0', steps: [] })
+    seed(dataDir, repo, WITH_TASK)
+    const end = await launched(dataDir)
+    expect(String(end.terminal_reason)).toContain('engine_unsupported')
+    expect(existsSync(join(bin, 'seen.json'))).toBe(false)
+  })
+
+  it('a server that never comes up fails the attempt and leaves no process', async () => {
+    const { dataDir, repo, seen } = scratch('opencode', { noUrl: true, steps: [] })
+    seed(dataDir, repo, WITH_TASK)
+    const end = await launched(dataDir)
+    expect(end.state).toBe('failed')
+    expect(String(end.terminal_reason)).toContain('opencode serve')
+    const { pid } = seen()
+    await until(() => {
+      try {
+        process.kill(pid, 0)
+        return false
+      } catch {
+        return true
+      }
+    }, 5000)
+  })
+
+  it('a stop ends interrupted, with the group confirmed gone', async () => {
+    const { dataDir, repo, seen } = scratch('opencode', { steps: [{ sleep: 60_000 }] })
+    seed(dataDir, repo, { slot: GLM_SLOT, task: { ...GLM_TASK, budget: { wall_clock_ms: 800 } } })
+    const end = await launched(dataDir)
+    expect(end.state).toBe('interrupted')
+    expect(() => process.kill(seen().pid, 0)).toThrow()
+  })
+
+  it('a failed turn fails the attempt, and the stream end is what carries the exit', async () => {
+    const error = { error: { type: 'provider.unknown', status: 400, message: 'bad' } }
+    const steps = [{ event: { type: 'session.execution.failed', data: error } }]
+    const { dataDir, repo } = scratch('opencode', { steps })
+    seed(dataDir, repo, WITH_TASK)
     const end = await launched(dataDir)
     expect(end.state).toBe('failed')
   })

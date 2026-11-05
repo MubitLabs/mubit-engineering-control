@@ -235,13 +235,81 @@ describe('OpenCodeAdapter permission bridge', () => {
     })
     expect(posts[1]).toEqual({
       path: '/api/session/ses_syn_perm1/permission/perm_syn_01/reply',
-      body: { decision: native },
+      body:
+        native === 'once'
+          ? { decision: native }
+          : {
+              decision: native,
+              message: 'MEC refused this. Carry on without it, and say so in your report.',
+            },
     })
     expect(asked[0]).toEqual({
       kind: 'shell',
       worktree: '/wt/audit-view',
       deadline: '2026-11-03T16:46:03.000Z',
     })
+  })
+})
+
+describe('OpenCodeAdapter through connect', () => {
+  const line = (type: string, data: unknown) => `data: ${JSON.stringify({ id: 'e', type, data })}`
+
+  const connected = (sent: unknown[], lines: string[], decision: 'allow' | 'deny' = 'allow') => {
+    const asked: unknown[] = []
+    const adapter = new OpenCodeAdapter({
+      connect: async () => ({
+        post: async (path, body) => {
+          sent.push({ path, body })
+          return { data: { id: 'ses_1' } }
+        },
+        sse: async function* () {
+          for (const each of lines) yield each
+        },
+        ready: async () => {},
+      }),
+    })
+    const launched = adapter.launch(
+      spec({
+        bridge: {
+          request: async (_attempt, operation) => {
+            asked.push(operation)
+            return decision
+          },
+        },
+      }),
+    )
+    return { adapter, launched, asked }
+  }
+
+  it('sends the brief as the first prompt, and send stays unsupported', async () => {
+    const sent: { path: string; body?: unknown }[] = []
+    const { adapter, launched } = connected(sent, [])
+    const handle = await launched
+    expect(sent.at(-1)).toMatchObject({
+      path: '/api/session/ses_1/prompt',
+      body: { text: 'Add the audit log view' },
+    })
+    await expect(adapter.send(handle, { id: 'inp_1', kind: 'message', text: 'more' })).rejects.toThrow(
+      'send is not proven',
+    )
+  })
+
+  it('an edit reaches the decider as a real path, whichever way the engine spelled it', async () => {
+    const sent: unknown[] = []
+    const ask = (id: string, resource: string) =>
+      line('permission.asked', { id, action: 'edit', resources: [resource], source: { id: 'write' } })
+    const { adapter, launched, asked } = connected(sent, [
+      ask('per_1', 'src/a.ts'),
+      ask('per_2', '/elsewhere/b.ts'),
+    ])
+    const handle = await launched
+    for await (const _ of adapter.events(handle)) {
+      // drained for the asks
+    }
+    expect(asked).toMatchObject([
+      { kind: 'edit', paths: ['/wt/audit-view/src/a.ts'] },
+      { kind: 'edit', paths: ['/elsewhere/b.ts'] },
+    ])
   })
 })
 

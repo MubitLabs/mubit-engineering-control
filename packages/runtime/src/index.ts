@@ -30,6 +30,13 @@ export { buildAttemptSettings, defaultDenyRead, serialiseAttemptSettings } from 
 export type { JournalOpenMode } from './journal'
 export { AttemptJournal, SequenceError } from './journal'
 export * from './model'
+export type {
+  OpenCodeAttemptConfig,
+  OpenCodeClient,
+  OpenCodeClientOptions,
+  OpenCodeRule,
+} from './opencode-client'
+export { OPENCODE_TOKEN_VAR, opencodeAttemptConfig, startOpenCodeClient } from './opencode-client'
 export { opencodeSlotEnv } from './opencode-env'
 export type { OwnedSpawn, OwnedSpawnHooks } from './owned-spawn'
 export { ownedSpawn } from './owned-spawn'

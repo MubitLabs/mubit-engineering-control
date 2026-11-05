@@ -29,9 +29,11 @@ export {
 } from './codex/protocol'
 // OpenCode V2 (plan §9): one `opencode serve --stdio` per slot, one server session per attempt.
 export {
+  OPENCODE_FLAGS_VERIFIED,
   OpenCodeAdapter,
   type OpenCodeAdapterDeps,
   type OpenCodeAuthList,
+  type OpenCodeConnection,
   type OpenCodePost,
   type OpenCodeSpawnFn,
   type OpenCodeSse,

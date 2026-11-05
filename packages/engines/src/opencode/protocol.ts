@@ -326,13 +326,14 @@ function mapOpenCodeEvent(
     if (!requestId) return []
     const resources = Array.isArray(data.resources) ? data.resources.map(String) : []
     const metadata = (data.metadata ?? {}) as AnyRecord
+    const kind = operationKindOf(data)
     const command = Array.isArray(metadata.command) ? metadata.command.map(String) : undefined
     return [
       {
         type: 'permission_request',
         request_id: requestId,
         operation: {
-          kind: operationKindOf(data),
+          kind,
           summary:
             str(data.message) ||
             str(metadata.summary) ||
@@ -340,7 +341,8 @@ function mapOpenCodeEvent(
             `${str(data.action) || 'permission'} ${resources.join(' ')}`.trim() ||
             'permission request',
           command,
-          paths: resources.filter((r) => r.startsWith('/')),
+          // An edit's resource is its target, and it may be relative to the session's directory.
+          paths: kind === 'edit' ? resources : resources.filter((r) => r.startsWith('/')),
           hosts: undefined,
           tool: str(metadata.tool) || undefined,
         },

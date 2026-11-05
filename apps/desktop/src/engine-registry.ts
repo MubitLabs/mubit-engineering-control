@@ -19,9 +19,18 @@ import type {
   LaunchSpec,
   Operation,
   PermissionBridge,
+  ProviderId,
   StoreDoc,
 } from '@mec/contracts'
-import { ClaudeAdapter, CODEX_ENGINE_VERSION, CODEX_FLAGS_VERIFIED, CodexAdapter } from '@mec/engines'
+import {
+  ClaudeAdapter,
+  CODEX_ENGINE_VERSION,
+  CODEX_FLAGS_VERIFIED,
+  CodexAdapter,
+  OPENCODE_ENGINE_VERSION,
+  OPENCODE_FLAGS_VERIFIED,
+  OpenCodeAdapter,
+} from '@mec/engines'
 import {
   buildAttemptSettings,
   CODEX_PROFILE,
@@ -30,9 +39,13 @@ import {
   codexOtherServers,
   defaultDenyRead,
   type OwnedSpawn,
+  opencodeAttemptConfig,
+  opencodeSlotEnv,
   serialiseAttemptSettings,
   startCodexClient,
+  startOpenCodeClient,
 } from '@mec/runtime'
+import { SlotKeystore } from '@mec/slots'
 
 /** §13's always-confirm commands, refused by the engine itself: see the Claude row. */
 const CLAUDE_DENIED_TOOLS = 'Bash(git push:*),Bash(gh:*)'
@@ -194,6 +207,74 @@ const claudeRow: EngineRow = {
     new ClaudeAdapter({ binary, streamInput: true, spawnFn: spawn({ stdin: true }) }),
 }
 
+/** What `docs/log/HANDSHAKES.md` shows of OpenCode through the runner, and it equals the adapter's probe. */
+const OPENCODE_CAPABILITIES: Capabilities = {
+  engine_version: OPENCODE_ENGINE_VERSION,
+  flags_verified: [...OPENCODE_FLAGS_VERIFIED],
+  structured_stream: true,
+  questions: false,
+  tool_approval: true,
+  interrupt: false,
+  resume: false,
+  usage: true,
+  rate_limit_events: false,
+  sandbox: false,
+  restricted_mode: false,
+  mcp_http: true,
+  usage_mode: 'cumulative',
+}
+
+/** §5.7: where a pasted key goes at launch. `MEC_OPENCODE_KEY` is what a slot config's `{env:}` names. */
+const KEY_VARS: Readonly<Record<string, string>> = {
+  'zai-coding-plan': 'ZHIPU_API_KEY',
+  'google-gemini': 'GOOGLE_GENERATIVE_AI_API_KEY',
+}
+
+const opencodeRow: EngineRow = {
+  engine: 'opencode',
+  kinds: ['opencode-glm', 'opencode-gemini'],
+  // No OS sandbox (§8.4). `off` is the truth, and the decider then refuses every shell ask.
+  sandbox: 'off',
+  domains: [],
+  pinned: OPENCODE_ENGINE_VERSION,
+  capabilities: OPENCODE_CAPABILITIES,
+  modelRequired: true,
+  // Project config stays off for a trusted repository too: nothing else stands in for a sandbox.
+  hygiene: () => opencodeSlotEnv(false),
+  tokenFile: false,
+  notes: [
+    'You have no shell here: this engine has no sandbox behind it, so MEC refuses every shell command, git',
+    'included. Do not retry one. Read and edit files with your file tools, inside the worktree only.',
+    ...COMMIT_NOTE,
+  ],
+  asksLeaveSandbox: false,
+  prepare: (ctx) => {
+    const path = join(ctx.worktree, '.mec', 'opencode.json')
+    writeFileSync(path, `${JSON.stringify(opencodeAttemptConfig({ toolsUrl: ctx.toolsUrl }))}\n`)
+    return { env: { OPENCODE_CONFIG: path } }
+  },
+  adapter: ({ binary, cwd, secrets, spawn }) =>
+    new OpenCodeAdapter({
+      connect: (spec) =>
+        startOpenCodeClient({ binary, cwd, env: spec.env, secrets, spawn: spawn({ stdin: true }) }),
+    }),
+  // `auth list` shows integrations only, so a key slot reads as logged out while it works: a dead
+  // key arrives at the first turn as `provider.auth`, and that parks the attempt.
+  probe: async (binary, env) => {
+    const { capabilities } = await new OpenCodeAdapter({
+      authList: async () => ({ code: 0, stdout: '[]', stderr: '' }),
+      versionProbe: async () => versionOf((await run(binary, ['--version'], env)).stdout),
+    }).probe()
+    return { capabilities, auth: { logged_in: true } }
+  },
+  secretsOf: (slot): Record<string, string> => {
+    const name = KEY_VARS[String(slot.provider)]
+    if (name === undefined || typeof slot.home !== 'string') return {}
+    const key = new SlotKeystore(slot.home).read(slot.provider as ProviderId)
+    return key === undefined ? {} : { [name]: key, MEC_OPENCODE_KEY: key }
+  },
+}
+
 const codexRow: EngineRow = {
   engine: 'codex',
   kinds: ['codex-sub'],
@@ -249,7 +330,11 @@ const codexRow: EngineRow = {
 }
 
 /** The rows, each added only with its own proof. */
-export const ENGINE_ROWS: Readonly<Record<string, EngineRow>> = { claude: claudeRow, codex: codexRow }
+export const ENGINE_ROWS: Readonly<Record<string, EngineRow>> = {
+  claude: claudeRow,
+  codex: codexRow,
+  opencode: opencodeRow,
+}
 
 /**
  * §5.3, the probe's rule: a linked slot runs with its home variable unset and any other runs

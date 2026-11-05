@@ -1,0 +1,358 @@
+[
+  {
+    "name": "advertise unproven",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "  codex: codexRow,\n  opencode: opencodeRow,\n",
+    "replace": "  codex: codexRow,\n  opencode: opencodeRow,\n  gemini: { ...codexRow, engine: 'gemini', kinds: ['gemini-key'] },\n",
+    "tests": [
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": "kind beyond the proof",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "  kinds: ['codex-sub'],\n",
+    "replace": "  kinds: ['codex-sub', 'codex-api'],\n",
+    "tests": [
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": "capabilities beyond the proof",
+    "file": "packages/engines/src/codex/adapter.ts",
+    "find": "        resume: false, // thread/resume has not run through the runner\n",
+    "replace": "        resume: true,\n",
+    "tests": [
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": "shared token",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "    const token = issueToken({ attemptId, generation, role: 'specialist', secret: tools.secret })\n",
+    "replace": "    const token = issueToken({ attemptId: 'att_shared', generation, role: 'specialist', secret: tools.secret })\n",
+    "tests": [
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": "token on argv",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "bearer_token_env_var=${toml(CODEX_TOKEN_VAR)},",
+    "replace": "bearer_token=${toml(process.env[CODEX_TOKEN_VAR] ?? '')},",
+    "tests": [
+      "packages/runtime/test/codex-client.test.ts"
+    ]
+  },
+  {
+    "name": "token in the shell",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "    `shell_environment_policy.exclude=[${toml(CODEX_TOKEN_VAR)}]`,\n",
+    "replace": "",
+    "tests": [
+      "packages/runtime/test/codex-client.test.ts"
+    ]
+  },
+  {
+    "name": "token file for codex",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "  hygiene: () => ({}),\n  tokenFile: false,\n",
+    "replace": "  hygiene: () => ({}),\n  tokenFile: true,\n",
+    "tests": [
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": "host env reaches codex",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "cwd: opts.cwd, env: opts.env })",
+    "replace": "cwd: opts.cwd, env: { ...(process.env as Record<string, string>), ...opts.env } })",
+    "tests": [
+      "packages/runtime/test/codex-client.test.ts"
+    ]
+  },
+  {
+    "name": "sandbox overrides the profile",
+    "file": "packages/engines/src/codex/adapter.ts",
+    "find": "          ...(this.deps.profile === undefined && { sandbox }),\n",
+    "replace": "          sandbox,\n",
+    "tests": [
+      "packages/engines/test/codex.test.ts",
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": "profile not checked",
+    "file": "packages/engines/src/codex/adapter.ts",
+    "find": "    if (this.deps.profile !== undefined && active?.id !== this.deps.profile) {\n",
+    "replace": "    if (false as boolean) {\n",
+    "tests": [
+      "packages/engines/test/codex.test.ts",
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": "shared clone left writable",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "    [opts.sharedClone]: 'read',\n",
+    "replace": "    [opts.sharedClone]: 'write',\n",
+    "tests": [
+      "packages/runtime/test/codex-client.test.ts"
+    ]
+  },
+  {
+    "name": "deny list not applied",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "  for (const path of opts.denyRead) filesystem[path] = 'deny'\n",
+    "replace": "",
+    "tests": [
+      "packages/runtime/test/codex-client.test.ts",
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": ".mec writable to codex",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "    [`${opts.worktree}/.mec`]: 'read',\n",
+    "replace": "",
+    "tests": [
+      "packages/runtime/test/codex-client.test.ts"
+    ]
+  },
+  {
+    "name": "user MCP servers stay",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "    ...opts.otherServers.filter(({ name }) => name !== 'mec').map(disabledServer),\n",
+    "replace": "",
+    "tests": [
+      "packages/runtime/test/codex-client.test.ts",
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": "unfenceable name passes",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "  if (!BARE_KEY.test(name)) throw new Error(`codex: cannot fence MCP server ${JSON.stringify(name)}`)\n",
+    "replace": "",
+    "tests": [
+      "packages/runtime/test/codex-client.test.ts"
+    ]
+  },
+  {
+    "name": "codex ask reaches the decider",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "      if (row.asksLeaveSandbox) return Promise.resolve('deny')\n",
+    "replace": "",
+    "tests": [
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": "ask not recorded",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "      atomic(() => facts.permissionRequested(attempt, id, operation))\n",
+    "replace": "",
+    "tests": [
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": "unhandled request unanswered",
+    "file": "packages/engines/src/codex/adapter.ts",
+    "find": "      for (const { id, method } of parser.takeUnhandled()) {\n",
+    "replace": "      for (const { id, method } of [] as { id: string; method: string }[]) {\n",
+    "tests": [
+      "packages/engines/test/codex.test.ts"
+    ]
+  },
+  {
+    "name": "permissions granted",
+    "file": "packages/engines/src/codex/adapter.ts",
+    "find": "      return { permissions: {}, scope: 'turn' } // grants nothing, whatever was asked\n",
+    "replace": "      return { permissions: { fileSystem: { write: ['/'] } }, scope: 'turn' }\n",
+    "tests": [
+      "packages/engines/test/codex.test.ts"
+    ]
+  },
+  {
+    "name": "re-initialize",
+    "file": "packages/engines/src/codex/adapter.ts",
+    "find": "    if (!this.initialized) {\n",
+    "replace": "    if (true as boolean) {\n",
+    "tests": [
+      "packages/engines/test/codex.test.ts"
+    ]
+  },
+  {
+    "name": "turn end does not end the stream",
+    "file": "packages/engines/src/codex/adapter.ts",
+    "find": "            if (this.deps.connect) return\n",
+    "replace": "",
+    "tests": [
+      "packages/engines/test/codex.test.ts"
+    ]
+  },
+  {
+    "name": "send advertised",
+    "file": "packages/engines/src/codex/adapter.ts",
+    "find": "    if (this.deps.connect) throw new Error('codex adapter: send is not proven; it stays unsupported')\n",
+    "replace": "",
+    "tests": [
+      "packages/engines/test/codex.test.ts"
+    ]
+  },
+  {
+    "name": "objective never sent",
+    "file": "packages/engines/src/codex/adapter.ts",
+    "find": "    if (this.deps.connect) await this.startTurn(handle, spec.brief.objective)\n",
+    "replace": "",
+    "tests": [
+      "packages/engines/test/codex.test.ts"
+    ]
+  },
+  {
+    "name": "handshake failure leaves the server",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "        await this.#supervisor.stop(attempt_id, generation).catch(() => {})\n",
+    "replace": "",
+    "tests": [
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": "drift ignored",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "    const drift = driftOf(row, probe)\n",
+    "replace": "    const drift = undefined as string | undefined\n",
+    "tests": [
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": "login not checked",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "    if (!probe.auth.logged_in) throw refuse(`auth_required: ${probe.auth.detail ?? row.engine}`)\n",
+    "replace": "",
+    "tests": [
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": "opencode claims a sandbox",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "  sandbox: 'off',\n  domains: [],\n  pinned: OPENCODE_ENGINE_VERSION,\n",
+    "replace": "  sandbox: 'required',\n  domains: [],\n  pinned: OPENCODE_ENGINE_VERSION,\n",
+    "tests": [
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": "opencode starts from allow",
+    "file": "packages/runtime/src/opencode-client.ts",
+    "find": "  rule('*', '*', 'deny'),\n",
+    "replace": "  rule('*', '*', 'allow'),\n",
+    "tests": [
+      "packages/runtime/test/opencode-client.test.ts"
+    ]
+  },
+  {
+    "name": "opencode reads .mec",
+    "file": "packages/runtime/src/opencode-client.ts",
+    "find": "  rule('read', '.mec/*', 'deny'),\n",
+    "replace": "",
+    "tests": [
+      "packages/runtime/test/opencode-client.test.ts"
+    ]
+  },
+  {
+    "name": "plan agent can edit",
+    "file": "packages/runtime/src/opencode-client.ts",
+    "find": "plan: { permissions: [...READING] }",
+    "replace": "plan: { permissions: [...WRITING] }",
+    "tests": [
+      "packages/runtime/test/opencode-client.test.ts"
+    ]
+  },
+  {
+    "name": "verdict by text",
+    "file": "packages/runtime/src/opencode-client.ts",
+    "find": "          if (verdictAt === undefined && isVerdict(line)) verdictAt = Date.now()\n",
+    "replace": "          if (verdictAt === undefined && line.includes('session.execution.')) verdictAt = Date.now()\n",
+    "tests": [
+      "packages/runtime/test/opencode-client.test.ts"
+    ]
+  },
+  {
+    "name": "stream closes at the verdict",
+    "file": "packages/runtime/src/opencode-client.ts",
+    "find": "        const remaining = verdictAt === undefined ? undefined : verdictAt + graceMs - Date.now()\n",
+    "replace": "        const remaining = verdictAt === undefined ? undefined : 0\n",
+    "tests": [
+      "packages/runtime/test/opencode-client.test.ts"
+    ]
+  },
+  {
+    "name": "ready before the stream",
+    "file": "packages/runtime/src/opencode-client.ts",
+    "find": "    opened()\n    const reader",
+    "replace": "    const reader",
+    "tests": [
+      "packages/runtime/test/opencode-client.test.ts"
+    ]
+  },
+  {
+    "name": "stdin not held open",
+    "file": "packages/runtime/src/owned-spawn.ts",
+    "find": "      stdio: [hooks.stdin === true ? 'pipe' : 'ignore', 'pipe', 'pipe'],\n",
+    "replace": "      stdio: ['ignore', 'pipe', 'pipe'],\n",
+    "tests": [
+      "packages/runtime/test/opencode-client.test.ts"
+    ]
+  },
+  {
+    "name": "key not redacted",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "      exacts: [token, ...Object.values(secrets)],\n",
+    "replace": "      exacts: [token],\n",
+    "tests": [
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": "project config on",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "  hygiene: () => opencodeSlotEnv(false),\n",
+    "replace": "  hygiene: () => opencodeSlotEnv(true),\n",
+    "tests": [
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": "edit path left relative",
+    "file": "packages/engines/src/opencode/adapter.ts",
+    "find": "                  isAbsolute(path) ? path : resolve(spec.brief.worktree, path),\n",
+    "replace": "                  isAbsolute(path) ? path : path,\n",
+    "tests": [
+      "packages/engines/test/opencode.test.ts",
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": "reject ends the turn",
+    "file": "packages/engines/src/opencode/adapter.ts",
+    "find": "                  ...(decision !== 'allow' && { message: REFUSED }),\n",
+    "replace": "",
+    "tests": [
+      "packages/engines/test/opencode.test.ts"
+    ]
+  },
+  {
+    "name": "model not required",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "  capabilities: OPENCODE_CAPABILITIES,\n  modelRequired: true,\n",
+    "replace": "  capabilities: OPENCODE_CAPABILITIES,\n  modelRequired: false,\n",
+    "tests": [
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  }
+]

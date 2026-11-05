@@ -165,7 +165,7 @@ From `packages/policy/src/policy.ts` — v0 is JSON (the plan's YAML is a later 
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `MEC_REAL_RUNNER=1` | off | A launch effect starts a real Claude specialist through the attempt runner. Off, the launch fails with `no_runner`, the work blocks with that reason and no process starts. The flag grants no authority: mandate, hold and repo checks run on every launch. Decision #25: only on scratch repositories and `mec-sandbox`, because repo checks run unsandboxed. On, a planner turn sees only launchable slots, and their marks are the capability table's entries. |
+| `MEC_REAL_RUNNER=1` | off | A launch effect starts a real specialist through the attempt runner, on any engine `apps/desktop/src/engine-registry.ts` lists: Claude, Codex and OpenCode. Off, the launch fails with `no_runner`, the work blocks with that reason and no process starts. The flag grants no authority: mandate, hold and repo checks run on every launch. Decision #25: only on scratch repositories and `mec-sandbox`, because repo checks run unsandboxed. On, a planner turn sees only launchable slots, and their marks are the capability table's entries. |
 | `MEC_FAKE_ENGINE=1` | off | The fixture replay stands in for an engine. It wins over `MEC_REAL_RUNNER`. |
 
 ## Fixture library layout

@@ -92,3 +92,29 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
   from `packages/testkit`, which is not shipped, so `effects:launch` reports ENOENT. Chat and
   planning work. The flag is for development and the check needs a checkout.
 - **`bundle.test.ts` waits 6 seconds for health and can flake under load.**
+
+- **Codex and OpenCode attempts (M2.4 Part B).** Each is proven alone; see `docs/log/HANDSHAKES.md`.
+  - Codex's sandbox can express what Claude's does and more: its permissions profile writes only
+    to the worktree and temp dir, keeps `refs`, `packed-refs`, `objects`, the index and `HEAD` of
+    the shared clone unwritable while git can read them, and refuses the deny list for reading.
+    The worker's shell is sandboxed; the engine itself is not.
+  - Every Codex ask is refused, because an allowed one runs outside the sandbox. A worker that
+    needs network or a path beyond the worktree cannot get it.
+  - Push on Codex is stopped by the sandbox and by no name rule: in-sandbox commands are not asked,
+    so `git push` runs and fails. The profile refuses network. On Claude the deny rule names it.
+  - **OpenCode has no OS sandbox, so it cannot express the shared clone denial, or any other.** MEC
+    pins `sandbox: off` and the decider refuses every shell command, git included. A worker there
+    can read and edit inside the worktree and call MEC's tools, and it cannot run a test. Its
+    boundary is the engine's own permission rules. They bind its tools. Nothing here binds code
+    the engine itself runs, and a bug in those rules has no second line behind it.
+  - A linked home brings things the attempt cannot switch off: `~/.codex/AGENTS.md` and skills on
+    Codex, and connected MCP servers on OpenCode, whose tools are denied though the servers run.
+    MEC's sessions land in that home's history. Dedicated slots have none of this, and neither
+    engine has been proved on one here.
+  - `budget.turns` binds Claude alone. Codex and OpenCode have no turn cap, so the wall clock is
+    their only bound.
+  - On Codex a command the sandbox refuses reaches no journal event, so a refusal may show only in
+    the model's own report.
+  - The model table lists `gpt-6-*`; 0.148.0's catalogue offers `gpt-5.6-*`. A planner choosing a
+    Codex tier from the shipped table can pick a model the engine refuses, which fails that attempt.
+  - `send` stays unsupported on both, with an explicit failure, until `deliver` is proven.

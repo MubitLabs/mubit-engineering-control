@@ -245,10 +245,10 @@
     "tests": ["apps/desktop/test/specialist-tools.test.ts"]
   },
   {
-    "name": "brief promises a read-only clone",
+    "name": "brief calls the clone writable",
     "file": "apps/desktop/src/attempt-launch.ts",
-    "find": "\"the shared clone behind the worktree, which holds other attempts' branches, so leave its refs alone.\",\n",
-    "replace": "\"the shared clone behind the worktree is read-only.\",\n",
+    "find": "'is read-only to your shell, so anything that writes to git fails there, and that is expected.',\n",
+    "replace": "'is writable by git, so leave its refs alone.',\n",
     "tests": ["apps/desktop/test/attempt-launch.test.ts"]
   },
   {

@@ -399,6 +399,62 @@ test.describe('the repo workspace', () => {
     await expect(page.getByRole('button', { name: 'Send' })).toHaveAttribute('aria-disabled', 'true')
   })
 
+  test('reload on Unassigned keeps it, with no notice', async ({ page }) => {
+    await twoRepos(page, {
+      messages: [{ id: 'm_old', text: 'An old message', createdAt: '' }],
+    })
+    await start(page)
+    await expect(page.getByText('New request in alpha')).toBeVisible()
+    await page.getByRole('button', { name: 'Unassigned' }).click()
+    await expect(page.getByText('An old message')).toBeVisible()
+    await page.reload()
+    await expect(page.getByText('An old message')).toBeVisible()
+    await expect(page.getByText('Unassigned history, read-only')).toBeVisible()
+    await expect(composerBox(page)).toHaveAttribute('readonly', '')
+    await expect(page.getByText('Repository not found')).toHaveCount(0)
+    expect(new URL(page.url()).hash).toBe('#repo/unassigned/chat')
+    // Nothing was lost, so the stored repository is still the one a return lands on.
+    await page.evaluate(() => {
+      window.location.hash = 'chat'
+    })
+    await expect(page.getByText('New request in alpha')).toBeVisible()
+    await expect(page.getByText('Repository not found')).toHaveCount(0)
+  })
+
+  test('reload on Unassigned with no repository, and slow reads, shows no notice', async ({ page }) => {
+    await mockServer(page, { messages: [{ id: 'm_old', text: 'An old message', createdAt: '' }] })
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let scopedReads = 0
+    await page.route('**/api/work?*', async (route) => {
+      scopedReads += 1
+      await held
+      await route.fallback()
+    })
+    await start(page, 'repo/unassigned/chat')
+    await expect.poll(() => scopedReads).toBeGreaterThan(0)
+    await expect(page.locator('.shell')).toBeVisible()
+    await expect(page.getByText('Repository not found')).toHaveCount(0)
+    release()
+    await expect(page.getByText('An old message')).toBeVisible()
+    await expect(page.getByText('Repository not found')).toHaveCount(0)
+    expect(new URL(page.url()).hash).toBe('#repo/unassigned/chat')
+  })
+
+  test('the retry banner says Retry ignores an edit', async ({ page }) => {
+    await twoRepos(page)
+    await start(page)
+    await expect(page.getByText('New request in alpha')).toBeVisible()
+    await page.route('**/api/chat/messages', (route) =>
+      route.request().method() === 'POST' ? route.abort() : route.fallback(),
+    )
+    await composerBox(page).fill('Build it')
+    await composerBox(page).press('Enter')
+    await expect(page.getByRole('alert')).toContainText('Retry sends the original text')
+  })
+
   test('no Unassigned entry without such rows', async ({ page }) => {
     await twoRepos(page)
     await start(page)

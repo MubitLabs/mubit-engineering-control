@@ -166,5 +166,40 @@
     "find": "      explicitNew: input.explicitNew,\n",
     "replace": "",
     "tests": ["packages/meta/test/service.test.ts"]
+  },
+  {
+    "name": "Unassigned starts as known-absent",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "    repositories: loading(),\n    unassigned: null,\n",
+    "replace": "    repositories: loading(),\n    unassigned: false,\n",
+    "tests": ["apps/web/test/workspace.test.ts"]
+  },
+  {
+    "name": "an unknown Unassigned address falls through to lost",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "  if (addressed === UNASSIGNED && unassigned === null) return { id: null, notice: null }\n",
+    "replace": "",
+    "tests": ["apps/web/test/workspace.test.ts"]
+  },
+  {
+    "name": "an unknown Unassigned address falls back to the stored repository",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "unassigned === null) return { id: null, notice: null }",
+    "replace": "unassigned === null) return { id: known(stored)?.id ?? null, notice: null }",
+    "tests": ["apps/web/test/workspace.test.ts"]
+  },
+  {
+    "name": "an unknown Unassigned applies to every address",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "  if (addressed === UNASSIGNED && unassigned === null) return",
+    "replace": "  if (unassigned === null) return",
+    "tests": ["apps/web/test/workspace.test.ts"]
+  },
+  {
+    "name": "a failed Unassigned read means none",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "        // Not knowing is not the same as none: the entry stays as it was.\n",
+    "replace": "        if (state.unassigned === null) set({ unassigned: false })\n",
+    "tests": ["apps/web/test/workspace.test.ts"]
   }
 ]

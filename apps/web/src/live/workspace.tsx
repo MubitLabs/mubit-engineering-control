@@ -22,8 +22,8 @@ export interface Feed<T> {
 
 export interface WorkspaceState {
   repositories: Feed<RepositoryEntry>
-  /** Rows with no repository exist, so the sidebar offers them. */
-  unassigned: boolean
+  /** Rows with no repository exist, so the sidebar offers them. Null until a read has answered. */
+  unassigned: boolean | null
   scope: string | null
   chat: Feed<ChatMessage>
   work: Feed<WorkItem>
@@ -63,7 +63,7 @@ const inScope = (scope: string, row: { repoId?: string }): boolean =>
 export function createWorkspace(client: WorkspaceClient) {
   let state: WorkspaceState = {
     repositories: loading(),
-    unassigned: false,
+    unassigned: null,
     scope: null,
     chat: loading(),
     work: loading(),
@@ -204,10 +204,11 @@ export function resolveRepository(input: {
   addressed: string | null
   stored: string | null
   repositories: readonly RepositoryEntry[]
-  unassigned: boolean
+  unassigned: boolean | null
 }): ResolvedRepository {
   const { addressed, stored, repositories, unassigned } = input
   const known = (id: string | null) => repositories.find((repo) => repo.id === id)
+  if (addressed === UNASSIGNED && unassigned === null) return { id: null, notice: null }
   if (addressed === UNASSIGNED && unassigned) return { id: UNASSIGNED, notice: null }
   if (known(addressed)) return { id: addressed, notice: null }
 

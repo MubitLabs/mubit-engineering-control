@@ -69,9 +69,9 @@ function createLive() {
 function failureText(submission: Submission): string {
   const { error } = submission
   if (error instanceof HttpError) {
-    return `The workbench refused this message${error.reason ? ` (${error.reason})` : ''}. It is kept here.`
+    return `The workbench refused this message${error.reason ? ` (${error.reason})` : ''}. It is kept here. Retry sends the original text.`
   }
-  return 'This may not have been sent. Retry cannot send it twice.'
+  return 'This may not have been sent. Retry sends the original text and cannot send it twice.'
 }
 
 const toOption = (repo: { id: string; url: string }): RepositoryOption => ({

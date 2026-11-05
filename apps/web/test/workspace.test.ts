@@ -183,6 +183,45 @@ describe('workspace feed', () => {
     stop()
   })
 
+  it('does not know about Unassigned until both its reads have answered', async () => {
+    let answerChat: (rows: ChatMessage[]) => void = () => {}
+    const workspace = createWorkspace({
+      repositories: async () => [repo('repo_a')],
+      chat: () => new Promise((resolve) => (answerChat = resolve)),
+      work: async () => [],
+      subscribe: () => () => {},
+    })
+    const stop = workspace.start()
+    await new Promise((done) => setTimeout(done))
+    expect(workspace.getState().repositories.status).toBe('ready')
+    expect(workspace.getState().unassigned).toBeNull()
+    answerChat([])
+    await new Promise((done) => setTimeout(done))
+    expect(workspace.getState().unassigned).toBe(false)
+    stop()
+  })
+
+  it('a failed Unassigned read stays unknown, then a later read settles it', async () => {
+    let online = false
+    const workspace = createWorkspace({
+      repositories: async () => [repo('repo_a')],
+      chat: async () => {
+        if (!online) throw new Error('offline')
+        return [message('m_old')]
+      },
+      work: async () => [],
+      subscribe: () => () => {},
+    })
+    const stop = workspace.start()
+    await new Promise((done) => setTimeout(done))
+    expect(workspace.getState().unassigned).toBeNull()
+    online = true
+    workspace.refresh()
+    await new Promise((done) => setTimeout(done))
+    expect(workspace.getState().unassigned).toBe(true)
+    stop()
+  })
+
   it('subscribes to this repository’s work streams only', async () => {
     const { workspace, chat, works, streams, settle } = rig()
     workspace.setScope('repo_a')
@@ -239,5 +278,22 @@ describe('resolveRepository', () => {
   it('Unassigned is addressable only while such rows exist', () => {
     expect(resolveRepository({ ...base, addressed: UNASSIGNED, unassigned: true }).id).toBe(UNASSIGNED)
     expect(resolveRepository({ ...base, addressed: UNASSIGNED }).id).toBeNull()
+  })
+
+  it('an Unassigned address waits for its reads: no fallback and no notice', () => {
+    const unknown = { ...base, addressed: UNASSIGNED, unassigned: null }
+    const empty = { id: null, notice: null }
+    expect(resolveRepository(unknown)).toEqual(empty)
+    expect(resolveRepository({ ...unknown, stored: 'repo_a' })).toEqual(empty)
+    expect(resolveRepository({ ...unknown, stored: 'repo_gone' })).toEqual(empty)
+    expect(resolveRepository({ ...unknown, repositories: [repo('repo_a')] })).toEqual(empty)
+    expect(resolveRepository({ ...unknown, repositories: [] })).toEqual(empty)
+  })
+
+  it('unknown Unassigned changes nothing for any other address', () => {
+    expect(resolveRepository({ ...base, addressed: 'repo_b', unassigned: null }).id).toBe('repo_b')
+    expect(resolveRepository({ ...base, stored: 'repo_a', unassigned: null }).id).toBe('repo_a')
+    const lost = resolveRepository({ ...base, addressed: 'repo_gone', stored: 'repo_a', unassigned: null })
+    expect(lost.notice).toContain('no longer')
   })
 })

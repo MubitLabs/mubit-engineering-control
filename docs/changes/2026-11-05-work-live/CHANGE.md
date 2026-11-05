@@ -55,3 +55,27 @@ Stage A's assumptions now hold against a real server: stage keys land in the exp
 
 - Stage C: activity pages, artifacts, compact events.
 - Request-to-PR traceability with real attempts and checks stays unproven until `33` repeats it with M2 evidence.
+
+## After verification
+
+The verifier's run found seven defects and a flaky test. All are fixed here.
+
+| Defect | Fix |
+| --- | --- |
+| Conversation lost its thread when `GET /api/repositories` failed | `resolveActive` treats rows kept from a failed read as still known, and `chatRead` feeds that failure into the kept-content path. Rows from a failed read cannot prove a repository has gone: no "no longer registered" notice, and the stored choice stands. |
+| An open `pr_create` or `pr_merge` card vanished under a repository filter | The release routes store only `payload.repo`, so the card has a label and no id. An open card like that now stays under every filter, labelled as itself. A settled one still follows the filter, so audit item 11 holds. |
+| Focus fell to the body after hold, lift, stop, keep it, answer and approve | A delivery acted on takes focus back, onto its next action or its own row, on every commit until a pointer goes elsewhere. Opening stop lands on the confirm's heading, not a button, so a held Enter cannot walk through a stop. Keep it and confirm return to the Stop button. A card filed under Settled claims focus as it remounts. |
+| Answering in the thread removed the card, and a 409 there said nothing | `threadQuestions` keeps a question this page answered, so the answer and "Already answered" both show. |
+| A settled card said its evidence had not loaded, permanently | Needs you reads the evidence of the settled cards on show, each once and one at a time. A failed read offers Retry, and a card with none served says so. `refresh` still rereads only open cards. |
+| A time carried no date | `timeLabel` names the day, and the year if it differs, for anything not today. |
+| The reset notice outlived a later failure | A failed read withdraws it. |
+
+The sidebar count test now waits for evidence. The flake was the test's: it counted while a card was still `.decision-missing`, which matches neither selector.
+
+### Pending the coordinator's choice
+
+The filter rule for label-only cards is the client side of a decision the verifier left open. It keeps an open card visible, at the cost of showing another repository's card under a filter, with its own repository named on it. The server join in handoff 30 would be the better fix: with a `repoId` on the card, `needInFilter` goes back to `inFilter`. Nothing else depends on the rule.
+
+### Intended test change
+
+`work.screens.playwright.ts` now pins the clock to the fixtures' morning. A date on another day is intended behaviour, so without the pin the baselines and `Last read 10:00` would change at midnight. No assertion and no baseline changed.

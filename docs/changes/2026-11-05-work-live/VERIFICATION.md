@@ -55,3 +55,60 @@ The builder also drove the built product once, on a scratch `MEC_DATA_DIR` and `
 - The verifier's steps, including stop and restart while on Work, a card through the release route with a fake `gh`, the second-tab answer, direct SQLite comparison and keyboard-only passes.
 - `event: reset` against a server, because nothing sends it until M3.1 Stage 2. It is proved with a fake `EventSource` only.
 - Request-to-PR traceability with real attempts and checks, until `33` repeats it with M2 evidence.
+
+## Fixes after verification
+
+Run by the builder, so this is not itself a verification. Every browser result below is against `page.route` mocks: nothing here drove a real server.
+
+### Failing first
+
+| Test | Red | Green |
+| --- | --- | --- |
+| `work-model.test.ts`, `workspace.test.ts`, `inspection-feed.test.ts`, new cases | 26 failed, 118 passed | All pass |
+| `work-live.screens.playwright.ts`, new cases on the unfixed source | 21 failed, 2 passed | All pass |
+
+The two that passed red are the controls: a first read that fails has nothing to keep. Several unit reds were a missing function, so the mutants are what prove those tests see the behaviour. Three browser reds were faults in the new tests and were corrected before the green run: `body` cannot be Playwright-focused, a selector guessed a title, and a reset went to a connection already replaced.
+
+The first fix for the settled card read its evidence in `refresh`, which failed `reads an open card’s evidence, and not a settled one’s`. That test stands unchanged. The read moved to Needs you instead.
+
+### After the fixes
+
+| Command | Result |
+| --- | --- |
+| `pnpm exec vitest run --project a apps/web/test` | 21 files, 338 tests passed |
+| `pnpm exec playwright test` in `apps/web`, under the lock | 272 passed |
+| `work-live.screens.playwright.ts --repeat-each=5`, before the last test was added | 315 passed |
+| `the sidebar count is the waiting list --repeat-each=20` | 20 passed |
+| `pnpm check` | 1 failed, 2285 passed, 15 skipped. The failure is the permitted `login-cards.test.ts` node-pty case |
+
+No baseline changed.
+
+### Mutants
+
+`python3 tools/mutants/run.py tools/mutants/m3.2-work.json`: 56 of 56 killed, 18 of them new: a failed repositories read forgets the rows, a failed read reports a repository as gone, a failed repositories read leaves the thread current, an unresolved open card follows the filter, an unresolved settled card ignores the filter, legacy work ignores the filter, another day has no date, today carries a date, another year has no year, an answered question leaves the thread, a thread question ignores the repository, a card with no evidence served reads as not loaded, a settled card has no retry, an open card gets the settled retry, a failure still reads as current, settled evidence is reread, settled evidence held is read again, settled evidence reads all at once.
+
+Playwright gates by hand, in this worktree, each restored afterwards. All killed:
+
+| Mutant | Test |
+| --- | --- |
+| a settled card does not claim focus | answering, confirming |
+| a remounted card ignores its claim | answering, denying |
+| work row does not recover focus | hold and lift, stop |
+| stop opens with no focus | stop |
+| keep it does not return focus | stop |
+| a pointer does not release the row | a click on the page |
+| a failure keeps the reset notice | reset notice |
+| a failed read cannot move scope | switching during the failure |
+| Conversation ignores the failed repositories read | the repositories route alone |
+| settled evidence is not read on show | shows its own evidence |
+| a settled card shows no Retry | offers a retry that works |
+| the count test does not wait for evidence | sidebar count, 7 of 20 failed, the verifier's flake |
+
+Two pieces were removed because no test could tell them apart from their absence: a position-stable key on hold and lift, and a render gate on the reset notice. Focus recovery and the withdrawing effect already cover both.
+
+### Still unobserved
+
+- A real restart. `composition.ts:206` listens on port 0, so a restarted server gets a new port, and an open tab stays labelled stale until the owner opens the new URL.
+- `event: reset` from a server, because nothing on this base sends it. The new test sends it through a mocked stream.
+- Approving a push card, questions from a real `ask_user`, and a label-only card from the real release route with the new rule.
+- Axe, Lighthouse and measured contrast, which are handoff 33's. Request-to-PR traceability with real attempts and checks stays unproven until `33`.

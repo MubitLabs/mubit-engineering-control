@@ -264,5 +264,131 @@
     "find": "        set({ evidence: rest })\n",
     "replace": "",
     "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "a failed repositories read forgets the rows",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "if (repositories.status === 'loading') return { id: null, notice: null }",
+    "replace": "if (repositories.status !== 'ready') return { id: null, notice: null }",
+    "tests": ["apps/web/test/workspace.test.ts"]
+  },
+  {
+    "name": "a failed read reports a repository as gone",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "  if (!fresh) return { id: null, notice: null }\n",
+    "replace": "",
+    "tests": ["apps/web/test/workspace.test.ts"]
+  },
+  {
+    "name": "a failed repositories read leaves the thread current",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "if (feed.status === 'ready' && repositories.status !== 'error') {",
+    "replace": "if (feed.status === 'ready') {",
+    "tests": ["apps/web/test/workspace.test.ts"]
+  },
+  {
+    "name": "an unresolved open card follows the filter",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "return inFilter(item, filter) || (isOpen(item) && item.repoId === null && item.repoLabel !== null)",
+    "replace": "return inFilter(item, filter)",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "an unresolved settled card ignores the filter",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "(isOpen(item) && item.repoId === null && item.repoLabel !== null)",
+    "replace": "(item.repoId === null && item.repoLabel !== null)",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "legacy work ignores the filter",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "(isOpen(item) && item.repoId === null && item.repoLabel !== null)",
+    "replace": "(isOpen(item) && item.repoId === null)",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "another day has no date",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "if (date.toDateString() === now.toDateString()) return date.toLocaleTimeString([], time)",
+    "replace": "return date.toLocaleTimeString([], time)",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "today carries a date",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "if (date.toDateString() === now.toDateString()) return date.toLocaleTimeString([], time)\n",
+    "replace": "",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "another year has no year",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "const year = date.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' as const }",
+    "replace": "const year = {}",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "an answered question leaves the thread",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "return view.status.state === 'open' || outcome !== null ? [view] : []",
+    "replace": "return view.status.state === 'open' ? [view] : []",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "a thread question ignores the repository",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "if (item.kind !== 'question' || item.repoId !== repoId) return []",
+    "replace": "if (item.kind !== 'question') return []",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "a card with no evidence served reads as not loaded",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "      (served === null\n        ? 'The evidence",
+    "replace": "      (served !== undefined\n        ? 'The evidence",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "a settled card has no retry",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "retryEvidence: served === null && item.status !== 'pending',",
+    "replace": "retryEvidence: false,",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "an open card gets the settled retry",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "retryEvidence: served === null && item.status !== 'pending',",
+    "replace": "retryEvidence: served === null,",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "a failure still reads as current",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "reads.every((read) => read.status !== 'failed')",
+    "replace": "reads.every(() => true)",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "settled evidence is reread",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "if (settledAsked.has(id) || state.evidence[id] !== undefined) continue",
+    "replace": "if (state.evidence[id] !== undefined) continue",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "settled evidence held is read again",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "if (settledAsked.has(id) || state.evidence[id] !== undefined) continue",
+    "replace": "if (settledAsked.has(id)) continue",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "settled evidence reads all at once",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "        settledAsked.add(id)\n        await readEvidence(id)\n",
+    "replace": "        settledAsked.add(id)\n        void readEvidence(id)\n",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
   }
 ]

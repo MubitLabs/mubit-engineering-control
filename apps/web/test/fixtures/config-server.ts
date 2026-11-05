@@ -9,7 +9,17 @@ const hash = (text: string): string => `${text.length.toString(16).padStart(8, '
 
 type Slot = Record<string, unknown> & { id: string; label: string; state: string }
 
-export function sampleServer({ fail, empty }: { fail: string[]; empty: boolean }) {
+const ALWAYS_CONFIRM = "class 'pr_merge' is always-confirm (§13) and can never be pre-authorised"
+
+export function sampleServer({
+  fail,
+  empty,
+  noChecks = false,
+}: {
+  fail: string[]
+  empty: boolean
+  noChecks?: boolean
+}) {
   let policyText = '{\n  "preAuthorised": {}\n}\n'
   let policyRevision = 0
   let modelsYaml = `# ${MARK}\ntiers: [fast, balanced]\n`
@@ -72,7 +82,7 @@ export function sampleServer({ fail, empty }: { fail: string[]; empty: boolean }
           id: 'repo_sample',
           url: '/sample/console',
           bootstrap: ['pnpm install'],
-          checks: [{ name: 'test', cmd: 'pnpm test' }],
+          checks: noChecks ? [] : [{ name: 'test', cmd: 'pnpm test' }],
           trust: false,
           revision: 'r1',
         },
@@ -115,6 +125,7 @@ export function sampleServer({ fail, empty }: { fail: string[]; empty: boolean }
 
   const readiness = () => {
     const usable = slots.some((slot) => slot.state === 'healthy' && slot.kind === 'claude-sub')
+    const repositoryReady = repositories.some((repository) => repository.checks.length > 0)
     return {
       steps: [
         { id: 'engines', title: 'Engines', status: 'done', detail: 'Found claude 2.1.317.', next: null },
@@ -122,15 +133,23 @@ export function sampleServer({ fail, empty }: { fail: string[]; empty: boolean }
           id: 'connection',
           title: 'Connection',
           status: usable ? 'done' : 'missing',
-          detail: usable ? '1 usable connection.' : 'No connection yet.',
+          detail: usable
+            ? '1 usable connection.'
+            : slots.length > 0
+              ? 'A connection exists, but none has passed a health check.'
+              : 'No connection yet.',
           next: usable ? null : { label: 'Open Connections', route: 'slots' },
         },
         {
           id: 'repository',
           title: 'Repository',
-          status: repositories.length > 0 ? 'done' : 'missing',
-          detail: repositories.length > 0 ? 'Has a check profile.' : 'No repository yet.',
-          next: repositories.length > 0 ? null : { label: 'Add a repository', route: 'setup' },
+          status: repositoryReady ? 'done' : 'missing',
+          detail: repositoryReady ? 'Has a check profile.' : 'No repository yet.',
+          next: repositoryReady
+            ? null
+            : repositories.length > 0
+              ? { label: 'Open Repositories', route: 'settings' }
+              : { label: 'Add a repository', route: 'setup' },
         },
         {
           id: 'meta_slot',
@@ -210,9 +229,34 @@ export function sampleServer({ fail, empty }: { fail: string[]; empty: boolean }
       if (route === 'GET /api/setup/readiness') return json(readiness())
       if (route === 'GET /api/connections') return json({ rows: slots, options })
       if (route === 'GET /api/setup/drafts') return json(drafts)
+      // The one sample proposal asks for what no policy may hold, so Apply shows a refusal.
+      if (route === 'POST /api/setup/drafts/draft_sample/apply') {
+        return json({ error: 'invalid_policy', detail: ALWAYS_CONFIRM }, 400)
+      }
+      if (route === 'POST /api/slots/dedicated') {
+        const label = String(body.label)
+        slots.push({
+          id: `slot_${label}`,
+          label,
+          engine: String(body.engine),
+          kind: 'claude-sub',
+          provider: 'anthropic',
+          state: 'home_ready',
+          linked: false,
+          credential: 'sign_in',
+          usage: null,
+          pin: null,
+          pair: null,
+        })
+        return json({ id: `slot_${label}`, state: 'home_ready' })
+      }
+      if (route === 'POST /api/slots/login') return json({ id: 'card_sample', busy: false })
       if (route === 'GET /api/policy') return json(policy())
       if (route === 'PUT /api/policy') {
         if (body.base_sha256 !== hash(policyText)) return json({ error: 'stale_base' }, 409)
+        if (String(body.text).includes('pr_merge')) {
+          return json({ error: 'invalid_policy', detail: ALWAYS_CONFIRM }, 400)
+        }
         policyText = String(body.text)
         policyRevision += 1
         return json({ sha256: hash(policyText), revision: policyRevision })
@@ -222,6 +266,9 @@ export function sampleServer({ fail, empty }: { fail: string[]; empty: boolean }
       }
       if (route === 'PUT /api/models') {
         if (body.base_sha256 !== hash(modelsYaml)) return json({ error: 'stale_base' }, 409)
+        if (String(body.yaml).includes('[unterminated')) {
+          return json({ error: 'invalid models table', detail: 'line 1: unterminated flow sequence' }, 400)
+        }
         modelsYaml = String(body.yaml)
         return json({ provenance: { source: 'user', path: '/sample', sha256: hash(modelsYaml) } })
       }

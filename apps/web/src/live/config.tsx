@@ -59,7 +59,10 @@ import { Loading } from './surfaces'
 
 /** Words for a failure: the server's own reason where it gave one. */
 export function failureText(error: unknown): string {
-  if (error instanceof HttpError) return error.reason ?? `The server answered ${error.status}.`
+  if (error instanceof HttpError) {
+    const reason = error.reason ?? `The server answered ${error.status}.`
+    return error.detail === undefined ? reason : `${reason}: ${error.detail}`
+  }
   if (error instanceof Error && error.name === 'DecodeError') return error.message
   return 'Could not reach the workbench. Nothing was changed.'
 }
@@ -108,7 +111,7 @@ function useRead<T>(load: () => Promise<T>): [Read<T>, () => void] {
 interface SignIn {
   slotId: string
   label: string
-  cardId: string | null
+  cardId: string
   lines: string[]
   url: string | null
   ended: boolean
@@ -132,16 +135,24 @@ function useConnectionFlow(onChanged: () => void) {
   )
 
   const begin = useCallback(async (slotId: string, label: string, engine: string) => {
-    setSignIn({ slotId, label, cardId: null, lines: [], url: null, ended: false, note: null })
-    const started = await configApi.startLogin(engine, label)
-    setSignIn(
-      (current) =>
-        current && {
-          ...current,
-          cardId: started.id,
-          note: started.busy ? 'Another sign-in is running, so this card is attached to it.' : null,
-        },
-    )
+    setError(null)
+    let started: Awaited<ReturnType<typeof configApi.startLogin>>
+    try {
+      started = await configApi.startLogin(engine, label)
+    } catch (failure) {
+      setError(`The sign-in did not start, so ${label} is not signed in: ${failureText(failure)}`)
+      return
+    }
+    // The card opens only once a command runs: it must never wait for one that failed to start.
+    setSignIn({
+      slotId,
+      label,
+      cardId: started.id,
+      lines: [],
+      url: null,
+      ended: false,
+      note: started.busy ? 'Another sign-in is running, so this card is attached to it.' : null,
+    })
     detach.current?.()
     detach.current = subscribeLoginCard((event: LoginCardEvent) => {
       setSignIn((current) => {
@@ -205,11 +216,11 @@ function useConnectionFlow(onChanged: () => void) {
   }, [close, signIn])
 
   const cancel = useCallback(async () => {
-    if (signIn?.cardId) await configApi.cancelLogin(signIn.cardId).catch(() => {})
+    if (signIn) await configApi.cancelLogin(signIn.cardId).catch(() => {})
     close()
   }, [close, signIn])
 
-  return { busy, error, signIn, submit, begin, finish, cancel, setError }
+  return { busy, error, signIn, submit, begin, finish, cancel }
 }
 
 function ConnectionPanel({
@@ -293,9 +304,7 @@ function ConnectionsSurface({ capabilities }: { capabilities: Capabilities | nul
     },
     signIn: (row: ConnectionRow) => {
       setAdding(true)
-      flow.begin(row.id, row.label, row.engine).catch((error: unknown) => {
-        flow.setError(failureText(error))
-      })
+      void flow.begin(row.id, row.label, row.engine)
     },
     replaceKey: (id, key) => {
       note(id, 'Replacing the key…')
@@ -375,9 +384,11 @@ function ConnectionsSurface({ capabilities }: { capabilities: Capabilities | nul
 // ─── Setup ──────────────────────────────────────────────────────────────────────
 
 function SetupSurface({
+  store,
   onNavigate,
   onRepositories,
 }: {
+  store: ConfigStore
   onNavigate: (route: Route) => void
   onRepositories: () => void
 }) {
@@ -444,7 +455,10 @@ function SetupSurface({
           .then(refresh)
           .catch(() => refresh())
       }}
-      onNavigate={(route: StepRoute) => onNavigate(route)}
+      onNavigate={(route: StepRoute, step?: string) => {
+        if (route === 'settings' && step === 'repository') store.section = 'repositories'
+        onNavigate(route)
+      }}
       onRecheck={refresh}
     />
   )
@@ -985,6 +999,8 @@ export function ConfigSurface({
   const [capabilities] = useRead(() => configApi.capabilities())
   const flags = capabilities.value
   if (route === 'slots') return <ConnectionsSurface capabilities={flags} />
-  if (route === 'setup') return <SetupSurface onNavigate={onNavigate} onRepositories={onRepositories} />
+  if (route === 'setup') {
+    return <SetupSurface store={store} onNavigate={onNavigate} onRepositories={onRepositories} />
+  }
   return <SettingsSurface store={store} capabilities={flags} onRepositories={onRepositories} />
 }

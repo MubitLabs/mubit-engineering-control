@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 // Relative on purpose, as in web-contract.test.ts: the one place these decoders meet real routes.
 import { MemoryRepositories } from '../../../packages/testkit/src/index'
 import { buildServer } from '../../desktop/src/server'
+import { HttpError } from '../src/api'
 import { configApi, StaleError } from '../src/api-config'
+import { failureText } from '../src/live/config'
 import { roleOfPart } from '../src/next/config-model'
 
 const AT = new Date('2026-11-05T12:00:00.000Z')
@@ -119,6 +121,48 @@ describe('the configuration client against the real routes', () => {
     const models = await configApi.modelsText()
     await configApi.saveModels(`${models.yaml}\n# edited\n`, models.sha256)
     expect((await configApi.modelsText()).source).toBe('user')
+  })
+
+  const refusalOf = (attempt: Promise<unknown>): Promise<string> =>
+    attempt.then(
+      () => 'accepted',
+      (failure: unknown) => failureText(failure),
+    )
+
+  it('a refused policy says why, from a save and from a proposal', async () => {
+    const policy = await configApi.policy()
+    const said = await refusalOf(configApi.savePolicy('{"preAuthorised":{"pr_merge":[]}}', policy.sha256))
+    expect(said).toContain('invalid_policy')
+    expect(said).toContain("class 'pr_merge' is always-confirm")
+
+    store.engines.save({
+      id: 'draft/d2',
+      draftId: 'd2',
+      target: 'policy',
+      patch: { preAuthorised: { pr_merge: [] } },
+      reason: 'a reason',
+      diff: 'a diff',
+      status: 'pending',
+      conversationId: 'setup',
+      createdAt: AT.toISOString(),
+    })
+    const applied = await refusalOf(configApi.applyDraft('d2', policy.sha256))
+    expect(applied).toContain('invalid_policy')
+    expect(applied).toContain("class 'pr_merge' is always-confirm")
+  })
+
+  it('a refused models table says which line', async () => {
+    const models = await configApi.modelsText()
+    const said = await refusalOf(configApi.saveModels('tiers: [fast', models.sha256))
+    expect(said).toContain('invalid models table')
+    expect(said).toContain('line 1')
+  })
+
+  it('a failure with only an error reads as that error', () => {
+    expect(failureText(new HttpError('/x', 400, 'a slot with that label already exists'))).toBe(
+      'a slot with that label already exists',
+    )
+    expect(failureText(new HttpError('/x', 500))).toBe('The server answered 500.')
   })
 
   it('lists drafts and takes a backup', async () => {

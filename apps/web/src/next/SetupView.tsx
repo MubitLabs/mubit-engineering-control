@@ -93,7 +93,8 @@ export function SetupView({
   metaError: string | null
   onChooseMeta: (slotId: string) => void
   onSkip: (step: string) => void
-  onNavigate: (route: StepRoute) => void
+  /** `step` names the stage whose next action this is, so the caller can open the right section. */
+  onNavigate: (route: StepRoute, step?: string) => void
   onRecheck: () => void
 }) {
   const current = openStage(readiness.steps)
@@ -137,7 +138,7 @@ export function SetupView({
                   <div className="form-actions">
                     {step.id === 'engines' && <Button onClick={onRecheck}>Check again</Button>}
                     {step.next && step.id !== 'first_request' && step.next.route !== 'setup' && (
-                      <Button onClick={() => step.next && onNavigate(step.next.route)}>
+                      <Button onClick={() => step.next && onNavigate(step.next.route, step.id)}>
                         {step.next.label}
                       </Button>
                     )}

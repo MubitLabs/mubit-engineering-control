@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { HttpError } from '../src/api'
 import { configApi, StaleError } from '../src/api-config'
 import { decodeCapabilities, decodeChanges, decodeConnections, decodeReadiness } from '../src/config-decode'
 
@@ -56,6 +57,27 @@ describe('saves always name their base', () => {
     const sent = stub(200, { id: 'slot_a', state: 'retired' })
     await configApi.retireSlot('slot_a', 'a')
     expect(sent[0]).toMatchObject({ path: '/api/slots/slot_a/retire', body: { label: 'a' } })
+  })
+})
+
+describe('a refusal keeps the words the server gave', () => {
+  const refusal = async (body: unknown): Promise<HttpError> => {
+    stub(400, body)
+    const failure = await configApi.savePolicy('{}', 'old').catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(HttpError)
+    return failure as HttpError
+  }
+
+  it('carries detail beside the error', async () => {
+    const failure = await refusal({ error: 'invalid_policy', detail: 'line 1: bad' })
+    expect(failure.reason).toBe('invalid_policy')
+    expect(failure.detail).toBe('line 1: bad')
+  })
+
+  it('leaves detail unset when there is none to show', async () => {
+    expect((await refusal({ error: 'invalid_policy' })).detail).toBeUndefined()
+    expect((await refusal({ error: 'invalid_policy', detail: '' })).detail).toBeUndefined()
+    expect((await refusal({ error: 'invalid_policy', detail: 7 })).detail).toBeUndefined()
   })
 })
 

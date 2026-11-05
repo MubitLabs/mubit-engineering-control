@@ -14,6 +14,7 @@ const params = new URLSearchParams(window.location.search)
 const server = sampleServer({
   fail: params.get('fail')?.split(',') ?? [],
   empty: params.has('empty'),
+  noChecks: params.has('nochecks'),
 })
 
 declare global {

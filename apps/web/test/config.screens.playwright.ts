@@ -60,6 +60,40 @@ test('an expired sign-in offers Sign in again, and Drain says why it is off', as
   await expect(row.getByText('No reading yet')).toBeVisible()
 })
 
+async function startSignIn(page: Page): Promise<void> {
+  await page.getByLabel(/Sign in to a dedicated connection/).check()
+  await page.getByLabel('Connection name').fill('sample-new')
+  await page.getByRole('button', { name: 'Start sign-in' }).click()
+}
+
+test('a sign-in that starts shows its card', async ({ page }) => {
+  await open(page, 'setup', 'empty=1')
+  await startSignIn(page)
+  await expect(page.getByText('Waiting for the sign-in command…')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Cancel sign-in' })).toBeVisible()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+})
+
+test('a sign-in that fails to start says so and keeps no waiting card', async ({ page }) => {
+  await open(page, 'setup', 'empty=1&fail=/api/slots/login')
+  await startSignIn(page)
+  await expect(page.getByRole('alert')).toContainText('sample failure')
+  await expect(page.getByRole('alert')).toContainText('did not start')
+  await expect(page.getByText('Waiting for the sign-in command…')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Cancel sign-in' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Start sign-in' })).toBeEnabled()
+  await expect(page.getByLabel('Connection name')).toHaveValue('sample-new')
+  await expect(page.getByText('A connection exists, but none has passed')).toBeVisible()
+})
+
+test('Sign in again that fails to start says so and keeps no waiting card', async ({ page }) => {
+  await open(page, 'slots', 'fail=/api/slots/login')
+  await connection(page, 'sample-expired').getByRole('button', { name: 'Sign in again' }).click()
+  await expect(page.getByRole('alert')).toContainText('sample failure')
+  await expect(page.getByText('Waiting for the sign-in command…')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Cancel sign-in' })).toHaveCount(0)
+})
+
 test('trust arms and disarms', async ({ page }) => {
   await open(page, 'settings')
   await page.getByRole('button', { name: 'Repositories' }).click()
@@ -126,6 +160,30 @@ test('leaving a section keeps its draft and marks it', async ({ page }) => {
   await expect(page.getByLabel('Policy file')).toHaveValue('{"preAuthorised":{"spend":[]}}')
 })
 
+test('a refused save shows the reason the server gave and keeps the draft', async ({ page }) => {
+  await open(page, 'settings')
+  const text = page.getByLabel('Policy file')
+  await text.fill('{"preAuthorised":{"pr_merge":[]}}')
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(
+    page.getByText("Not saved: invalid_policy: class 'pr_merge' is always-confirm (§13)"),
+  ).toBeVisible()
+  await expect(text).toHaveValue('{"preAuthorised":{"pr_merge":[]}}')
+
+  await page.getByRole('button', { name: 'Models' }).click()
+  await page.getByLabel('Capability table').fill('tiers: [unterminated')
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(
+    page.getByText('Not saved: invalid models table: line 1: unterminated flow sequence'),
+  ).toBeVisible()
+})
+
+test('a refused proposal shows the reason the server gave', async ({ page }) => {
+  await open(page, 'settings')
+  await page.getByRole('button', { name: 'Apply' }).click()
+  await expect(page.getByRole('alert')).toContainText("invalid_policy: class 'pr_merge' is always-confirm")
+})
+
 test('a proposal changes nothing until Apply', async ({ page }) => {
   await open(page, 'settings')
   await expect(page.getByText('Sample proposal from setup chat')).toBeVisible()
@@ -156,6 +214,14 @@ test('an empty install starts at the first missing stage with the shared form', 
   await open(page, 'setup', 'empty=1')
   await expect(page.getByRole('button', { name: 'Add connection' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Finish' })).toBeDisabled()
+})
+
+test('Open Repositories lands on Repositories', async ({ page }) => {
+  await open(page, 'setup', 'nochecks=1')
+  await page.getByRole('button', { name: 'Open Repositories' }).click()
+  await expect(page).toHaveURL(/settings$/)
+  await expect(page.getByRole('button', { name: 'Trust…' })).toBeVisible()
+  await expect(page.getByLabel('Policy file')).toHaveCount(0)
 })
 
 test('the add form offers only what an engine supports', async ({ page }) => {

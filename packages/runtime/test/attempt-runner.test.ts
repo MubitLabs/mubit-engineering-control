@@ -490,6 +490,53 @@ describe('AttemptRunner', { timeout: 60_000 }, () => {
     expect(facts.reason).toBe('wall_clock')
   })
 
+  describe('a stop while the repo check runs', () => {
+    /** A check that names its own group and would pass, had it been left to finish. */
+    const hangs = (dir: string) => `echo $$ > ${join(dir, 'check.pid')}; sleep 30`
+
+    const during = async (
+      act: (run: Awaited<ReturnType<typeof rig>>) => Promise<void>,
+      wallClockMs?: number,
+    ) => {
+      const scratch = mkdtempSync(join(root, 'hang-'))
+      const run = await rig(DONE, {
+        checks: check(hangs(scratch)),
+        ...(wallClockMs !== undefined && { wallClockMs }),
+      })
+      const pidFile = join(scratch, 'check.pid')
+      await run.runner.launchAttempt(run.attempt, run.brief)
+      await until(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '')
+      const pid = Number(readFileSync(pidFile, 'utf8'))
+      const started = Date.now()
+      await act(run)
+      await run.runner.settled()
+      return { ...run, pid, tookMs: Date.now() - started }
+    }
+
+    it('stop kills the group and records no verdict', async () => {
+      const { facts, pid, tookMs } = await during(({ attempt, runner }) => runner.stop(attempt))
+      expect(tookMs).toBeLessThan(10_000)
+      await until(() => groupGone(pid))
+      expect(facts.state).toBe('work_complete')
+      expect(facts.note).toContain('stopped during check unit: stop_requested')
+      expect(facts.outcomes).toEqual([])
+    })
+
+    it('closing the server does the same, within its bound', async () => {
+      const { facts, pid, tookMs } = await during(({ runner }) => runner.stopAll())
+      expect(tookMs).toBeLessThan(10_000)
+      await until(() => groupGone(pid))
+      expect(facts.note).toContain('stopped during check unit: server_closing')
+    })
+
+    it('the wall clock reaches a hung check', async () => {
+      const { facts, pid } = await during(async () => {}, 6_000)
+      await until(() => groupGone(pid))
+      expect(facts.state).toBe('work_complete')
+      expect(facts.note).toContain('stopped during check unit: wall_clock')
+    })
+  })
+
   it('a crash fails the attempt with the reason', async () => {
     const { attempt, brief, runner, facts } = await rig([{ init: true }, { exit: 3 }])
     await runner.launchAttempt(attempt, brief)

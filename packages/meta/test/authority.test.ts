@@ -511,6 +511,18 @@ describe('authority fence', () => {
   })
 
   describe('stop', () => {
+    it('a stop asks the runner to end an attempt still in its checks', async () => {
+      const { service, store } = rig(fakeBrain(plan(['a', []])))
+      const id = await start(service)
+      const attempt = store.attempts.list({ workItemId: id })[0]!
+      store.attempts.save({ ...attempt, state: 'work_complete' })
+      service.stopWork(id)
+      expect(store.attempts.get(String(attempt.id))?.state).toBe('work_complete')
+      expect(store.events.read(`attempt:${String(attempt.id)}`).map((event) => event.type)).toContain(
+        'attempt.interrupt_requested',
+      )
+    })
+
     it('stop withdraws the mandate and interrupts queued attempts', async () => {
       const { service, store } = rig(fakeBrain(plan(['a', []])))
       const id = await start(service)

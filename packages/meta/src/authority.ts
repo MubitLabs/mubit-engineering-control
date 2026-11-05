@@ -227,7 +227,7 @@ export function stopWorkItem(
   return 'stopped'
 }
 
-/** Killing a running process is M2.1; here the request is recorded for it to act on. */
+/** The kill is the runner's; here the request is recorded for it to act on (§8.1). */
 function interruptAttempts(store: Store, workItemId: string, at: string): void {
   for (const attempt of store.attempts.list({ workItemId })) {
     const attemptId = String(attempt.id)
@@ -236,7 +236,8 @@ function interruptAttempts(store: Store, workItemId: string, at: string): void {
       const interrupted = transition(ATTEMPT_MACHINE, state, 'interrupt_confirmed')
       store.attempts.save({ ...attempt, state: interrupted, updatedAt: at })
       appendEvent(store, `attempt:${attemptId}`, 'attempt.interrupted', { attemptId, at }, at)
-    } else if (state === 'running') {
+    } else if (state === 'running' || state === 'work_complete') {
+      // `work_complete` may be running the repo's checks, which a stop ends as well.
       appendEvent(store, `attempt:${attemptId}`, 'attempt.interrupt_requested', { attemptId, at }, at)
     }
   }

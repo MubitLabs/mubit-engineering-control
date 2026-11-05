@@ -104,6 +104,8 @@ type Live = {
   timer: NodeJS.Timeout
   sawSession: boolean
   stopReason?: StopReason
+  /** A stop cancels a repo check as well: the check runs after the engine's group is gone. */
+  checks: AbortController
   done: Promise<void>
 }
 
@@ -139,6 +141,7 @@ export class AttemptRunner {
       adapter,
       handle,
       sawSession: false,
+      checks: new AbortController(),
       timer: setTimeout(() => {
         this.#stop(live, 'wall_clock').catch(() => {})
       }, brief.budget.wall_clock_ms),
@@ -183,6 +186,7 @@ export class AttemptRunner {
 
   async #stop(live: Live, reason: StopReason): Promise<void> {
     live.stopReason ??= reason
+    live.checks.abort()
     await this.#stopGroup(live)
     await live.done
   }
@@ -306,7 +310,13 @@ export class AttemptRunner {
         facts.atomic(() => facts.checksSkipped(attempt, head, skipped))
         return
       }
-      const outcome = await runCheck(spec)
+      const outcome = await runCheck(spec, live.checks.signal)
+      // A stopped attempt gets no verdict, whatever the check's last act was.
+      if (live.stopReason !== undefined) {
+        const skipped = `stopped during check ${spec.name}: ${live.stopReason}`
+        facts.atomic(() => facts.checksSkipped(attempt, head, skipped))
+        return
+      }
       outcomes.push({ ...outcome, logTail: this.#clean(live, outcome.logTail) })
     }
     const passed = outcomes.every((outcome) => outcome.status === 'passed')

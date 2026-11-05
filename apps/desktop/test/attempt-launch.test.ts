@@ -357,6 +357,47 @@ describe('the launch path', { timeout: 60_000 }, () => {
     expect(terminal).toBe('stop_requested')
   })
 
+  /** A repository whose one check names its pid and hangs. */
+  const hangingCheck = (repo: string, root: string) => {
+    const pidFile = join(root, 'check.pid')
+    writeFileSync(join(repo, 'hang.sh'), `echo $$ > ${pidFile}\nexec sleep 137\n`)
+    gitIn(repo, 'add', '--all')
+    gitIn(repo, 'commit', '--quiet', '-m', 'a check that hangs')
+    return { pidFile, checks: [{ name: 'hang', cmd: 'sh hang.sh' }] }
+  }
+
+  it('stopping work during its only check kills the check and accepts nothing', async () => {
+    const { root, dataDir, repo } = scratch({ steps: SUCCESS })
+    const { pidFile, checks } = hangingCheck(repo, root)
+    process.env.MEC_REAL_RUNNER = '1'
+    seedStore(dataDir, repo, { checks })
+    const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 6000 })
+    closers.push(server.close)
+    await until(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '')
+    const pid = Number(readFileSync(pidFile, 'utf8'))
+    const stopped = await fetch(`${server.url}/api/work/wi_abcdefghij/stop`, { method: 'POST' })
+    expect(stopped.status).toBe(200)
+    await until(() => peek(dataDir, (store) => store.attempts.get('att_1')?.checks_note) !== undefined)
+    const attempt = peek(dataDir, (store) => store.attempts.get('att_1'))
+    expect(attempt).toMatchObject({ state: 'work_complete' })
+    expect(String(attempt?.checks_note)).toContain('stopped during check hang')
+    expect(() => process.kill(pid, 0)).toThrow()
+  })
+
+  it('close kills a running check within its bound', async () => {
+    const { root, dataDir, repo } = scratch({ steps: SUCCESS })
+    const { pidFile, checks } = hangingCheck(repo, root)
+    process.env.MEC_REAL_RUNNER = '1'
+    seedStore(dataDir, repo, { checks })
+    const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 6000 })
+    await until(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '')
+    const pid = Number(readFileSync(pidFile, 'utf8'))
+    await server.close()
+    expect(() => process.kill(pid, 0)).toThrow()
+    const note = peek(dataDir, (store) => store.attempts.get('att_1')?.checks_note)
+    expect(String(note)).toContain('stopped during check hang: server_closing')
+  })
+
   it('close stops a running attempt before the tools go', async () => {
     const { dataDir, repo, seen } = scratch({ steps: [{ init: true }, { forever: true }] })
     process.env.MEC_REAL_RUNNER = '1'

@@ -17,7 +17,6 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import type {
   AttemptRef,
   CoreForEngines,
-  Evidence,
   Generation,
   Json,
   Operation,

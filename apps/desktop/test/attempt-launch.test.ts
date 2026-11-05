@@ -167,6 +167,20 @@ async function until(test: () => boolean, ms = 45_000): Promise<void> {
 const attemptState = (dataDir: string, id = 'att_1'): unknown =>
   peek(dataDir, (store) => store.attempts.get(id)?.state)
 
+const SETTLED = ['succeeded', 'checks_failed', 'failed', 'interrupted']
+
+/** Waits for a state, and fails at once when the attempt has settled on another one. */
+async function reaches(dataDir: string, state: string, id = 'att_1'): Promise<void> {
+  await until(() => {
+    const now = String(attemptState(dataDir, id))
+    if (now !== state && SETTLED.includes(now)) {
+      const reason = peek(dataDir, (store) => store.attempts.get(id)?.terminal_reason)
+      throw new Error(`attempt settled ${now}: ${String(reason)}`)
+    }
+    return now === state
+  })
+}
+
 const SUCCESS = [
   { init: true },
   { write: { path: 'made.txt', text: 'made\n' } },
@@ -179,7 +193,7 @@ describe('the launch path', { timeout: 60_000 }, () => {
     const { dataDir, repo, bin } = scratch({ steps: SUCCESS })
     seedStore(dataDir, repo)
     await serve(dataDir)
-    await until(() => attemptState(dataDir) === 'failed')
+    await reaches(dataDir, 'failed')
     expect(existsSync(join(bin, 'seen.json'))).toBe(false)
     const work = peek(dataDir, (store) => store.workItems.get('wi_abcdefghij'))
     expect(work).toMatchObject({ state: 'blocked', blockedReason: 'no_runner' })
@@ -230,7 +244,7 @@ describe('the launch path', { timeout: 60_000 }, () => {
     })
     await serve(dataDir)
     try {
-      await until(() => attemptState(dataDir) === 'succeeded')
+      await reaches(dataDir, 'succeeded')
     } finally {
       delete process.env.ANTHROPIC_API_KEY
       delete process.env.CLAUDE_CONFIG_DIR
@@ -246,6 +260,10 @@ describe('the launch path', { timeout: 60_000 }, () => {
     expect(seen().config_dir).toBeNull()
     expect(seen().has_anthropic_key).toBe(false)
     expect(seen().cwd).toContain(join('work', 'att_1'))
+    const argv = seen().argv as string[]
+    expect(argv[argv.indexOf('--permission-mode') + 1]).toBe('default')
+    expect(argv).toContain('Bash(git push:*)')
+    expect(argv).toContain('Bash(gh:*)')
 
     // Its branch, its pinned base, a real commit under the repository's identity.
     const base = gitIn(repo, 'rev-parse', 'HEAD')
@@ -281,7 +299,7 @@ describe('the launch path', { timeout: 60_000 }, () => {
     process.env.MEC_REAL_RUNNER = '1'
     seedStore(dataDir, repo)
     await serve(dataDir)
-    await until(() => attemptState(dataDir) === 'work_complete')
+    await reaches(dataDir, 'work_complete')
     await until(() => peek(dataDir, (store) => store.engines.get('report/att_1/1') !== undefined))
 
     const token = readFileSync(join(bin, 'token.txt'), 'utf8')
@@ -304,7 +322,7 @@ describe('the launch path', { timeout: 60_000 }, () => {
     process.env.MEC_REAL_RUNNER = '1'
     seedStore(dataDir, repo)
     await serve(dataDir)
-    await until(() => attemptState(dataDir) === 'running')
+    await reaches(dataDir, 'running')
     // The job has finished while the engine runs, so its row has drained.
     const launchRows = (db: Database.Database): number =>
       (db.prepare("SELECT count(*) AS n FROM effects WHERE kind = 'launch'").get() as { n: number }).n
@@ -320,7 +338,7 @@ describe('the launch path', { timeout: 60_000 }, () => {
     seedStore(dataDir, repo)
     const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 6000 })
     closers.push(server.close)
-    await until(() => attemptState(dataDir) === 'running')
+    await reaches(dataDir, 'running')
     await until(() => existsSync(join(dirnameOfSeen(seen), 'child.pid')))
     peek(dataDir, (store) =>
       store.atomic(() =>
@@ -333,7 +351,7 @@ describe('the launch path', { timeout: 60_000 }, () => {
         }),
       ),
     )
-    await until(() => attemptState(dataDir) === 'interrupted')
+    await reaches(dataDir, 'interrupted')
     expect(() => process.kill(-Number(seen().pid), 0)).toThrow()
     const terminal = peek(dataDir, (store) => store.attempts.get('att_1')?.terminal_reason)
     expect(terminal).toBe('stop_requested')
@@ -344,7 +362,7 @@ describe('the launch path', { timeout: 60_000 }, () => {
     process.env.MEC_REAL_RUNNER = '1'
     seedStore(dataDir, repo)
     const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 6000 })
-    await until(() => attemptState(dataDir) === 'running')
+    await reaches(dataDir, 'running')
     await server.close()
     expect(() => process.kill(-Number(seen().pid), 0)).toThrow()
     expect(attemptState(dataDir)).toBe('interrupted')
@@ -355,7 +373,7 @@ describe('the launch path', { timeout: 60_000 }, () => {
     process.env.MEC_REAL_RUNNER = '1'
     seedStore(dataDir, repo)
     await serve(dataDir)
-    await until(() => attemptState(dataDir) === 'work_complete')
+    await reaches(dataDir, 'work_complete')
     const first = String(peek(dataDir, (store) => store.attempts.get('att_1')?.head_sha))
     const base = gitIn(repo, 'rev-parse', 'HEAD')
     writeFileSync(join(repo, 'later.txt'), 'upstream moved\n')
@@ -390,7 +408,7 @@ describe('the launch path', { timeout: 60_000 }, () => {
         })
       }),
     )
-    await until(() => attemptState(dataDir, 'att_2') === 'work_complete')
+    await reaches(dataDir, 'work_complete', 'att_2')
     const second = peek(dataDir, (store) => store.attempts.get('att_2'))
     expect(second?.base_sha).toBe(base)
     const worktree = join(dataDir, 'work', 'att_1')

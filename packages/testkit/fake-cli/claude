@@ -23,7 +23,7 @@
  * It writes `seen.json` beside itself: argv, cwd, pid and the attempt variables it was given.
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { appendFileSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 const here = dirname(realpathSync(process.argv[1]))
@@ -97,13 +97,11 @@ for (const step of steps) {
   else if (step.forever === true) await new Promise(() => setInterval(() => {}, 1000))
   else if (step.ignoreTerm === true) process.on('SIGTERM', () => {})
   else if (step.child !== undefined) {
-    const code = step.child.ignoreTerm
-      ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"
-      : 'setInterval(()=>{},1000)'
-    const child = spawn(process.execPath, ['-e', code], { stdio: 'ignore' })
-    writeFileSync(join(here, 'child.pid'), String(child.pid))
-    child.unref()
-    await sleep(200)
+    // `child.pid` appears once the child is really set up, so a test can signal it at once.
+    const trap = step.child.ignoreTerm ? "process.on('SIGTERM',()=>{});" : ''
+    const code = `${trap}require('fs').writeFileSync(${JSON.stringify(join(here, 'child.pid'))},String(process.pid));setInterval(()=>{},1000)`
+    spawn(process.execPath, ['-e', code], { stdio: 'ignore' }).unref()
+    while (!existsSync(join(here, 'child.pid'))) await sleep(10)
   } else if (step.sh !== undefined) spawnSync('/bin/sh', ['-c', step.sh], { stdio: 'ignore' })
   else if (step.write !== undefined) {
     mkdirSync(dirname(join(process.cwd(), step.write.path)), { recursive: true })

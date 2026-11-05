@@ -98,6 +98,13 @@
     "tests": ["apps/desktop/test/attempt-launch.test.ts"]
   },
   {
+    "name": "push reaches the engine unrefused",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "        MEC_DISALLOWED_TOOLS: ENGINE_DENIED_TOOLS,\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
     "name": "confirm reads only the schema name",
     "file": "apps/desktop/src/specialist-tools.ts",
     "find": "  const toolInput = (input.input ?? input.tool_input ?? {}) as Record<string, unknown>\n",
@@ -158,6 +165,6 @@
     "file": "apps/desktop/src/core-facts.ts",
     "find": "    if (!canTransition(ATTEMPT_MACHINE, state, event)) return false\n",
     "replace": "",
-    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+    "tests": ["apps/desktop/test/core-facts.test.ts"]
   }
 ]

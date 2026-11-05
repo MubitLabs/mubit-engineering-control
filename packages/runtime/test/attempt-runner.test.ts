@@ -343,9 +343,10 @@ describe('AttemptRunner', { timeout: 60_000 }, () => {
     ])
     await runner.launchAttempt(attempt, brief)
     await runner.settled()
+    const child = pidOf('child.pid')
     await until(() => {
       try {
-        process.kill(pidOf('child.pid'), 0)
+        process.kill(child, 0)
         return false
       } catch {
         return true

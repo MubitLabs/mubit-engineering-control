@@ -663,6 +663,37 @@ describe('the push card (§13: git push always confirms)', () => {
     expect(replay.body).toMatchObject({ error: 'already_handled' })
   })
 
+  it.each([
+    ['ssh', 'git@github.com:owner/repo.git'],
+    ['https', 'https://github.com/owner/repo.git'],
+    ['https without .git', 'https://github.com/owner/repo'],
+    ['a trailing slash', 'https://github.com/owner/repo/'],
+  ])('the GitHub repository comes from the clone origin, %s', async (_, origin) => {
+    const g = gitWorld()
+    g.git('remote', 'set-url', 'origin', origin)
+    const { run, calls } = fakeGh(world({ remoteUrl: g.bare }))
+    const h = await harness(run)
+    const repoId = await register(h, g.work)
+    const opened = await h.post('/api/release/push', { repoId, branch: BRANCH })
+    expect(opened.status).toBe(200)
+    expect(calls[0]?.slice(0, 3)).toEqual(['repo', 'view', REPO])
+  })
+
+  it('a clone whose origin changed after the card opened does not push', async () => {
+    const g = gitWorld()
+    const { run } = fakeGh(world({ remoteUrl: g.bare }))
+    const h = await harness(run)
+    const repoId = await register(h, g.work)
+    const opened = await h.post('/api/release/push', { repoId, branch: BRANCH })
+    const id = String(opened.body.confirmationId)
+    g.git('remote', 'set-url', 'origin', 'https://github.com/someone/else.git')
+    await expect(h.web.api.resolve(id, 'approve')).resolves.toMatchObject({
+      status: 'pending',
+      reason: 'remote_unreadable',
+    })
+    expect(() => g.headOf(`refs/heads/${BRANCH}`)).toThrow()
+  })
+
   it('deny pushes nothing', async () => {
     const g = gitWorld()
     const { run } = fakeGh(world({ remoteUrl: g.bare }))

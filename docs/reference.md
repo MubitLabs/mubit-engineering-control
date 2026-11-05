@@ -73,12 +73,19 @@ Every route in `apps/desktop/src/server.ts`. **Auth model: loopback only** — t
 
 ### Release (the §14 GitHub leg — always-confirm)
 
+Every card binds the exact head SHA it shows (`inputSha`). A card that cannot read its head never opens, and a head that moves after opening makes the card `stale`: nothing runs and a new card is needed. Approving is the action: a card is answered once, from the workbench or the routes below. `/api/inbox/:id/resolve` acts on release cards the same way.
+
 | Method | Path | Body | What it does |
 | --- | --- | --- | --- |
-| POST | `/api/release/pr` | `{ repo, branch, title, body? }` | Opens a `pr_create` confirmation card for the exact PR; nothing leaves the machine while it is pending. |
-| POST | `/api/release/pr/:confirmationId/resolve` | `{ answer }` | Settles the card; on approve pushes the branch and opens the PR through your own `gh` (yield-to-duplicate checked first). |
-| POST | `/api/release/merge` | `{ repo, prNumber, confirmationId? }` | Opens a `pr_merge` card bound to that repo and PR. |
-| POST | `/api/release/merge/:confirmationId/resolve` | `{ answer }` | Reads CI from GitHub **before** touching the card: every check must be `SUCCESS`; on approve merges and reports `merged` only once GitHub's state says `MERGED`. |
+| POST | `/api/release/push` | `{ repoId, branch, headSha? }` | Opens a `push` card. `repoId` is a repository registered by local path; its clone is the git directory and its `origin` names the GitHub repository, so no path or repo is taken from the caller. Refuses the default branch. |
+| POST | `/api/release/push/:confirmationId/resolve` | `{ answer }` | On approve pushes exactly the bound SHA to `refs/heads/<branch>`. Never forces: a diverged branch is rejected. A failure spends the card and leaves a `push_failed` event. |
+| POST | `/api/release/pr` | `{ repo, branch, title, body?, headSha? }` | Opens a `pr_create` confirmation card for the exact PR; nothing leaves the machine while it is pending. The branch must already be on GitHub. |
+| POST | `/api/release/pr/:confirmationId/resolve` | `{ answer }` | Settles the card; on approve opens the PR through your own `gh`. It does not push; that is the `push` card. |
+| POST | `/api/release/merge` | `{ repo, prNumber, confirmationId? }` | Opens a `pr_merge` card bound to that repo, PR and the head GitHub reports. |
+| POST | `/api/release/merge/:confirmationId/resolve` | `{ answer }` | Deny settles at once and reads nothing. On approve, reads GitHub **before** touching the card: the PR must be open, on the bound head, with **required** checks passing (`SUCCESS`, `NEUTRAL` or `SKIPPED`; a check nobody requires cannot hold it), and `mergeStateStatus` must be `CLEAN`, `HAS_HOOKS` or `UNSTABLE`. Otherwise the card stays pending and `reason` says why: `ci_pending`, `ci_failed`, `ci_unreadable`, `no_required_checks`, `behind`, `blocked`, `dirty`, `draft`, `merge_state_unknown`, `pr_unreadable` or `pr_not_open`. Then runs `gh pr merge --squash --match-head-commit <head>` and reports `merged` only once GitHub's state says `MERGED`. |
+| GET | `/api/inbox/:id/detail` | — | What a release card approves: repository, branch, head, and the title, body or PR number. 404 for a card with no release payload. |
+
+Refusals to open a card answer 422 `{ error, detail }` (404 for `unknown_repo`). An always-confirm card nothing can run, such as `branch_delete`, answers an approve with 422 `no_executor` and stays pending; deny still settles it. Release events also land on the fixed `inbox` stream, which the workbench subscribes to.
 
 ### Events
 

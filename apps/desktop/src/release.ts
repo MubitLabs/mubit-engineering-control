@@ -336,9 +336,11 @@ export function refusalOf(error: unknown): { status: number; error: string; deta
 const REPO_SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const BRANCH_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/
 
-function assertNames(repo: string | undefined, branch: string): void {
-  if (repo !== undefined && !REPO_SLUG.test(repo))
-    throw codedError('invalid_ref', `'${repo}' is not owner/name`)
+function assertRepo(repo: string): void {
+  if (!REPO_SLUG.test(repo)) throw codedError('invalid_ref', `'${repo}' is not owner/name`)
+}
+
+function assertBranch(branch: string): void {
   if (!BRANCH_NAME.test(branch) || branch.includes('..'))
     throw codedError('invalid_ref', `'${branch}' is not a plain branch name`)
 }
@@ -420,7 +422,8 @@ export async function createPrBehindCard(
   input: PrCreatePayload & { headSha?: string },
 ): Promise<{ confirmationId: string; prNumber?: number; prUrl?: string }> {
   const at = deps.now().toISOString()
-  assertNames(input.repo, input.branch)
+  assertRepo(input.repo)
+  assertBranch(input.branch)
   const head = await remoteHead(deps.run, input.repo, input.branch)
   if (head === undefined) throw codedError('head_unreadable', `${input.repo} ${input.branch}`)
   if (input.headSha !== undefined && input.headSha !== head)
@@ -578,7 +581,7 @@ export async function openMergeCard(
   input: { repo: string; prNumber: number; originConfirmationId?: string },
 ): Promise<{ confirmationId: string }> {
   const at = deps.now().toISOString()
-  assertNames(input.repo, 'main')
+  assertRepo(input.repo)
   const pr = await readPr(deps.run, input.repo, input.prNumber)
   if (pr === undefined) throw codedError('pr_unreadable', `${input.repo}#${input.prNumber}`)
   if (pr.state !== 'OPEN') throw codedError('pr_not_open', `${input.repo}#${input.prNumber} is ${pr.state}`)
@@ -636,7 +639,7 @@ async function readRequiredChecks(
   run: GhRun,
   repo: string,
   prNumber: number,
-): Promise<{ verdict: 'green' | string; checks: CheckRow[] }> {
+): Promise<{ verdict: string; checks: CheckRow[] }> {
   const read = await run(['pr', 'checks', '-R', repo, '--required', '--json', 'name,state', String(prNumber)])
   const rows = parseJson<CheckRow[]>(read.stdout)
   if (!Array.isArray(rows)) {
@@ -789,7 +792,7 @@ const slugOf = (remote: string): string | undefined =>
  * still does not make the default branch a place MEC pushes to.
  */
 async function pushTarget(deps: ReleaseDeps, repoId: string, branch: string): Promise<PushTarget> {
-  assertNames(undefined, branch)
+  assertBranch(branch)
   const doc = repoId.startsWith('repo_') ? deps.store.engines.get(repoId) : undefined
   if (doc === undefined) throw codedError('unknown_repo', `repository ${repoId} is not registered`)
   const gitDir = String(doc.url ?? '')

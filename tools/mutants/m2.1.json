@@ -259,5 +259,50 @@
     "tests": [
       "packages/meta/test/authority.test.ts"
     ]
+  },
+  {
+    "name": "claude marks ignore the flag",
+    "file": "apps/desktop/src/planner-placement.ts",
+    "find": "      if (realRunner && isLaunchableSlot(slot)) {\n",
+    "replace": "      if (isLaunchableSlot(slot)) {\n",
+    "tests": [
+      "apps/desktop/test/attempt-launch.test.ts"
+    ]
+  },
+  {
+    "name": "a launchable slot gets no marks",
+    "file": "apps/desktop/src/planner-placement.ts",
+    "find": "        out[String(slot.id)] = declared(String(slot.engine))\n",
+    "replace": "",
+    "tests": [
+      "apps/desktop/test/attempt-launch.test.ts"
+    ]
+  },
+  {
+    "name": "any Claude kind counts as launchable",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "  return LAUNCHABLE_ENGINES.includes(String(slot.engine)) && LAUNCHABLE_KINDS.includes(String(slot.kind))\n",
+    "replace": "  return LAUNCHABLE_ENGINES.includes(String(slot.engine))\n",
+    "tests": [
+      "apps/desktop/test/attempt-launch.test.ts"
+    ]
+  },
+  {
+    "name": "plans validate against slots dispatch will not use",
+    "file": "packages/meta/src/service.ts",
+    "find": "      slots: this.#placementSlots(),\n",
+    "replace": "      slots: slotViewsFromStore(this.#store, this.#marks?.()),\n",
+    "tests": [
+      "apps/desktop/test/attempt-launch.test.ts"
+    ]
+  },
+  {
+    "name": "dispatch places on an unlaunchable slot",
+    "file": "packages/meta/src/service.ts",
+    "find": "    const slotViews = this.#placementSlots()\n",
+    "replace": "    const slotViews = slotViewsFromStore(this.#store, this.#marks?.())\n",
+    "tests": [
+      "apps/desktop/test/attempt-launch.test.ts"
+    ]
   }
 ]

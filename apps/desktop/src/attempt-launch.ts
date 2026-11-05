@@ -58,6 +58,11 @@ const LAUNCHABLE_ENGINES: readonly string[] = ['claude']
 /** The one slot kind whose login needs no key in the environment (§5.2, §5.12). */
 const LAUNCHABLE_KINDS: readonly string[] = ['claude-sub']
 
+/** Whether a launch of this slot could start at all: engine and kind, health aside. */
+export function isLaunchableSlot(slot: StoreDoc): boolean {
+  return LAUNCHABLE_ENGINES.includes(String(slot.engine)) && LAUNCHABLE_KINDS.includes(String(slot.kind))
+}
+
 /** The engine's own domains (H1's allowance) and nothing else: §14's registry field is unbuilt. */
 const ENGINE_DOMAINS: readonly string[] = ['claude.ai', 'api.claude.com']
 

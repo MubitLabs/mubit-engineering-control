@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Later } from '@mec/contracts'
 import { issueToken, MecToolsServer } from '@mec/mec-tools'
-import { repoFields } from '@mec/meta'
+import { type MetaBrain, repoFields } from '@mec/meta'
 import { MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -187,6 +187,135 @@ const SUCCESS = [
   { saveToken: true },
   { result: 'completed' },
 ]
+
+/** A planner that does what the real one does: propose through the tools, keep what they accept. */
+const proposes =
+  (tier: string): MetaBrain =>
+  async ({ tools, workItemId }) => {
+    tools?.execute('propose_plan', {
+      work_item: workItemId,
+      tasks: [
+        {
+          id: 'task_1',
+          objective: 'add the thing',
+          depends_on: [],
+          role: 'implementer',
+          model_request: { tier, reason: 'a small change' },
+        },
+      ],
+    })
+    const plan = tools?.journal().plan
+    return { ack: 'On it.', ...(plan !== undefined && { plan: { tasks: plan.tasks } }) }
+  }
+
+/** One repository and these slots, no work: a store a chat request arrives on. */
+function seedSlots(dataDir: string, repo: string, slots: Record<string, unknown>[]): void {
+  const db = new Database(join(dataDir, 'mec.db'))
+  migrate(db, MIGRATIONS_v1)
+  const store = new SqliteStore(db)
+  store.atomic(() => {
+    store.engines.save({ id: 'repo_a', url: repo, bootstrap: [], checks: [], trust: false })
+    for (const slot of slots) store.slots.save(slot as never)
+  })
+  db.close()
+}
+
+const LINKED = {
+  id: 'slot_linked',
+  engine: 'claude',
+  kind: 'claude-sub',
+  home: '/nowhere',
+  state: 'healthy',
+  env: {},
+}
+
+const onlyAttempt = (dataDir: string): string =>
+  peek(dataDir, (store) => String(store.attempts.list()[0]?.id))
+
+describe('a chat request', { timeout: 60_000 }, () => {
+  const request = async (dataDir: string, tier = 'fast') => {
+    const server = await startServer({
+      dataDir,
+      policyText: POLICY,
+      closeBoundMs: 4000,
+      brain: proposes(tier),
+    })
+    closers.push(server.close)
+    const answer = await fetch(`${server.url}/api/chat/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'please add the thing', repoId: 'repo_a' }),
+    })
+    expect(answer.status).toBeLessThan(300)
+    return (await answer.json()) as { tasksCreated: number; launchesEnqueued: number }
+  }
+
+  it('on a Claude-only store creates a task and a launch that reaches the engine', async () => {
+    const { dataDir, repo, seen } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedSlots(dataDir, repo, [LINKED])
+    const turn = await request(dataDir)
+    expect(turn.tasksCreated).toBe(1)
+    expect(turn.launchesEnqueued).toBe(1)
+    await reaches(dataDir, 'work_complete', onlyAttempt(dataDir))
+    expect(JSON.stringify(seen())).toContain('haiku')
+  })
+
+  it('never lands on an engine this build cannot launch, whatever sorts first', async () => {
+    const { root, dataDir, repo } = scratch({ steps: SUCCESS })
+    const home = join(root, 'glm')
+    mkdirSync(join(home, 'config', 'opencode'), { recursive: true })
+    writeFileSync(
+      join(home, 'config', 'opencode', 'opencode.json'),
+      JSON.stringify({ provider: { 'zai-coding-plan': { models: { 'glm-5.3-flash': {} } } } }),
+    )
+    process.env.MEC_REAL_RUNNER = '1'
+    seedSlots(dataDir, repo, [
+      LINKED,
+      { id: 'slot_a_glm', engine: 'opencode', kind: 'opencode-key', home, state: 'healthy', env: {} },
+    ])
+    expect((await request(dataDir)).launchesEnqueued).toBe(1)
+    const id = onlyAttempt(dataDir)
+    await reaches(dataDir, 'work_complete', id)
+    expect(peek(dataDir, (store) => store.attempts.get(id)?.slotId)).toBe('slot_linked')
+  })
+
+  it('a tier only an unlaunchable slot serves is refused at the plan, not at the launch', async () => {
+    const { root, dataDir, repo } = scratch({ steps: SUCCESS })
+    const home = join(root, 'glm')
+    mkdirSync(join(home, 'config', 'opencode'), { recursive: true })
+    writeFileSync(
+      join(home, 'config', 'opencode', 'opencode.json'),
+      JSON.stringify({ provider: { 'zai-coding-plan': { models: { 'glm-5.3-flash': {} } } } }),
+    )
+    process.env.MEC_REAL_RUNNER = '1'
+    seedSlots(dataDir, repo, [
+      { ...LINKED, state: 'degraded' },
+      { id: 'slot_a_glm', engine: 'opencode', kind: 'opencode-key', home, state: 'healthy', env: {} },
+    ])
+    expect((await request(dataDir)).tasksCreated).toBe(0)
+  })
+
+  it('a degraded Claude slot places nothing', async () => {
+    const { dataDir, repo } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedSlots(dataDir, repo, [{ ...LINKED, state: 'degraded' }])
+    expect((await request(dataDir)).tasksCreated).toBe(0)
+  })
+
+  it('a Claude slot with a key in it stays unlisted', async () => {
+    const { dataDir, repo } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedSlots(dataDir, repo, [{ ...LINKED, kind: 'claude-api' }])
+    expect((await request(dataDir)).tasksCreated).toBe(0)
+  })
+
+  it('flag off nothing changes: a Claude slot stays unlisted', async () => {
+    const { dataDir, repo } = scratch({ steps: SUCCESS })
+    seedSlots(dataDir, repo, [LINKED])
+    expect((await request(dataDir)).tasksCreated).toBe(0)
+  })
+})
 
 describe('the launch path', { timeout: 60_000 }, () => {
   it('flag off starts no process and blocks with a reason', async () => {

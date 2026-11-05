@@ -26,15 +26,15 @@ import {
   saveProcessing,
 } from '@mec/meta'
 import { loadPolicy } from '@mec/policy'
-import { defaultsRoot, loadModelsTable, userModelsPath } from '@mec/prompts'
+import { defaultsRoot } from '@mec/prompts'
 import { parkFromEvents, redactEvent } from '@mec/runtime'
-import { probeModelAvailabilitySync } from '@mec/slots'
 import type { EffectHandler, HealthClaim, Json } from '@mec/store'
 import { DirLock, HealthBoardImpl, InspectionReads, MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import { FakeEngine } from '@mec/testkit'
 import Database from 'better-sqlite3'
 import { AttemptLauncher } from './attempt-launch'
 import { StoreFacts } from './core-facts'
+import { plannerPlacement } from './planner-placement'
 import { buildHealthSnapshot, buildServer } from './server'
 import { specialistBridge, specialistTools } from './specialist-tools'
 
@@ -316,9 +316,10 @@ function composePlanner(
   opts: { dataDir: string; brain?: MetaBrain },
   metaSlotDir: string | undefined,
 ): ({ service: MetaAgentService } & PlannerLifetime) | undefined {
+  const placement = plannerPlacement(store, opts.dataDir)
   if (opts.brain !== undefined) {
     return {
-      service: new MetaAgentService({ store, effects: store.effects, brain: opts.brain }),
+      service: new MetaAgentService({ store, effects: store.effects, brain: opts.brain, ...placement }),
       ...NO_ENGINE,
     }
   }
@@ -362,39 +363,7 @@ function composePlanner(
     service: new MetaAgentService({
       store,
       effects: store.effects,
-      // Issue #14: the planner's capability-table supplier — without it the service
-      // falls back to an EMPTY table, every tier is unplaceable, every plan rejected.
-      modelsTable: () => {
-        try {
-          const loaded = loadModelsTable({ userPath: userModelsPath(opts.dataDir) })
-          return {
-            table: loaded.table,
-            provenance: {
-              sha256: loaded.provenance.sha256,
-              origin: loaded.provenance.source,
-            },
-          }
-        } catch {
-          return undefined
-        }
-      },
-      // Issue #14, seam two: per-turn availability marks — the config-declared probe
-      // for opencode slots (the slot's own opencode.json), honestly unlisted elsewhere.
-      marks: () => {
-        const out: Record<string, Record<string, 'available' | 'unavailable' | 'unlisted'>> = {}
-        for (const slot of store.slots.list()) {
-          if (slot.engine !== 'opencode' || typeof slot.home !== 'string') continue
-          try {
-            const report = probeModelAvailabilitySync('opencode', {
-              configDir: join(slot.home, 'config'),
-            })
-            out[String(slot.id)] = report.availability
-          } catch {
-            // a slot whose config cannot be read is honestly unlisted (empty marks)
-          }
-        }
-        return out
-      },
+      ...placement,
       brain: brain.asBrain(),
     }),
     quiesce: () => brain.quiesce(),

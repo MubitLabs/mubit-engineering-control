@@ -1,7 +1,7 @@
 import type { DomainEvent } from '@mec/contracts'
 import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { CursorError, decodeCursor, encodeCursor, InspectionReads } from '../src/inspection'
+import { CursorError, decodeCursor, decodeCursorAt, encodeCursor, InspectionReads } from '../src/inspection'
 import { MIGRATIONS_v1, migrate } from '../src/migrations'
 import { SqliteStore } from '../src/store'
 
@@ -107,6 +107,14 @@ describe('InspectionReads.pageDocs', () => {
     const page = reads.pageDocs('task', { limit: 10, maxBytes: 100 })
     expect(page.rows).toHaveLength(1)
     expect(page.nextCursor).toBeNull()
+  })
+
+  it('a needs cursor carries its phase and an unknown phase is refused', () => {
+    expect(decodeCursorAt(encodeCursor(7))).toEqual({ r: 7, recent: false })
+    expect(decodeCursorAt(encodeCursor(7, true))).toEqual({ r: 7, recent: true })
+    expect(decodeCursor(encodeCursor(7, true))).toBe(7)
+    const wrong = Buffer.from(JSON.stringify({ v: 1, r: 7, p: 'other' })).toString('base64url')
+    expect(() => decodeCursor(wrong)).toThrow(CursorError)
   })
 
   it('malformed cursor is refused', () => {

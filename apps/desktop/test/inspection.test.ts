@@ -884,3 +884,329 @@ describe('inspection routes: honest counts and bounded needs (fix wave)', () => 
     expect(task.attempts.at(-1).id).toBe('att_300')
   })
 })
+
+describe('inspection routes: every response stays under 1 MiB (second fix round)', () => {
+  const MIB = 1024 * 1024
+  const bytes = (body: string): number => Buffer.byteLength(body)
+  const WIDE = '語'
+
+  const ids = (n: number): string[] =>
+    Array.from({ length: n }, (_, i) => `task_${String(i).padStart(23, '0')}`)
+
+  it('tasks/:id with 60,000 dependsOn ids answers under 1 MiB and counts the cut', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    store.atomic(() => {
+      store.tasks.save({
+        id: 'task_x',
+        workItemId: 'wi_1',
+        objective: 'o',
+        status: 'ready',
+        dependsOn: ids(60_000),
+      })
+    })
+    const res = await get('/api/inspect/tasks/task_x')
+    expect(res.status).toBe(200)
+    expect(bytes(res.body)).toBeLessThanOrEqual(MIB)
+    const task = res.json()
+    expect(task.dependsOn.length).toBeGreaterThan(0)
+    expect(task.dependsOn.length).toBeLessThan(60_000)
+    expect(task.dependsOnTruncated).toBe(60_000 - task.dependsOn.length)
+  })
+
+  it('work/:id with 60,000 dependsOn ids answers under 1 MiB and counts the cut', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    store.atomic(() => {
+      store.tasks.save({
+        id: 'task_x',
+        workItemId: 'wi_1',
+        objective: 'o',
+        status: 'ready',
+        dependsOn: ids(60_000),
+      })
+    })
+    const res = await get('/api/inspect/work/wi_1')
+    expect(bytes(res.body)).toBeLessThanOrEqual(MIB)
+    const [task] = res.json().tasks
+    expect(task.dependsOnTruncated).toBe(60_000 - task.dependsOn.length)
+  })
+
+  it('a short dependsOn is served whole with a zero count', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    store.atomic(() => {
+      store.tasks.save({
+        id: 'task_x',
+        workItemId: 'wi_1',
+        objective: 'o',
+        status: 'ready',
+        dependsOn: ids(3),
+      })
+    })
+    const task = (await get('/api/inspect/tasks/task_x')).json()
+    expect(task.dependsOn).toEqual(ids(3))
+    expect(task.dependsOnTruncated).toBe(0)
+  })
+
+  it('work/:id bounds its cursors, keeps the work stream, and counts what it cut', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    store.atomic(() => {
+      for (let i = 0; i < 3_000; i++) {
+        store.attempts.save({
+          id: `att_${i}_${'a'.repeat(600)}`,
+          taskId: 't',
+          workItemId: 'wi_1',
+          state: 'done',
+        })
+      }
+    })
+    const res = await get('/api/inspect/work/wi_1')
+    expect(bytes(res.body)).toBeLessThanOrEqual(MIB)
+    const work = res.json()
+    const shown = Object.keys(work.cursors)
+    expect(shown).toContain('work:wi_1')
+    expect(shown.length).toBeLessThan(3_001)
+    expect(work.cursorsTruncated).toBe(3_001 - shown.length)
+  })
+
+  it('work/:id says how many tasks it left out', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    store.atomic(() => {
+      for (let i = 0; i < 230; i++) {
+        store.tasks.save({
+          id: `task_${i}`,
+          workItemId: 'wi_1',
+          objective: 'o',
+          status: 'ready',
+          dependsOn: ids(1_000),
+        })
+      }
+    })
+    const res = await get('/api/inspect/work/wi_1')
+    expect(bytes(res.body)).toBeLessThanOrEqual(MIB)
+    const work = res.json()
+    expect(work.tasks.length).toBeLessThan(230)
+    expect(work.tasksTruncated).toBe(230 - work.tasks.length)
+  })
+
+  it('tasks/:id stays under 1 MiB in real bytes when every capped list is full of wide or long text', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    const head = 'b'.repeat(40)
+    store.atomic(() => {
+      store.tasks.save({
+        id: 'task_wide',
+        workItemId: 'wi_1',
+        localKey: 'k'.repeat(2 * MIB),
+        role: 'r'.repeat(2 * MIB),
+        status: 's'.repeat(2 * MIB),
+        objective: WIDE.repeat(30_000),
+        dependsOn: [],
+      })
+      for (let g = 1; g <= 60; g++) {
+        store.attempts.save({
+          id: `att_${g}`,
+          taskId: 'task_wide',
+          workItemId: 'wi_1',
+          generation: g,
+          state: 'done',
+          model: WIDE.repeat(20_000),
+          ...(g === 60 && {
+            headSha: head,
+            diff: {
+              summary: WIDE.repeat(5_000),
+              files: Array.from({ length: 2_000 }, (_, i) => ({
+                path: `${i}${WIDE.repeat(600)}`,
+                added: 1,
+                removed: 1,
+              })),
+            },
+            checks: Array.from({ length: 400 }, (_, i) => ({
+              name: `${i}${WIDE.repeat(300)}`,
+              state: 'passed',
+              headSha: head,
+              detail: WIDE.repeat(800),
+              artifactRef: `artifacts/${'x'.repeat(5_000)}`,
+            })),
+          }),
+        })
+      }
+    })
+    const res = await get('/api/inspect/tasks/task_wide')
+    expect(res.status).toBe(200)
+    expect(bytes(res.body)).toBeLessThanOrEqual(MIB)
+    const task = res.json()
+    expect(task.attemptsTruncated).toBe(60 - task.attempts.length)
+    expect(task.checks.truncated).toBe(400 - task.checks.results.length)
+    expect(task.diff.truncated).toBe(2_000 - task.diff.files.length)
+    expect(task.diff.files.length).toBeGreaterThan(0)
+  })
+
+  it('oversized scalars on a work item cannot push its row or detail past 1 MiB', async () => {
+    const big = 'z'.repeat(2 * MIB)
+    seedWork('wi_big', {
+      repoId: 'repo_a',
+      state: big,
+      updatedAt: big,
+      hold: { at: big, reason: big },
+      delivery: { stage: 'pr-open', branch: big, headSha: big, prUrl: big },
+    })
+    const detail = await get('/api/inspect/work/wi_big')
+    expect(bytes(detail.body)).toBeLessThanOrEqual(MIB)
+    const page = await get('/api/inspect/work')
+    expect(bytes(page.body)).toBeLessThanOrEqual(MIB)
+    expect(page.json().items).toHaveLength(1)
+  })
+})
+
+describe('inspection routes: needs cursor and byte cap (second fix round)', () => {
+  const MIB = 1024 * 1024
+  const WIDE = '語'
+
+  const question = (id: string, status: string, workItemId = 'wi_1'): Record<string, any> => ({
+    id: `question/${id}`,
+    questionId: id,
+    question: `q ${id}`,
+    options: [],
+    workItemId,
+    status,
+    askedAt: AT,
+    ...(status === 'answered' && { answer: 'yes' }),
+  })
+  const card = (id: string, status: string, extra: Record<string, any> = {}): Record<string, any> => ({
+    id,
+    cls: 'install',
+    status,
+    operationHash: 'h',
+    createdAt: AT,
+    expiresAt: '2999-01-01T00:00:00.000Z',
+    workItemId: 'wi_1',
+    ...extra,
+  })
+  const walk = async (
+    query: string,
+    between: (page: number) => void = () => {},
+  ): Promise<{ ids: string[]; pages: number }> => {
+    const ids: string[] = []
+    let cursor: string | null = null
+    let pages = 0
+    do {
+      const res = await get(`/api/inspect/needs?${query}${cursor === null ? '' : `&cursor=${cursor}`}`)
+      expect(res.status).toBe(200)
+      expect(Buffer.byteLength(res.body)).toBeLessThanOrEqual(MIB)
+      const page = res.json()
+      ids.push(...page.items.map((item: any) => item.id))
+      cursor = page.nextCursor
+      pages += 1
+      between(pages)
+    } while (cursor !== null)
+    return { ids, pages }
+  }
+
+  it('no row is skipped when an earlier row is answered between pages', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    const all = Array.from({ length: 100 }, (_, i) => `a${i}`)
+    store.atomic(() => {
+      for (const id of all) store.engines.save(question(id, 'open') as any)
+    })
+    const { ids } = await walk('limit=48', (page) => {
+      if (page === 1) {
+        store.atomic(() => {
+          store.engines.save(question('a0', 'answered') as any)
+          store.engines.save(question('a1', 'answered') as any)
+        })
+      }
+    })
+    expect(ids).toEqual(all)
+  })
+
+  it('a card and a question share one oldest-first order and the cursor is a rowid', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    store.atomic(() => {
+      store.engines.save(question('q1', 'open') as any)
+      store.confirmations.save(card('conf_1', 'pending') as any)
+      store.engines.save(question('q2', 'open') as any)
+    })
+    const first = (await get('/api/inspect/needs?limit=2')).json()
+    expect(first.items.map((i: any) => i.id)).toEqual(['q1', 'conf_1'])
+    const rowid = (db.prepare('SELECT rowid AS r FROM docs WHERE id = ?').get('conf_1') as { r: number }).r
+    expect(JSON.parse(Buffer.from(first.nextCursor, 'base64url').toString('utf8'))).toEqual({
+      v: 1,
+      r: rowid,
+    })
+    const second = (await get(`/api/inspect/needs?limit=2&cursor=${first.nextCursor}`)).json()
+    expect(second.items.map((i: any) => i.id)).toEqual(['q2'])
+    expect(second.nextCursor).toBeNull()
+  })
+
+  it('recent=1 pages the open rows, then the recent rows newest first, each once', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    store.atomic(() => {
+      for (let i = 0; i < 5; i++) store.engines.save(question(`open${i}`, 'open') as any)
+      for (let i = 0; i < 30; i++) store.engines.save(question(`done${i}`, 'answered') as any)
+    })
+    const { ids, pages } = await walk('recent=1&limit=3')
+    const newest = Array.from({ length: 20 }, (_, i) => `done${29 - i}`)
+    expect(ids).toEqual(['open0', 'open1', 'open2', 'open3', 'open4', ...newest])
+    expect(pages).toBeGreaterThan(5)
+  })
+
+  it('a recent row is not skipped when newer rows settle between pages', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    store.atomic(() => {
+      for (let i = 0; i < 10; i++) store.engines.save(question(`done${i}`, 'answered') as any)
+    })
+    const { ids } = await walk('recent=1&limit=3', (page) => {
+      if (page === 1) {
+        store.atomic(() => {
+          store.engines.save(question('late', 'answered') as any)
+        })
+      }
+    })
+    expect(ids).toEqual(Array.from({ length: 10 }, (_, i) => `done${9 - i}`))
+  })
+
+  it('a newer settled card is not pushed out by twenty settled questions', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    store.atomic(() => {
+      for (let i = 0; i < 25; i++) store.engines.save(question(`done${i}`, 'answered') as any)
+      store.confirmations.save(card('conf_late', 'denied') as any)
+    })
+    const { ids } = await walk('recent=1')
+    expect(ids[0]).toBe('conf_late')
+    expect(ids).toHaveLength(20)
+  })
+
+  it('100 cards with long wide cls end the page at the byte cap and all still arrive', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    const all = Array.from({ length: 100 }, (_, i) => `conf_${i}`)
+    store.atomic(() => {
+      for (const id of all) store.confirmations.save(card(id, 'pending', { cls: WIDE.repeat(10_000) }) as any)
+    })
+    const first = await get('/api/inspect/needs?limit=100')
+    expect(Buffer.byteLength(first.body)).toBeLessThanOrEqual(MIB)
+    expect(first.json().items.length).toBeLessThan(100)
+    expect(first.json().nextCursor).not.toBeNull()
+    const { ids, pages } = await walk('limit=100')
+    expect(ids).toEqual(all)
+    expect(pages).toBeGreaterThan(1)
+  })
+
+  it('one oversized card cannot exceed 1 MiB alone', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    const big = 'c'.repeat(2 * MIB)
+    store.atomic(() => {
+      store.confirmations.save(
+        card('conf_big', 'pending', {
+          cls: big,
+          workItemId: undefined,
+          expiresAt: `2999${big}`,
+          payload: { repo: big, branch: 'main' },
+        }) as any,
+      )
+    })
+    const res = await get('/api/inspect/needs')
+    expect(Buffer.byteLength(res.body)).toBeLessThanOrEqual(MIB)
+    const [item] = res.json().items
+    expect(item.id).toBe('conf_big')
+    expect(item.cls.length).toBeLessThan(big.length)
+    expect(item.repoLabel.length).toBeLessThanOrEqual(80)
+  })
+})

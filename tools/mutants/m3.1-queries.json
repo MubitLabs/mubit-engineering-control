@@ -58,43 +58,155 @@
   {
     "name": "stop the open walk at 200",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "    } while (cursor !== null)\n    return docs\n",
-    "replace": "    } while (cursor !== null && docs.length < 200)\n    return docs.slice(0, 200)\n",
+    "find": "    } while (cursor !== null)\n    return rows\n",
+    "replace": "    } while (cursor !== null && rows.length < 200)\n    return rows.slice(0, 200)\n",
     "tests": ["apps/desktop/test/inspection.test.ts"]
   },
   {
     "name": "needs never returns a cursor",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "nextCursor: end < all.length ? encodeCursor(end) : null,",
-    "replace": "nextCursor: null,",
+    "find": "        last !== undefined && served.length < rows.length\n          ? encodeCursor(last.rowid, served.length > open.length)\n          : null,",
+    "replace": "        null,",
     "tests": ["apps/desktop/test/inspection.test.ts"]
   },
   {
     "name": "recent filters by repo after the cap",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "        if (repoId === undefined || item.repoId === repoId) found.push(item)",
-    "replace": "        if (found.length < RECENT_CAP) found.push(item)",
+    "find": "        if (repoId === undefined || row.item.repoId === repoId) found.push(row)",
+    "replace": "        if (found.length < RECENT_CAP) found.push(row)",
     "tests": ["apps/desktop/test/inspection.test.ts"]
   },
   {
     "name": "diff files uncapped",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "const files = allFiles.slice(0, DIFF_FILE_CAP)",
+    "find": "const files = takeWithin(allFiles, DIFF_FILE_CAP, DIFF_BYTES)",
     "replace": "const files = allFiles",
     "tests": ["apps/desktop/test/inspection.test.ts"]
   },
   {
     "name": "checks uncapped",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "const checks = allChecks.slice(0, CHECK_CAP)",
+    "find": "const checks = takeWithin(allChecks, CHECK_CAP, CHECK_BYTES)",
     "replace": "const checks = allChecks",
     "tests": ["apps/desktop/test/inspection.test.ts"]
   },
   {
     "name": "attempts uncapped",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "const shown = attempts.slice(-ATTEMPT_CAP)",
-    "replace": "const shown = attempts",
+    "find": "const views = takeWithin(built.reverse(), ATTEMPT_CAP, ATTEMPT_BYTES).reverse()",
+    "replace": "const views = built",
     "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "needs page ignores the byte cap",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      if (served.length > 0 && bytes + size > MAX_PAGE_BYTES) break\n      bytes += size\n      served.push(row)",
+    "replace": "      bytes += size\n      served.push(row)",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "needs cursor loses a row",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": ".filter((row) => row.rowid > at.r)",
+    "replace": ".filter((row) => row.rowid > at.r + 1)",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "needs cursor ignores the rowid",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": ".filter((row) => row.rowid > at.r)",
+    "replace": ".slice(at.r === 0 ? 0 : 48)",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "recent keyset ignored",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "this.#recentRows(repoId).filter((row) => !at.recent || row.rowid < at.r)",
+    "replace": "this.#recentRows(repoId)",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "recent cursor loses its phase",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "encodeCursor(last.rowid, served.length > open.length)",
+    "replace": "encodeCursor(last.rowid)",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "recent rows not merged newest first",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      .sort((a, b) => b.rowid - a.rowid)\n      .slice(0, RECENT_CAP)",
+    "replace": "      .slice(0, RECENT_CAP)",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "open rows not merged by rowid",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      .sort((a, b) => a.rowid - b.rowid)\n",
+    "replace": "\n",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "dependsOn uncapped",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "const dependsOn = takeWithin(allDepends, DEPENDS_CAP, DEPENDS_BYTES)",
+    "replace": "const dependsOn = allDepends",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "cursors uncapped",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      CURSOR_CAP,\n      CURSOR_BYTES,\n",
+    "replace": "      Number.MAX_SAFE_INTEGER,\n      Number.MAX_SAFE_INTEGER,\n",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "tasks truncated count dropped",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "tasksTruncated: allTasks.length - tasks.length,",
+    "replace": "tasksTruncated: 0,",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "list byte budget ignored",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    if (used > bytes) break\n    kept.push(entry)",
+    "replace": "    kept.push(entry)",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "card cls uncut",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "cls: cutText(str(doc.cls) ?? '', CLS_CAP),",
+    "replace": "cls: str(doc.cls) ?? '',",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "card payload repo uncut",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "(payloadRepo === null ? null : cutText(payloadRepo, LABEL_CAP)),",
+    "replace": "payloadRepo,",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "card expiry uncut",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "expiresAt: shortText(expiresAt),",
+    "replace": "expiresAt,",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "work scalars uncut",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "const shortText = (text: string): string => cutText(text, SHORT_CAP)",
+    "replace": "const shortText = (text: string): string => redactText(text)",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "cursor phase unchecked",
+    "file": "packages/store/src/inspection.ts",
+    "find": "  if (p !== undefined && p !== 'recent') throw new CursorError('cursor phase is not valid')\n",
+    "replace": "",
+    "tests": ["packages/store/test/inspection.test.ts"]
   }
 ]

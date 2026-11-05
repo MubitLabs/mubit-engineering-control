@@ -28,6 +28,7 @@ export {
   CursorError,
   DEFAULT_PAGE_LIMIT,
   decodeCursor,
+  decodeCursorAt,
   encodeCursor,
   InspectionReads,
   MAX_PAGE_BYTES,

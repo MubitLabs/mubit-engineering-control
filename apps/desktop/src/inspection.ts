@@ -11,7 +11,8 @@
  *   repository is never inferred from a path, a title or a branch name.
  * - A card joins to work only through a stored `workItemId` or `mandateId`. Never by branch.
  * - Every string leaves through `redactText`, after any cut, so a cut cannot leave half a secret.
- * - A page is at most 100 rows and 1 MiB of JSON, and ends early with a valid cursor.
+ * - A page is at most 100 rows and 1 MiB of JSON, and ends early with a valid cursor. A detail answer
+ *   is held to 1 MiB too, by a count and a byte budget per list, and says how much each list cut.
  */
 
 import type { Json, Store, StoreDoc } from '@mec/contracts'
@@ -21,7 +22,9 @@ import { redact } from '@mec/slots'
 import {
   CursorError,
   DEFAULT_PAGE_LIMIT,
+  type DocRow,
   decodeCursor,
+  decodeCursorAt,
   encodeCursor,
   type InspectionReads,
   MAX_PAGE_BYTES,
@@ -65,6 +68,8 @@ export type TaskRow = {
   role: string | null
   status: string
   dependsOn: string[]
+  /** Ids left out of `dependsOn`. */
+  dependsOnTruncated: number
   planRevision: number | null
   attemptCount: number
 }
@@ -83,10 +88,14 @@ export type WorkDetail = WorkRow & {
   hold: { since: string; reason: string | null } | null
   planRevision: number | null
   tasks: TaskRow[]
+  /** Tasks left out of `tasks`. */
+  tasksTruncated: number
   delegation: { parentAttemptId: string; childAttemptId: string }[]
   delivery: DeliveryView
   coverage: Coverage
   cursors: Record<string, number>
+  /** Attempt streams left out of `cursors` (the work stream and the newest attempts are kept). */
+  cursorsTruncated: number
 }
 
 export type AttemptView = {
@@ -180,6 +189,23 @@ function scrub<T>(value: T): T {
 /** Redact first, then cut: a cut must never leave the front half of a key that no longer matches. */
 const cutText = (text: string, max: number): string => redactText(text).slice(0, max)
 
+/** Ids, times and names are short in any real record; one that is not still cannot pass the byte bound. */
+const SHORT_CAP = 200
+const shortText = (text: string): string => cutText(text, SHORT_CAP)
+const shortOrNull = (text: string | null): string | null => (text === null ? null : shortText(text))
+
+/** The leading entries that fit both bounds, sized as the JSON that actually leaves. */
+function takeWithin<T>(list: readonly T[], count: number, bytes: number): T[] {
+  const kept: T[] = []
+  let used = 0
+  for (const entry of list.slice(0, count)) {
+    used += Buffer.byteLength(JSON.stringify(scrub(entry))) + 1
+    if (used > bytes) break
+    kept.push(entry)
+  }
+  return kept
+}
+
 // ── Small readers over loosely typed docs ────────────────────────────────────────────────────
 
 const str = (value: Json | undefined): string | null => (typeof value === 'string' ? value : null)
@@ -228,12 +254,29 @@ const ATTEMPT_CAP = 50
 const CHECK_CAP = 200
 const DIFF_FILE_CAP = 500
 const TASK_CAP = 200
+const DEPENDS_CAP = 100
+const CURSOR_CAP = 200
+const CLS_CAP = 4000
+const LABEL_CAP = 80
+/**
+ * Count caps alone do not hold a byte bound: JSON spends up to 6 bytes on one character. These budgets,
+ * with the objective (at most 120 KiB) or the goal, sum to under 1 MiB for any one detail answer.
+ */
+const ATTEMPT_BYTES = 150 * 1024
+const CHECK_BYTES = 250 * 1024
+const DIFF_BYTES = 250 * 1024
+const DEPENDS_BYTES = 16 * 1024
+const TASK_BYTES = 768 * 1024
+const CURSOR_BYTES = 64 * 1024
 const SNAPSHOT_STREAM_CAP = 100
 const SEARCH_CAP = 20
 /** Headroom for the envelope fields around a page's items. */
 const ENVELOPE_BYTES = 1024
 
 type InspectDeps = { store: Store; reads: InspectionReads; now: () => Date }
+
+/** A need with the rowid that keys its page: stable, unlike its position in the list. */
+type NeedRow = { rowid: number; item: NeedItem }
 
 class Inspector {
   readonly #store: Store
@@ -278,8 +321,8 @@ class Inspector {
   // ── needs: open questions and pending cards ──
 
   /** Walks the whole set by keyset. Nothing is dropped here: a count must be the truth (§18). */
-  #collect(kind: string, options: Parameters<InspectionReads['pageDocs']>[1]): StoreDoc[] {
-    const docs: StoreDoc[] = []
+  #collect(kind: string, options: Parameters<InspectionReads['pageDocs']>[1]): DocRow[] {
+    const rows: DocRow[] = []
     let cursor: string | null = null
     do {
       const page: ReturnType<InspectionReads['pageDocs']> = this.#reads.pageDocs(kind, {
@@ -287,41 +330,42 @@ class Inspector {
         limit: MAX_PAGE_LIMIT,
         cursor,
       })
-      docs.push(...page.rows.map((row) => row.doc))
+      rows.push(...page.rows)
       cursor = page.nextCursor
     } while (cursor !== null)
-    return docs
+    return rows
   }
 
   #workRepo(workItemId: string | null): string | null {
     return workItemId === null ? null : repoIdOf(this.#store.workItems.get(workItemId))
   }
 
-  #questionItem(doc: StoreDoc): NeedItem {
+  #questionRow({ rowid, doc }: DocRow): NeedRow {
     const workItemId = str(doc.workItemId)
     const repoId = repoIdOf(doc) ?? this.#workRepo(workItemId)
     const stored = str(doc.status) ?? 'open'
-    return {
+    const item: NeedItem = {
       kind: 'question',
-      id: str(doc.questionId) ?? String(doc.id).slice(QUESTION_PREFIX.length),
-      repoId,
+      id: shortText(str(doc.questionId) ?? String(doc.id).slice(QUESTION_PREFIX.length)),
+      repoId: shortOrNull(repoId),
       repoLabel: this.repoLabel(repoId),
-      workItemId,
+      workItemId: shortOrNull(workItemId),
       question: cutText(str(doc.question) ?? '', 2000),
       options: strings(doc.options)
         .slice(0, 20)
         .map((option) => cutText(option, 200)),
       status: stored === 'open' ? 'open' : stored === 'answered' ? 'answered' : 'expired',
-      askedAt: str(doc.askedAt),
+      askedAt: shortOrNull(str(doc.askedAt)),
       answer: str(doc.answer) === null ? null : cutText(String(doc.answer), 2000),
     }
+    return { rowid, item }
   }
 
   /** Cards join to work only through a stored workItemId or a mandateId some work item carries. */
-  #cardItems(docs: StoreDoc[]): NeedItem[] {
+  #cardRows(rows: DocRow[]): NeedRow[] {
     const mandateIds = [
       ...new Set(
-        docs.filter((doc) => str(doc.workItemId) === null).flatMap((doc) => str(doc.mandateId) ?? []),
+        rows.filter(({ doc }) => str(doc.workItemId) === null).flatMap(({ doc }) => str(doc.mandateId) ?? []),
       ),
     ]
     const byMandate = new Map<string, string>()
@@ -330,7 +374,7 @@ class Inspector {
       if (mandateId !== null) byMandate.set(mandateId, String(work.id))
     }
     const nowIso = this.observedAt()
-    return docs.map((doc): NeedItem => {
+    return rows.map(({ rowid, doc }): NeedRow => {
       const mandateId = str(doc.mandateId)
       const workItemId =
         str(doc.workItemId) ?? (mandateId === null ? null : (byMandate.get(mandateId) ?? null))
@@ -346,33 +390,41 @@ class Inspector {
           : stored === 'approved' || stored === 'denied' || stored === 'expired' || stored === 'stale'
             ? stored
             : 'stale'
-      const id = String(doc.id)
-      return {
+      const payloadRepo = str(payload?.repo)
+      const id = shortText(String(doc.id))
+      const item: NeedItem = {
         kind: 'card',
         id,
-        repoId,
-        repoLabel: (repoId === null ? null : this.repoLabel(repoId)) ?? str(payload?.repo),
-        workItemId,
-        cls: str(doc.cls) ?? '',
+        repoId: shortOrNull(repoId),
+        repoLabel:
+          (repoId === null ? null : this.repoLabel(repoId)) ??
+          (payloadRepo === null ? null : cutText(payloadRepo, LABEL_CAP)),
+        workItemId: shortOrNull(workItemId),
+        cls: cutText(str(doc.cls) ?? '', CLS_CAP),
         status,
-        expiresAt,
+        expiresAt: shortText(expiresAt),
         detailPath: `/api/inbox/${id}/detail`,
       }
+      return { rowid, item }
     })
   }
 
   /** Everything that needs a person now, all repositories, oldest first. The single source of every count. */
-  openNeeds(): NeedItem[] {
+  #openRows(): NeedRow[] {
     const questions = this.#collect('engine', { idPrefix: QUESTION_PREFIX, equals: { status: 'open' } })
-    const cards = this.#cardItems(this.#collect('confirmation', { equals: { status: 'pending' } }))
-    return [...questions.map((doc) => this.#questionItem(doc)), ...cards].filter(
-      (item) => item.status === 'open' || item.status === 'pending',
-    )
+    const cards = this.#cardRows(this.#collect('confirmation', { equals: { status: 'pending' } }))
+    return [...questions.map((row) => this.#questionRow(row)), ...cards]
+      .filter(({ item }) => item.status === 'open' || item.status === 'pending')
+      .sort((a, b) => a.rowid - b.rowid)
+  }
+
+  openNeeds(): NeedItem[] {
+    return this.#openRows().map((row) => row.item)
   }
 
   /** Newest first, filtered to the scope before the cap, so another repository's items cannot push these out. */
-  #recentOf(kind: string, toItems: (docs: StoreDoc[]) => NeedItem[], repoId: string | undefined): NeedItem[] {
-    const found: NeedItem[] = []
+  #recentOf(kind: string, toRows: (rows: DocRow[]) => NeedRow[], repoId: string | undefined): NeedRow[] {
+    const found: NeedRow[] = []
     let cursor: string | null = null
     let scanned = 0
     do {
@@ -383,9 +435,9 @@ class Inspector {
         cursor,
       })
       scanned += page.rows.length
-      for (const item of toItems(page.rows.map((row) => row.doc))) {
-        if (item.status === 'open' || item.status === 'pending') continue
-        if (repoId === undefined || item.repoId === repoId) found.push(item)
+      for (const row of toRows(page.rows)) {
+        if (row.item.status === 'open' || row.item.status === 'pending') continue
+        if (repoId === undefined || row.item.repoId === repoId) found.push(row)
       }
       cursor = page.nextCursor
     } while (cursor !== null && found.length < RECENT_CAP && scanned < RECENT_SCAN_CAP)
@@ -393,39 +445,49 @@ class Inspector {
   }
 
   /** Recently settled and expired items, newest first. Never counted as needing anyone. */
-  recentNeeds(repoId: string | undefined): NeedItem[] {
+  #recentRows(repoId: string | undefined): NeedRow[] {
     return [
-      ...this.#recentOf('engine', (docs) => docs.map((doc) => this.#questionItem(doc)), repoId),
-      ...this.#recentOf('confirmation', (docs) => this.#cardItems(docs), repoId),
-    ].slice(0, RECENT_CAP)
+      ...this.#recentOf('engine', (rows) => rows.map((row) => this.#questionRow(row)), repoId),
+      ...this.#recentOf('confirmation', (rows) => this.#cardRows(rows), repoId),
+    ]
+      .sort((a, b) => b.rowid - a.rowid)
+      .slice(0, RECENT_CAP)
   }
 
-  needs(repoId: string | undefined, recent: boolean): NeedItem[] {
-    const open = this.openNeeds().filter((item) => repoId === undefined || item.repoId === repoId)
-    return recent ? [...open, ...this.recentNeeds(repoId)] : open
-  }
-
-  /** One page of needs by position in the list; ends early at the row limit or 1 MiB. */
+  /**
+   * One page of needs by rowid, so a row that settles between pages cannot shift another past the
+   * cursor: open rows oldest first, then with `recent` the recent rows newest first. Docs share one
+   * rowid space, so questions and cards share one order. Ends early at the row limit or 1 MiB.
+   */
   needsPage(
     repoId: string | undefined,
     recent: boolean,
     cursor: string | null,
     limit: number,
   ): Page<NeedItem> {
-    const all = this.needs(repoId, recent)
-    const start = cursor === null ? 0 : decodeCursor(cursor)
-    const items: NeedItem[] = []
+    const at = cursor === null ? { r: 0, recent: false } : decodeCursorAt(cursor)
+    const open = at.recent
+      ? []
+      : this.#openRows()
+          .filter(({ item }) => repoId === undefined || item.repoId === repoId)
+          .filter((row) => row.rowid > at.r)
+    const settled = recent ? this.#recentRows(repoId).filter((row) => !at.recent || row.rowid < at.r) : []
+    const rows = [...open, ...settled]
+    const served: NeedRow[] = []
     let bytes = ENVELOPE_BYTES
-    for (const item of all.slice(start, start + limit)) {
-      const size = Buffer.byteLength(JSON.stringify(scrub(item)))
-      if (items.length > 0 && bytes + size > MAX_PAGE_BYTES) break
+    for (const row of rows.slice(0, limit)) {
+      const size = Buffer.byteLength(JSON.stringify(scrub(row.item)))
+      if (served.length > 0 && bytes + size > MAX_PAGE_BYTES) break
       bytes += size
-      items.push(item)
+      served.push(row)
     }
-    const end = start + items.length
+    const last = served.at(-1)
     return {
-      items,
-      nextCursor: end < all.length ? encodeCursor(end) : null,
+      items: served.map((row) => row.item),
+      nextCursor:
+        last !== undefined && served.length < rows.length
+          ? encodeCursor(last.rowid, served.length > open.length)
+          : null,
       observedAt: this.observedAt(),
     }
   }
@@ -455,10 +517,10 @@ class Inspector {
     const stage = stages.find((candidate) => candidate === stored?.stage) ?? 'none'
     return {
       stage,
-      branch: str(stored?.branch),
-      headSha: str(stored?.headSha),
+      branch: shortOrNull(str(stored?.branch)),
+      headSha: shortOrNull(str(stored?.headSha)),
       prNumber: num(stored?.prNumber),
-      prUrl: str(stored?.prUrl),
+      prUrl: str(stored?.prUrl) === null ? null : cutText(String(stored?.prUrl), 500),
     }
   }
 
@@ -501,7 +563,7 @@ class Inspector {
         const hold = obj(doc.hold)
         const why = str(hold?.reason)
         return {
-          reason: `Held by you since ${str(hold?.at) ?? 'an unknown time'}${why === null ? '' : `: ${cutText(why, 200)}`}`,
+          reason: `Held by you since ${shortOrNull(str(hold?.at)) ?? 'an unknown time'}${why === null ? '' : `: ${cutText(why, 200)}`}`,
           nextAction: 'Tell the meta agent to go ahead when ready',
         }
       }
@@ -544,12 +606,12 @@ class Inspector {
         repoId,
         repoLabel: this.repoLabel(repoId),
         readOnly: repoId === null,
-        state: str(doc.state) ?? 'admitted',
+        state: shortText(str(doc.state) ?? 'admitted'),
         stage,
         ...this.#reasonAndAction(stage, doc, facts),
         taskCounts: { total: Object.values(byStatus).reduce((sum, n) => sum + n, 0), byStatus },
         lastActivityAt: lastAt[`work:${id}`] ?? null,
-        updatedAt: str(doc.updatedAt) ?? '',
+        updatedAt: shortText(str(doc.updatedAt) ?? ''),
       }
     })
   }
@@ -609,13 +671,17 @@ class Inspector {
       const id = String(task.id)
       const objective = str(task.objective)
       const line = objective === null ? null : firstLine(redactText(objective))
+      const localKey = shortOrNull(str(task.localKey))
+      const allDepends = strings(task.dependsOn)
+      const dependsOn = takeWithin(allDepends, DEPENDS_CAP, DEPENDS_BYTES)
       return {
         id,
-        localKey: str(task.localKey),
-        title: line === null ? (str(task.localKey) ?? id) : line.slice(0, 80),
-        role: str(task.role),
-        status: str(task.status) ?? 'ready',
-        dependsOn: strings(task.dependsOn),
+        localKey,
+        title: line === null ? (localKey ?? id).slice(0, 80) : line.slice(0, 80),
+        role: shortOrNull(str(task.role)),
+        status: shortText(str(task.status) ?? 'ready'),
+        dependsOn,
+        dependsOnTruncated: allDepends.length - dependsOn.length,
         planRevision: num(task.planRevision),
         attemptCount: Object.values(counts[id] ?? {}).reduce((sum, n) => sum + n, 0),
       }
@@ -626,30 +692,37 @@ class Inspector {
     const doc = this.#reads.getDoc('work_item', id)
     if (doc === undefined) return undefined
     const [row] = this.workRows([doc], needs) as [WorkRow]
-    const tasks = this.#reads.docsByField('task', 'workItemId', [id]).slice(0, TASK_CAP)
+    const allTasks = this.#reads.docsByField('task', 'workItemId', [id])
+    const tasks = takeWithin(this.taskRows(allTasks.slice(0, TASK_CAP)), TASK_CAP, TASK_BYTES)
     const attempts = this.#reads.docsByField('attempt', 'workItemId', [id])
     const originId = str(doc.originMessageId)
     const goalText = originId === null ? null : str(this.#store.messages.get(originId)?.text)
     const hold = obj(doc.hold)
-    const streams = [`work:${id}`, ...attempts.map((a) => `attempt:${String(a.id)}`)]
+    const attemptStreams = takeWithin(
+      attempts.map((a) => `attempt:${String(a.id)}`).reverse(),
+      CURSOR_CAP,
+      CURSOR_BYTES,
+    )
     return {
       ...row,
-      originMessageId: originId,
+      originMessageId: shortOrNull(originId),
       goal: goalText === null ? null : cutText(goalText, 2000),
       hold:
         hold !== null && str(hold.liftedAt) === null
           ? {
-              since: str(hold.at) ?? '',
+              since: shortText(str(hold.at) ?? ''),
               reason: str(hold.reason) === null ? null : cutText(String(hold.reason), 200),
             }
           : null,
       planRevision: num(doc.planRevision),
-      tasks: this.taskRows(tasks),
+      tasks,
+      tasksTruncated: allTasks.length - tasks.length,
       // Parent and child attempts: empty until M2 records them, never inferred from dependencies.
       delegation: [],
       delivery: this.#deliveryOf(doc),
       coverage: this.#coverage(attempts, doc),
-      cursors: this.#reads.cursors(streams),
+      cursors: this.#reads.cursors([`work:${id}`, ...attemptStreams]),
+      cursorsTruncated: attempts.length - attemptStreams.length,
     }
   }
 
@@ -667,7 +740,7 @@ class Inspector {
     const lastAt = this.#reads.lastEventAt(attempts.slice(-ATTEMPT_CAP).map((a) => `attempt:${String(a.id)}`))
     const modelRequest = obj(task.modelRequest)
     const shown = attempts.slice(-ATTEMPT_CAP)
-    const views = shown.map((attempt): AttemptView => {
+    const built = shown.map((attempt): AttemptView => {
       const slotId = str(attempt.slotId)
       const model = str(attempt.model)
       const engine = str(attempt.engine)
@@ -694,6 +767,7 @@ class Inspector {
         lastActivityAt: lastAt[`attempt:${String(attempt.id)}`] ?? null,
       }
     })
+    const views = takeWithin(built.reverse(), ATTEMPT_CAP, ATTEMPT_BYTES).reverse()
     const named = [...attempts].reverse().find((attempt) => str(attempt.headSha) !== null)
     const head = str(named?.headSha)
     // Checks and diff belong to the exact head they ran on, never inherited from another scope.
@@ -714,7 +788,7 @@ class Inspector {
           ]
         })
       : []
-    const checks = allChecks.slice(0, CHECK_CAP)
+    const checks = takeWithin(allChecks, CHECK_CAP, CHECK_BYTES)
     const diffRecord = obj(named?.diff)
     const fileList = diffRecord?.files
     const allFiles = Array.isArray(fileList)
@@ -731,25 +805,25 @@ class Inspector {
             : []
         })
       : []
-    const files = allFiles.slice(0, DIFF_FILE_CAP)
+    const files = takeWithin(allFiles, DIFF_FILE_CAP, DIFF_BYTES)
     const costs = attempts.map((attempt) => num(attempt.costUsd))
     const reported = costs.filter((cost): cost is number => cost !== null)
     const modes = new Set(attempts.map((attempt) => str(attempt.usageMode)).filter((mode) => mode !== null))
     const onlyMode = modes.size === 1 ? [...modes][0] : null
     return {
       ...row,
-      workItemId,
-      repoId: repoIdOf(task) ?? repoIdOf(workDoc),
+      workItemId: shortText(workItemId),
+      repoId: shortOrNull(repoIdOf(task) ?? repoIdOf(workDoc)),
       objective: cutText(str(task.objective) ?? '', 20000),
       attempts: views,
       attemptsTruncated: attempts.length - views.length,
       checks: {
-        headSha: checks.length > 0 ? head : null,
+        headSha: checks.length > 0 ? shortOrNull(head) : null,
         results: checks,
         truncated: allChecks.length - checks.length,
       },
       diff: {
-        headSha: diffRecord === null ? null : head,
+        headSha: diffRecord === null ? null : shortOrNull(head),
         summary: str(diffRecord?.summary) === null ? null : cutText(String(diffRecord?.summary), 2000),
         files,
         truncated: allFiles.length - files.length,

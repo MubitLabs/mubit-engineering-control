@@ -48,7 +48,7 @@ import type { ToolName } from '../../mec-tools/src/tools'
 import { type CompiledBundle, compileBundle, componentHash } from '../../prompts/src/bundles'
 import { buildAgentEnv } from '../../runtime/src/env'
 import { buildAttemptSettings, serialiseAttemptSettings } from '../../runtime/src/isolation'
-import { PlannerBrain } from './brain'
+import { PlannerBrain, turnCutShort } from './brain'
 import type { MetaBrain, MetaDecision } from './service'
 
 /** The engine surface the brain uses; `ClaudeAdapter` satisfies it structurally. */
@@ -71,6 +71,8 @@ export type RealClaudeBrainOptions = {
   now?: () => Date
   /** The engine adapter to launch through; defaults to the real `ClaudeAdapter`. */
   adapter?: BrainEngine
+  /** §16.1: the user's prompt store; the default is `~/.mec/prompts`. */
+  promptsRoot?: string
 }
 
 /** The v0 pseudo-check every proposed task carries (see service.ts's module doc). */
@@ -143,6 +145,7 @@ export class RealClaudeBrain {
   readonly #secret: string
   readonly #now: () => Date
   readonly #engine: BrainEngine
+  readonly #promptsRoot: string | undefined
   /** The brain-owned tmpdir: cwd, only writable path, and home of the engine config. */
   readonly #root: string
   #retriesUsed = 0
@@ -154,6 +157,10 @@ export class RealClaudeBrain {
   #planner: PlannerBrain | null = null
   /** Decides are serialised: the shared tools server routes to one turn at a time. */
   #gate: Promise<unknown> = Promise.resolve()
+  /** §20: set once the server is closing; from then on no engine starts. */
+  #closing = false
+  /** The v0 run in flight, so a close past its bound can stop it. */
+  #running: AttemptHandle | null = null
 
   constructor(opts: RealClaudeBrainOptions) {
     this.#slotDir = opts.slotDir
@@ -161,6 +168,7 @@ export class RealClaudeBrain {
     this.#secret = opts.toolsSecret
     this.#now = opts.now ?? (() => new Date())
     this.#engine = opts.adapter ?? new ClaudeAdapter()
+    this.#promptsRoot = opts.promptsRoot
     this.#root = mkdtempSync(join(tmpdir(), 'mec-meta-brain-'))
   }
 
@@ -176,7 +184,8 @@ export class RealClaudeBrain {
    * snapshot per turn; a context without them is refused (the planner never runs unvalidated).
    */
   asBrain(): MetaBrain {
-    return (context) => this.#plannerBrain().asBrain()(context)
+    return (context) =>
+      this.#closing ? Promise.reject(turnCutShort()) : this.#plannerBrain().asBrain()(context)
   }
 
   /** The nine-tool planner over this brain's seams, built once and reused across turns. */
@@ -187,6 +196,7 @@ export class RealClaudeBrain {
       toolsSecret: this.#secret,
       now: this.#now,
       adapter: this.#engine,
+      ...(this.#promptsRoot !== undefined && { promptsRoot: this.#promptsRoot }),
     })
     return this.#planner
   }
@@ -204,6 +214,19 @@ export class RealClaudeBrain {
       () => undefined,
     )
     return run
+  }
+
+  /** §20's first step: the run in flight may finish, but no engine starts after this. */
+  quiesce(): void {
+    this.#closing = true
+    this.#planner?.quiesce()
+  }
+
+  /** §20, past the bound: stops the run in flight too, so it holds nothing open. */
+  async abort(): Promise<void> {
+    this.quiesce()
+    await this.#planner?.abort()
+    if (this.#running !== null) await this.#stopEngine(this.#running)
   }
 
   /** Stops both tool servers and removes the brain-owned tmpdirs; decides must be done. */
@@ -232,6 +255,7 @@ export class RealClaudeBrain {
     const bundle = buildTurnBundle(context)
     const { settingsPath, mcpPath } = this.#writeEngineConfig(url, token)
 
+    if (this.#closing) throw turnCutShort()
     const handle = await this.#engine.launch({
       brief: {
         attempt_id: META_ATTEMPT_ID,
@@ -279,14 +303,13 @@ export class RealClaudeBrain {
       cwd: this.#root,
       bridge: PERMIT_ALL_BRIDGE,
     })
+    this.#running = handle
 
     const events: EngineEvent[] = []
     for await (const event of this.#engine.events(handle)) events.push(event)
-    try {
-      await this.#engine.stop(handle)
-    } catch {
-      // A finished one-shot is already gone; stopping is best-effort cleanup.
-    }
+    this.#running = null
+    await this.#stopEngine(handle)
+    if (this.#closing) throw turnCutShort()
     this.lastEvents = events
     const decision = decisionFromEvents(events)
     // §6 bounded repair: the protocol REQUIRES at least acknowledge. A model that answers
@@ -354,6 +377,14 @@ export class RealClaudeBrain {
       return retriedCalled || !anyToolCall ? retried : decision
     }
     return decision
+  }
+
+  async #stopEngine(handle: AttemptHandle): Promise<void> {
+    try {
+      await this.#engine.stop(handle)
+    } catch {
+      // A finished one-shot is already gone; stopping is best-effort cleanup.
+    }
   }
 
   // ── The platform tool side ────────────────────────────────────────────────────────────────

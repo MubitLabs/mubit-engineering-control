@@ -1,9 +1,20 @@
-import type { EffectKind, Json } from '@mec/contracts'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { AttemptHandle, EffectKind, EngineEvent, Json, LaunchSpec } from '@mec/contracts'
+import { Later } from '@mec/contracts'
 import { MemoryRepositories } from '@mec/testkit'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { loadPolicy } from '../../policy/src/policy'
-import type { MetaBrain, MetaDecision } from '../src'
-import { launchAuthority, MetaAgentService, saveProcessing, stableMessageId } from '../src'
+import type { BrainEngine, MetaBrain, MetaDecision, PlannerTools, PlannerTurnInput } from '../src'
+import {
+  launchAuthority,
+  MetaAgentService,
+  PlannerBrain,
+  RealClaudeBrain,
+  saveProcessing,
+  stableMessageId,
+} from '../src'
 
 /**
  * Durable commands (M1.4b, spec §6, §12.1, §17, §20, §26): a message keeps one identity across
@@ -505,5 +516,248 @@ describe('chat during Pause (decision #27, §20)', () => {
 
     expect(next.calls()).toBe(1)
     expect(outcome.acknowledged).toContain('Noted')
+  })
+})
+
+/** An engine whose runs stay open until the test ends them, or until `stop` does. */
+const heldEngine = (holdLaunch = false) => {
+  const specs: LaunchSpec[] = []
+  const stopped: AttemptHandle[] = []
+  const ends: ((reason: string) => void)[] = []
+  const launches: (() => void)[] = []
+  let runs = 0
+  let stopBeforeEvents = false
+  const engine: BrainEngine = {
+    async launch(spec) {
+      specs.push(spec)
+      if (holdLaunch) await new Promise<void>((resolve) => launches.push(resolve))
+      return {
+        attempt_id: spec.brief.attempt_id,
+        generation: spec.brief.generation,
+        pid: 4242,
+        session_id: 'sess_held',
+      }
+    },
+    async *events(handle) {
+      runs += 1
+      const terminal_reason = stopBeforeEvents
+        ? 'crashed'
+        : await new Promise<string>((resolve) => ends.push(resolve))
+      yield {
+        type: 'exit',
+        code: terminal_reason === 'completed' ? 0 : 143,
+        terminal_reason,
+        seq: 1,
+        at: NOW,
+        attempt_id: handle.attempt_id,
+        generation: handle.generation,
+      } as EngineEvent
+    },
+    async stop(handle) {
+      stopped.push(handle)
+      if (runs < specs.length) stopBeforeEvents = true
+      ends.shift()?.('crashed')
+    },
+  }
+  return {
+    engine,
+    specs,
+    stopped,
+    end: (reason = 'completed') => ends.shift()!(reason),
+    finishLaunch: () => launches.shift()!(),
+    untilRunning: () => vi.waitFor(() => expect(ends).toHaveLength(1)),
+    untilLaunches: (count: number) => vi.waitFor(() => expect(specs).toHaveLength(count)),
+  }
+}
+
+const EMPTY_JOURNAL = {
+  acks: [],
+  routes: [],
+  spawns: [],
+  questions: [],
+  confirmations: [],
+  reports: [],
+  stops: [],
+  cancels: [],
+  escalated: false,
+}
+
+/** A turn whose journal says whether the protocol was completed. */
+const plannerTurn = (complete = false): PlannerTurnInput => ({
+  messageId: 'msg_1',
+  messageText: 'do the thing',
+  tools: {
+    journal: () => ({
+      ...EMPTY_JOURNAL,
+      ...(complete && { acks: [{ text: 'On it' }], reports: [{ summary: 'Done' }] }),
+    }),
+    execute: () => undefined,
+  } as unknown as PlannerTools,
+})
+
+describe('shutdown owns the planner (§20)', () => {
+  const dirs: string[] = []
+  const brainOptions = (engine: BrainEngine) => {
+    const slotDir = mkdtempSync(join(tmpdir(), 'mec-shutdown-'))
+    dirs.push(slotDir)
+    return { slotDir, homeDir: slotDir, toolsSecret: 'test-secret', adapter: engine }
+  }
+  const planner = (engine: BrainEngine) =>
+    new PlannerBrain({ ...brainOptions(engine), readProtocol: () => 'The protocol.' })
+
+  afterEach(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
+    dirs.length = 0
+  })
+
+  it('abort stops the running engine, and the turn is deferred, not failed', async () => {
+    const held = heldEngine()
+    const brain = planner(held.engine)
+    const turn = brain.decide(plannerTurn())
+    await held.untilRunning()
+
+    await brain.abort()
+
+    expect(held.stopped.map((handle) => handle.attempt_id)).toContain('att_meta_planner')
+    await expect(turn).rejects.toBeInstanceOf(Later)
+    await brain.close()
+  })
+
+  it('quiesce leaves the running turn to finish', async () => {
+    const held = heldEngine()
+    const brain = planner(held.engine)
+    const turn = brain.decide(plannerTurn(true))
+    await held.untilRunning()
+
+    brain.quiesce()
+    held.end()
+
+    await expect(turn).resolves.toMatchObject({ ack: 'On it' })
+    await brain.close()
+  })
+
+  it('a closing brain runs no corrective retry', async () => {
+    const held = heldEngine()
+    const brain = planner(held.engine)
+    const turn = brain.decide(plannerTurn())
+    await held.untilRunning()
+
+    brain.quiesce()
+    held.end()
+
+    await expect(turn).rejects.toBeInstanceOf(Later)
+    expect(held.specs).toHaveLength(1)
+    await brain.close()
+  })
+
+  it('a retry that ends clean during close is deferred, not answered', async () => {
+    const held = heldEngine()
+    const brain = planner(held.engine)
+    const turn = brain.decide(plannerTurn())
+    await held.untilRunning()
+    held.end()
+    await held.untilLaunches(2)
+    await held.untilRunning()
+
+    brain.quiesce()
+    held.end()
+
+    await expect(turn).rejects.toBeInstanceOf(Later)
+    await brain.close()
+  })
+
+  it('a turn queued behind the gate launches nothing once closing', async () => {
+    const held = heldEngine()
+    const brain = planner(held.engine)
+    const first = brain.decide(plannerTurn())
+    const second = brain.decide(plannerTurn())
+    await held.untilRunning()
+
+    await brain.abort()
+
+    await expect(first).rejects.toBeInstanceOf(Later)
+    await expect(second).rejects.toBeInstanceOf(Later)
+    expect(held.specs).toHaveLength(1)
+    await brain.close()
+  })
+
+  it('an abort landing during a launch stops that launch', async () => {
+    const held = heldEngine(true)
+    const brain = planner(held.engine)
+    const turn = expect(brain.decide(plannerTurn())).rejects.toBeInstanceOf(Later)
+    await held.untilLaunches(1)
+
+    await brain.abort()
+    held.finishLaunch()
+
+    await turn
+    expect(held.stopped.length).toBeGreaterThan(0)
+    await brain.close()
+  })
+
+  it('RealClaudeBrain builds no planner once closing', async () => {
+    const held = heldEngine()
+    const brain = new RealClaudeBrain(brainOptions(held.engine))
+    brain.quiesce()
+
+    await expect(
+      brain.asBrain()({ messageText: 'go', liveWork: [], tools: plannerTurn().tools }),
+    ).rejects.toBeInstanceOf(Later)
+
+    expect(held.specs).toHaveLength(0)
+    await brain.close()
+  })
+
+  it('RealClaudeBrain passes abort to the planner it drives', async () => {
+    const held = heldEngine()
+    const brain = new RealClaudeBrain(brainOptions(held.engine))
+    const turn = brain.asBrain()({ messageText: 'go', liveWork: [], tools: plannerTurn().tools })
+    await held.untilRunning()
+
+    await brain.abort()
+
+    expect(held.stopped.length).toBeGreaterThan(0)
+    await expect(turn).rejects.toBeInstanceOf(Later)
+    await brain.close()
+  })
+
+  it('the v0 turn stops on abort and runs no corrective retry', async () => {
+    const held = heldEngine()
+    const brain = new RealClaudeBrain(brainOptions(held.engine))
+    const turn = brain.decide({ messageText: 'go', liveWork: [] })
+    await held.untilRunning()
+
+    await brain.abort()
+
+    expect(held.stopped.length).toBeGreaterThan(0)
+    await expect(turn).rejects.toBeInstanceOf(Later)
+    expect(held.specs).toHaveLength(1)
+    await brain.close()
+  })
+
+  it('a turn cut short by shutdown leaves its message to resume', async () => {
+    const { store, workItemId } = await crashedAdmission()
+    const { service } = rig(async () => {
+      throw new Later('closing')
+    }, store)
+    service.enqueueResumes()
+
+    await expect(service.runRelay(rowsOf(store, 'relay')[0]!.payload)).rejects.toBeInstanceOf(Later)
+
+    expect(store.messages.get('msg_1')?.ackText).toBeUndefined()
+    expect(store.workItems.get(workItemId)?.state).toBe('planning')
+  })
+
+  it('a wake cut short by shutdown stays unanswered, so its row runs again', async () => {
+    const { store, workItemId } = await crashedAdmission()
+    const { service } = rig(async () => {
+      throw new Later('closing')
+    }, store)
+    const wake = { causationId: 'question/q_1', reason: 'answer', workItemId }
+
+    await expect(service.onWake(wake)).rejects.toBeInstanceOf(Later)
+
+    expect(store.messages.list({}).filter((doc) => typeof doc.ackText === 'string')).toEqual([])
+    expect(store.workItems.get(workItemId)?.state).toBe('planning')
   })
 })

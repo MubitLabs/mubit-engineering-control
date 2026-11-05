@@ -44,6 +44,7 @@
  */
 import { createHash } from 'node:crypto'
 import type { Effects, Json, Store, StoreDoc } from '@mec/contracts'
+import { Later } from '@mec/contracts'
 import type { AttemptState, Caps, SchedulableTask, SlotView, WorkItemState } from '@mec/domain'
 import {
   ACTIVE_ATTEMPT_STATES,
@@ -488,6 +489,7 @@ export class MetaAgentService {
         }),
       })
     } catch (error) {
+      if (error instanceof Later) throw error
       return this.#failTurn(
         { ...turn, text: input.detail ?? input.reason },
         workItemId,
@@ -804,6 +806,8 @@ export class MetaAgentService {
         }),
       })
     } catch (error) {
+      // A shutdown cut the turn short (§20): no receipt, so the next start resumes it.
+      if (error instanceof Later) throw error
       // The brain failing must never throw outward (§6): the user gets the failure ack,
       // the work item is stopped with the error on its stream, and the turn ends.
       return this.#failTurn(input, workItemId, error instanceof Error ? error.message : String(error))

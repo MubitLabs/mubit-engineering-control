@@ -63,6 +63,10 @@ describe('the production build keeps the shells apart', () => {
     expect(js).not.toMatch(/\/api\/|demoStatus|demoWork/)
   })
 
+  it('dist/assets contains no SAMPLE-ONLY', () => {
+    for (const name of assets) expect(read(name), name).not.toContain('SAMPLE-ONLY')
+  })
+
   it('the synthetic harness is not in the build at all', () => {
     for (const name of assets) expect(read(name), name).not.toMatch(/Sample console|sample search/)
   })

@@ -10,6 +10,8 @@ interface ToolbarProps {
   details?: { open: boolean; onToggle: () => void; ref: RefObject<HTMLButtonElement | null> }
   paletteRef: RefObject<HTMLButtonElement | null>
   onOpenPalette: () => void
+  /** Present once something can answer a search. */
+  search?: { onOpen: () => void }
 }
 
 export function Toolbar({
@@ -19,6 +21,7 @@ export function Toolbar({
   details,
   paletteRef,
   onOpenPalette,
+  search,
 }: ToolbarProps) {
   return (
     <header className="toolbar">
@@ -39,6 +42,11 @@ export function Toolbar({
         <strong>{routeLabel}</strong>
       </div>
       <div className="toolbar-actions">
+        {search && (
+          <Button variant="quiet" aria-haspopup="dialog" onClick={search.onOpen}>
+            Search
+          </Button>
+        )}
         {menu ? (
           <IconButton ref={paletteRef} label="Open commands" aria-haspopup="dialog" onClick={onOpenPalette}>
             <CommandIcon />

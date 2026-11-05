@@ -28,6 +28,8 @@ export interface InspectorScope {
     sections: readonly { heading: string; body: string }[]
     facts: readonly Fact[]
   }
+  /** Internal identifiers, folded on the Overview (§18). */
+  technical?: readonly Fact[]
   checks: InspectorChecks
   activity: { note: string; entries: readonly { when: string; text: string }[] }
   diff: { summary: string; files: readonly { path: string; lines: readonly string[] }[] }
@@ -57,6 +59,12 @@ function Evidence({ scope, tab, onAsk }: { scope: InspectorScope; tab: Inspector
           </section>
         ))}
         <Facts facts={scope.overview.facts} />
+        {scope.technical && scope.technical.length > 0 && (
+          <details className="technical">
+            <summary>Technical details</summary>
+            <Facts facts={scope.technical} />
+          </details>
+        )}
         {onAsk && <Button onClick={onAsk}>Ask about this work</Button>}
       </>
     )

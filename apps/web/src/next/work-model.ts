@@ -39,7 +39,14 @@ export interface SurfaceState {
   freshness: string | null
 }
 
-const readData = <T>(read: Read<T>): T | null => (read.status === 'loading' ? null : read.data)
+export const readData = <T>(read: Read<T>): T | null => (read.status === 'loading' ? null : read.data)
+
+/** The same read over a derived value. What was kept stays kept. */
+export function mapRead<T, U>(read: Read<T>, map: (data: T) => U): Read<U> {
+  if (read.status === 'loading') return read
+  if (read.status === 'ready') return { ...read, data: map(read.data) }
+  return { ...read, data: read.data === null ? null : map(read.data) }
+}
 
 function timeLabel(at: string): string {
   const date = new Date(at)
@@ -85,7 +92,10 @@ function unassigned(item: { repoId: string | null; repoLabel: string | null }): 
   return item.repoId === null && item.repoLabel === null
 }
 
-function inFilter(item: { repoId: string | null; repoLabel: string | null }, filter: RepoFilter): boolean {
+export function inFilter(
+  item: { repoId: string | null; repoLabel: string | null },
+  filter: RepoFilter,
+): boolean {
   if (filter.kind === 'all') return true
   if (filter.kind === 'unassigned') return unassigned(item)
   return item.repoId === filter.repoId
@@ -99,8 +109,9 @@ export function filterValue(filter: RepoFilter): string {
 export function repoFilterOptions(
   rows: readonly WorkRow[],
   items: readonly NeedItem[],
+  registered: readonly { id: string; label: string }[] = [],
 ): readonly RepoFilterOption[] {
-  const repositories = new Map<string, string>()
+  const repositories = new Map(registered.map((repo) => [repo.id, repo.label]))
   const everything = [...rows, ...items]
   for (const item of everything) {
     if (item.repoId !== null) repositories.set(item.repoId, item.repoLabel ?? item.repoId)
@@ -189,9 +200,11 @@ export interface WorkGroupView {
   rows: readonly WorkRowView[]
 }
 
-/** Empty groups stay in the list so the order is fixed; the view skips them. */
+/** Empty groups stay in the list so the order is fixed; the view skips them. Newest leads each. */
 export function workGroups(rows: readonly WorkRow[], filter: RepoFilter): readonly WorkGroupView[] {
-  const scoped = rows.filter((row) => inFilter(row, filter))
+  const scoped = rows
+    .filter((row) => inFilter(row, filter))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   return STAGE_GROUPS.map(({ key, label }) => {
     const members = scoped.filter((row) => stageGroup(row) === key).map(workRowView)
     return { key, label, count: members.length, rows: members }
@@ -206,6 +219,9 @@ export interface WorkAction {
 }
 
 /** The item's own id and repository, whatever the filter says. A filter only changes the wording. */
+const whereLabel = (row: WorkRow, filter: RepoFilter | null): string =>
+  filter?.kind === 'all' ? ` in ${row.repoLabel ?? row.repoId}` : ''
+
 export function workActions(
   row: WorkRow,
   filter: RepoFilter,
@@ -213,7 +229,7 @@ export function workActions(
 ): readonly WorkAction[] {
   const { repoId } = row
   if (repoId === null || row.readOnly || ended(row)) return []
-  const where = filter.kind === 'all' ? ` in ${row.repoLabel ?? repoId}` : ''
+  const where = whereLabel(row, filter)
   const held = hold !== null || stageGroup(row) === 'held'
   return [
     {
@@ -257,6 +273,22 @@ function deliveryLabel(detail: WorkDetail): string {
   return prNumber !== null ? `${label}, pull request #${prNumber}` : label
 }
 
+/** Sets M1.3's intent on the item's own repository, never on the selected one. */
+export interface DiscussAction {
+  label: string
+  workItemId: string
+  repoId: string
+}
+
+function discussAction(row: WorkRow, filter: RepoFilter | null): DiscussAction | null {
+  if (row.repoId === null || row.readOnly || ended(row)) return null
+  return {
+    label: `Discuss this work${whereLabel(row, filter)}`,
+    workItemId: row.id,
+    repoId: row.repoId,
+  }
+}
+
 export interface DeliveryDetailView {
   plan: {
     title: string
@@ -267,11 +299,15 @@ export interface DeliveryDetailView {
     footnote: string
   }
   /** Read only from `dependsOn`. */
-  dependencies: readonly { task: string; on: readonly string[] }[]
+  dependencies: readonly { task: string; on: readonly string[]; more?: number }[]
   /** Read only from `delegation`. */
   delegation: readonly { parent: string; child: string }[]
   actions: readonly WorkAction[]
+  discuss: DiscussAction | null
 }
+
+/** What a bounded answer left out. A cut list never reads as the whole list. */
+const leftOut = (count: number, noun: string): string => (count > 0 ? `, ${count} ${noun} not shown` : '')
 
 export function deliveryDetail(detail: WorkDetail, filter: RepoFilter | null): DeliveryDetailView {
   const titles = new Map(detail.tasks.map((task) => [task.id, task.title]))
@@ -280,7 +316,7 @@ export function deliveryDetail(detail: WorkDetail, filter: RepoFilter | null): D
   return {
     plan: {
       title: row.title,
-      subtitle: `${count} ${count === 1 ? 'task' : 'tasks'} in ${row.repository}`,
+      subtitle: `${count} ${count === 1 ? 'task' : 'tasks'} in ${row.repository}${leftOut(detail.tasksTruncated, 'more')}`,
       stateLabel: row.stageLabel,
       stateTone: row.tone,
       tasks: detail.tasks.map((task) => {
@@ -297,12 +333,17 @@ export function deliveryDetail(detail: WorkDetail, filter: RepoFilter | null): D
     },
     dependencies: detail.tasks
       .filter((task) => task.dependsOn.length > 0)
-      .map((task) => ({ task: task.title, on: task.dependsOn.map((id) => titles.get(id) ?? id) })),
+      .map((task) => ({
+        task: task.title,
+        on: task.dependsOn.map((id) => titles.get(id) ?? id),
+        ...(task.dependsOnTruncated > 0 && { more: task.dependsOnTruncated }),
+      })),
     delegation: detail.delegation.map((link) => ({
       parent: link.parentAttemptId,
       child: link.childAttemptId,
     })),
     actions: workActions(detail, filter ?? { kind: 'all' }, detail.hold),
+    discuss: discussAction(detail, filter),
   }
 }
 
@@ -338,7 +379,7 @@ function taskChecks(detail: TaskDetail, head: string | null): InspectorChecks {
   return {
     state: failed ? 'failed' : 'passed',
     heading: failed ? 'Checks failed on this commit' : 'Checks passed on this commit',
-    detail: `Results for ${short(head)} only.`,
+    detail: `Results for ${short(head)} only${leftOut(detail.checks.truncated, 'more results')}.`,
     results: decided.map((result) => ({
       label: result.name,
       detail: result.detail ?? '',
@@ -397,7 +438,7 @@ export function taskScope(detail: TaskDetail, workTitle: string): InspectorScope
     checks: taskChecks(detail, head),
     activity: detail.coverage.activity
       ? {
-          note: 'Attempts recorded for this task.',
+          note: `Attempts recorded for this task${leftOut(detail.attemptsTruncated, 'older attempts')}.`,
           entries: detail.attempts.map((entry) => ({
             when: entry.lastActivityAt ? timeLabel(entry.lastActivityAt) : NOT_RECORDED,
             text: `Attempt ${entry.generation}: ${entry.state}`,
@@ -406,7 +447,7 @@ export function taskScope(detail: TaskDetail, workTitle: string): InspectorScope
       : { note: NOT_RECORDED, entries: [] },
     diff: detail.coverage.diff
       ? {
-          summary: detail.diff.summary ?? NOT_RECORDED,
+          summary: `${detail.diff.summary ?? NOT_RECORDED}${leftOut(detail.diff.truncated, 'more files')}`,
           files: detail.diff.files.map((file) => ({
             path: file.path,
             lines: [`+${file.added} -${file.removed}`],
@@ -414,6 +455,41 @@ export function taskScope(detail: TaskDetail, workTitle: string): InspectorScope
         }
       : { summary: NOT_RECORDED, files: [] },
   }
+}
+
+/** Stands in while a task reads, or when it could not be read: same id, so the tabs stay put. */
+export function pendingScope(taskId: string, workTitle: string, title: string): InspectorScope {
+  return {
+    id: `task:${taskId}`,
+    kind: 'task',
+    context: workTitle,
+    title,
+    overview: { sections: [], facts: [] },
+    checks: { state: 'unavailable', heading: NOT_RECORDED, detail: title },
+    activity: { note: title, entries: [] },
+    diff: { summary: title, files: [] },
+  }
+}
+
+/** Kept evidence stays on screen after a failed read, and says how old it is. */
+export const staleScope = (scope: InspectorScope, freshness: string): InspectorScope => ({
+  ...scope,
+  context: `${scope.context}. ${freshness}`,
+})
+
+/** The task a selection shows: its own read, and never a task from another delivery. */
+export function taskInspector(
+  taskId: string,
+  read: Read<TaskDetail>,
+  workId: string,
+  workTitle: string,
+): InspectorScope | null {
+  if (read.status === 'loading') return pendingScope(taskId, workTitle, 'Reading this task')
+  const { data } = read
+  if (data === null) return pendingScope(taskId, workTitle, read.status === 'failed' ? read.message : '')
+  if (data.id !== taskId || data.workItemId !== workId) return null
+  const scope = taskScope(data, workTitle)
+  return read.status === 'failed' ? staleScope(scope, readSurface(read, () => false).freshness ?? '') : scope
 }
 
 function cardChecks(evidence: CardEvidence): InspectorChecks {
@@ -475,8 +551,10 @@ export function approvalScope(item: CardItem, evidence: CardEvidence): Inspector
 // ── Needs you ────────────────────────────────────────────────────────────────────────────
 
 export interface NeedsList {
-  /** null while unknown: a failed read is never "nothing waiting". */
+  /** null while unknown: a failed read is never "nothing waiting", and a part list has no total. */
   count: number | null
+  /** The server has more than was read. */
+  partial: boolean
   waiting: readonly NeedItem[]
   settled: readonly NeedItem[]
 }
@@ -511,7 +589,8 @@ export function needsList(
     .filter(isOpen)
     .sort((a, b) => downstream(b) - downstream(a) || needAge(a).localeCompare(needAge(b)))
   const settled = items.filter((item) => !isOpen(item))
-  return { count: read.status === 'ready' ? waiting.length : null, waiting, settled }
+  const partial = readData(read)?.nextCursor != null
+  return { count: read.status === 'ready' && !partial ? waiting.length : null, waiting, settled, partial }
 }
 
 export const needsCount = (list: NeedsList): number | null => list.count
@@ -561,11 +640,16 @@ export type ApprovalView = Omit<ApprovalProps, 'onConfirm' | 'onDeny' | 'onInspe
   hold: string | null
 }
 
+/** A card the server serves no evidence for is the same as one whose evidence never arrived. */
+export const usableEvidence = (evidence: CardEvidence | null): CardEvidence | null =>
+  evidence === null || evidence.absent === true ? null : evidence
+
 export function approvalProps(
   item: CardItem,
-  evidence: CardEvidence | null,
+  served: CardEvidence | null,
   outcome: ApprovalOutcome | null,
 ): ApprovalView {
+  const evidence = usableEvidence(served)
   const repository = repositoryOf(item)
   const verb = evidence?.verb ?? 'approve'
   return {
@@ -589,11 +673,14 @@ export function approvalProps(
       : [],
     canApprove: evidence !== null,
     actionable: !unassigned(item),
-    hold: outcome !== null && !outcome.closes ? outcome.toast : null,
+    hold: outcome !== null && !outcome.closes && item.status === 'pending' ? outcome.toast : null,
   }
 }
 
-export type AnswerOutcome = { kind: 'answered'; answer: string } | { kind: 'already-answered' }
+export type AnswerOutcome =
+  | { kind: 'answered'; answer: string }
+  | { kind: 'already-answered' }
+  | { kind: 'failed'; message: string }
 
 function questionStatus(item: QuestionItem, outcome: AnswerOutcome | null): DecisionStatus {
   if (outcome?.kind === 'already-answered') {
@@ -612,7 +699,12 @@ function questionStatus(item: QuestionItem, outcome: AnswerOutcome | null): Deci
   return { state: 'open', expires: item.askedAt ? `Asked at ${timeLabel(item.askedAt)}` : 'Waiting for you' }
 }
 
-export type QuestionView = Omit<QuestionProps, 'onAnswer' | 'onInspect'> & { id: string; actionable: boolean }
+export type QuestionView = Omit<QuestionProps, 'onAnswer' | 'onInspect'> & {
+  id: string
+  actionable: boolean
+  /** The last answer did not land. The question stays open and nothing was recorded. */
+  failure: string | null
+}
 
 export function questionProps(item: QuestionItem, outcome: AnswerOutcome | null): QuestionView {
   return {
@@ -625,6 +717,7 @@ export function questionProps(item: QuestionItem, outcome: AnswerOutcome | null)
     choices: item.options,
     freeTextLabel: 'Answer in your own words',
     actionable: !unassigned(item),
+    failure: outcome?.kind === 'failed' ? outcome.message : null,
   }
 }
 
@@ -657,22 +750,51 @@ export interface ConversationViewModel {
   title: string
   entries: readonly ConversationEntry[]
   plan: DeliveryDetailView['plan'] | null
+  discuss: DiscussAction | null
 }
 
-/** Acknowledgement, plan and quiet progress. Any other kind is a trace, and traces stay out (§18.1). */
+/** §12.7: an acknowledgement can name work by id, and an id is not for the owner to read. */
+function withTitles(text: string, work: readonly WorkRow[]): string {
+  return work.reduce((line, row) => (row.title === null ? line : line.replaceAll(row.id, row.title)), text)
+}
+
+/**
+ * Acknowledgement, plan and quiet progress. A stored message has no kind and is the person's; any
+ * other unknown kind is a trace, and traces stay out (§18.1).
+ */
 export function conversationView(input: {
   row: WorkRow | null
   detail: WorkDetail | null
   messages: readonly ChatLine[]
+  work?: readonly WorkRow[]
 }): ConversationViewModel {
+  const work = input.work ?? []
+  const delivery = input.detail ? deliveryDetail(input.detail, null) : null
   const entries = input.messages.flatMap((line): ConversationEntry[] => {
-    const kind = ENTRY_KINDS[line.kind ?? '']
-    return kind ? [{ id: line.id, kind, text: line.text }] : []
+    const kind = line.kind === null ? 'user' : ENTRY_KINDS[line.kind]
+    if (kind === undefined) return []
+    const text = kind === 'user' ? line.text : withTitles(line.text, work)
+    return [
+      { id: line.id, kind, text },
+      ...(line.ackText === undefined
+        ? []
+        : [{ id: `${line.id}:ack`, kind: 'agent' as const, text: withTitles(line.ackText, work) }]),
+      ...(line.secretGuard === true
+        ? [
+            {
+              id: `${line.id}:guard`,
+              kind: 'note' as const,
+              text: 'This looked like a key, so it was redacted before storage.',
+            },
+          ]
+        : []),
+    ]
   })
   return {
     title: input.row ? workRowView(input.row).title : 'Conversation',
     entries,
-    plan: input.detail ? deliveryDetail(input.detail, null).plan : null,
+    plan: delivery?.plan ?? null,
+    discuss: delivery?.discuss ?? null,
   }
 }
 
@@ -714,10 +836,15 @@ export interface SearchTarget {
   taskId: string | null
 }
 
-/** Where a result goes. It has no field for the composer: choosing one never changes a send target. */
-export function searchTarget(hit: SearchHit): SearchTarget {
+/**
+ * Where a result goes. It has no field for the composer: choosing one never changes a send target.
+ * So a message in another repository opens its work, because reaching its thread would move the
+ * composer to that repository. `activeRepository` is that repository's served label.
+ */
+export function searchTarget(hit: SearchHit, activeRepository?: string | null): SearchTarget {
+  const here = activeRepository === undefined || hit.repoLabel === activeRepository
   return {
-    route: hit.kind === 'message' ? 'chat' : 'work',
+    route: hit.kind === 'message' && here ? 'chat' : 'work',
     workItemId: hit.workItemId,
     taskId: hit.kind === 'task' ? hit.id : null,
   }

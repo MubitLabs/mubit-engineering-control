@@ -148,7 +148,17 @@ const taskRow = (
   status: string,
   dependsOn: string[] = [],
   role: string | null = 'implementer',
-): TaskRow => ({ id, localKey: id, title, role, status, dependsOn, planRevision: 1, attemptCount: 1 })
+): TaskRow => ({
+  id,
+  localKey: id,
+  title,
+  role,
+  status,
+  dependsOn,
+  dependsOnTruncated: 0,
+  planRevision: 1,
+  attemptCount: 1,
+})
 
 const tasks = {
   done: taskRow('task_done', 'SAMPLE-ONLY read the code', 'accepted', [], 'planner'),
@@ -170,6 +180,8 @@ const quietDetail = {
   delivery: NO_DELIVERY,
   coverage: UNCOVERED,
   cursors: {},
+  cursorsTruncated: 0,
+  tasksTruncated: 0,
 }
 
 export const workDetails = {
@@ -234,8 +246,9 @@ const taskDetail = (
   repoId,
   objective: `${base.title}: the objective`,
   attempts: [],
-  checks: { headSha: null, results: [] },
-  diff: { headSha: null, summary: null, files: [] },
+  attemptsTruncated: 0,
+  checks: { headSha: null, results: [], truncated: 0 },
+  diff: { headSha: null, summary: null, files: [], truncated: 0 },
   usage: { reportedUsd: null, missingAttempts: 0, mode: 'unknown' },
   coverage: COVERED,
   ...extra,
@@ -251,11 +264,13 @@ export const taskDetails = {
         // A stale row for another commit: it must never show under this head.
         { name: 'SAMPLE-ONLY stale check', state: 'failed', headSha: OLD_HEAD, detail: 'old', artifactRef: null },
       ],
+      truncated: 0,
     },
     diff: {
       headSha: TASK_HEAD,
       summary: 'SAMPLE-ONLY one file changed',
       files: [{ path: 'src/sample.ts', added: 4, removed: 1 }],
+      truncated: 0,
     },
     usage: { reportedUsd: 0.12, missingAttempts: 0, mode: 'api' },
   }),
@@ -277,8 +292,9 @@ export const taskDetails = {
       results: [
         { name: 'SAMPLE-ONLY full suite', state: 'passed', headSha: TASK_HEAD, detail: 'green', artifactRef: null },
       ],
+      truncated: 0,
     },
-    diff: { headSha: TASK_HEAD, summary: 'SAMPLE-ONLY two files changed', files: [] },
+    diff: { headSha: TASK_HEAD, summary: 'SAMPLE-ONLY two files changed', files: [], truncated: 0 },
   }),
 } satisfies Record<string, TaskDetail>
 
@@ -450,5 +466,25 @@ export const chatLines = [
     createdAt: OBSERVED,
     kind: 'tool',
     workItemId: 'work_working',
+  },
+] satisfies ChatLine[]
+
+/** The real server's shape: a stored message has no kind, and carries its acknowledgement. */
+export const storedLines = [
+  {
+    id: 'msg_stored',
+    text: 'SAMPLE-ONLY a stored request',
+    createdAt: OBSERVED,
+    workItemId: 'work_working',
+    kind: null,
+    ackText: 'SAMPLE-ONLY started work_working for you',
+  },
+  {
+    id: 'msg_guarded',
+    text: 'SAMPLE-ONLY [redacted]',
+    createdAt: OBSERVED,
+    workItemId: null,
+    kind: null,
+    secretGuard: true,
   },
 ] satisfies ChatLine[]

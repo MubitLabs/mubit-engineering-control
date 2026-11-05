@@ -16,6 +16,7 @@ import type {
   NeedItem,
   Page,
   SearchHit,
+  Snapshot,
   Stage,
   TaskDetail,
   TaskRow,
@@ -146,6 +147,7 @@ function taskRow(path: string, value: unknown, what: string): TaskRow {
     role: strOrNull(path, raw.role, `${what}.role`),
     status: str(path, raw.status, `${what}.status`),
     dependsOn: strings(path, raw.dependsOn, `${what}.dependsOn`),
+    dependsOnTruncated: num(path, raw.dependsOnTruncated, `${what}.dependsOnTruncated`),
     planRevision: numOrNull(path, raw.planRevision, `${what}.planRevision`),
     attemptCount: num(path, raw.attemptCount, `${what}.attemptCount`),
   }
@@ -277,6 +279,7 @@ export function decodeWorkDetail(raw: unknown): WorkDetail {
         : { since: str(path, hold.since, 'hold.since'), reason: strOrNull(path, hold.reason, 'hold.reason') },
     planRevision: numOrNull(path, body.planRevision, 'planRevision'),
     tasks: list(path, body.tasks, 'tasks', (entry, label) => taskRow(path, entry, label)),
+    tasksTruncated: num(path, body.tasksTruncated, 'tasksTruncated'),
     delegation: list(path, body.delegation, 'delegation', (entry, label) => {
       const link = obj(path, entry, label)
       return {
@@ -287,6 +290,7 @@ export function decodeWorkDetail(raw: unknown): WorkDetail {
     delivery: delivery(path, body.delivery, 'delivery'),
     coverage: coverage(path, body.coverage, 'coverage'),
     cursors: numberRecord(path, body.cursors, 'cursors'),
+    cursorsTruncated: num(path, body.cursorsTruncated, 'cursorsTruncated'),
   }
 }
 
@@ -303,14 +307,17 @@ export function decodeTaskDetail(raw: unknown): TaskDetail {
     repoId: strOrNull(path, body.repoId, 'repoId'),
     objective: str(path, body.objective, 'objective'),
     attempts: list(path, body.attempts, 'attempts', (entry, label) => attempt(path, entry, label)),
+    attemptsTruncated: num(path, body.attemptsTruncated, 'attemptsTruncated'),
     checks: {
       headSha: strOrNull(path, checks.headSha, 'checks.headSha'),
       results: list(path, checks.results, 'checks.results', (entry, label) => check(path, entry, label)),
+      truncated: num(path, checks.truncated, 'checks.truncated'),
     },
     diff: {
       headSha: strOrNull(path, diff.headSha, 'diff.headSha'),
       summary: strOrNull(path, diff.summary, 'diff.summary'),
       files: list(path, diff.files, 'diff.files', (entry, label) => fileChange(path, entry, label)),
+      truncated: num(path, diff.truncated, 'diff.truncated'),
     },
     usage: {
       reportedUsd: numOrNull(path, usage.reportedUsd, 'usage.reportedUsd'),
@@ -325,6 +332,26 @@ export function decodeTaskDetail(raw: unknown): TaskDetail {
 export function decodeNeedsPage(raw: unknown): Page<NeedItem> {
   const path = '/api/inspect/needs'
   return page(path, raw, (entry, label) => needItem(path, entry, label))
+}
+
+/** GET /api/inspect/snapshot */
+export function decodeSnapshot(raw: unknown): Snapshot {
+  const path = '/api/inspect/snapshot'
+  const body = obj(path, raw, 'the body')
+  return {
+    observedAt: str(path, body.observedAt, 'observedAt'),
+    repositories: list(path, body.repositories, 'repositories', (entry, label) => {
+      const repo = obj(path, entry, label)
+      return {
+        id: str(path, repo.id, `${label}.id`),
+        label: strOrNull(path, repo.label, `${label}.label`),
+        needsCount: num(path, repo.needsCount, `${label}.needsCount`),
+      }
+    }),
+    repositoriesTruncated: num(path, body.repositoriesTruncated, 'repositoriesTruncated'),
+    needsCount: num(path, body.needsCount, 'needsCount'),
+    cursors: numberRecord(path, body.cursors, 'cursors'),
+  }
 }
 
 /** GET /api/inspect/search */
@@ -349,6 +376,7 @@ export function decodeCardEvidence(raw: unknown): CardEvidence {
   const consequences = obj(path, body.consequences, 'consequences')
   const diff = obj(path, body.diff, 'diff')
   return {
+    ...(body.absent === true && { absent: true as const }),
     what: str(path, body.what, 'what'),
     verb: typeof body.verb === 'string' ? body.verb : null,
     why: str(path, body.why, 'why'),
@@ -392,6 +420,8 @@ export function decodeChatLines(raw: unknown): ChatLine[] {
       createdAt: str(path, line.createdAt, `${label}.createdAt`),
       workItemId: typeof line.workItemId === 'string' ? line.workItemId : null,
       kind: typeof line.kind === 'string' ? line.kind : null,
+      ...(typeof line.ackText === 'string' && { ackText: line.ackText }),
+      ...(line.secretGuard === true && { secretGuard: true as const }),
     }
   })
 }

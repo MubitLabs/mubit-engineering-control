@@ -51,6 +51,7 @@ function rig(repositories = [repo('repo_a'), repo('repo_b')]) {
         : new Promise((resolve, reject) => {
             works.push({ scope, signal: signal as AbortSignal, resolve, reject })
           }),
+    snapshot: async () => ({ cursors: {}, labels: {} }),
     subscribe: (subscriptions) => {
       streams.push(subscriptions.map((entry) => entry.stream))
       return () => {}
@@ -98,6 +99,7 @@ describe('workspace feed', () => {
       repositories: async () => [],
       chat: async () => [],
       work: async () => reads,
+      snapshot: async () => ({ cursors: {}, labels: {} }),
       subscribe: () => () => {},
     })
     workspace.setScope(UNASSIGNED)
@@ -174,6 +176,7 @@ describe('workspace feed', () => {
       repositories: async () => [repo('repo_a')],
       chat: async () => [message('m_old')],
       work: async () => [],
+      snapshot: async () => ({ cursors: {}, labels: {} }),
       subscribe: () => () => {},
     })
     const stop = workspace.start()
@@ -189,6 +192,7 @@ describe('workspace feed', () => {
       repositories: async () => [repo('repo_a')],
       chat: () => new Promise((resolve) => (answerChat = resolve)),
       work: async () => [],
+      snapshot: async () => ({ cursors: {}, labels: {} }),
       subscribe: () => () => {},
     })
     const stop = workspace.start()
@@ -210,6 +214,7 @@ describe('workspace feed', () => {
         return [message('m_old')]
       },
       work: async () => [],
+      snapshot: async () => ({ cursors: {}, labels: {} }),
       subscribe: () => () => {},
     })
     const stop = workspace.start()

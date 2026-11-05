@@ -7,6 +7,7 @@ import { useShellActions } from './Shell'
 import { EmptyState, StateNotice } from './states'
 import type {
   DeliveryDetailView,
+  DiscussAction,
   Read,
   RepoFilterOption,
   SurfaceState,
@@ -129,10 +130,11 @@ function DeliveryDetail({
   selectedTaskId: string | null
   onOpenTask: (id: string) => void
   onAction: (action: WorkAction) => void
-  onDiscuss: (id: string) => void
+  onDiscuss: (action: DiscussAction) => void
 }) {
   const { openInspector } = useShellActions()
   const [stopping, setStopping] = useState<WorkAction | null>(null)
+  const { discuss } = detail
   return (
     <div className="work-detail">
       <DeliveryPlan
@@ -145,7 +147,7 @@ function DeliveryDetail({
             openInspector()
           },
         }))}
-        action={{ label: 'Discuss this work', onClick: () => onDiscuss(row.id) }}
+        {...(discuss && { action: { label: discuss.label, onClick: () => onDiscuss(discuss) } })}
       />
       <section className="work-links">
         <h3>Dependencies</h3>
@@ -156,6 +158,7 @@ function DeliveryDetail({
             {detail.dependencies.map((link) => (
               <li key={link.task}>
                 {link.task} waits for {link.on.join(', ')}
+                {link.more ? `, and ${link.more} more not shown` : ''}
               </li>
             ))}
           </ul>
@@ -218,12 +221,16 @@ export interface WorkViewProps {
   selectedTaskId: string | null
   onOpenTask: (id: string) => void
   onAction: (action: WorkAction) => void
-  onDiscuss: (id: string) => void
+  onDiscuss: (action: DiscussAction) => void
   onRetry: () => void
+  /** Set when the list stops short of what the server holds. */
+  partialNote?: string | null
 }
 
 function WorkEntry({ row, props }: { row: WorkRowView; props: WorkViewProps }) {
   const selected = row.id === props.selectedId
+  const { delivery } = props
+  const kept = delivery.status === 'loading' ? null : delivery.data
   return (
     <li className="work-entry">
       <button
@@ -241,25 +248,25 @@ function WorkEntry({ row, props }: { row: WorkRowView; props: WorkViewProps }) {
         </span>
         <Status tone={row.tone}>{row.stageLabel}</Status>
       </button>
-      {selected && props.delivery.status === 'ready' && (
+      {selected && delivery.status === 'failed' && (
+        <StateNotice
+          kind="error"
+          title="Could not read this delivery"
+          body={kept ? `${delivery.message} What is shown below may be out of date.` : delivery.message}
+          action={{ label: 'Retry', onClick: props.onRetry }}
+        />
+      )}
+      {selected && kept && (
         <DeliveryDetail
           row={row}
-          detail={props.delivery.data}
+          detail={kept}
           selectedTaskId={props.selectedTaskId}
           onOpenTask={props.onOpenTask}
           onAction={props.onAction}
           onDiscuss={props.onDiscuss}
         />
       )}
-      {selected && props.delivery.status === 'loading' && <p className="freshness">Reading this delivery.</p>}
-      {selected && props.delivery.status === 'failed' && (
-        <StateNotice
-          kind="error"
-          title="Could not read this delivery"
-          body={props.delivery.message}
-          action={{ label: 'Retry', onClick: props.onRetry }}
-        />
-      )}
+      {selected && delivery.status === 'loading' && <p className="freshness">Reading this delivery.</p>}
     </li>
   )
 }
@@ -271,6 +278,7 @@ export function WorkView(props: WorkViewProps) {
       <PageHeader title="Work" subtitle="Every delivery, by stage." action={<GlossaryButton />} />
       <RepoScope options={props.repoOptions} value={props.repoValue} onChange={props.onRepo} />
       <ReadNotice surface={surface} noun="work" onRetry={props.onRetry} />
+      {props.partialNote && <p className="freshness">{props.partialNote}</p>}
       {surface.state === 'empty' && (
         <EmptyState
           title="No deliveries yet"

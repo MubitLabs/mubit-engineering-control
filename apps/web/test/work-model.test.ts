@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { decodeNeedsPage, decodeTaskDetail, decodeWorkDetail, decodeWorkPage } from '../src/inspection-decode'
-import type { NeedItem, Page, SearchHit, TaskDetail, WorkRow } from '../src/next/inspection-wire'
+import type { NeedItem, Page, SearchHit, TaskDetail, TaskRow, WorkRow } from '../src/next/inspection-wire'
 import {
   approvalProps,
   approvalScope,
@@ -8,6 +8,7 @@ import {
   deliveryDetail,
   needsCount,
   needsList,
+  pendingScope,
   questionProps,
   type Read,
   readSurface,
@@ -16,6 +17,8 @@ import {
   searchTarget,
   selectionInScope,
   stageGroup,
+  staleScope,
+  taskInspector,
   taskScope,
   workActions,
   workGroups,
@@ -30,6 +33,7 @@ import {
   needsPage,
   OLD_HEAD,
   searchPage,
+  storedLines,
   TASK_HEAD,
   taskDetails,
   workDetails,
@@ -240,6 +244,7 @@ describe('inspector scope', () => {
       checks: {
         headSha: OLD_HEAD,
         results: [{ name: 'Old', state: 'passed', headSha: OLD_HEAD, detail: null, artifactRef: null }],
+        truncated: 0,
       },
     })
     expect(moved.checks.state).toBe('not-run')
@@ -254,6 +259,7 @@ describe('inspector scope', () => {
           { name: 'A', state: 'passed', headSha: TASK_HEAD, detail: null, artifactRef: null },
           { name: 'B', state: 'failed', headSha: TASK_HEAD, detail: null, artifactRef: null },
         ],
+        truncated: 0,
       },
     })
     expect(scope.checks.state).toBe('failed')
@@ -267,6 +273,7 @@ describe('inspector scope', () => {
       checks: {
         headSha: CARD_HEAD,
         results: [{ name: 'Card', state: 'passed', headSha: CARD_HEAD, detail: null, artifactRef: null }],
+        truncated: 0,
       },
     })
     expect(scope.checks.state).toBe('not-run')
@@ -478,6 +485,148 @@ describe('search', () => {
       workItemId: 'work_working',
       taskId: null,
     })
+  })
+})
+
+describe('live data', () => {
+  const held = decodeWorkDetail(workDetails.work_held)
+  const working = decodeWorkDetail(workDetails.work_working)
+
+  it('an absent card detail cannot be approved and names nothing false', () => {
+    const absent = { ...cardEvidence.card_pending, absent: true as const, what: 'Evidence not served' }
+    const view = approvalProps(needs.pending, absent, null)
+    expect(view.canApprove).toBe(false)
+    expect(view.title).toBe('Push approval')
+    expect(view.consequences).toEqual([])
+    expect(view.evidence.map((fact) => fact.label)).toEqual(['Repository'])
+  })
+
+  it('a stored message with no kind is the person’s, and its acknowledgement follows', () => {
+    const view = conversationView({ row: null, detail: null, messages: storedLines })
+    expect(view.entries.map((entry) => entry.kind)).toEqual(['user', 'agent', 'user', 'note'])
+  })
+
+  it('an acknowledgement names work by title, never by id', () => {
+    const view = conversationView({ row: null, detail: null, messages: storedLines, work: rows })
+    const ack = view.entries.find((entry) => entry.kind === 'agent')
+    expect(ack?.text).toContain('search for the console')
+    expect(ack?.text).not.toContain('work_working')
+  })
+
+  it('left-out tasks are said, never silently complete', () => {
+    expect(deliveryDetail({ ...working, tasksTruncated: 3 }, ALL).plan.subtitle).toContain('3 more not shown')
+    expect(deliveryDetail(working, ALL).plan.subtitle).not.toContain('not shown')
+  })
+
+  it('left-out dependencies are said', () => {
+    const [first, second, third] = working.tasks as [TaskRow, TaskRow, TaskRow]
+    const cut = { ...second, dependsOnTruncated: 2 }
+    const detail = deliveryDetail({ ...working, tasks: [first, cut, third] }, ALL)
+    expect(detail.dependencies.find((link) => link.task === cut.title)?.more).toBe(2)
+  })
+
+  it('left-out attempts, checks and files are said', () => {
+    const scope = task('task_done', {
+      attemptsTruncated: 4,
+      checks: { ...taskDetails.task_done.checks, truncated: 5 },
+      diff: { ...taskDetails.task_done.diff, truncated: 6 },
+    })
+    expect(scope.activity.note).toContain('4 older attempts not shown')
+    expect(scope.checks.detail).toContain('5 more results not shown')
+    expect(scope.diff.summary).toContain('6 more files not shown')
+  })
+
+  it('a list with more to read has no count, because the count must equal it', () => {
+    const list = needsList(ready({ ...page(items), nextCursor: 'more' }), rows, ALL)
+    expect(list.count).toBeNull()
+    expect(list.partial).toBe(true)
+    expect(needsList(ready(page(items)), rows, ALL).partial).toBe(false)
+  })
+
+  it('a card that settled elsewhere drops an earlier hold', () => {
+    const hold = describeApproval({ status: 'pending', reason: 'ci_pending' })
+    expect(approvalProps(needs.pending, cardEvidence.card_pending, hold).hold).toContain('still running')
+    const settled = { ...needs.pending, status: 'approved' as const }
+    expect(approvalProps(settled, cardEvidence.card_pending, hold).hold).toBeNull()
+  })
+
+  it('an answer that did not land keeps the question open and says so', () => {
+    const view = questionProps(needs.question, { kind: 'failed', message: 'Not sent' })
+    expect(view.status.state).toBe('open')
+    expect(view.failure).toBe('Not sent')
+    expect(questionProps(needs.question, null).failure).toBeNull()
+  })
+
+  it('newest work leads its group, whatever order the server pages in', () => {
+    const older = { ...rows[0], id: 'older', updatedAt: '2026-11-01T00:00:00.000Z' } as WorkRow
+    const newer = { ...rows[0], id: 'newer', updatedAt: '2026-11-02T00:00:00.000Z' } as WorkRow
+    const [group] = workGroups([older, newer], ALL).filter((entry) => entry.count > 0)
+    expect(group?.rows.map((row) => row.id)).toEqual(['newer', 'older'])
+  })
+
+  it('a registered repository with no work is still a filter', () => {
+    const options = repoFilterOptions([], [], [{ id: 'repo_new', label: 'fresh' }])
+    expect(options.map((option) => option.label)).toEqual(['All repositories', 'fresh'])
+  })
+
+  it('discussing is offered only on work a person can still follow up', () => {
+    expect(deliveryDetail(working, ALL).discuss).toEqual({
+      label: 'Discuss this work in sample-console',
+      workItemId: 'work_working',
+      repoId: 'repo_a',
+    })
+    expect(deliveryDetail(working, { kind: 'repo', repoId: 'repo_a' }).discuss?.label).toBe(
+      'Discuss this work',
+    )
+    expect(deliveryDetail({ ...held, repoId: null, repoLabel: null }, ALL).discuss).toBeNull()
+    const ended = decodeWorkDetail({ ...workDetails.work_working, ...workRows.completed })
+    expect(deliveryDetail(ended, ALL).discuss).toBeNull()
+  })
+
+  it('a message in another repository opens its work, because the thread here is not its own', () => {
+    const hit: SearchHit = {
+      kind: 'message',
+      id: 'm',
+      title: 't',
+      repoLabel: 'other',
+      workItemId: 'work_x',
+    }
+    expect(searchTarget(hit, 'sample-console').route).toBe('work')
+    expect(searchTarget(hit, 'other').route).toBe('chat')
+  })
+
+  it('a detail that could not be read says so in its inspector, and keeps its own id', () => {
+    const scope = pendingScope('task_x', 'Parent work', 'Reading this task')
+    expect(scope.id).toBe('task:task_x')
+    expect(scope.checks.state).toBe('unavailable')
+    expect(scope.title).toBe('Reading this task')
+  })
+
+  it('a selection shows its own task, from its own delivery, or nothing', () => {
+    const read = ready(decodeTaskDetail(taskDetails.task_done))
+    expect(taskInspector('task_done', read, 'work_working', 'Parent')?.title).toBe(
+      taskDetails.task_done.title,
+    )
+    expect(taskInspector('task_other', read, 'work_working', 'Parent')).toBeNull()
+    expect(taskInspector('task_done', read, 'work_held', 'Parent')).toBeNull()
+  })
+
+  it('a task that cannot be read says why, and a kept one is labelled stale', () => {
+    const failed: Read<TaskDetail> = { status: 'failed', message: 'Down', data: null, readAt: null }
+    expect(taskInspector('task_done', failed, 'work_working', 'Parent')?.title).toBe('Down')
+    const kept: Read<TaskDetail> = {
+      status: 'failed',
+      message: 'Down',
+      data: decodeTaskDetail(taskDetails.task_done),
+      readAt: READ_AT,
+    }
+    expect(taskInspector('task_done', kept, 'work_working', 'Parent')?.context).toContain('Stale')
+  })
+
+  it('kept evidence is labelled stale', () => {
+    const scope = staleScope(task('task_done'), 'Stale. Last read 10:00')
+    expect(scope.context).toContain('Stale. Last read 10:00')
+    expect(scope.id).toBe(task('task_done').id)
   })
 })
 

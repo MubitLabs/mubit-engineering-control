@@ -14,8 +14,10 @@
   margin-bottom: 16px;
 }
 
-.work-actions {
-  padding: 4px 16px 12px;
+.entry-found {
+  border-radius: 8px;
+  outline: 2px solid var(--focus, currentColor);
+  outline-offset: 4px;
 }
 
 .repo-choices {

@@ -26,8 +26,13 @@ export function QuestionCard({ view, onAnswer }: { view: QuestionView; onAnswer:
       />
     )
   }
-  const { id, actionable: _actionable, ...frame } = view
-  return <Question {...frame} onAnswer={(answer) => onAnswer(id, answer)} />
+  const { id, actionable: _actionable, failure, ...frame } = view
+  return (
+    <>
+      {failure && <StateNotice kind="error" title="Your answer was not sent" body={failure} />}
+      <Question {...frame} onAnswer={(answer) => onAnswer(id, answer)} />
+    </>
+  )
 }
 
 function ApprovalCard({ view, handlers }: { view: ApprovalView; handlers: NeedHandlers }) {
@@ -91,16 +96,19 @@ export interface NeedsViewProps extends NeedHandlers {
   repoValue: string
   onRepo: (option: RepoFilterOption) => void
   onRetry: () => void
+  /** Set when the list stops short of what the server holds, so its count is unknown. */
+  partialNote?: string | null
 }
 
 export function NeedsView(props: NeedsViewProps) {
-  const { surface, waiting, settled, onRetry, ...handlers } = props
+  const { surface, waiting, settled, onRetry, partialNote: _partialNote, ...handlers } = props
   return (
     <div className="page">
       <PageHeader title="Needs you" action={<GlossaryButton />} />
       <RepoScope options={props.repoOptions} value={props.repoValue} onChange={props.onRepo} />
       {/* A healthy empty state takes no space: only a failure or a list is worth saying. */}
       {surface.state !== 'empty' && <ReadNotice surface={surface} noun="what needs you" onRetry={onRetry} />}
+      {props.partialNote && <p className="freshness">{props.partialNote}</p>}
       {waiting.map((card) => (
         <Card key={card.view.id} card={card} handlers={handlers} />
       ))}

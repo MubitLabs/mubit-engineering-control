@@ -259,6 +259,247 @@ describe('effects queue', () => {
   })
 })
 
+/** A handler body that stays in flight until `release` is called. */
+const gate = (): { wait: Promise<void>; release: () => void } => {
+  let release = (): void => {}
+  const wait = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  return { wait, release }
+}
+
+describe('overlapping passes', () => {
+  it('a running job is not re-picked by an overlapping pass', async () => {
+    const held = gate()
+    const payloads: unknown[] = []
+    queue.handle('launch', async (payload) => {
+      payloads.push(payload)
+      await held.wait
+    })
+    queue.enqueue('launch', 'att_1', { attempt: 1 })
+
+    const first = queue.run({ now: clock() })
+    const second = queue.run({ now: clock() })
+    expect(payloads).toEqual([{ attempt: 1 }])
+    expect(queue.snapshot('launch', 'att_1')?.state).toBe('running') // A pass never resets it.
+
+    // A coalesced re-enqueue returns the row to pending, but its job is still in flight.
+    queue.enqueue('launch', 'att_1', { attempt: 2 })
+    const third = queue.run({ now: clock() })
+    expect(payloads).toEqual([{ attempt: 1 }])
+
+    held.release()
+    await Promise.all([first, second, third])
+  })
+
+  it('concurrency holds across overlapping passes', async () => {
+    const held = gate()
+    const calls: string[] = []
+    queue.handle('launch', async (payload) => {
+      calls.push((payload as { key: string }).key)
+      await held.wait
+    })
+    queue.enqueue('launch', 'k1', { key: 'k1' })
+    queue.enqueue('launch', 'k2', { key: 'k2' })
+    queue.enqueue('launch', 'k3', { key: 'k3' })
+
+    const first = queue.run({ now: clock() })
+    const second = queue.run({ now: clock() })
+    expect(calls).toEqual(['k1', 'k2'])
+    held.release()
+    await Promise.all([first, second])
+    await queue.run({ now: clock() })
+    expect(calls).toEqual(['k1', 'k2', 'k3'])
+  })
+
+  it('a free slot fills on the next pass while another job of the kind still runs', async () => {
+    const held = gate()
+    const calls: string[] = []
+    queue.handle('launch', async (payload) => {
+      const key = (payload as { key: string }).key
+      calls.push(key)
+      if (key === 'slow') await held.wait
+    })
+    queue.enqueue('launch', 'slow', { key: 'slow' })
+    const first = queue.run({ now: clock() })
+    queue.enqueue('launch', 'k2', { key: 'k2' })
+
+    // §11: a slow launch delays only its own task, so the pass is not held behind it.
+    const second = queue.run({ now: clock() })
+    expect(calls).toEqual(['slow', 'k2'])
+
+    held.release()
+    await Promise.all([first, second])
+  })
+
+  it('a slow job of one kind does not hold back another kind', async () => {
+    const held = gate()
+    const calls: string[] = []
+    queue.handle('launch', async () => {
+      calls.push('launch')
+      await held.wait
+    })
+    queue.handle('relay', async () => {
+      calls.push('relay')
+    })
+    queue.enqueue('launch', 'att_1', {})
+    const first = queue.run({ now: clock() })
+    queue.enqueue('relay', 'wi_1', {})
+
+    const second = queue.run({ now: clock() })
+    expect(calls).toEqual(['launch', 'relay'])
+
+    held.release()
+    await Promise.all([first, second])
+  })
+
+  it('an ordered kind stays one at a time across overlapping passes', async () => {
+    const held = gate()
+    const calls: string[] = []
+    queue.handle('relay', async (payload) => {
+      calls.push((payload as { key: string }).key)
+      await held.wait
+    })
+    queue.enqueue('relay', 'k1', { key: 'k1' })
+    queue.enqueue('relay', 'k2', { key: 'k2' })
+
+    const first = queue.run({ now: clock() })
+    const second = queue.run({ now: clock() })
+    expect(calls).toEqual(['k1'])
+
+    // Coalescing the head mid-run must not expose it, or the job behind it, to a second pass.
+    queue.enqueue('relay', 'k1', { key: 'k1', again: true })
+    const third = queue.run({ now: clock() })
+    expect(calls).toEqual(['k1'])
+
+    held.release()
+    await Promise.all([first, second, third])
+  })
+
+  it('a re-enqueue with a new payload during a run survives the success and runs once after it', async () => {
+    const held = gate()
+    const payloads: unknown[] = []
+    queue.handle('launch', async (payload) => {
+      payloads.push(payload)
+      await held.wait
+    })
+    queue.enqueue('launch', 'att_1', { rev: 1 })
+    const first = queue.run({ now: clock() })
+    queue.enqueue('launch', 'att_1', { rev: 2 })
+    held.release()
+    await first
+
+    expect(queue.snapshot('launch', 'att_1')?.state).toBe('pending')
+    await queue.run({ now: clock() })
+    expect(payloads).toEqual([{ rev: 1 }, { rev: 2 }])
+    expect(queue.snapshot('launch', 'att_1')).toBeUndefined()
+  })
+
+  it('an identical re-enqueue during a run adds no second run (a replayed launch)', async () => {
+    const held = gate()
+    let calls = 0
+    queue.handle('launch', async () => {
+      calls += 1
+      await held.wait
+    })
+    queue.enqueue('launch', 'att_1', { attempt: 1 })
+    const first = queue.run({ now: clock() })
+    queue.enqueue('launch', 'att_1', { attempt: 1 })
+    held.release()
+    await first
+
+    expect(queue.snapshot('launch', 'att_1')).toBeUndefined()
+    await queue.run({ now: clock() })
+    expect(calls).toBe(1)
+  })
+
+  it('drain waits for a job an earlier pass started, and does not run it again', async () => {
+    const held = gate()
+    let calls = 0
+    let finished = false
+    queue.handle('launch', async () => {
+      calls += 1
+      await held.wait
+      finished = true
+    })
+    queue.enqueue('launch', 'att_1', {})
+    const first = queue.run({ now: clock() })
+
+    let returned = false
+    const drained = queue.drain().then(() => {
+      returned = true
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(returned).toBe(false) // Shutdown closes the database right after the drain.
+    held.release()
+    await drained
+    expect(finished).toBe(true)
+    expect(calls).toBe(1)
+    await first
+  })
+
+  it('a settled job leaves the guard: the same key runs again when enqueued again', async () => {
+    let calls = 0
+    queue.handle('launch', async () => {
+      calls += 1
+    })
+    queue.enqueue('launch', 'att_1', {})
+    await queue.run({ now: clock() })
+    queue.enqueue('launch', 'att_1', {})
+    await queue.run({ now: clock() })
+    expect(calls).toBe(2)
+  })
+})
+
+describe('restart', () => {
+  /** What a crash leaves behind: a row marked running that no live handler owns. */
+  const crashed = (kind: string, key: string): void => {
+    db.prepare("UPDATE effects SET state = 'running' WHERE kind = ? AND key = ?").run(kind, key)
+  }
+
+  it('boot resumes a crashed running row', async () => {
+    const calls: string[] = []
+    queue.handle('launch', async (payload) => {
+      calls.push((payload as { key: string }).key)
+    })
+    queue.enqueue('launch', 'att_1', { key: 'att_1' })
+    crashed('launch', 'att_1')
+
+    queue.resumeRunning()
+    expect(queue.snapshot('launch', 'att_1')?.state).toBe('pending')
+    await queue.run({ now: clock() })
+    expect(calls).toEqual(['att_1'])
+    expect(queue.snapshot('launch', 'att_1')).toBeUndefined()
+  })
+
+  it('a crashed ordered head resumes first and keeps its place', async () => {
+    const calls: string[] = []
+    queue.handle('relay', async (payload) => {
+      calls.push((payload as { key: string }).key)
+    })
+    queue.enqueue('relay', 'k1', { key: 'k1' })
+    queue.enqueue('relay', 'k2', { key: 'k2' })
+    crashed('relay', 'k1')
+
+    queue.resumeRunning()
+    await queue.drain()
+    expect(calls).toEqual(['k1', 'k2'])
+  })
+
+  it('a pass alone does not resume a running row', async () => {
+    let calls = 0
+    queue.handle('launch', async () => {
+      calls += 1
+    })
+    queue.enqueue('launch', 'att_1', {})
+    crashed('launch', 'att_1')
+
+    await queue.run({ now: clock() })
+    expect(calls).toBe(0)
+    expect(queue.snapshot('launch', 'att_1')?.state).toBe('running')
+  })
+})
+
 describe('health board', () => {
   it('records state per name and refuses a second claim', () => {
     const handle = health.claim('runtime')

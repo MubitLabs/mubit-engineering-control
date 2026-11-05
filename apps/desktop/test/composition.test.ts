@@ -57,6 +57,24 @@ describe('startServer', () => {
 })
 
 describe('§26 restart reconciliation and capability drift (composition)', () => {
+  it('an effect left running by a crash is resumed once at boot and drained', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'mec-composition-'))
+    tempDirs.push(dataDir)
+    const seed = new Database(join(dataDir, 'mec.db'))
+    migrate(seed, MIGRATIONS_v1)
+    new SqliteStore(seed).effects.enqueue('note', 'wi_crashed', { text: 'left running' })
+    seed.prepare("UPDATE effects SET state = 'running'").run()
+    seed.close()
+
+    const handle = await startServer({ dataDir })
+    await handle.close()
+
+    const after = new Database(join(dataDir, 'mec.db'))
+    const left = after.prepare('SELECT COUNT(*) AS n FROM effects').get() as { n: number }
+    after.close()
+    expect(left.n).toBe(0)
+  }, 12_000)
+
   it('running attempts reconcile to stalled with a recovery event on restart', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mec-recon-'))
     const db = new Database(join(dir, 'mec.db'))

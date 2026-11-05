@@ -360,6 +360,7 @@ export const demoInbox: InboxItem[] = [
 export const demoWork: WorkItem[] = [
   {
     id: 'wi_a1',
+    repoId: 'repo_console',
     state: 'blocked',
     stage: 'waiting on you (confirmation)',
     taskCounts: { total: 5, byStatus: { integrated: 2, active: 2, awaiting_review: 1 } },
@@ -367,6 +368,7 @@ export const demoWork: WorkItem[] = [
   },
   {
     id: 'wi_b2',
+    repoId: 'repo_console',
     state: 'executing',
     stage: 'working',
     taskCounts: { total: 2, byStatus: { active: 1, ready: 1 } },
@@ -374,6 +376,7 @@ export const demoWork: WorkItem[] = [
   },
   {
     id: 'wi_c3',
+    repoId: 'repo_console',
     state: 'parked',
     stage: 'waiting for quota',
     taskCounts: { total: 1, byStatus: { ready: 1 } },
@@ -381,6 +384,7 @@ export const demoWork: WorkItem[] = [
   },
   {
     id: 'wi_d4',
+    repoId: 'repo_console',
     state: 'done',
     stage: 'done',
     taskCounts: { total: 2, byStatus: { integrated: 2 } },
@@ -388,6 +392,7 @@ export const demoWork: WorkItem[] = [
   },
   {
     id: 'wi_e5',
+    repoId: 'repo_console',
     state: 'stopped',
     stage: 'stopped',
     taskCounts: { total: 1, byStatus: { dropped: 1 } },

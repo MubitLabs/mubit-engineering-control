@@ -24,6 +24,7 @@ import {
   type WorkItem,
 } from './api'
 import { describeApproval, liveStreams } from './release-cards'
+import { classicKey, type HeldKey } from './repo-target'
 import { type Route, useHashRoute } from './router'
 import { workItemContext } from './state'
 
@@ -82,7 +83,7 @@ export type WorkbenchValue = {
   toastText: string | null
   composerPrefill: { text: string; nonce: number } | undefined
   refresh: () => void
-  sendChat: (text: string, referencesWorkItem?: string) => Promise<boolean>
+  sendChat: (text: string, repoId: string, referencesWorkItem?: string) => Promise<boolean>
   approveDecision: (item: InboxItem) => Promise<void>
   denyDecision: (item: InboxItem) => Promise<void>
   answerQuestion: (question: Question, option: string) => Promise<void>
@@ -159,7 +160,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const contextOpener = useRef<HTMLElement | null>(null)
   const sheetOpener = useRef<HTMLElement | null>(null)
   const paletteOpener = useRef<HTMLElement | null>(null)
-  const idemKey = useRef(newIdempotencyKey())
+  const idemKey = useRef<HeldKey>({ key: newIdempotencyKey(), payload: '' })
   const prefillNonce = useRef(0)
   const cursors = useRef<Record<string, number>>({})
 
@@ -403,9 +404,15 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   // ── Chat ────────────────────────────────────────────────────────────────────
 
   const sendChat = useCallback(
-    async (text: string, referencesWorkItem?: string) => {
+    async (text: string, repoId: string, referencesWorkItem?: string) => {
+      idemKey.current = classicKey(
+        idemKey.current,
+        JSON.stringify([text, repoId, referencesWorkItem]),
+        newIdempotencyKey,
+      )
+      const held = idemKey.current
       const optimistic: ChatMessage = {
-        id: `pending:${idemKey.current}`,
+        id: `pending:${held.key}`,
         text,
         createdAt: new Date().toISOString(),
         kind: 'user',
@@ -415,13 +422,17 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       setSendingChat(true)
       setPendingMessages((rows) => [...rows, optimistic])
       try {
-        await api.sendChat(text, referencesWorkItem, idemKey.current)
-        idemKey.current = newIdempotencyKey()
+        await api.sendChat(
+          text,
+          { repoId, ...(referencesWorkItem === undefined ? {} : { referencesWorkItem }) },
+          held.key,
+        )
+        idemKey.current = { key: newIdempotencyKey(), payload: '' }
         setPendingMessages((rows) => rows.filter((row) => row.id !== optimistic.id))
         await fetchAll()
         return false
       } catch {
-        // Keep the draft; the key stays so a retry is idempotent.
+        // Keep the draft; the key stays with this payload so a retry is idempotent.
         setPendingMessages((rows) => rows.filter((row) => row.id !== optimistic.id))
         return true
       } finally {
@@ -511,7 +522,9 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   // Reply-to: a Work row or a chat chip can point the next message at a work item.
   useEffect(() => {
     if (route !== 'chat') return
-    const live = work.find((item) => item.state !== 'done' && item.state !== 'stopped')
+    const live = work.find(
+      (item) => item.repoId !== undefined && item.state !== 'done' && item.state !== 'stopped',
+    )
     if (live !== undefined && workItemContext.current === null) workItemContext.set(live.id)
   }, [route, work])
 

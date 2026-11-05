@@ -69,28 +69,37 @@ describe('api.sendChat', () => {
   it('attaches the given idempotency key header, the text and the reference, and parses the response', async () => {
     const calls = stubFetch(() => ({ body: { messageId: 'm_1', workItemId: 'w_9' } }))
 
-    const result = await api.sendChat('ship it', 'w_9', 'idem-1')
+    const result = await api.sendChat(
+      'ship it',
+      { repoId: 'repo_a', referencesWorkItem: 'w_9', intent: 'follow_up' },
+      'idem-1',
+    )
 
     expect(result).toEqual({ messageId: 'm_1', workItemId: 'w_9' })
     const call = calls[0]
     expect(call?.url).toBe('/api/chat/messages')
     expect(call?.init?.method).toBe('POST')
     expect(headersOf(call)['x-idempotency-key']).toBe('idem-1')
-    expect(bodyOf(call)).toEqual({ text: 'ship it', referencesWorkItem: 'w_9' })
+    expect(bodyOf(call)).toEqual({
+      text: 'ship it',
+      repoId: 'repo_a',
+      referencesWorkItem: 'w_9',
+      intent: 'follow_up',
+    })
   })
 
   it('generates a fresh UUID idempotency key per call when none is given and omits referencesWorkItem', async () => {
     const calls = stubFetch(() => ({ body: { messageId: 'm_2' } }))
 
-    await api.sendChat('hello')
-    await api.sendChat('hello again')
+    await api.sendChat('hello', { repoId: 'repo_a' })
+    await api.sendChat('hello again', { repoId: 'repo_a' })
 
     const firstKey = headersOf(calls[0])['x-idempotency-key']
     const secondKey = headersOf(calls[1])['x-idempotency-key']
     expect(firstKey).toMatch(UUID_RE)
     expect(secondKey).toMatch(UUID_RE)
     expect(firstKey).not.toBe(secondKey)
-    expect(bodyOf(calls[0])).toEqual({ text: 'hello' })
+    expect(bodyOf(calls[0])).toEqual({ text: 'hello', repoId: 'repo_a' })
     expect(newIdempotencyKey()).not.toBe(firstKey)
   })
 })

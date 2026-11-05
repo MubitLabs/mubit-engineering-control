@@ -1,16 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { CLASSIC_REPO_KEY, classicTarget, repositoryName } from '../repo-target'
 import { useWorkItemContext, workItemContext } from '../state'
 import { useWorkbench } from '../workbench'
 import { Btn } from './base'
 
+function readStoredRepo(): string | null {
+  try {
+    return localStorage.getItem(CLASSIC_REPO_KEY)
+  } catch {
+    return null
+  }
+}
+
 /**
  * The composer: Enter sends, Shift+Enter adds a line, `/` focuses it from
- * anywhere. The reply chip names the work item the next message refers to.
+ * anywhere. The reply chip names the work item the next message refers to, and with no chip
+ * and several repositories a plain select names where the message lands.
  */
 export function Composer({ prefill }: { prefill?: { text: string; nonce: number } }) {
   const wb = useWorkbench()
   const replyTo = useWorkItemContext()
   const [draft, setDraft] = useState('')
+  const [storedRepo, setStoredRepo] = useState(readStoredRepo)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const appliedNonce = useRef(-1)
@@ -30,14 +41,35 @@ export function Composer({ prefill }: { prefill?: { text: string; nonce: number 
     input.style.height = `${Math.min(200, input.scrollHeight)}px`
   }, [])
 
+  const replyWork = wb.work.find((item) => item.id === replyTo)
+  const target = classicTarget(wb.repositories, replyWork, storedRepo)
+
+  const chooseRepo = useCallback((repoId: string) => {
+    setStoredRepo(repoId)
+    setError(null)
+    try {
+      localStorage.setItem(CLASSIC_REPO_KEY, repoId)
+    } catch {
+      // The choice still holds for this session.
+    }
+  }, [])
+
   const send = useCallback(async () => {
     const text = draft.trim()
     if (text === '') return
+    if (replyWork !== undefined && replyWork.repoId === undefined) {
+      setError('That work has no repository. Clear the reply to send.')
+      return
+    }
+    if (target === null) {
+      setError(wb.repositories.length === 0 ? 'Add a repository in Setup first' : 'Choose a repository')
+      return
+    }
     setDraft('')
-    const failure = await wb.sendChat(text, replyTo ?? undefined)
+    const failure = await wb.sendChat(text, target, replyTo ?? undefined)
     setError(failure ? 'could not send — try again' : null)
     if (failure) setDraft(text)
-  }, [draft, replyTo, wb])
+  }, [draft, replyTo, replyWork, target, wb])
 
   return (
     <form
@@ -60,6 +92,20 @@ export function Composer({ prefill }: { prefill?: { text: string; nonce: number 
           </>
         )}
       </div>
+      {replyTo === null && wb.repositories.length > 1 ? (
+        <select
+          aria-label="Repository"
+          value={target ?? ''}
+          onChange={(event) => chooseRepo(event.target.value)}
+        >
+          {target === null ? <option value="">Choose a repository</option> : null}
+          {wb.repositories.map((repo) => (
+            <option key={repo.id} value={repo.id}>
+              {repositoryName(repo.url)}
+            </option>
+          ))}
+        </select>
+      ) : null}
       <label className="sr-only" htmlFor="composer-input">
         Message
       </label>

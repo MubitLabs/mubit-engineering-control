@@ -79,3 +79,11 @@ The filter rule for label-only cards is the client side of a decision the verifi
 ### Intended test change
 
 `work.screens.playwright.ts` now pins the clock to the fixtures' morning. A date on another day is intended behaviour, so without the pin the baselines and `Last read 10:00` would change at midnight. No assertion and no baseline changed.
+
+## Second verifier's defect
+
+Answering a question left a false "You said: question answered" in Conversation (§18.1). A wake turn stores its reason, or on a failed turn the answer itself, as the text of a message row with no kind (`packages/meta/src/service.ts:495-505`), and `conversationView` reads a null kind as the person's. The fix is in `conversationView`: a row with a `msg_wake_` id shows only its acknowledgement.
+
+The id rule was chosen over a stamped kind for two reasons. The rows already stored have no kind, and changing them needs a data migration, which the handoff forbids, so a stamp would need the id rule beside it anyway. The handoff also leaves the server and `service.ts` to others. Every wake path shares the prefix (`service.ts:450`), so all causes are covered. The rule relies on a server id, so `inspection-contract.test.ts` holds it to the real wake path.
+
+The classic shell and search are unchanged: classic shows the row as a quiet line with no speaker, and search still lists it as a message.

@@ -112,3 +112,45 @@ Two pieces were removed because no test could tell them apart from their absence
 - `event: reset` from a server, because nothing on this base sends it. The new test sends it through a mocked stream.
 - Approving a push card, questions from a real `ask_user`, and a label-only card from the real release route with the new rule.
 - Axe, Lighthouse and measured contrast, which are handoff 33's. Request-to-PR traceability with real attempts and checks stays unproven until `33`.
+
+## Second verifier's fixes
+
+Run by the builder, on the verifier's defect and unobserved list.
+
+### Failing first
+
+| Test | Red | Green |
+| --- | --- | --- |
+| `work-model.test.ts`, `a wake is no one’s message` | Fails: 4 entries, two of them the person's | Passes |
+| `inspection-contract.test.ts`, `a wake on the real path`, 3 cases | All 3 fail on `conversationView` with the fix switched off, showing the wake's text as a person's | All pass |
+
+The contract cases run the real `ask_user` tool, the answer route, the real queue and a real `SqliteStore`. Only the model is fake. They cover a question answered, a failed wake, and a wake with another cause and no causation id. The specialist-report cause is called through `onWake` directly.
+
+### After the fix
+
+| Command | Result |
+| --- | --- |
+| `pnpm check` | 1 failed, 2289 passed, 15 skipped. The failure is the permitted `login-cards.test.ts` node-pty case |
+| `pnpm --dir apps/web test:screens`, under the lock | 272 passed |
+
+No baseline changed.
+
+### Mutants
+
+`python3 tools/mutants/run.py tools/mutants/m3.2-work.json`: 61 of 61 killed, 5 of them new: a wake reads as the person's, a wake loses its acknowledgement, a wake is found by its text, a wake is found only by its stored kind, an acknowledgement drops the work's title on a wake.
+
+The 12 Playwright hand mutants above were rerun from a script, each against a clean control first, and all 12 were killed. The edits were rebuilt from the names in the table, because the originals were not kept. `the count test does not wait for evidence` failed 8 of 20.
+
+### Real server, built tree
+
+Scratch `HOME` and `MEC_DATA_DIR`, `MEC_FAKE_ENGINE=1`, Chromium. The question was seeded into scratch SQLite; the answer went through the Needs you form.
+
+- One `msg_wake_` row was stored. After a reload, Conversation did not show `question answered`, and the wake's acknowledgement did show.
+- Direct restart with the tab left open: the new server took a new port. After 28 s the tab still read `Stale. Last read 08:33 PM`, with its alert and 1 row kept, and Retry changed nothing. The new URL read current with 1 row. This matches the code: an open tab cannot find a new port.
+
+### Still unobserved
+
+- `event: reset` from a server. Nothing on this base sends one.
+- A question from a real engine calling `ask_user`. The tool and the persist path are real in the contract test, and the model is not.
+- Approving a push or merge card in the browser. `release-cards.test.ts` covers the routes: a push approved into a real bare repository, and merge through fake `gh`.
+- Axe, Lighthouse, measured contrast and traceability with real attempts, as above.

@@ -17,11 +17,11 @@ After the implementation the first full run of the desktop file had 3 failures, 
 
 ## Gate
 
-`pnpm check`: typecheck passes, `biome check` clean on the touched files, then `vitest run`: 1832 tests, 1815 passed, 1 failed, 16 skipped. The one failure is the known baseline `apps/desktop/test/login-cards.test.ts > drives a real interactive shell through the seam (no vendor command)` (`posix_spawnp failed`, the node-pty execute bit). `pnpm test:screens` was not run: no web file changed.
+`pnpm check` at the second fix round: typecheck passes, `biome check .` passes, then `vitest run`: 1852 tests, 1836 passed, 1 failed, 15 skipped (136 files: 129 passed, 1 failed, 6 skipped). The one failure is the known baseline `apps/desktop/test/login-cards.test.ts > drives a real interactive shell through the seam (no vendor command)` (`posix_spawnp failed`, the node-pty execute bit). `pnpm test:screens` was not run: no web file changed.
 
 ## Mutants
 
-`python3 tools/mutants/run.py tools/mutants/m3.1-queries.json`: 14 of 14 killed after the fix wave (six added: open walk stopped at 200, needs cursor, recent filtered after its cap, and the three task-detail caps).
+`python3 tools/mutants/run.py tools/mutants/m3.1-queries.json`: 30 of 30 killed at the second fix round (exit 0), and `--self-check` gave SURVIVED for the no-op and INVALID for the syntax error, as it should.
 
 | Mutant | Verdict |
 | --- | --- |
@@ -33,6 +33,28 @@ After the implementation the first full run of the desktop file had 3 failures, 
 | make a missing record coverage true | KILLED |
 | join a card by branch name | KILLED |
 | treat absent repoId as readOnly false | KILLED |
+| stop the open walk at 200 | KILLED |
+| needs never returns a cursor | KILLED |
+| recent filters by repo after the cap | KILLED |
+| diff files uncapped | KILLED |
+| checks uncapped | KILLED |
+| attempts uncapped | KILLED |
+| needs page ignores the byte cap | KILLED |
+| needs cursor loses a row | KILLED |
+| needs cursor ignores the rowid | KILLED |
+| recent keyset ignored | KILLED |
+| recent cursor loses its phase | KILLED |
+| recent rows not merged newest first | KILLED |
+| open rows not merged by rowid | KILLED |
+| dependsOn uncapped | KILLED |
+| cursors uncapped | KILLED |
+| tasks truncated count dropped | KILLED |
+| list byte budget ignored | KILLED |
+| card cls uncut | KILLED |
+| card payload repo uncut | KILLED |
+| card expiry uncut | KILLED |
+| work scalars uncut | KILLED |
+| cursor phase unchecked | KILLED |
 
 ## Migration trip wire (100 ms at 50,000 docs): FIRED
 
@@ -70,6 +92,16 @@ The keyset itself is instant. The cost is each JSON-field equality (task and att
 
 ## Fix wave
 
-Failing tests first (5 red): 230 heavy open questions paged under 1 MiB at 50 rows; a fresh beta question behind 235 older ones; 200 expired cards plus one fresh; recent needs scoped to a repository; a 20,000-file task under 1 MiB. Then green. The migration trip wire stays fired and awaits the owner decision: approve the expression-index migration, or rule that 50,000 per kind is not a target. Open needs now walk the whole pending set, which is the cost that decision bears on.
+Failing tests first (5 red): 230 heavy open questions paged under 1 MiB at 50 rows; a fresh beta question behind 235 older ones; 200 expired cards plus one fresh; recent needs scoped to a repository; a 20,000-file task under 1 MiB. Then green. Open needs now walk the whole pending set.
 
-The needs byte-cap mutant (drop the 1 MiB break) survives and is an equivalent mutant today: one need item is at most about 6.5 KB, so 100 rows never reach 1 MiB. The byte guard stays as defence against a future larger item; the 230-heavy-question test proves the row limit and cursor.
+## Second fix round
+
+**Correction.** The first fix wave said the needs byte-cap mutant was equivalent because one need item is at most about 6.5 KB. That was false. The cuts alone allow 8,000 characters in a question, its options and its answer, a character can take 3 bytes in UTF-8 or 6 as a JSON escape, and a card's `cls` and `payload.repo` were not cut at all, so one card could exceed 1 MiB alone. The byte cap is live, and its mutant is back and killed.
+
+Failing tests first: 13 red, each for the expected reason. `tasks/:id` and `work/:id` over 1 MiB (1.86 MB with 60,000 ids; 6.2 MB with oversized scalars; 14.7 MB with 3,000 long attempt ids; 116 MB with 230 tasks of 1,000 ids), missing truncated counts, a row skipped after an earlier one was answered, a recent row skipped after a newer one settled, questions and cards not sharing one order, a newer card pushed out by settled questions, one oversized card over 1 MiB, and an unknown cursor phase accepted. Then green. Two new tests passed before the fix because they pin behaviour that already held: `100 cards with long wide cls` (it exists to kill the byte-cap mutant) and `recent=1 pages the open rows`. Sizes are `Buffer.byteLength`; the older tests' `res.body.length` counts UTF-16 units, not bytes.
+
+**Mutant run.** The first run was 27 of 30: three cursor mutants showed SURVIVED. Applying one by hand showed why: the mutant made a cursor repeat forever, the test's page loop never ended, and vitest stopped with 7 tests pending, 0 failed, and exit 1. The tests were not passing. Both page loops in the test file now fail past 50 pages, and all three are killed. `tools/mutants/run.py` reads pending tests with zero failures as SURVIVED; that is safe, since it never reads as killed, but it is misleading. The runner is unchanged here.
+
+## Trip wire: coordinator ruling for this branch
+
+Add no index, table, column or migration. By that ruling the handoff's own scenario (50,000 task docs, 1,000 work items) is under 100 ms; that scenario was not measured in this record. The over-100 ms numbers above, with 50,000 docs in every kind, stay here as an open owner question. They were not re-measured in the second fix round, which adds no query but does add sizing work to the detail routes.

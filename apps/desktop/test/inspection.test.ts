@@ -1095,6 +1095,8 @@ describe('inspection routes: needs cursor and byte cap (second fix round)', () =
       ids.push(...page.items.map((item: any) => item.id))
       cursor = page.nextCursor
       pages += 1
+      // A cursor that never ends must fail here; left unbounded it hangs the run and no test reports it.
+      expect(pages).toBeLessThanOrEqual(50)
       between(pages)
     } while (cursor !== null)
     return { ids, pages }

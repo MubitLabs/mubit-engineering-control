@@ -1,0 +1,233 @@
+[
+  {
+    "name": "1 mint freshId even with a key",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    const messageId = idempotencyKey !== undefined ? stableMessageId(idempotencyKey) : freshId('msg_')\n",
+    "replace": "    const messageId = freshId('msg_')\n",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "2 store the key after the brain",
+    "file": "packages/meta/src/service.ts",
+    "find": "      input.idempotencyKey ?? (typeof prior?.idempotencyKey === 'string' ? prior.idempotencyKey : undefined)\n",
+    "replace": "      fields.ackText !== undefined ? input.idempotencyKey : undefined\n",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "2b the key is dropped by a later save",
+    "file": "packages/meta/src/service.ts",
+    "find": "      input.idempotencyKey ?? (typeof prior?.idempotencyKey === 'string' ? prior.idempotencyKey : undefined)\n",
+    "replace": "      fields.ackText !== undefined ? undefined : input.idempotencyKey\n",
+    "tests": ["apps/desktop/test/server.test.ts", "packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "3 route before the prior check",
+    "file": "packages/meta/src/service.ts",
+    "find": "    if (typeof prior?.workItemId === 'string') {\n      const fenced = this.#fencedTurn(input, prior.workItemId)\n",
+    "replace": "    if (typeof prior?.workItemId === 'string' && prior.workItemId === '') {\n      const fenced = this.#fencedTurn(input, prior.workItemId)\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "3b resume stopped work instead of writing the receipt",
+    "file": "packages/meta/src/service.ts",
+    "find": "      const fenced = this.#fencedTurn(input, prior.workItemId)\n      if (fenced !== undefined) return fenced\n      if (String(this.#store.workItems.get(prior.workItemId)?.state) === 'planning') {\n",
+    "replace": "      if (String(this.#store.workItems.get(prior.workItemId)?.state) === 'planning') {\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "4 drop the in-flight map",
+    "file": "packages/meta/src/service.ts",
+    "find": "    if (running !== undefined) return running\n",
+    "replace": "",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "4b the in-flight entry never clears",
+    "file": "packages/meta/src/service.ts",
+    "find": "    const turn = run().finally(() => this.#turns.delete(messageId))\n",
+    "replace": "    const turn = run()\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "5 dedupe key without causation",
+    "file": "packages/meta/src/service.ts",
+    "find": "      input.causationId === undefined ? freshId('msg_wake_') : `msg_wake_${digest(input.causationId)}`\n",
+    "replace": "      freshId('msg_wake_')\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "5b the queue key loses the cause",
+    "file": "packages/meta/src/service.ts",
+    "find": "    this.#effects.enqueue('relay', `wake:${causationId}`, {\n",
+    "replace": "    this.#effects.enqueue('relay', `wake:${freshId('')}`, {\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "6 onWake skips the ackText receipt check",
+    "file": "packages/meta/src/service.ts",
+    "find": "    if (typeof prior?.ackText === 'string') return this.#replay(prior)\n    return this.#once(messageId, () => this.#wakeTurn(input, messageId))\n",
+    "replace": "    return this.#once(messageId, () => this.#wakeTurn(input, messageId))\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "7 enqueue the wake outside the answer's transaction",
+    "file": "packages/meta/src/service.ts",
+    "find": "        this.enqueueWake({\n          causationId: docId,\n          reason,\n          detail: `question \"${String(doc.question ?? '')}\" answered: ${stored}`,\n          ...(workItemId !== undefined && { workItemId }),\n        })\n",
+    "replace": "        queueMicrotask(() =>\n          this.#store.atomic(() =>\n            this.enqueueWake({\n              causationId: docId,\n              reason,\n              detail: `question \"${String(doc.question ?? '')}\" answered: ${stored}`,\n              ...(workItemId !== undefined && { workItemId }),\n            }),\n          ),\n        )\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "7b the answer queues no wake at all",
+    "file": "packages/meta/src/service.ts",
+    "find": "        this.enqueueWake({\n          causationId: docId,\n          reason,\n",
+    "replace": "        void ({\n          causationId: docId,\n          reason,\n",
+    "tests": ["packages/meta/test/durable.test.ts", "apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "7c a stored answer goes unredacted",
+    "file": "packages/meta/src/service.ts",
+    "find": "      const stored = redact(answer, [], [])\n",
+    "replace": "      const stored = answer\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "7d the route's wake-less answer goes unredacted",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    const stored = redact(answer, [], [])\n",
+    "replace": "    const stored = answer\n",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "7e a closed question takes a second answer",
+    "file": "packages/meta/src/service.ts",
+    "find": "      if (String(doc.status ?? 'open') !== 'open') return { status: 'not_open' as const }\n",
+    "replace": "",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "7f the answer wakes ended work",
+    "file": "packages/meta/src/service.ts",
+    "find": "      if (work !== undefined && (isTerminal(work) || mandateOf(work).status === 'withdrawn')) {\n        this.#refuseWake({ reason }, work)\n      } else {\n",
+    "replace": "      {\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "8 return success on unsupported launch",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    throw new Error('launch failed: no_runner')\n",
+    "replace": "    return\n",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "8b a retry of a failed launch drains as refused",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    if (failure !== undefined) throw new Error(`launch failed: ${failure}`)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "9 skip the block on unsupported launch",
+    "file": "packages/meta/src/authority.ts",
+    "find": "    appendEvent(store, `attempt:${attemptId}`, 'attempt.failed', { attemptId, reason, at }, at)\n  }\n  blockWork(store, workItemId, reason, at)\n",
+    "replace": "    appendEvent(store, `attempt:${attemptId}`, 'attempt.failed', { attemptId, reason, at }, at)\n  }\n",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "9b the attempt stays queued on unsupported launch",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (attempt !== undefined && canTransition(ATTEMPT_MACHINE, String(attempt.state), 'attempt_failed')) {\n",
+    "replace": "  if (attempt !== undefined && attempt.state === 'never') {\n",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "10 give an unsupported kind a no-op handler",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    throw new Error(`unsupported effect: ${kind}`)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "10b a relay with no meta agent succeeds",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    if (service === undefined) throw new Later('no meta agent is configured')\n    await service.runRelay(payload)\n",
+    "replace": "    await service?.runRelay(payload)\n",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "11 remove the close time bound",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  await Promise.race([work.catch(() => {}), limit])\n",
+    "replace": "  await work.catch(() => {})\n",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "11b a drain starts new turns on the way out",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "      Promise.allSettled([app.close(), store.effects.settle()]),\n",
+    "replace": "      Promise.allSettled([app.close(), store.effects.drain()]),\n",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "11c a stuck connection outlives close",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    app.server.closeAllConnections()\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "12 boot enqueues no resume",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  if (!paused) metaAgent?.enqueueResumes()\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "12b boot resumes messages with a receipt",
+    "file": "packages/meta/src/service.ts",
+    "find": "          typeof doc.ackText !== 'string' &&\n          typeof doc.workItemId === 'string' &&\n",
+    "replace": "          typeof doc.workItemId === 'string' &&\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "12c boot resumes ended work",
+    "file": "packages/meta/src/service.ts",
+    "find": "          typeof doc.workItemId === 'string' &&\n          String(this.#store.workItems.get(doc.workItemId)?.state) === 'planning',\n",
+    "replace": "          typeof doc.workItemId === 'string',\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "13 a pause still runs the planner",
+    "file": "packages/meta/src/service.ts",
+    "find": "    if (!resumed && processingOf(this.#store).paused) {\n",
+    "replace": "    if (resumed && processingOf(this.#store).paused && input.text === '') {\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "13b a relay caught by a pause is swallowed",
+    "file": "packages/meta/src/service.ts",
+    "find": "    if (!resumed && processingOf(this.#store).paused) {\n",
+    "replace": "    if (processingOf(this.#store).paused) {\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "13c resume does not queue the held turn",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "      metaAgent?.enqueueResumes()\n    },\n",
+    "replace": "    },\n",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "14 a replay queues launches for work not executing",
+    "file": "packages/meta/src/service.ts",
+    "find": "    if (launches.length > 0 && String(this.#store.workItems.get(workItemId)?.state) === 'executing') {\n",
+    "replace": "    if (launches.length > 0) {\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "15 prompts land outside the data dir",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    keystoreRoot: opts.dataDir,\n",
+    "replace": "    keystoreRoot: join(opts.dataDir, 'elsewhere'),\n",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  }
+]

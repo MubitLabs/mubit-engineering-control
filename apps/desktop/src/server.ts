@@ -204,10 +204,15 @@ const SSE_POLL_MS = 500
 
 let idCounter = 0
 
-/** A contract-shaped id (`msg_…`, `wi_…`): clock + counter + random, url-safe by construction. */
+/**
+ * A contract-shaped id (`msg_…`, `wi_…`): clock + counter + random, url-safe by construction.
+ * The counter is fixed-width so ids from one millisecond sort in order: message lists tie-break
+ * on id, and an unpadded `z` sorts after `10`.
+ */
 function freshId(prefix: string): string {
   idCounter += 1
-  return `${prefix}${Date.now().toString(36)}${idCounter.toString(36)}${randomBytes(4).toString('hex')}`
+  const counter = idCounter.toString(36).padStart(4, '0')
+  return `${prefix}${Date.now().toString(36)}${counter}${randomBytes(4).toString('hex')}`
 }
 
 /** §5.8 zero-token validity probe for Anthropic API keys: GET /v1/models costs no tokens. */

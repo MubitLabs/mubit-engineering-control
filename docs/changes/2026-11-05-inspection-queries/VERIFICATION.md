@@ -108,7 +108,7 @@ Failing tests first: 13 red, each for the expected reason. responses over 1 MiB 
 
 Failing tests first: 10 red, each for the expected reason. A 1.2 MB answer of 400,000 wide characters served with a 200; an answer one byte over the limit not refused; `repositoriesTruncated` undefined; `done24` ahead of a just-answered old question; the same with 2,100 newer rows; questions and cards in rowid order, not settle order; a walk of 15 instead of 20 when five rows settled mid-walk; a row served as open then served again in the recent phase; a recent cursor with no settle key; and in the store, a cursor that dropped `t` and `n`. Then green. `a key-shaped settle time cannot leave through the recent cursor` passed before the fix because there was no time in the cursor; it pins the change and kills `settle time leaves unredacted`.
 
-**The cap stays 20 per walk.** Applying the cursor before a plain cap of 20 made every page offer 20 more, so a walk served all 30 settled rows and broke two existing tests. The recent cursor therefore carries `n`, the rows the walk has served, and each page's room is `20 - n`. The existing tests are unchanged.
+**The cap stays 20 per walk.** Applied before a plain cap of 20, the cursor lets every page offer 20 more, so a walk would serve all the settled rows; the existing `recent=1 pages` test pins 20, and the mutant `recent cap is per page` proves it fails. The recent cursor therefore carries `n`, the rows the walk has served, and each page's room is `20 - n`. The existing tests are unchanged.
 
 **Mutant run.** 21 added, 5 repointed at the rewritten lines (`recent filters by repo after the cap` became `recent ignores its repo scope`, since the check moved). The first run was 46 of 51, and all five were test gaps: the 2,100-row test's old row sat on the first page of the now ascending walk, so a walk that stopped early still found it; the settled card's time and the lapsed card's expiry sat in the same order as the `createdAt` fallback; and a spent cursor had too few rows left to show a negative slice. The tests were tightened and the run is 51 of 51 (exit 0).
 
@@ -122,7 +122,7 @@ Failing tests first: 10 red, each for the expected reason. A 1.2 MB answer of 40
 | 10,000 + 10,000 | 132 ms | 7 ms |
 | 50,000 + 50,000 | 667 ms | 36 ms |
 
-A walk repeats that per page, and it runs inside one read transaction per request. It is over the 100 ms bar at about 8,000 of each kind. An index on settle time would be a migration, which this branch's ruling excludes, so it stays an owner question with the one below.
+A walk repeats that per page, and it runs inside one read transaction per request. By interpolation it crosses the 100 ms bar at about 8,000 of each kind. An index on settle time would be a migration, which this branch's ruling excludes, so it stays an owner question with the one below.
 
 ## Trip wire: coordinator ruling for this branch
 

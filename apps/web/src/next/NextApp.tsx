@@ -1,24 +1,15 @@
-import { useState } from 'react'
-import { useHashRoute } from '../router'
+import type { ReactNode } from 'react'
+import type { Route } from '../router'
 import { PageHeader } from './Conversation'
 import { ROUTE_LABELS } from './routes'
-import { Shell } from './Shell'
+import { Shell, type ShellProps } from './Shell'
 import { EmptyState, ReturnToClassic } from './states'
-import { useTheme } from './theme'
 
 /**
- * No live path is wired yet, so every surface says so. Each sentence avoids implying
- * anything about the owner's real work: not "nothing is waiting", only "not shown here".
+ * Surfaces with no live path yet say so. Each sentence avoids implying anything about the
+ * owner's real work: not "nothing is waiting", only "not shown here".
  */
-const UNAVAILABLE = {
-  chat: {
-    title: 'Conversation is not connected here yet',
-    body: 'This preview does not show your repositories or send requests. Your work is unchanged.',
-  },
-  work: {
-    title: 'Work is not connected here yet',
-    body: 'Deliveries and tasks are not shown in this preview. Your work is unchanged.',
-  },
+const UNAVAILABLE: Partial<Record<Route, { title: string; body: string }>> = {
   needs: {
     title: 'Decisions are not shown here yet',
     body: 'Anything waiting for you is still in the classic workbench. This preview cannot approve or deny.',
@@ -37,47 +28,26 @@ const UNAVAILABLE = {
   },
 }
 
-const COMPOSER_UNAVAILABLE = 'Sending is not connected in this preview.'
+export interface NextAppProps extends Omit<ShellProps, 'children'> {
+  /** The live surface for this route. Without one it says it is not connected here. */
+  children?: ReactNode
+}
 
-export function NextApp() {
-  const [route, navigate] = useHashRoute()
-  const [theme, setTheme] = useTheme()
-  const [draft, setDraft] = useState('')
-  const copy = UNAVAILABLE[route]
-
+/** Pure props: everything real arrives from `live/`. */
+export function NextApp({ children, ...shell }: NextAppProps) {
+  const copy = UNAVAILABLE[shell.route]
   return (
-    <Shell
-      route={route}
-      onNavigate={navigate}
-      theme={theme}
-      onTheme={setTheme}
-      repositories={[]}
-      repositoryId={null}
-      needsCount={null}
-      recent={[]}
-      onOpenRecent={() => {}}
-      footnote="Preview only"
-      composer={{
-        scope: 'New request',
-        value: draft,
-        onChange: setDraft,
-        onSubmit: () => {},
-        unavailable: COMPOSER_UNAVAILABLE,
-      }}
-      commands={[
-        {
-          id: 'return-classic',
-          label: 'Return to the classic workbench',
-          run: () => window.location.assign(`?ui=classic${window.location.hash}`),
-        },
-      ]}
-    >
-      <div className={route === 'chat' ? 'conversation' : 'page'}>
-        <PageHeader title={ROUTE_LABELS[route]} />
-        <EmptyState title={copy.title} body={copy.body}>
-          <ReturnToClassic />
-        </EmptyState>
-      </div>
+    <Shell {...shell}>
+      {children ?? (
+        <div className="page">
+          <PageHeader title={ROUTE_LABELS[shell.route]} />
+          {copy && (
+            <EmptyState title={copy.title} body={copy.body}>
+              <ReturnToClassic />
+            </EmptyState>
+          )}
+        </div>
+      )}
     </Shell>
   )
 }

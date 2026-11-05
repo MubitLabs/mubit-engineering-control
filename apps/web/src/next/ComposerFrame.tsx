@@ -12,6 +12,12 @@ export interface ComposerProps {
   intentToggle?: { label: string; onToggle: () => void }
   /** Why nothing can be sent. The frame stays visible and reachable, but read-only. */
   unavailable?: string
+  /** A send is in flight: typing stays open, sending again does not. */
+  sending?: boolean
+  /** Replaces the standing line under the field. */
+  note?: string
+  /** The last send did not land. The text is kept and Retry sends exactly that again. */
+  failure?: { text: string; onRetry: () => void }
   textareaRef?: RefObject<HTMLTextAreaElement | null>
 }
 
@@ -22,10 +28,13 @@ export function ComposerFrame({
   onSubmit,
   intentToggle,
   unavailable,
+  sending = false,
+  note,
+  failure,
   textareaRef,
 }: ComposerProps) {
   const noteId = useId()
-  const blocked = unavailable !== undefined || value.trim() === ''
+  const blocked = unavailable !== undefined || sending || value.trim() === ''
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -40,6 +49,12 @@ export function ComposerFrame({
 
   return (
     <div className="composer-dock">
+      {failure && (
+        <div className="composer-failure" role="alert">
+          <span>{failure.text}</span>
+          <Button onClick={failure.onRetry}>Retry</Button>
+        </div>
+      )}
       <form className="composer" aria-label="Message the meta agent" onSubmit={submit}>
         <div className="composer-scope">
           <span>{scope}</span>
@@ -61,7 +76,9 @@ export function ComposerFrame({
           onKeyDown={onKeyDown}
         />
         <div className="composer-bottom">
-          <small id={noteId}>{unavailable ?? 'You talk to the meta agent. It coordinates the work.'}</small>
+          <small id={noteId}>
+            {unavailable ?? note ?? 'You talk to the meta agent. It coordinates the work.'}
+          </small>
           <Button type="submit" variant="primary" className="send" aria-label="Send" aria-disabled={blocked}>
             <SendIcon />
           </Button>

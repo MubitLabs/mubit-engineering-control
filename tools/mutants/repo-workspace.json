@@ -1,0 +1,163 @@
+[
+  {
+    "name": "keep the same key after an edit",
+    "file": "apps/web/src/live/submission.ts",
+    "find": "held !== null && samePayload(held.frozen, payload) ? held.frozen.key : deps.newKey()",
+    "replace": "held !== null ? held.frozen.key : deps.newKey()",
+    "tests": ["apps/web/test/submission.test.ts"]
+  },
+  {
+    "name": "remove the in-flight guard",
+    "file": "apps/web/src/live/submission.ts",
+    "find": "      if (held?.state === 'pending') return false\n      const payload",
+    "replace": "      const payload",
+    "tests": ["apps/web/test/submission.test.ts"]
+  },
+  {
+    "name": "clear the draft before the server confirms",
+    "file": "apps/web/src/live/submission.ts",
+    "find": "      await deps.send(frozen)\n",
+    "replace": "      deps.drafts.write(frozen.repoId, draftScope(frozen), '')\n      await deps.send(frozen)\n",
+    "tests": ["apps/web/test/submission.test.ts"]
+  },
+  {
+    "name": "a success wipes the whole draft",
+    "file": "apps/web/src/live/submission.ts",
+    "find": "withoutSent(deps.drafts.read(frozen.repoId, scope), frozen.text)",
+    "replace": "''",
+    "tests": ["apps/web/test/submission.test.ts"]
+  },
+  {
+    "name": "a retry mints a new key",
+    "file": "apps/web/src/live/submission.ts",
+    "find": "      void launch(held.frozen)\n",
+    "replace": "      void launch({ ...held.frozen, key: deps.newKey() })\n",
+    "tests": ["apps/web/test/submission.test.ts"]
+  },
+  {
+    "name": "write key-shaped text to storage",
+    "file": "apps/web/src/live/drafts.ts",
+    "find": "      if (text === '' || looksLikeSecret(text)) remove(key)\n",
+    "replace": "      if (text === '') remove(key)\n",
+    "tests": ["apps/web/test/drafts.test.ts"]
+  },
+  {
+    "name": "write a key-shaped pending submission to storage",
+    "file": "apps/web/src/live/drafts.ts",
+    "find": "      if (looksLikeSecret(frozen.text)) remove(pendingKey(frozen.repoId))\n      else put(",
+    "replace": "      put(",
+    "tests": ["apps/web/test/drafts.test.ts"]
+  },
+  {
+    "name": "reintroduce a first-live selection in live/",
+    "file": "apps/web/src/live/drafts.ts",
+    "find": "  if (intent.kind === 'new') return { kind: 'new' }\n",
+    "replace": "  if (intent.kind === 'new') {\n    const first = work?.[0]\n    return first ? { kind: 'follow_up', workId: first.id, title: first.title ?? 'this work' } : { kind: 'new' }\n  }\n",
+    "tests": ["apps/web/test/drafts.test.ts"]
+  },
+  {
+    "name": "skip the stale-repo guard on work rows",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "const kept = rows.filter((row) => inScope(scope, row))",
+    "replace": "const kept = rows",
+    "tests": ["apps/web/test/workspace.test.ts"]
+  },
+  {
+    "name": "a late answer paints after a switch",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "    const live = () => reading === controller\n",
+    "replace": "    const live = () => true\n",
+    "tests": ["apps/web/test/workspace.test.ts"]
+  },
+  {
+    "name": "a switch does not cancel in-flight reads",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "      if (scope === state.scope) return\n      reading?.abort()\n",
+    "replace": "      if (scope === state.scope) return\n",
+    "tests": ["apps/web/test/workspace.test.ts"]
+  },
+  {
+    "name": "a stale repository falls back silently",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "  if (!lost) return { id: fallback?.id ?? null, notice: null }\n",
+    "replace": "  if (fallback !== undefined || !lost) return { id: fallback?.id ?? null, notice: null }\n",
+    "tests": ["apps/web/test/workspace.test.ts"]
+  },
+  {
+    "name": "classicTarget prefers stored over the reply's repo",
+    "file": "apps/web/src/repo-target.ts",
+    "find": "  if (replyWork?.repoId !== undefined) return replyWork.repoId\n  if (repositories.some((repo) => repo.id === stored)) return stored\n",
+    "replace": "  if (repositories.some((repo) => repo.id === stored)) return stored\n  if (replyWork?.repoId !== undefined) return replyWork.repoId\n",
+    "tests": ["apps/web/test/repo-target.test.ts"]
+  },
+  {
+    "name": "classic keeps its key after an edit",
+    "file": "apps/web/src/repo-target.ts",
+    "find": "  return held.payload === payload ? held : { key: mint(), payload }\n",
+    "replace": "  return held\n",
+    "tests": ["apps/web/test/repo-target.test.ts"]
+  },
+  {
+    "name": "drop the repoId filter in /api/work",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    rowsInScope(store.workItems, store, request).map((doc) => {",
+    "replace": "    store.workItems.list().map((doc) => {",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "unassigned reads return every row",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    return rows.list().filter((doc) => typeof doc.repoId !== 'string')\n",
+    "replace": "    return rows.list()\n",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "remove the idempotency mismatch check",
+    "file": "apps/desktop/src/server.ts",
+    "find": "          reply.code(409).send({ error: 'idempotency_mismatch' })\n          return\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "the mismatch check ignores the intent",
+    "file": "apps/desktop/src/server.ts",
+    "find": "          replay.intent !== intent ||\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "the composed path forgets what was sent",
+    "file": "apps/desktop/src/server.ts",
+    "find": "store.messages.save({ ...doc, ...submitted, idempotencyKey })",
+    "replace": "store.messages.save({ ...doc, idempotencyKey })",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "follow_up needs no reference",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    if (intent === 'follow_up' && referencesWorkItem === undefined) {",
+    "replace": "    if (false) {",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "explicitNew ignored in routing",
+    "file": "packages/meta/src/routing.ts",
+    "find": "  if (input.explicitNew === true) return { action: 'new_work' }\n",
+    "replace": "",
+    "tests": ["packages/meta/test/routing.test.ts"]
+  },
+  {
+    "name": "explicitNew overrides a reference",
+    "file": "packages/meta/src/routing.ts",
+    "find": "  const reference = input.referencesWorkItem\n",
+    "replace": "  if (input.explicitNew === true) return { action: 'new_work' }\n  const reference = input.referencesWorkItem\n",
+    "tests": ["packages/meta/test/routing.test.ts"]
+  },
+  {
+    "name": "the service drops explicitNew",
+    "file": "packages/meta/src/service.ts",
+    "find": "      explicitNew: input.explicitNew,\n",
+    "replace": "",
+    "tests": ["packages/meta/test/service.test.ts"]
+  }
+]

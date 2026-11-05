@@ -749,6 +749,7 @@ describe('inspection routes: honest counts and bounded needs (fix wave)', () => 
       seen.push(...page.items.map((i: any) => i.id))
       cursor = page.nextCursor
       pages += 1
+      expect(pages).toBeLessThanOrEqual(50)
     } while (cursor !== null)
     expect(pages).toBeGreaterThan(1)
     expect(new Set(seen).size).toBe(230)

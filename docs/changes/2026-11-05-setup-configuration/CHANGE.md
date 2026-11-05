@@ -60,6 +60,7 @@ Each was needed by a requirement and is one small block.
 
 ## Left open
 
+- A sign-in that failed to start leaves its `home_ready` connection. The form says the sign-in did not start, and trying the same name is refused with "retire it first". The row offers Check and Retire but no sign-in, because `connectionActions` offers that only for `auth_expired`.
 - Stage B: `capabilities.switchWork`, parked notices, Switch work.
 - `NoRepositories` in `live/surfaces.tsx` still links to classic Setup, and `next.screens` pins that. It belongs to `31`'s surfaces.
 - The sidebar footnote still says "Conversation and Work are live", in `LiveApp`'s shared area.

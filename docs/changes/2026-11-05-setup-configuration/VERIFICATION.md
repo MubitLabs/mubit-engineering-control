@@ -56,4 +56,34 @@ The UI was driven only against the in-page sample server, not this server. Drivi
 
 - A real sign-in, a real key, Replace key and Validate on a real provider. These are the owner's steps.
 - A real `claude auth status` or `codex login status` through the probe route: only fake runners here.
-- The sign-in card end to end. The pty seam is covered by existing tests, and the new card has no Playwright test because the harness has no login stream.
+- The sign-in card end to end. The pty seam is covered by existing tests. Playwright covers the card opening and the failed start against the sample server, which has no login stream, so output, the URL link and the end of a sign-in are not shown there.
+- A failed sign-in start on a scratch server after the fix. The harness answers the 500; `posix_spawnp failed` on this checkout was seen before the fix only.
+
+## Verifier fixes
+
+Behaviour verification on a scratch server found three defects. Each was fixed test first.
+
+| Defect | Red | Green |
+| --- | --- | --- |
+| A failed sign-in start left the card waiting with no error, in Setup and on Sign in again | `a sign-in that fails to start…`, `Sign in again that fails to start…` failed | Pass |
+| The server's validation reason never reached the screen, on policy save, models save and proposal Apply | 3 of 18 in `config-api` and `config-contract` failed, and `a refused save…`, `a refused proposal…` failed | Pass |
+| Open Repositories landed on Policy | `Open Repositories lands on Repositories` failed | Pass |
+
+The first fix differs from the two the verifier suggested. Clearing the card on failure remounted the form, so it lost the chosen path and name, and the first green run failed on that. The card now opens only after `POST /api/slots/login` answers.
+
+The contract tests read `failureText` against the real routes, so the always-confirm, proposal and bad YAML wordings are the server's own. The sample server copies those words for the screens.
+
+| Command | Result |
+| --- | --- |
+| `python3 tools/mutants/run.py tools/mutants/m3.3-config.json` | 22 of 22 killed, four of them new: `the error reader drops detail`, `an empty detail counts as a reason`, `the screen shows only the error code`, `detail replaces the error text` |
+| `pnpm check` | 1 failed, 2285 passed, 15 skipped. The failure is the permitted `login-cards.test.ts` node-pty case |
+| `pnpm --dir apps/web test:screens`, under the lock | 235 passed, classic and next baselines unchanged |
+
+Playwright gates, by hand. Each mutation was applied, its test run, and the file restored.
+
+| Gate | Mutation | Tests | Result |
+| --- | --- | --- | --- |
+| `card before the start` | The card opens before `startLogin` | Both failed-start tests | Failed, as they should |
+| `failure swallowed` | The catch sets no error | Both failed-start tests | Failed, as they should |
+| `section not set` | Setup leaves `store.section` alone | `Open Repositories lands on Repositories` | Failed, as it should |
+| `detail not shown` | `failureText` returns the error text alone | `a refused save…`, `a refused proposal…` | Failed, as they should |

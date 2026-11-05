@@ -124,5 +124,33 @@
     "find": "export const canRetire = (typed: string, label: string): boolean => typed === label",
     "replace": "export const canRetire = (typed: string, label: string): boolean => typed.trim().toLowerCase() === label.toLowerCase()",
     "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "the error reader drops detail",
+    "file": "apps/web/src/api.ts",
+    "find": "throw new HttpError(path, response.status, error, detail)",
+    "replace": "throw new HttpError(path, response.status, error)",
+    "tests": ["apps/web/test/config-api.test.ts"]
+  },
+  {
+    "name": "an empty detail counts as a reason",
+    "file": "apps/web/src/api.ts",
+    "find": "return { error: text(error), detail: text(detail) }",
+    "replace": "return { error: text(error), detail: detail as string }",
+    "tests": ["apps/web/test/config-api.test.ts"]
+  },
+  {
+    "name": "the screen shows only the error code",
+    "file": "apps/web/src/live/config.tsx",
+    "find": "return error.detail === undefined ? reason : `${reason}: ${error.detail}`",
+    "replace": "return reason",
+    "tests": ["apps/web/test/config-contract.test.ts"]
+  },
+  {
+    "name": "detail replaces the error text",
+    "file": "apps/web/src/live/config.tsx",
+    "find": "return error.detail === undefined ? reason : `${reason}: ${error.detail}`",
+    "replace": "return error.detail ?? reason",
+    "tests": ["apps/web/test/config-contract.test.ts"]
   }
 ]

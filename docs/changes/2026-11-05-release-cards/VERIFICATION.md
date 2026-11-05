@@ -99,12 +99,12 @@ Run against this repository with gh 2.103.3; these write nothing.
 ## Not verified
 
 - No real gh `repo view` URL has been compared with a real origin through the code. The test fake reports the URL form the probe below showed.
-- No real push, PR or merge has gone through a card. The fake gh and the local bare repository stand in for GitHub. The owner hand-merges this PR (decision #17), so the first real use is the first card after it.
+- No real push, PR or merge has gone through a card. The fake gh and the local bare repository stand in for GitHub. Decision #23 supersedes #17: this PR merges through its own repaired card, so that is the first real use.
 - GitHub's real answers are assumed from documentation or source reading for: `gh pr checks` exit 8 with `--json`, the "no required checks" message text, and a real `BEHIND`. The code holds on all of them either way: no unexpected answer can read as green.
 
 ## Bootstrap runbook
 
-Per decision #17, the repaired cards can carry their own PR before they are on main. A scratch server for that needs real `gh`, so it is the owner's step, not an agent's.
+Per decision #23, the repaired cards carry their own PR before they are on main. A scratch server for that needs real `gh`, and the operator resolves its cards by script. The one blockers-only review of this change ran on 2a67357; its four blockers were fixed in 6e5cba4, with no re-review under the standing rule.
 
 1. Build in the worktree that holds the fix: `pnpm build:desktop && pnpm --dir apps/web build`.
 2. `MEC_DATA_DIR="$(mktemp -d)" MEC_NO_OPEN=1 node apps/desktop/bin/mec.js`, and read the URL it prints. This keeps the real `HOME` so `gh` works. Stick to release routes, as the scout runbook says.

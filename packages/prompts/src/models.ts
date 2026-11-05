@@ -415,8 +415,15 @@ export const DEFAULT_MODELS_YAML_PATH = fileURLToPath(
   DEFAULT_MODELS_YAML_URL ?? DEFAULT_MODELS_YAML_CANDIDATES[0]!,
 )
 
-/** Where the user's table lives; `~/.mec/models.yaml` by default (§5.4 keystore root). */
-export const userModelsPath = (root = join(homedir(), '.mec')) => join(root, 'models.yaml')
+/**
+ * §5.4 keystore root: the same rule `bin/mec.js` gives the store, so a server on a scratch
+ * `MEC_DATA_DIR` keeps its keystore, models table and prompts there and never reaches `~/.mec`.
+ * Read on every call, because the environment is the caller's to set.
+ */
+export const mecRoot = (): string => process.env.MEC_DATA_DIR ?? join(homedir(), '.mec')
+
+/** Where the user's table lives; `<keystore root>/models.yaml` by default (§5.4). */
+export const userModelsPath = (root = mecRoot()) => join(root, 'models.yaml')
 
 /**
  * Loads the capability table with provenance: the user's `~/.mec/models.yaml` when it

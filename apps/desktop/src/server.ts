@@ -12,7 +12,6 @@ import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { Socket } from 'node:net'
-import { homedir } from 'node:os'
 import { extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Effects, HealthBoard, HealthName, Json, ProviderId, Store, StoreDoc } from '@mec/contracts'
@@ -38,7 +37,7 @@ import {
 } from '@mec/meta'
 import type { ConfirmationRecord } from '@mec/policy'
 import { ALWAYS_CONFIRM, loadPolicy, resolveConfirmation } from '@mec/policy'
-import { defaultParts, PromptStore, StaleBaseError, UnknownPartError } from '@mec/prompts'
+import { defaultParts, mecRoot, PromptStore, StaleBaseError, UnknownPartError } from '@mec/prompts'
 import {
   API_KEY_PROBE_TARGETS,
   claudeHome,
@@ -84,7 +83,8 @@ export type ServerDeps = {
    * §5.4 root the engines tree hangs off: slot homes land at
    * `<keystoreRoot>/engines/<engine>/<slot>` and key files at
    * `<keystoreRoot>/engines/<engine>/<slot>/keys/<provider>.key` (0600, nowhere else).
-   * Defaults to `~/.mec`, so keys live under `~/.mec/engines/…` exactly as §5.4 states.
+   * Defaults to `MEC_DATA_DIR` when set, else `~/.mec`, so keys live under `~/.mec/engines/…`
+   * exactly as §5.4 states.
    */
   keystoreRoot?: string
   /** The built web app to serve; defaults to the bundled or repo `dist`. A test seam. */
@@ -199,9 +199,6 @@ function freshId(prefix: string): string {
   idCounter += 1
   return `${prefix}${Date.now().toString(36)}${idCounter.toString(36)}${randomBytes(4).toString('hex')}`
 }
-
-/** §5.4 default keystore root: the engines tree under `~/.mec`. */
-const DEFAULT_KEYSTORE_ROOT = join(homedir(), '.mec')
 
 /** §5.8 zero-token validity probe for Anthropic API keys: GET /v1/models costs no tokens. */
 const VALIDATE_TIMEOUT_MS = 15_000
@@ -457,7 +454,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // tests inject one with a fake pty, everyone else gets the default manager.
   const loginCards = deps.loginCards ?? new LoginCardManager()
   // §5.4 where slot homes (and only they) hold keys; §5.8 transport for the zero-token probe.
-  const keystoreRoot = deps.keystoreRoot ?? DEFAULT_KEYSTORE_ROOT
+  const keystoreRoot = deps.keystoreRoot ?? mecRoot()
   // §21.3 wizard probes: local, capped, never throwing; tests inject fixtures.
   const probeCmd = deps.probeCmd ?? defaultProbeCmd
   const validateFetch = deps.validateFetch ?? globalThis.fetch

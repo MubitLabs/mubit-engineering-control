@@ -50,9 +50,11 @@ import {
   redact,
   SlotKeystore,
 } from '@mec/slots'
+import type { InspectionReads } from '@mec/store'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 import { buildDoctorReport } from './doctor'
 import type { HealthSnapshot, PartEntry } from './health'
+import { registerInspectionRoutes } from './inspection'
 import { type CardEvent, LoginCardManager } from './login-cards'
 import {
   cardDetail,
@@ -143,6 +145,8 @@ export type ServerDeps = {
   setupAgent?: SetupAgentSurface
   /** T7: the Settings API the default setup agent drafts against (the integrator wires T1/T4 here). */
   setupSettingsApi?: SetupSettingsApi
+  /** M3.1: bounded keyset reads over the SQLite store; the `/api/inspect/*` routes exist only when present. */
+  inspection?: InspectionReads
 }
 
 /** The chat route's setup-mode surface — `SetupAgent` from @mec/meta satisfies it structurally. */
@@ -2209,6 +2213,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // (recovered from revision history), new default, user text — plus removed parts, dropped
   // on the next save.
   app.get('/api/prompts/changes', async () => ({ changes: prompts.changes() }))
+
+  // M3.1 canonical inspection: read-only, bounded, redacted `GET /api/inspect/*`.
+  if (deps.inspection !== undefined) registerInspectionRoutes(app, { store, reads: deps.inspection, now })
 
   const webDist = deps.webDist ?? WEB_DIST
   if (existsSync(webDist)) {

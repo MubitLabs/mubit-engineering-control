@@ -59,6 +59,19 @@ Every route in `apps/desktop/src/server.ts`. **Auth model: loopback only** — t
 | POST | `/api/processing/pause`, `/api/processing/resume` | — | Stops or restarts queue passes: `{ status: 'paused' \| 'running' }`. Idempotent. A pause is stored and survives restart; resume moves waiting deadlines later by its length. 404 when the server has no pause control. |
 | GET | `/api/processing` | — | `{ paused, pausedAt? }`. `/api/status`, `health.json` and `mec status` report `paused` too. |
 
+### Inspection (read-only, bounded)
+
+Additive routes for the overhaul's views; `/api/work` and the other routes above are unchanged. Every string is redacted on the way out. A page is at most 100 rows (default 50, a larger `limit` is held to 100) and 1 MiB of JSON; a byte cap ends a page early with a valid `nextCursor`. The cursor is opaque. A malformed `limit` or `cursor`, or an unknown `repoId`, is a 400 before any query. A row with no `repoId` is Unassigned: `repoId: null`, `repoLabel: null`, `readOnly: true`. What is not recorded yet is `null`, `[]` or `coverage: false`, never zero. The stage is computed from facts (spec §10); an ended item shows its outcome.
+
+| Method | Path | Query | What it does |
+| --- | --- | --- | --- |
+| GET | `/api/inspect/snapshot` | `?repoId=` | Registered repositories with their needs counts, the needs count for the scope, and the event cursors (`repositories` and the newest 100 `work:<id>` streams) read in one consistent call. |
+| GET | `/api/inspect/work` | `?repoId=&cursor=&limit=` | A page of work rows: title, repository, stage (`key`, `label`, `waitingOn`), reason, next action, task counts, last activity. |
+| GET | `/api/inspect/work/:id` | — | One work item: its tasks, hold, delivery, `delegation` (empty until attempts record parents), coverage and cursors. 404 for an id that is not a work item. |
+| GET | `/api/inspect/tasks/:id` | — | One task: attempts (requested and actual model kept apart), checks and diff for the exact head only, reported usage, coverage. |
+| GET | `/api/inspect/needs` | `?repoId=&recent=1` | Open questions and pending cards. `recent=1` adds recently settled and expired ones. A card's `workItemId` is set only from a stored `workItemId` or `mandateId`, never from a branch name. |
+| GET | `/api/inspect/search` | `?q=&repoId=` | Messages by text or id, work by title, tasks by name, and references (`#12`, a GitHub PR URL, a SHA) where a stored field holds them. At most 20 per kind. |
+
 ### Slots
 
 | Method | Path | Body | What it does |

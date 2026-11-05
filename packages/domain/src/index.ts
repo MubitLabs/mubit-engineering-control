@@ -14,7 +14,7 @@ export type { BuiltinRole, ContextPolicy, RoleDef, RoleIssue, SlotClassPreferenc
 export { BUILTIN_ROLE_NAMES, BUILTIN_ROSTER, compileAdHocRole, RESERVED_NAME_PREFIXES } from './registry'
 export type { ActiveAttempt, DispatchPlan, SchedulableTask, SlotView } from './scheduling'
 export { planDispatches } from './scheduling'
-export type { StageRow, WorkItemView } from './stages'
+export type { Stage, StageRow, WorkItemView } from './stages'
 export { STAGE_TABLE, stageOf } from './stages'
 export type {
   AttemptEvent,

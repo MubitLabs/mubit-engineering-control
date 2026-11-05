@@ -1,0 +1,58 @@
+[
+  {
+    "name": "remove repo predicate",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      limit,\n      ...(repoId !== undefined && { equals: { repoId } }),\n    })\n    const rows = this.workRows(",
+    "replace": "      limit,\n    })\n    const rows = this.workRows(",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "drop the page limit",
+    "file": "packages/store/src/inspection.ts",
+    "find": "      options.onRow?.()\n      if (rows.length === limit) {",
+    "replace": "      options.onRow?.()\n      if (false) {",
+    "tests": ["packages/store/test/inspection.test.ts", "apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "skip cursor validation",
+    "file": "packages/store/src/inspection.ts",
+    "find": "  if (v !== 1) throw new CursorError('cursor version is not supported')\n",
+    "replace": "",
+    "tests": ["packages/store/test/inspection.test.ts", "apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "serve task text without redact",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "const redactText = (text: string): string => redact(text, [], [])",
+    "replace": "const redactText = (text: string): string => text",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "restore held-first stage order",
+    "file": "packages/domain/src/stages.ts",
+    "find": "    match: (w) => w.openQuestions > 0,\n    label: () => 'Needs your answer',",
+    "replace": "    match: (w) => w.holdStatus === 'held',\n    label: () => 'Held by you',",
+    "tests": ["packages/domain/test/stages.test.ts", "apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "make a missing record coverage true",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      usage: some((a) => num(a.costUsd) !== null),",
+    "replace": "      usage: true,",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "join a card by branch name",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      const workItemId = str(doc.workItemId) ?? (mandateId === null ? null : (byMandate.get(mandateId) ?? null))",
+    "replace": "      const workItemId =\n        str(doc.workItemId) ??\n        (mandateId === null ? null : (byMandate.get(mandateId) ?? null)) ??\n        str(this.#reads.docsByField('work_item', 'branch', [String(obj(doc.payload)?.branch)])[0]?.id)",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "treat absent repoId as readOnly false",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "        readOnly: repoId === null,",
+    "replace": "        readOnly: false,",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  }
+]

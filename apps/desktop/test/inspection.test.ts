@@ -1198,21 +1198,23 @@ describe('inspection routes: needs cursor and byte cap (second fix round)', () =
     store.atomic(() => {
       store.engines.save({ ...question('old', 'answered'), answeredAt: later(100) } as any)
       for (let i = 0; i < 2_100; i++) store.engines.save(question(`done${i}`, 'answered') as any)
+      store.engines.save({ ...question('young', 'answered'), answeredAt: later(200) } as any)
     })
     const { ids } = await walk('recent=1')
-    expect(ids[0]).toBe('old')
+    expect(ids.slice(0, 2)).toEqual(['young', 'old'])
   })
 
   it('questions and cards share one settle-time order, with a lapsed card at its expiry', async () => {
     seedWork('wi_1', { repoId: 'repo_a' })
     store.atomic(() => {
-      store.confirmations.save(card('conf_denied', 'denied', { resolvedAt: later(30) }) as any)
+      store.confirmations.save(card('conf_denied', 'denied', { resolvedAt: later(50) }) as any)
       store.engines.save({ ...question('q_late', 'answered'), answeredAt: later(40) } as any)
       store.confirmations.save(card('conf_lapsed', 'pending', { expiresAt: later(-20) }) as any)
       store.engines.save({ ...question('q_early', 'answered'), answeredAt: later(-30) } as any)
+      store.engines.save({ ...question('q_mid', 'answered'), answeredAt: later(-10) } as any)
     })
     const { ids } = await walk('recent=1&limit=1')
-    expect(ids).toEqual(['q_late', 'conf_denied', 'conf_lapsed', 'q_early'])
+    expect(ids).toEqual(['conf_denied', 'q_late', 'q_mid', 'conf_lapsed', 'q_early'])
   })
 
   it('a walk still reaches its twenty when newer rows settle mid-walk, and never more', async () => {
@@ -1257,6 +1259,9 @@ describe('inspection routes: needs cursor and byte cap (second fix round)', () =
     store.atomic(() => {
       store.engines.save({ ...question('a', 'answered'), answeredAt: later(1) } as any)
       store.engines.save({ ...question('b', 'answered'), answeredAt: later(2) } as any)
+      for (let i = 1; i <= 4; i++) {
+        store.engines.save({ ...question(`older${i}`, 'answered'), answeredAt: later(-i) } as any)
+      }
     })
     const first = (await get('/api/inspect/needs?recent=1&limit=1')).json()
     const rowid = (db.prepare('SELECT rowid AS r FROM docs WHERE id = ?').get('question/b') as { r: number })
@@ -1270,7 +1275,7 @@ describe('inspection routes: needs cursor and byte cap (second fix round)', () =
     })
     const bad = Buffer.from(JSON.stringify({ v: 1, r: 1, p: 'recent', t: 7, n: 1 })).toString('base64url')
     expect((await get(`/api/inspect/needs?recent=1&cursor=${bad}`)).status).toBe(400)
-    const spent = Buffer.from(JSON.stringify({ v: 1, r: rowid, p: 'recent', t: later(2), n: 25 }))
+    const spent = Buffer.from(JSON.stringify({ v: 1, r: rowid, p: 'recent', t: later(2), n: 21 }))
     const past = (await get(`/api/inspect/needs?recent=1&cursor=${spent.toString('base64url')}`)).json()
     expect(past.items).toEqual([])
     expect(past.nextCursor).toBeNull()

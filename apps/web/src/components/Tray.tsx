@@ -135,6 +135,7 @@ export function DecisionCard({ item }: { item: InboxItem }) {
 
 /** The confirm button names the effect in words (§2.7). */
 function confirmVerb(detail: DecisionDetail): string {
+  if (detail.verb !== undefined) return detail.verb
   const branch = detail.facts.find((fact) => fact.label === 'Branch')
   return branch === undefined || detail.what.toLowerCase().includes('push')
     ? 'push and open PR'

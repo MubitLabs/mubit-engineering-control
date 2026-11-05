@@ -90,6 +90,8 @@ export type DecisionDetail = {
   /** True when this is the honest placeholder for an id the §23 fixture does not know. */
   absent?: true
   what: string
+  /** The effect in words for the confirm button; a served card names its own. */
+  verb?: string
   why: string
   facts: Array<{ label: string; value: string; mono?: boolean }>
   operation: string
@@ -231,7 +233,15 @@ export type RepositoryEntry = {
 }
 
 export type ResolveAnswer = 'approve' | 'deny'
-export type ResolveResult = { status: string }
+/** What an answer did. `status` is the card's own; the rest is the truth about the action. */
+export type ResolveResult = {
+  status: string
+  reason?: string
+  error?: string
+  merged?: boolean
+  pushed?: boolean
+  prNumber?: number
+}
 
 /**
  * TODO(server) #7 of 10: prompts endpoint — the part list by layer with edited

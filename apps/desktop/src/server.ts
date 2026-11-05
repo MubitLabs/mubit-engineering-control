@@ -124,6 +124,7 @@ export type ServerDeps = {
       repoId?: string
       explicitNew?: boolean
       idempotencyKey?: string
+      intent?: 'new' | 'follow_up'
     }): Promise<{
       acknowledged: string
       workItemId?: string
@@ -662,7 +663,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       reply.code(400).send({ error: "intent must be 'new' or 'follow_up'" })
       return
     }
-    const intent = body.intent
+    const intent = body.intent as 'new' | 'follow_up' | undefined
     if (intent === 'follow_up' && referencesWorkItem === undefined) {
       reply.code(400).send({ error: 'follow_up_needs_reference' })
       return
@@ -711,17 +712,24 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     const at = now().toISOString()
 
     // Composed path: the meta-agent service owns message persistence, routing, the ack,
-    // the plan and the launch enqueues (§6), and stores the key before the brain runs, so the
-    // replay check above answers a retry from the doc without waiting on the turn.
+    // the plan and the launch enqueues (§6), and stores the key and the submission before the
+    // brain runs, so the replay check above answers a retry from the doc without waiting.
     if (deps.metaAgent !== undefined) {
       const outcome = await deps.metaAgent.onUserMessage({
         messageId,
         text,
-        referencesWorkItem,
+        ...submitted,
         explicitNew,
         ...repo,
         ...(idempotencyKey !== undefined && { idempotencyKey }),
       })
+      // The seam does not promise to store these: a meta agent that did rewrites the same fields.
+      if (idempotencyKey !== undefined) {
+        store.atomic(() => {
+          const doc = store.messages.get(messageId)
+          if (doc !== undefined) store.messages.save({ ...doc, ...submitted, idempotencyKey })
+        })
+      }
       return {
         messageId,
         ...(outcome.workItemId !== undefined && { workItemId: outcome.workItemId }),

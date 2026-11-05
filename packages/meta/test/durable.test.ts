@@ -141,6 +141,37 @@ describe('stable message identity (§12.1, §20 Duplicate dispatch)', () => {
     })
   })
 
+  it('stores the intent and reference with the key, and keeps them on every later save', async () => {
+    let storedInTurn: unknown
+    const { service, store } = rig(async () => {
+      storedInTurn = store.messages.get('msg_1')
+      return plan
+    })
+    await service.onUserMessage({
+      messageId: 'msg_1',
+      text: 'go',
+      repoId: 'repo_a',
+      idempotencyKey: 'k1',
+      intent: 'new',
+    })
+
+    expect(storedInTurn).toMatchObject({ idempotencyKey: 'k1', intent: 'new' })
+    expect(store.messages.get('msg_1')).toMatchObject({ intent: 'new', ackText: 'On it' })
+
+    await service.onUserMessage({
+      messageId: 'msg_2',
+      text: 'more',
+      repoId: 'repo_a',
+      idempotencyKey: 'k2',
+      intent: 'follow_up',
+      referencesWorkItem: String(store.messages.get('msg_1')?.workItemId),
+    })
+    expect(store.messages.get('msg_2')).toMatchObject({
+      intent: 'follow_up',
+      referencesWorkItem: store.messages.get('msg_1')?.workItemId,
+    })
+  })
+
   it('crash after work created resumes the same message', async () => {
     const { store, workItemId } = await crashedAdmission()
     const next = countingBrain(plan)

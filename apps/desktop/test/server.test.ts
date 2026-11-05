@@ -1068,6 +1068,30 @@ describe('durable commands at the routes (M1.4b, §12.1, §17, §20)', () => {
     expect(store.workItems.list()).toHaveLength(1)
   })
 
+  it('a retry during planning compares against the intent and reference it was sent with', async () => {
+    const { app, calls, answer } = realService()
+    const repoId = await registerRepo(app, 'one')
+    const headers = { 'x-idempotency-key': 'k1' }
+    const payload = { text: 'ship it', repoId, intent: 'new' }
+
+    const first = app.inject({ method: 'POST', url: '/api/chat/messages', payload, headers })
+    await untilBrainCalled(calls, 1)
+
+    // Same request: a replay. Dropped intent: another request, so never read as delivered.
+    expect((await postMessage(app, payload, headers)).routing).toBe('duplicate')
+    const edited = await app.inject({
+      method: 'POST',
+      url: '/api/chat/messages',
+      payload: { text: 'ship it', repoId },
+      headers,
+    })
+    expect(edited.statusCode).toBe(409)
+    expect(edited.json()).toMatchObject({ error: 'idempotency_mismatch' })
+    expect(calls()).toBe(1)
+    answer(planned)
+    await first
+  })
+
   it('the idempotency key is stored before the brain returns', async () => {
     const { app, store, calls, answer } = realService()
     const repoId = await registerRepo(app, 'one')

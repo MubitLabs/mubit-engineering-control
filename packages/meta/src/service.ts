@@ -168,8 +168,15 @@ export type TurnOutcome = {
  */
 type TurnInput = { messageId: string; text: string; repoId?: string; wake?: true; idempotencyKey?: string }
 
+/** §12.1: what the owner submitted, which a key's retry must repeat exactly. */
+type SubmissionIntent = 'new' | 'follow_up'
+
 /** A user message's turn: what it names, and whether the owner asked for a New request (§12.1). */
-type MessageTurn = TurnInput & { referencesWorkItem?: string; explicitNew?: boolean }
+type MessageTurn = TurnInput & {
+  referencesWorkItem?: string
+  explicitNew?: boolean
+  intent?: SubmissionIntent
+}
 
 /** A launch this turn enqueued, as persisted on the message doc so replays reuse the key. */
 type LaunchRecord = { attemptId: string; key: string; taskId: string; slotId: string }
@@ -294,15 +301,14 @@ export class MetaAgentService {
     explicitNew?: boolean
     /** Stored in the message's first transaction, so a retry finds it before the brain returns. */
     idempotencyKey?: string
+    /** Stored with the key: a retry during planning is compared against what was sent. */
+    intent?: SubmissionIntent
   }): Promise<TurnOutcome> {
     return this.#messageTurn(input, false)
   }
 
   /** `resumed` is a relay running the stored turn: only it may start a planner turn in a pause. */
-  async #messageTurn(
-    input: MessageTurn,
-    resumed: boolean,
-  ): Promise<TurnOutcome> {
+  async #messageTurn(input: MessageTurn, resumed: boolean): Promise<TurnOutcome> {
     assertRepoAdmission(this.#store, input)
     const prior = this.#store.messages.get(input.messageId)
     if (prior !== undefined && repoOf(prior) !== input.repoId) {
@@ -323,11 +329,7 @@ export class MetaAgentService {
     return turn
   }
 
-  async #admit(
-    input: MessageTurn,
-    prior: StoreDoc | undefined,
-    resumed: boolean,
-  ): Promise<TurnOutcome> {
+  async #admit(input: MessageTurn, prior: StoreDoc | undefined, resumed: boolean): Promise<TurnOutcome> {
     // A receipt-less message with work is an interrupted turn, and that work is its own. Routing
     // would read it as live work and file the message as conversation (§20 App crash).
     if (typeof prior?.workItemId === 'string') {
@@ -1414,9 +1416,9 @@ export class MetaAgentService {
     this.#store.events.append(stream, { stream, seq, at, type, body })
   }
 
-  /** Upserts the message doc, carrying `createdAt`, the repo and the key over once they exist. */
+  /** Upserts the message doc, carrying `createdAt`, the repo, the key and the submission over. */
   #saveMessage(
-    input: TurnInput,
+    input: MessageTurn,
     fields: {
       routing: string
       at: string
@@ -1431,6 +1433,10 @@ export class MetaAgentService {
     const repoId = input.repoId ?? repoOf(prior)
     const idempotencyKey =
       input.idempotencyKey ?? (typeof prior?.idempotencyKey === 'string' ? prior.idempotencyKey : undefined)
+    const intent = input.intent ?? (prior?.intent as SubmissionIntent | undefined)
+    const referencesWorkItem =
+      input.referencesWorkItem ??
+      (typeof prior?.referencesWorkItem === 'string' ? prior.referencesWorkItem : undefined)
     this.#store.messages.save({
       id: input.messageId,
       text: input.text,
@@ -1439,6 +1445,8 @@ export class MetaAgentService {
       routing: fields.routing,
       ...(repoId !== undefined && { repoId }),
       ...(idempotencyKey !== undefined && { idempotencyKey }),
+      ...(intent !== undefined && { intent }),
+      ...(referencesWorkItem !== undefined && { referencesWorkItem }),
       ...(fields.workItemId !== undefined && { workItemId: fields.workItemId }),
       ...(fields.ackText !== undefined && { ackText: fields.ackText }),
       ...(fields.tasksCreated !== undefined && { tasksCreated: fields.tasksCreated }),

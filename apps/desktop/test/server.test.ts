@@ -89,6 +89,146 @@ function track(server: ReturnType<typeof buildServer>): ReturnType<typeof buildS
   return server
 }
 
+async function registerRepo(app: ReturnType<typeof buildServer>, name: string): Promise<string> {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/repositories',
+    payload: { urlOrPath: `https://example.test/${name}`, trusted: true, bootstrapCmds: [], checkCmds: [] },
+  })
+  expect(res.statusCode).toBe(200)
+  return (res.json() as { id: string }).id
+}
+
+describe('repo identity at the chat route', () => {
+  const inject = (app: ReturnType<typeof buildServer>, payload: Record<string, unknown>) =>
+    app.inject({ method: 'POST', url: '/api/chat/messages', payload })
+
+  it('unknown repoId is refused before any write', async () => {
+    const { store, app } = makeServer()
+    const res = await inject(track(app), { text: 'ship it', repoId: 'repo_nope' })
+    expect(res.statusCode).toBe(400)
+    expect(res.json()).toMatchObject({ error: 'unknown_repo' })
+    expect(store.messages.list()).toHaveLength(0)
+    expect(store.workItems.list()).toHaveLength(0)
+  })
+
+  it('a key-shaped message under an unknown repo stores nothing at all', async () => {
+    const { store, app } = makeServer()
+    const res = await inject(track(app), { text: `sk-ant-${'a'.repeat(40)}`, repoId: 'repo_nope' })
+    expect(res.statusCode).toBe(400)
+    expect(store.messages.list()).toHaveLength(0)
+  })
+
+  it('a repoId of the wrong type is a 400', async () => {
+    const { store, app } = makeServer()
+    track(app)
+    for (const repoId of [7, '', null]) {
+      expect((await inject(app, { text: 'ship it', repoId })).statusCode).toBe(400)
+    }
+    expect(store.messages.list()).toHaveLength(0)
+  })
+
+  it('repo A live work does not route repo B to conversation', async () => {
+    const { store, app } = makeServer()
+    track(app)
+    const repoA = await registerRepo(app, 'a')
+    const repoB = await registerRepo(app, 'b')
+
+    const a = await postMessage(app, { text: 'work in a', repoId: repoA })
+    const b = await postMessage(app, { text: 'work in b', repoId: repoB })
+    const note = await postMessage(app, { text: 'more on a', repoId: repoA })
+
+    expect(a.routing).toBe('new_work')
+    expect(b.routing).toBe('new_work')
+    expect(note.routing).toBe('conversation')
+    expect(store.workItems.get(b.workItemId!)).toMatchObject({ repoId: repoB })
+    expect(store.messages.get(note.messageId)).toMatchObject({ repoId: repoA })
+    expect((store.workItems.get(a.workItemId!)?.pin as { url?: string }).url).toBe('https://example.test/a')
+  })
+
+  it('a reference across repos is a 400', async () => {
+    const { store, app } = makeServer()
+    track(app)
+    const repoA = await registerRepo(app, 'a')
+    const repoB = await registerRepo(app, 'b')
+    const a = await postMessage(app, { text: 'work in a', repoId: repoA })
+
+    const res = await inject(app, { text: 'x', repoId: repoB, referencesWorkItem: a.workItemId })
+    expect(res.statusCode).toBe(400)
+    expect(res.json()).toMatchObject({ error: 'repo_mismatch' })
+    expect(store.messages.list()).toHaveLength(1)
+  })
+
+  it('an idempotency key replayed under another repo is a 400', async () => {
+    const { app } = makeServer()
+    track(app)
+    const repoA = await registerRepo(app, 'a')
+    const repoB = await registerRepo(app, 'b')
+    const headers = { 'x-idempotency-key': 'key-1' }
+    await postMessage(app, { text: 'x', repoId: repoA }, headers)
+
+    const same = await postMessage(app, { text: 'x', repoId: repoA }, headers)
+    expect(same.routing).toBe('duplicate')
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/chat/messages',
+      payload: { text: 'x', repoId: repoB },
+      headers,
+    })
+    expect(res.statusCode).toBe(400)
+    expect(res.json()).toMatchObject({ error: 'repo_mismatch' })
+  })
+
+  it('absent repoId stays Unassigned, and repo reads are filtered', async () => {
+    const { app } = makeServer()
+    track(app)
+    const repoA = await registerRepo(app, 'a')
+    const bare = await postMessage(app, { text: 'no repo' })
+    const scoped = await postMessage(app, { text: 'in a', repoId: repoA })
+    expect(scoped.routing).toBe('new_work')
+
+    const work = (await app.inject({ method: 'GET', url: `/api/work?repoId=${repoA}` })).json() as {
+      id: string
+      repoId?: string
+    }[]
+    expect(work.map((row) => [row.id, row.repoId])).toEqual([[scoped.workItemId, repoA]])
+    const all = (await app.inject({ method: 'GET', url: '/api/work' })).json() as { id: string }[]
+    expect(all.map((row) => row.id)).toEqual([bare.workItemId, scoped.workItemId])
+    const messages = (
+      await app.inject({ method: 'GET', url: `/api/chat/messages?repoId=${repoA}` })
+    ).json() as { id: string }[]
+    expect(messages.map((row) => row.id)).toEqual([scoped.messageId])
+    for (const url of ['/api/work?repoId=repo_nope', '/api/chat/messages?repoId=repo_nope']) {
+      expect((await app.inject({ method: 'GET', url })).statusCode).toBe(400)
+    }
+  })
+
+  it('the composed path passes the repo to the meta agent and refuses before calling it', async () => {
+    const seen: (string | undefined)[] = []
+    const store: Store = new MemoryRepositories()
+    const app = track(
+      buildServer({
+        store,
+        effects: store.effects,
+        health: new FakeHealthBoard(),
+        policyText: '{"preAuthorised":{}}',
+        now: () => new Date(AT),
+        metaAgent: {
+          onUserMessage: async (input) => {
+            seen.push(input.repoId)
+            return { acknowledged: 'On it', tasksCreated: 0, launchesEnqueued: [], escalated: false }
+          },
+        },
+      }),
+    )
+    const repoA = await registerRepo(app, 'a')
+    await postMessage(app, { text: 'x', repoId: repoA })
+    expect(seen).toEqual([repoA])
+    expect((await inject(app, { text: 'x', repoId: 'repo_nope' })).statusCode).toBe(400)
+    expect(seen).toEqual([repoA])
+  })
+})
+
 describe('buildServer', () => {
   it('GET /healthz answers ok', async () => {
     const { app } = makeServer()

@@ -21,7 +21,14 @@ import { WORK_ITEM_TERMINAL, type WorkItemState } from '@mec/domain'
 import type { LiveWork } from '@mec/meta'
 // T7 (review 2026-11-04 §7): the setup agent for Chat's Setup mode — the Settings API's
 // read side plus a safe slot subset, every write a user-applied draft.
-import { routeMessage, SetupAgent, type SetupSettingsApi } from '@mec/meta'
+import {
+  assertRepoAdmission,
+  RepoAdmissionError,
+  repoFields,
+  routeMessage,
+  SetupAgent,
+  type SetupSettingsApi,
+} from '@mec/meta'
 import type { ConfirmationRecord } from '@mec/policy'
 import { ALWAYS_CONFIRM, loadPolicy, resolveConfirmation } from '@mec/policy'
 import { defaultParts, PromptStore, StaleBaseError, UnknownPartError } from '@mec/prompts'
@@ -37,7 +44,7 @@ import {
   redact,
   SlotKeystore,
 } from '@mec/slots'
-import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify'
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 import { buildDoctorReport } from './doctor'
 import type { HealthSnapshot, PartEntry } from './health'
 import { type CardEvent, LoginCardManager } from './login-cards'
@@ -100,7 +107,12 @@ export type ServerDeps = {
   repoStore?: Store
   /** Present in the composed app: the chat route delegates message+work+plan+launch to it. */
   metaAgent?: {
-    onUserMessage(input: { messageId: string; text: string; referencesWorkItem?: string }): Promise<{
+    onUserMessage(input: {
+      messageId: string
+      text: string
+      referencesWorkItem?: string
+      repoId?: string
+    }): Promise<{
       acknowledged: string
       workItemId?: string
       tasksCreated: number
@@ -376,10 +388,22 @@ function toPartEntry(entry: { state: string; detail?: string }): PartEntry {
   return { state: 'ok', ...(entry.detail !== undefined && { detail: entry.detail }) }
 }
 
-/** Live work for routing (§12.1): work items that are neither done nor stopped. */
-function liveWorkOf(store: Store): LiveWork[] {
+/**
+ * The optional `repoId` read filter: every row when absent, and a 400 for an id that is not
+ * registered, the same answer the chat route gives.
+ */
+function repoFilterOf(store: Store, request: FastifyRequest): { repoId?: string } {
+  const repoId = (request.query as { repoId?: unknown }).repoId
+  if (typeof repoId !== 'string') return {}
+  assertRepoAdmission(store, { repoId })
+  return { repoId }
+}
+
+/** Live work for routing (§12.1): this repository's work items, neither done nor stopped. */
+function liveWorkOf(store: Store, repoId: string | undefined): LiveWork[] {
   return store.workItems
     .list()
+    .filter((doc) => doc.repoId === repoId)
     .filter((doc) => !WORK_ITEM_TERMINAL.includes(String(doc.state) as WorkItemState))
     .map((doc) => ({
       workItemId: String(doc.id),
@@ -435,6 +459,14 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   //     *local* page (another project's dev server) from posting as the user.
   // EventSource streams are GETs: leg 1 covers them, leg 2 never applies.
   const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
+  // §12.1, decision #10: a request that names another repository is the client's error.
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof RepoAdmissionError) {
+      return reply.code(400).send({ error: error.code, detail: error.message })
+    }
+    return reply.send(error)
+  })
+
   app.addHook('onRequest', async (request, reply) => {
     const origin = request.headers.origin
     if (origin !== undefined) {
@@ -468,12 +500,29 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   app.get('/api/status', async () => buildHealthSnapshot(store, deps.health))
 
   app.post('/api/chat/messages', async (request, reply) => {
-    const body = (request.body ?? {}) as { text?: unknown; referencesWorkItem?: unknown; setup?: unknown }
+    const body = (request.body ?? {}) as {
+      text?: unknown
+      referencesWorkItem?: unknown
+      setup?: unknown
+      repoId?: unknown
+    }
     const text = typeof body.text === 'string' ? body.text.trim() : ''
     if (text === '') {
       reply.code(400).send({ error: 'text is required' })
       return
     }
+    if (body.repoId !== undefined && (typeof body.repoId !== 'string' || body.repoId === '')) {
+      reply.code(400).send({ error: 'repoId must be a non-empty string' })
+      return
+    }
+    // §12.1, decision #10: absent is Unassigned; unknown or crossing is refused before any write.
+    const repoId = typeof body.repoId === 'string' ? body.repoId : undefined
+    const repo: { repoId?: string } = repoId !== undefined ? { repoId } : {}
+    const referencesWorkItem =
+      typeof body.referencesWorkItem === 'string' && body.referencesWorkItem !== ''
+        ? body.referencesWorkItem
+        : undefined
+    assertRepoAdmission(store, { repoId, referencesWorkItem })
     // §26 Secrets-in-chat: a key-shaped message is stored REDACTED and answered with the
     // Slots pointer — the key never becomes durable, and the user learns the right door.
     if (matchesSecret(text)) {
@@ -487,6 +536,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
           updatedAt: now().toISOString(),
           routing: 'conversation',
           secretGuard: true,
+          ...repo,
         })
       })
       reply.code(200).send({
@@ -535,10 +585,6 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       }
     }
 
-    const referencesWorkItem =
-      typeof body.referencesWorkItem === 'string' && body.referencesWorkItem !== ''
-        ? body.referencesWorkItem
-        : undefined
     // Clients send `x-idempotency-key` (the web api module); the bare form is accepted too.
     const header = request.headers['x-idempotency-key'] ?? request.headers['idempotency-key']
     const headerText = Array.isArray(header) ? header[0] : header
@@ -548,6 +594,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     if (idempotencyKey !== undefined) {
       const replay = store.messages.list({ idempotencyKey }).at(0)
       if (replay !== undefined) {
+        if (replay.repoId !== repoId) {
+          throw new RepoAdmissionError('repo_mismatch', 'that idempotency key belongs to another repository')
+        }
         return {
           messageId: String(replay.id),
           ...(typeof replay.workItemId === 'string' && { workItemId: replay.workItemId }),
@@ -562,7 +611,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     // Composed path: the meta-agent service owns message persistence, routing, the ack,
     // the plan and the launch enqueues (§6). The route only adds the idempotency key.
     if (deps.metaAgent !== undefined) {
-      const outcome = await deps.metaAgent.onUserMessage({ messageId, text, referencesWorkItem })
+      const outcome = await deps.metaAgent.onUserMessage({ messageId, text, referencesWorkItem, ...repo })
       if (idempotencyKey !== undefined) {
         store.atomic(() => {
           const doc = store.messages.get(messageId)
@@ -589,11 +638,12 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         id: messageId,
         text,
         createdAt: at,
+        ...repo,
         ...(referencesWorkItem !== undefined && { referencesWorkItem }),
         ...(idempotencyKey !== undefined && { idempotencyKey }),
       }
 
-      const decision = routeMessage({ referencesWorkItem, liveWork: liveWorkOf(store) })
+      const decision = routeMessage({ referencesWorkItem, liveWork: liveWorkOf(store, repoId) })
 
       let workItemId: string | undefined
       if (decision.action === 'new_work') {
@@ -603,6 +653,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
           state: 'admitted',
           mandate: { originMessageId: messageId },
           originMessageId: messageId,
+          ...repoFields(store, repoId, deps.policyText),
           createdAt: at,
           updatedAt: at,
         })
@@ -621,8 +672,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     })
   })
 
-  app.get('/api/chat/messages', async () => {
-    const messages = store.messages.list()
+  app.get('/api/chat/messages', async (request) => {
+    const messages = store.messages.list(repoFilterOf(store, request))
     return [...messages].sort(
       (a, b) =>
         String(a.createdAt).localeCompare(String(b.createdAt)) || String(a.id).localeCompare(String(b.id)),
@@ -706,8 +757,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     return detail
   })
 
-  app.get('/api/work', async () =>
-    store.workItems.list().map((doc) => {
+  app.get('/api/work', async (request) =>
+    store.workItems.list(repoFilterOf(store, request)).map((doc) => {
       const id = String(doc.id)
       const tasks = store.tasks.list({ workItemId: id })
       const byStatus: Record<string, number> = {}
@@ -718,6 +769,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       const state = typeof doc.state === 'string' ? doc.state : 'admitted'
       return {
         id,
+        ...(typeof doc.repoId === 'string' && { repoId: doc.repoId }),
         state,
         // The §10 first-match stage projection lands with the scheduler milestone; until
         // then the work item's own lifecycle state is the honest stage.

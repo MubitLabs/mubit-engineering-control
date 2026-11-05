@@ -1,4 +1,11 @@
-import type { HealthBoard, HealthClaim, HealthName, Store, StoreDoc } from '@mec/contracts'
+import type { HealthBoard, HealthClaim, HealthName, Json, Store, StoreDoc } from '@mec/contracts'
+import {
+  MetaAgentService,
+  type MetaBrain,
+  type MetaDecision,
+  saveProcessing,
+  stableMessageId,
+} from '@mec/meta'
 import { type ConfirmationRecord, openConfirmation } from '@mec/policy'
 import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -46,7 +53,10 @@ class FakeHealthBoard implements HealthBoard {
   }
 }
 
-function makeServer(): { store: Store; app: ReturnType<typeof buildServer> } {
+function makeServer(metaFor?: (store: Store) => ServerDeps['metaAgent']): {
+  store: Store
+  app: ReturnType<typeof buildServer>
+} {
   const store: Store = new MemoryRepositories()
   const health = new FakeHealthBoard()
   health.claim('effects:launch').ready()
@@ -56,6 +66,7 @@ function makeServer(): { store: Store; app: ReturnType<typeof buildServer> } {
     health,
     policyText: '{"preAuthorised":{}}',
     now: () => new Date(AT),
+    ...(metaFor !== undefined && { metaAgent: metaFor(store) }),
   }
   return { store, app: buildServer(deps) }
 }
@@ -992,5 +1003,209 @@ describe('owner commands (M1.4a, §12.5, decision #20)', () => {
 
     expect(status.runtime.state).toBe('paused')
     expect(parseHealthSnapshot(JSON.stringify(status))?.runtime.state).toBe('paused')
+  })
+})
+
+describe('durable commands at the routes (M1.4b, §12.1, §17, §20)', () => {
+  const planned: MetaDecision = {
+    ack: 'On it',
+    plan: { tasks: [{ taskId: 'a', objective: 'Do a', dependsOn: [], role: 'implementer' }] },
+  }
+
+  /** A real service over a brain that stays on its await until the test answers. */
+  const realService = () => {
+    const answers: ((decision: MetaDecision) => void)[] = []
+    let calls = 0
+    const brain: MetaBrain = () => {
+      calls += 1
+      return new Promise((resolve) => answers.push(resolve))
+    }
+    let service: MetaAgentService | undefined
+    const server = makeServer((store) => {
+      service = new MetaAgentService({ store, effects: store.effects, brain })
+      return service
+    })
+    track(server.app)
+    return {
+      ...server,
+      service: service!,
+      calls: () => calls,
+      answer: (decision: MetaDecision) => answers.shift()!(decision),
+    }
+  }
+
+  const untilBrainCalled = async (calls: () => number, count: number): Promise<void> => {
+    await vi.waitFor(() => expect(calls()).toBe(count))
+  }
+
+  const relayRows = (store: Store): { key: string; payload: Json }[] =>
+    (store.effects as unknown as { snapshot(): [string, { kind: string; key: string; payload: Json }][] })
+      .snapshot()
+      .map(([, row]) => row)
+      .filter((row) => row.kind === 'relay')
+
+  it('retry during planning admits once', async () => {
+    const { app, store, calls, answer } = realService()
+    const repoId = await registerRepo(app, 'one')
+    const headers = { 'x-idempotency-key': 'k1' }
+    const payload = { text: 'ship it', repoId }
+
+    const first = app.inject({ method: 'POST', url: '/api/chat/messages', payload, headers })
+    await untilBrainCalled(calls, 1)
+    const retry = await postMessage(app, payload, headers)
+
+    // The retry answers at once from the stored doc: a request never waits on another's turn.
+    expect(retry.routing).toBe('duplicate')
+    expect(calls()).toBe(1)
+    answer(planned)
+    const body = (await first).json() as { messageId: string; workItemId: string; routing: string }
+
+    expect(body.messageId).toBe(stableMessageId('k1'))
+    expect(retry.messageId).toBe(body.messageId)
+    expect(retry.workItemId).toBe(body.workItemId)
+    expect(body.routing).toBe('new_work')
+    expect(store.messages.list()).toHaveLength(1)
+    expect(store.workItems.list()).toHaveLength(1)
+  })
+
+  it('a retry during planning compares against the intent and reference it was sent with', async () => {
+    const { app, calls, answer } = realService()
+    const repoId = await registerRepo(app, 'one')
+    const headers = { 'x-idempotency-key': 'k1' }
+    const payload = { text: 'ship it', repoId, intent: 'new' }
+
+    const first = app.inject({ method: 'POST', url: '/api/chat/messages', payload, headers })
+    await untilBrainCalled(calls, 1)
+
+    // Same request: a replay. Dropped intent: another request, so never read as delivered.
+    expect((await postMessage(app, payload, headers)).routing).toBe('duplicate')
+    const edited = await app.inject({
+      method: 'POST',
+      url: '/api/chat/messages',
+      payload: { text: 'ship it', repoId },
+      headers,
+    })
+    expect(edited.statusCode).toBe(409)
+    expect(edited.json()).toMatchObject({ error: 'idempotency_mismatch' })
+    expect(calls()).toBe(1)
+    answer(planned)
+    await first
+  })
+
+  it('the idempotency key is stored before the brain returns', async () => {
+    const { app, store, calls, answer } = realService()
+    const repoId = await registerRepo(app, 'one')
+
+    const first = app.inject({
+      method: 'POST',
+      url: '/api/chat/messages',
+      payload: { text: 'ship it', repoId },
+      headers: { 'x-idempotency-key': 'k1' },
+    })
+    await untilBrainCalled(calls, 1)
+
+    expect(store.messages.list({ idempotencyKey: 'k1' })).toHaveLength(1)
+    answer(planned)
+    await first
+    expect(store.messages.list({ idempotencyKey: 'k1' })).toHaveLength(1)
+  })
+
+  const planningWithQuestion = async (server: ReturnType<typeof realService>) => {
+    const { app, calls, answer } = server
+    const repoId = await registerRepo(app, 'one')
+    const first = app.inject({
+      method: 'POST',
+      url: '/api/chat/messages',
+      payload: { text: 'ship it', repoId },
+    })
+    await untilBrainCalled(calls, 1)
+    answer({
+      ack: 'Which one?',
+      questions: [{ id: 'q_1', question: 'Which one?', options: ['a', 'b'], at: AT }],
+    })
+    await first
+  }
+
+  it('POST answer wakes the real service once', async () => {
+    const server = realService()
+    const { app, store, service, calls, answer } = server
+    await planningWithQuestion(server)
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/questions/q_1/answer',
+      payload: { answer: 'a' },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ id: 'q_1', status: 'answered', answer: 'a' })
+    const rows = relayRows(store)
+    expect(rows.map((row) => row.key)).toEqual(['wake:question/q_1'])
+    const turn = service.runRelay(rows[0]!.payload)
+    await untilBrainCalled(calls, 2)
+    answer({ ack: 'Understood' })
+    await turn
+    await service.runRelay(rows[0]!.payload)
+    expect(calls()).toBe(2)
+  })
+
+  it('POST answer returns before the planner turn finishes', async () => {
+    const server = realService()
+    const { app, calls } = server
+    await planningWithQuestion(server)
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/questions/q_1/answer',
+      payload: { answer: 'a' },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(calls()).toBe(1)
+  })
+
+  it('a second POST answer is a 409 and queues nothing more', async () => {
+    const server = realService()
+    const { app, store } = server
+    await planningWithQuestion(server)
+    const post = (answer: string) =>
+      app.inject({ method: 'POST', url: '/api/questions/q_1/answer', payload: { answer } })
+
+    await post('a')
+    const second = await post('b')
+
+    expect(second.statusCode).toBe(409)
+    expect(store.engines.get('question/q_1')?.answer).toBe('a')
+    expect(relayRows(store)).toHaveLength(1)
+  })
+
+  it('a key-shaped answer is stored redacted with no meta agent too', async () => {
+    const server = makeServer()
+    const secret = `sk-ant-api03-${'a'.repeat(40)}`
+    server.store.atomic(() => {
+      server.store.engines.save({ id: 'question/q_1', questionId: 'q_1', question: 'Q?', status: 'open' })
+    })
+
+    const res = await track(server.app).inject({
+      method: 'POST',
+      url: '/api/questions/q_1/answer',
+      payload: { answer: secret },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(res.body).not.toContain(secret)
+    expect(JSON.stringify(server.store.engines.get('question/q_1'))).not.toContain(secret)
+    expect(JSON.stringify(server.store.events.read('question/q_1'))).not.toContain(secret)
+  })
+
+  it('a message during a pause is recorded and spends no planner turn (decision #27)', async () => {
+    const { app, store, calls } = realService()
+    const repoId = await registerRepo(app, 'one')
+    store.atomic(() => saveProcessing(store, { paused: true, pausedAt: AT }, AT))
+
+    const body = await postMessage(app, { text: 'ship it', repoId })
+
+    expect(calls()).toBe(0)
+    expect(store.messages.get(body.messageId)).toMatchObject({ text: 'ship it', routing: 'new_work' })
   })
 })

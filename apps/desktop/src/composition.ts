@@ -13,16 +13,19 @@ import type { LaunchSpec, Store } from '@mec/contracts'
 import { Later } from '@mec/contracts'
 import { BridgeImpl, MecToolsServer } from '@mec/mec-tools'
 import {
+  failLaunch,
   fakeBrain,
   launchAuthority,
+  launchFailure,
   MetaAgentService,
+  type MetaBrain,
   processingOf,
   RealClaudeBrain,
   refuseLaunch,
   saveProcessing,
 } from '@mec/meta'
 import { loadPolicy } from '@mec/policy'
-import { defaultsRoot, loadModelsTable } from '@mec/prompts'
+import { defaultsRoot, loadModelsTable, userModelsPath } from '@mec/prompts'
 import { parkFromEvents } from '@mec/runtime'
 import { probeModelAvailabilitySync } from '@mec/slots'
 import type { EffectHandler, HealthClaim, Json } from '@mec/store'
@@ -41,6 +44,12 @@ const FIXTURE_SMOKE_DIR = fileURLToPath(
 
 /** A1: queue passes every two seconds; handlers drain what commands committed. */
 const PASS_INTERVAL_MS = 2000
+
+/** §20 Shutdown: how long in-flight work gets before the process goes without it. */
+const CLOSE_BOUND_MS = 10_000
+
+/** The stop and the brain's close: a stopped engine ends at once, and the rest is not slow. */
+const BRAIN_CLOSE_GRACE_MS = 1000
 
 /**
  * The safe-side decider both engines and mec-tools see in this milestone. Composition
@@ -75,6 +84,10 @@ export async function startServer(opts: {
   /** The meta agent's slot home. Default: the wizard's persisted choice in the store, then
    *  MEC_META_SLOT as the override (review 2026-11-04 §3.2 — the env var stops being the way). */
   metaSlotDir?: string
+  /** A test seam: the planner to compose in place of the engine-backed or scripted one. */
+  brain?: MetaBrain
+  /** A test seam: §20's shutdown bound, which is 10 s everywhere else. */
+  closeBoundMs?: number
 }): Promise<RunningServer> {
   // Fail fast: a build without its prompts never starts, before it takes the lock (§16).
   defaultsRoot()
@@ -89,7 +102,9 @@ export async function startServer(opts: {
   // Fail fast: a policy that cannot load never starts a server that would enforce it.
   const policy = loadPolicy(opts.policyText ?? DEFAULT_POLICY_TEXT)
 
-  registerEffectHandlers(store, health, policy.versionHash)
+  // The relay handler reads this late: rows can wait for a meta agent, and one may never come.
+  let metaAgent: MetaAgentService | undefined
+  registerEffectHandlers(store, health, policy.versionHash, () => metaAgent)
 
   // §26 Restart mid-attempt: a previous process's attempts stuck in 'running' reconcile to
   // 'stalled' with a recovery note — one live attempt per task, no duplicate dispatch (the
@@ -129,11 +144,20 @@ export async function startServer(opts: {
         saveProcessing(store, { paused }, at.toISOString())
         if (shift > 0) store.effects.shiftWaiting?.(shift)
       })
+      // After the shift, so a message the pause held back runs on the next pass (#27).
+      metaAgent?.enqueueResumes()
     },
     isPaused(): boolean {
       return paused
     },
   }
+
+  const planner = composePlanner(store, opts, metaSlotDir)
+  metaAgent = planner?.service
+  // §20 App crash: a turn the crash cut short resumes through the queue, never inline. While
+  // paused, resume does this instead, and it comes after the deadline shift.
+  if (!paused) metaAgent?.enqueueResumes()
+
   const queueTimer = setInterval(() => {
     if (paused) return
     void store.effects.run().catch(() => {})
@@ -175,11 +199,91 @@ export async function startServer(opts: {
     inspection: new InspectionReads(db),
     policyText: opts.policyText ?? DEFAULT_POLICY_TEXT,
     pauseControl,
-    // §6 composed path: the meta-agent executor owns chat turns. MEC_FAKE_ENGINE=1 uses the
-    // scripted fake; otherwise the REAL brain (R1.4): the meta agent on a dedicated Claude
-    // slot (MEC_META_SLOT) through the platform tools.
-    ...(process.env.MEC_FAKE_ENGINE === '1' && {
-      metaAgent: new MetaAgentService({
+    // The data dir is the keystore root (§5.4), so a scratch server never reads real state.
+    keystoreRoot: opts.dataDir,
+    ...(metaAgent !== undefined && { metaAgent }),
+  })
+  await app.listen({ port: 0, host: '127.0.0.1' })
+  const address = app.server.address()
+  if (address === null || typeof address === 'string') {
+    throw new Error(`unexpected listen address: ${JSON.stringify(address)}`)
+  }
+
+  let closed = false
+  const close = async (): Promise<void> => {
+    if (closed) return
+    closed = true
+    clearInterval(queueTimer)
+    clearInterval(healthTimer)
+    planner?.quiesce()
+    // The final snapshot answers `not running` (instances 0, not answering) so `mec status`
+    // never reports a dead server as healthy.
+    const final = buildHealthSnapshot(store, health)
+    final.runtime = { state: 'paused', instances: 0, answering: false }
+    writeFileSync(healthPath, `${JSON.stringify(final, null, 2)}\n`)
+    await tools.stop()
+    // §20, decision #36: only work already in flight finishes, within the bound. A drain would
+    // start paid planner turns on the way out; pending rows are for the next start. Past the
+    // bound the engine is stopped, or its pipes would keep this process up. A turn that still
+    // answers fails quietly at its next write, so its row stays running for boot.
+    await within(
+      opts.closeBoundMs ?? CLOSE_BOUND_MS,
+      Promise.allSettled([app.close(), store.effects.settle()]),
+    )
+    app.server.closeAllConnections()
+    if (planner !== undefined) {
+      await within(
+        BRAIN_CLOSE_GRACE_MS,
+        planner.abort().then(() => planner.close()),
+      )
+    }
+    db.close()
+    lock.release()
+  }
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    port: address.port,
+    close,
+    pause: pauseControl.pause,
+    resume: pauseControl.resume,
+    isPaused: pauseControl.isPaused,
+  }
+}
+
+/** Waits for `work` no longer than `ms`; what `work` does later, or how it ends, is its own. */
+async function within(ms: number, work: Promise<unknown>): Promise<void> {
+  let timer: NodeJS.Timeout | undefined
+  const limit = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ms)
+  })
+  await Promise.race([work.catch(() => {}), limit])
+  clearTimeout(timer)
+}
+
+/** The planner's lifetime, as `close` drives it; a scripted brain has no engine to stop. */
+type PlannerLifetime = { quiesce: () => void; abort: () => Promise<void>; close: () => Promise<void> }
+
+const NO_ENGINE: PlannerLifetime = { quiesce: () => {}, abort: async () => {}, close: async () => {} }
+
+/**
+ * §6 composed path: the meta-agent executor owns chat turns. MEC_FAKE_ENGINE=1 uses the scripted
+ * fake; otherwise the REAL brain (R1.4), the meta agent on a dedicated Claude slot
+ * (MEC_META_SLOT) through the platform tools. With neither, there is no meta agent.
+ */
+function composePlanner(
+  store: SqliteStore,
+  opts: { dataDir: string; brain?: MetaBrain },
+  metaSlotDir: string | undefined,
+): ({ service: MetaAgentService } & PlannerLifetime) | undefined {
+  if (opts.brain !== undefined) {
+    return {
+      service: new MetaAgentService({ store, effects: store.effects, brain: opts.brain }),
+      ...NO_ENGINE,
+    }
+  }
+  if (process.env.MEC_FAKE_ENGINE === '1') {
+    return {
+      service: new MetaAgentService({
         store,
         effects: store.effects,
         brain: fakeBrain({
@@ -202,83 +306,59 @@ export async function startServer(opts: {
           },
         }),
       }),
-    }),
-    ...(process.env.MEC_FAKE_ENGINE !== '1' &&
-      metaSlotDir !== undefined && {
-        metaAgent: new MetaAgentService({
-          store,
-          effects: store.effects,
-          // Issue #14: the planner's capability-table supplier — without it the service
-          // falls back to an EMPTY table, every tier is unplaceable, every plan rejected.
-          modelsTable: () => {
-            try {
-              const loaded = loadModelsTable()
-              return {
-                table: loaded.table,
-                provenance: {
-                  sha256: loaded.provenance.sha256,
-                  origin: loaded.provenance.source,
-                },
-              }
-            } catch {
-              return undefined
-            }
-          },
-          // Issue #14, seam two: per-turn availability marks — the config-declared probe
-          // for opencode slots (the slot's own opencode.json), honestly unlisted elsewhere.
-          marks: () => {
-            const out: Record<string, Record<string, 'available' | 'unavailable' | 'unlisted'>> = {}
-            for (const slot of store.slots.list()) {
-              if (slot.engine !== 'opencode' || typeof slot.home !== 'string') continue
-              try {
-                const report = probeModelAvailabilitySync('opencode', {
-                  configDir: join(slot.home, 'config'),
-                })
-                out[String(slot.id)] = report.availability
-              } catch {
-                // a slot whose config cannot be read is honestly unlisted (empty marks)
-              }
-            }
-            return out
-          },
-          brain: new RealClaudeBrain({
-            slotDir: metaSlotDir,
-            toolsSecret: randomBytes(24).toString('hex'),
-          }).asBrain(),
-        }),
-      }),
+      ...NO_ENGINE,
+    }
+  }
+  if (metaSlotDir === undefined) return undefined
+  // Held so `close` can reach it; its close waits for a turn in flight, so `close` bounds that.
+  const brain = new RealClaudeBrain({
+    slotDir: metaSlotDir,
+    toolsSecret: randomBytes(24).toString('hex'),
+    // §5.4: the data dir is the root, so a scratch server never reads the real prompts.
+    promptsRoot: join(opts.dataDir, 'prompts'),
   })
-  await app.listen({ port: 0, host: '127.0.0.1' })
-  const address = app.server.address()
-  if (address === null || typeof address === 'string') {
-    throw new Error(`unexpected listen address: ${JSON.stringify(address)}`)
-  }
-
-  let closed = false
-  const close = async (): Promise<void> => {
-    if (closed) return
-    closed = true
-    clearInterval(queueTimer)
-    clearInterval(healthTimer)
-    // The final snapshot answers `not running` (instances 0, not answering) so `mec status`
-    // never reports a dead server as healthy.
-    const final = buildHealthSnapshot(store, health)
-    final.runtime = { state: 'paused', instances: 0, answering: false }
-    writeFileSync(healthPath, `${JSON.stringify(final, null, 2)}\n`)
-    await tools.stop()
-    await app.close()
-    // Paused, rows stay for the next start: only jobs already in flight finish.
-    await (paused ? store.effects.settle() : store.effects.drain()).catch(() => {})
-    db.close()
-    lock.release()
-  }
   return {
-    url: `http://127.0.0.1:${address.port}`,
-    port: address.port,
-    close,
-    pause: pauseControl.pause,
-    resume: pauseControl.resume,
-    isPaused: pauseControl.isPaused,
+    service: new MetaAgentService({
+      store,
+      effects: store.effects,
+      // Issue #14: the planner's capability-table supplier — without it the service
+      // falls back to an EMPTY table, every tier is unplaceable, every plan rejected.
+      modelsTable: () => {
+        try {
+          const loaded = loadModelsTable({ userPath: userModelsPath(opts.dataDir) })
+          return {
+            table: loaded.table,
+            provenance: {
+              sha256: loaded.provenance.sha256,
+              origin: loaded.provenance.source,
+            },
+          }
+        } catch {
+          return undefined
+        }
+      },
+      // Issue #14, seam two: per-turn availability marks — the config-declared probe
+      // for opencode slots (the slot's own opencode.json), honestly unlisted elsewhere.
+      marks: () => {
+        const out: Record<string, Record<string, 'available' | 'unavailable' | 'unlisted'>> = {}
+        for (const slot of store.slots.list()) {
+          if (slot.engine !== 'opencode' || typeof slot.home !== 'string') continue
+          try {
+            const report = probeModelAvailabilitySync('opencode', {
+              configDir: join(slot.home, 'config'),
+            })
+            out[String(slot.id)] = report.availability
+          } catch {
+            // a slot whose config cannot be read is honestly unlisted (empty marks)
+          }
+        }
+        return out
+      },
+      brain: brain.asBrain(),
+    }),
+    quiesce: () => brain.quiesce(),
+    abort: () => brain.abort(),
+    close: () => brain.close(),
   }
 }
 
@@ -363,11 +443,21 @@ function reconcileRunningAttempts(store: SqliteStore): void {
   })
 }
 
-function registerEffectHandlers(store: SqliteStore, health: HealthBoardImpl, policyHash: string): void {
+function registerEffectHandlers(
+  store: SqliteStore,
+  health: HealthBoardImpl,
+  policyHash: string,
+  metaAgent: () => MetaAgentService | undefined,
+): void {
   for (const kind of EFFECT_KINDS) {
     const claim = health.claim(`effects:${kind}`)
     claim.ready()
-    const run: EffectHandler = kind === 'launch' ? launchHandler(store, policyHash) : async () => {}
+    const run: EffectHandler =
+      kind === 'launch'
+        ? launchHandler(store, policyHash)
+        : kind === 'relay'
+          ? relayHandler(metaAgent)
+          : unsupportedHandler(kind)
     store.effects.handle(
       kind,
       guard(claim, run),
@@ -390,8 +480,28 @@ function guard(claim: HealthClaim, run: EffectHandler): EffectHandler {
   }
 }
 
+/** A wake with no meta agent to run it waits for a configured slot rather than being lost. */
+function relayHandler(metaAgent: () => MetaAgentService | undefined): EffectHandler {
+  return async (payload) => {
+    const service = metaAgent()
+    if (service === undefined) throw new Later('no meta agent is configured')
+    await service.runRelay(payload)
+  }
+}
+
+/** Nothing produces this kind yet, so a row of it is a bug, and it must not settle as success. */
+function unsupportedHandler(kind: string): EffectHandler {
+  return async () => {
+    throw new Error(`unsupported effect: ${kind}`)
+  }
+}
+
 function launchHandler(store: SqliteStore, policyHash: string): EffectHandler {
   return async (payload) => {
+    // A failed attempt stays failed: the row keeps failing until the queue gives up on it, where
+    // the gate below would drain it as refused.
+    const failure = launchFailure(store, payload)
+    if (failure !== undefined) throw new Error(`launch failed: ${failure}`)
     // The gate (§13, §20) comes first on every path. `Later` keeps a held launch's row; a drop
     // returns normally, so the row drains with its refusal on record.
     const at = new Date().toISOString()
@@ -401,10 +511,15 @@ function launchHandler(store: SqliteStore, policyHash: string): EffectHandler {
       store.atomic(() => refuseLaunch(store, payload, authority.reason, at))
       return
     }
-    // Without the fake flag a launch is acknowledged (no real runtime is wired at this
-    // milestone); with it, the recorded fixture stands in for a Claude attempt.
-    if (process.env.MEC_FAKE_ENGINE !== '1') return
-    await runFakeLaunch(store, payload)
+    // With the fake flag, the recorded fixture stands in for a Claude attempt.
+    if (process.env.MEC_FAKE_ENGINE === '1') {
+      await runFakeLaunch(store, payload)
+      return
+    }
+    // No real runtime is wired at this milestone, and a launch that cannot run says so. Not
+    // `Later`: a future runner would pick up stale work.
+    store.atomic(() => failLaunch(store, payload, 'no_runner', at))
+    throw new Error('launch failed: no_runner')
   }
 }
 

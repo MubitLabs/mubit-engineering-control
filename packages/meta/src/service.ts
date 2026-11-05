@@ -34,8 +34,17 @@
  *
  * Authority (`authority.ts`): the brain's await is a race window, so a commit re-reads the
  * work first, and only the owner's commands stop, hold or lift it (§12.5, decision #20).
+ *
+ * Durability (§6, §17, §20): a message keeps one id across retries and the key is stored
+ * before the brain runs, so a retry finds the message instead of admitting it twice. A turn
+ * that needs no user waiting on it is a `relay` row: wakes key on what caused them, and a
+ * message's id derives from that cause, so a row replayed after a crash finds the receipt and
+ * runs nothing. During a pause a new message is stored and its turn waits for a `resume` row
+ * (decision #27), so nothing spends quota.
  */
+import { createHash } from 'node:crypto'
 import type { Effects, Json, Store, StoreDoc } from '@mec/contracts'
+import { Later } from '@mec/contracts'
 import type { AttemptState, Caps, SchedulableTask, SlotView, WorkItemState } from '@mec/domain'
 import {
   ACTIVE_ATTEMPT_STATES,
@@ -51,6 +60,7 @@ import {
   WORK_ITEM_TERMINAL,
 } from '@mec/domain'
 import { loadPolicy } from '../../policy/src/policy'
+import { redact } from '../../slots/src/redaction'
 import { Acknowledger } from './acks'
 import {
   assertRepoAdmission,
@@ -69,6 +79,7 @@ import {
   type LiftOutcome,
   liftHoldRecord,
   mandateOf,
+  processingOf,
   revalidateWork,
   type StopOutcome,
   stopWorkItem,
@@ -155,7 +166,17 @@ export type TurnOutcome = {
  * The message a turn serves; `repoId` is its repository's conversation (absent is Unassigned).
  * `wake` marks a turn no user message started: it speaks with no person's authority.
  */
-type TurnInput = { messageId: string; text: string; repoId?: string; wake?: true }
+type TurnInput = { messageId: string; text: string; repoId?: string; wake?: true; idempotencyKey?: string }
+
+/** §12.1: what the owner submitted, which a key's retry must repeat exactly. */
+type SubmissionIntent = 'new' | 'follow_up'
+
+/** A user message's turn: what it names, and whether the owner asked for a New request (§12.1). */
+type MessageTurn = TurnInput & {
+  referencesWorkItem?: string
+  explicitNew?: boolean
+  intent?: SubmissionIntent
+}
 
 /** A launch this turn enqueued, as persisted on the message doc so replays reuse the key. */
 type LaunchRecord = { attemptId: string; key: string; taskId: string; slotId: string }
@@ -167,6 +188,9 @@ type DispatchCandidate = {
   role: string
   slotHint?: { slotClass?: string }
 }
+
+/** A wake's queue key is its cause, and the message it runs as derives from the same cause. */
+export type WakeRequest = { causationId: string; reason: string; detail?: string; workItemId?: string }
 
 /** The v0 pseudo-check standing in for the checks registry (see the module doc). */
 const MANUAL_REVIEW_CHECK = 'manual-review'
@@ -181,6 +205,8 @@ const FALLBACK_EMPTY_TABLE = {
   engines: {},
   routing: { subagents: {} },
 }
+
+const PAUSED_ACK = 'Recorded. Processing is paused, so planning starts when you resume.'
 
 /** §10 leaves a mandate's scope open: for now, the head of the origin message (#36). */
 const MANDATE_SCOPE_CHARS = 200
@@ -204,12 +230,23 @@ const FAKE_SLOT: SlotView = {
   pinnedRoles: [],
 }
 
+/** Long enough that two keys never collide in one store; short enough to read in a log. */
+const STABLE_ID_HEX_CHARS = 24
+
 let idCounter = 0
 
 /** A contract-shaped id (`wi_…`): clock + counter + random, url-safe by construction. */
 function freshId(prefix: string): string {
   idCounter += 1
   return `${prefix}${Date.now().toString(36)}${idCounter.toString(36)}${Math.random().toString(36).slice(2, 8)}`
+}
+
+const digest = (text: string): string =>
+  createHash('sha256').update(text, 'utf8').digest('hex').slice(0, STABLE_ID_HEX_CHARS)
+
+/** A client's retry keeps the message id: the same key always names the same message. */
+export function stableMessageId(idempotencyKey: string): string {
+  return `msg_${digest(idempotencyKey)}`
 }
 
 /** A brain that always answers with `scripted` — the seam tests and composition wire first. */
@@ -228,6 +265,8 @@ export class MetaAgentService {
   readonly #modelsTable?: () => ModelsTableSource | undefined
   readonly #acks = new Acknowledger()
   readonly #escalation = new EscalationCounter()
+  /** Turns running in this process: a concurrent retry joins one instead of starting another. */
+  readonly #turns = new Map<string, Promise<TurnOutcome>>()
 
   constructor(deps: {
     store: Store
@@ -260,7 +299,16 @@ export class MetaAgentService {
     repoId?: string
     /** §12.1: the owner asked for a New request, so it starts work beside any live work. */
     explicitNew?: boolean
+    /** Stored in the message's first transaction, so a retry finds it before the brain returns. */
+    idempotencyKey?: string
+    /** Stored with the key: a retry during planning is compared against what was sent. */
+    intent?: SubmissionIntent
   }): Promise<TurnOutcome> {
+    return this.#messageTurn(input, false)
+  }
+
+  /** `resumed` is a relay running the stored turn: only it may start a planner turn in a pause. */
+  async #messageTurn(input: MessageTurn, resumed: boolean): Promise<TurnOutcome> {
     assertRepoAdmission(this.#store, input)
     const prior = this.#store.messages.get(input.messageId)
     if (prior !== undefined && repoOf(prior) !== input.repoId) {
@@ -269,6 +317,29 @@ export class MetaAgentService {
     // A message already carrying a receipt replays verbatim: same ack, same launch keys —
     // the effects queue coalesces the re-enqueue to the existing rows (CONTRACTS §7).
     if (prior !== undefined && typeof prior.ackText === 'string') return this.#replay(prior)
+    return this.#once(input.messageId, () => this.#admit(input, prior, resumed))
+  }
+
+  /** One turn per message id in this process; the entry leaves when the turn settles. */
+  #once(messageId: string, run: () => Promise<TurnOutcome>): Promise<TurnOutcome> {
+    const running = this.#turns.get(messageId)
+    if (running !== undefined) return running
+    const turn = run().finally(() => this.#turns.delete(messageId))
+    this.#turns.set(messageId, turn)
+    return turn
+  }
+
+  async #admit(input: MessageTurn, prior: StoreDoc | undefined, resumed: boolean): Promise<TurnOutcome> {
+    // A receipt-less message with work is an interrupted turn, and that work is its own. Routing
+    // would read it as live work and file the message as conversation (§20 App crash).
+    if (typeof prior?.workItemId === 'string') {
+      const fenced = this.#fencedTurn(input, prior.workItemId)
+      if (fenced !== undefined) return fenced
+      if (String(this.#store.workItems.get(prior.workItemId)?.state) === 'planning') {
+        return this.#startNewWork(input, prior, resumed)
+      }
+      return this.#noteAttached(input, prior.workItemId)
+    }
 
     const routing = routeMessage({
       referencesWorkItem: input.referencesWorkItem,
@@ -283,7 +354,7 @@ export class MetaAgentService {
       case 'conversation':
         return this.#noteConversation(input)
       case 'new_work':
-        return await this.#startNewWork(input, prior)
+        return await this.#startNewWork(input, prior, resumed)
     }
   }
 
@@ -374,7 +445,19 @@ export class MetaAgentService {
    * and the decision commits exactly like a message turn. A wake belongs to an existing
    * work item and inherits its repo; it never creates work, and read-only work stays as it is.
    */
-  async onWake(input: { reason: string; detail?: string; workItemId?: string }): Promise<TurnOutcome> {
+  async onWake(input: Omit<WakeRequest, 'causationId'> & { causationId?: string }): Promise<TurnOutcome> {
+    const messageId =
+      input.causationId === undefined ? freshId('msg_wake_') : `msg_wake_${digest(input.causationId)}`
+    // Success deletes a relay row, so a repeat is a new row; the receipt is what dedupes it.
+    const prior = this.#store.messages.get(messageId)
+    if (typeof prior?.ackText === 'string') return this.#replay(prior)
+    return this.#once(messageId, () => this.#wakeTurn(input, messageId))
+  }
+
+  async #wakeTurn(
+    input: { reason: string; detail?: string; workItemId?: string },
+    messageId: string,
+  ): Promise<TurnOutcome> {
     const work = input.workItemId === undefined ? undefined : this.#store.workItems.get(input.workItemId)
     if (input.workItemId === undefined || work === undefined) return this.#unboundWake(input)
     const workItemId = input.workItemId
@@ -389,7 +472,6 @@ export class MetaAgentService {
     }
     if (isTerminal(work) || mandateOf(work).status === 'withdrawn') return this.#refuseWake(input, work)
     const repoId = repoOf(work)
-    const messageId = freshId('msg_wake_')
     const repo = repoId !== undefined ? { repoId } : {}
     const turn = { messageId, wake: true as const, ...repo }
     let decision: MetaDecision
@@ -409,6 +491,7 @@ export class MetaAgentService {
         }),
       })
     } catch (error) {
+      if (error instanceof Later) throw error
       return this.#failTurn(
         { ...turn, text: input.detail ?? input.reason },
         workItemId,
@@ -453,40 +536,107 @@ export class MetaAgentService {
   }
 
   /**
-   * §5.2/§12.6: an answered question is persisted (first answer wins) and WAKES the
-   * planner with the answer in context — the §1 gap this closes.
+   * Queues a wake (§17 `relay`). Call inside the transaction of what caused it, so a crash
+   * loses neither or both. The key coalesces a repeat while the row is queued; `onWake` covers
+   * a repeat after the row drained.
    */
-  async onQuestionAnswered(
+  enqueueWake(wake: WakeRequest): void {
+    const { causationId, reason, detail, workItemId } = wake
+    this.#effects.enqueue('relay', `wake:${causationId}`, {
+      causationId,
+      reason,
+      ...(detail !== undefined && { detail }),
+      ...(workItemId !== undefined && { workItemId }),
+    })
+  }
+
+  /**
+   * Queues a relay for each new-work message with no receipt whose work is still planning: at
+   * boot for a turn a crash cut short (§20), and on resume for a message a pause held back
+   * (decision #27). The brain runs from the queue, never inline.
+   */
+  enqueueResumes(): void {
+    const waiting = this.#store.messages
+      .list({ routing: 'new_work' })
+      .filter(
+        (doc) =>
+          typeof doc.ackText !== 'string' &&
+          typeof doc.workItemId === 'string' &&
+          String(this.#store.workItems.get(doc.workItemId)?.state) === 'planning',
+      )
+      .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+    this.#store.atomic(() => {
+      for (const doc of waiting) {
+        this.#effects.enqueue('relay', `resume:${String(doc.id)}`, { messageId: String(doc.id) })
+      }
+    })
+  }
+
+  /** The `relay` handler: a stored message's turn, or a wake. */
+  async runRelay(payload: Json): Promise<void> {
+    const fields = (payload ?? {}) as Record<string, unknown>
+    if (typeof fields.messageId === 'string') {
+      const doc = this.#store.messages.get(fields.messageId)
+      if (doc === undefined || typeof doc.ackText === 'string') return
+      const repoId = repoOf(doc)
+      await this.#messageTurn(
+        { messageId: String(doc.id), text: String(doc.text), ...(repoId !== undefined && { repoId }) },
+        true,
+      )
+      return
+    }
+    await this.onWake({
+      reason: String(fields.reason),
+      ...(typeof fields.causationId === 'string' && { causationId: fields.causationId }),
+      ...(typeof fields.detail === 'string' && { detail: fields.detail }),
+      ...(typeof fields.workItemId === 'string' && { workItemId: fields.workItemId }),
+    })
+  }
+
+  /**
+   * §5.2/§12.6: the answer and its wake commit together, first answer wins, and the planner
+   * runs from the queue, so the caller never waits on a turn. The answer is redacted before
+   * any write, the wake's detail included (AGENTS non-negotiable 5).
+   */
+  onQuestionAnswered(
     questionId: string,
     answer: string,
-  ): Promise<{ status: 'answered' | 'not_open' | 'missing'; outcome?: TurnOutcome }> {
+  ): { status: 'answered'; answer: string } | { status: 'not_open' | 'missing' } {
     const docId = questionId.startsWith('question/') ? questionId : `question/${questionId}`
-    const doc = this.#store.engines.get(docId)
-    if (doc === undefined) return { status: 'missing' }
-    if (doc.status !== 'open') return { status: 'not_open' }
     const at = this.#now()
-    this.#store.atomic(() => {
+    return this.#store.atomic(() => {
+      const doc = this.#store.engines.get(docId)
+      if (doc === undefined) return { status: 'missing' as const }
+      if (String(doc.status ?? 'open') !== 'open') return { status: 'not_open' as const }
+      const stored = redact(answer, [], [])
       this.#store.engines.save({
         ...doc,
         status: 'answered',
-        answer,
+        answer: stored,
         answeredAt: at,
         updatedAt: at,
       })
       this.#appendEvent(
         docId,
         'question_answered',
-        { questionId: typeof doc.questionId === 'string' ? doc.questionId : questionId, answer, at },
+        { questionId: typeof doc.questionId === 'string' ? doc.questionId : questionId, answer: stored, at },
         at,
       )
+      const reason = 'question answered'
+      const workItemId = typeof doc.workItemId === 'string' ? doc.workItemId : undefined
+      const work = workItemId === undefined ? undefined : this.#store.workItems.get(workItemId)
+      if (work !== undefined && (isTerminal(work) || mandateOf(work).status === 'withdrawn')) {
+        this.#refuseWake({ reason }, work)
+      } else {
+        this.enqueueWake({
+          causationId: docId,
+          reason,
+          detail: `question "${String(doc.question ?? '')}" answered: ${stored}`,
+          ...(workItemId !== undefined && { workItemId }),
+        })
+      }
+      return { status: 'answered' as const, answer: stored }
     })
-    const workItemId = typeof doc.workItemId === 'string' ? doc.workItemId : undefined
-    const outcome = await this.onWake({
-      reason: 'question answered',
-      detail: `question "${String(doc.question ?? '')}" answered: ${answer}`,
-      ...(workItemId !== undefined && { workItemId }),
-    })
-    return { status: 'answered', outcome }
   }
 
   // ── Owner commands (§12.5, decision #20) ─────────────────────────────────────────────────
@@ -595,11 +745,13 @@ export class MetaAgentService {
    * resumes planning on the same work item instead of minting a second one.
    */
   async #startNewWork(
-    input: TurnInput & { referencesWorkItem?: string },
+    input: MessageTurn,
     prior: StoreDoc | undefined,
+    resumed: boolean,
   ): Promise<TurnOutcome> {
-    const workItemId = typeof prior?.workItemId === 'string' ? prior.workItemId : freshId('wi_')
-    if (prior === undefined) {
+    const known = typeof prior?.workItemId === 'string' ? prior.workItemId : undefined
+    const workItemId = known ?? freshId('wi_')
+    if (known === undefined) {
       const at = this.#now()
       this.#store.atomic(() => {
         this.#store.workItems.save({
@@ -628,6 +780,17 @@ export class MetaAgentService {
       })
     }
 
+    // Decision #27: stored, and no receipt, so resuming finds it and runs its turn then.
+    if (!resumed && processingOf(this.#store).paused) {
+      return {
+        acknowledged: PAUSED_ACK,
+        workItemId,
+        tasksCreated: 0,
+        launchesEnqueued: [],
+        escalated: false,
+      }
+    }
+
     let decision: MetaDecision
     try {
       decision = await this.#brain({
@@ -645,6 +808,8 @@ export class MetaAgentService {
         }),
       })
     } catch (error) {
+      // A shutdown cut the turn short (§20): no receipt, so the next start resumes it.
+      if (error instanceof Later) throw error
       // The brain failing must never throw outward (§6): the user gets the failure ack,
       // the work item is stopped with the error on its stream, and the turn ends.
       return this.#failTurn(input, workItemId, error instanceof Error ? error.message : String(error))
@@ -1213,14 +1378,15 @@ export class MetaAgentService {
   /**
    * The receipt replay: same ack text (the Acknowledger returns the recorded one), and the
    * launch effects re-enqueued under their original keys — the queue coalesces each
-   * kind + key to the row it already holds, so a retry adds no second launch.
+   * kind + key to the row it already holds, so a retry adds no second launch. A drained row
+   * comes back new, and the launch gate drops it once its attempt has moved on.
    */
   #replay(prior: StoreDoc): TurnOutcome {
     const messageId = String(prior.id)
     const ack = this.#acks.acknowledge(messageId, String(prior.ackText))
     const launches = launchRecordsOf(prior)
-    if (launches.length > 0) {
-      const workItemId = typeof prior.workItemId === 'string' ? prior.workItemId : ''
+    const workItemId = typeof prior.workItemId === 'string' ? prior.workItemId : ''
+    if (launches.length > 0 && String(this.#store.workItems.get(workItemId)?.state) === 'executing') {
       this.#store.atomic(() => {
         for (const launch of launches) {
           this.#effects.enqueue('launch', launch.key, {
@@ -1250,9 +1416,9 @@ export class MetaAgentService {
     this.#store.events.append(stream, { stream, seq, at, type, body })
   }
 
-  /** Upserts the message doc, carrying `createdAt` over once it exists. */
+  /** Upserts the message doc, carrying `createdAt`, the repo, the key and the submission over. */
   #saveMessage(
-    input: TurnInput,
+    input: MessageTurn,
     fields: {
       routing: string
       at: string
@@ -1264,13 +1430,23 @@ export class MetaAgentService {
     },
   ): void {
     const prior = this.#store.messages.get(input.messageId)
+    const repoId = input.repoId ?? repoOf(prior)
+    const idempotencyKey =
+      input.idempotencyKey ?? (typeof prior?.idempotencyKey === 'string' ? prior.idempotencyKey : undefined)
+    const intent = input.intent ?? (prior?.intent as SubmissionIntent | undefined)
+    const referencesWorkItem =
+      input.referencesWorkItem ??
+      (typeof prior?.referencesWorkItem === 'string' ? prior.referencesWorkItem : undefined)
     this.#store.messages.save({
       id: input.messageId,
       text: input.text,
       createdAt: typeof prior?.createdAt === 'string' ? prior.createdAt : fields.at,
       updatedAt: fields.at,
       routing: fields.routing,
-      ...(input.repoId !== undefined && { repoId: input.repoId }),
+      ...(repoId !== undefined && { repoId }),
+      ...(idempotencyKey !== undefined && { idempotencyKey }),
+      ...(intent !== undefined && { intent }),
+      ...(referencesWorkItem !== undefined && { referencesWorkItem }),
       ...(fields.workItemId !== undefined && { workItemId: fields.workItemId }),
       ...(fields.ackText !== undefined && { ackText: fields.ackText }),
       ...(fields.tasksCreated !== undefined && { tasksCreated: fields.tasksCreated }),

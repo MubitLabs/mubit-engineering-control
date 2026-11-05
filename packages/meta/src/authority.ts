@@ -38,6 +38,8 @@ export type LaunchDropReason =
   | 'repo_mismatch'
   | 'attempt_not_queued'
 
+export type LaunchFailureReason = 'no_runner'
+
 /** What the launch gate decides: `defer` keeps the row, `drop` lets it drain unlaunched. */
 export type LaunchAuthority =
   | { verdict: 'run' }
@@ -124,7 +126,36 @@ export function launchAuthority(
 export function refuseLaunch(store: Store, payload: Json, reason: LaunchDropReason, at: string): void {
   const { work_item_id: workItemId, attempt_id: attemptId } = launchFields(payload)
   appendEvent(store, `work:${workItemId}`, 'launch_refused', { workItemId, attemptId, reason, at }, at)
-  if (reason !== 'policy_changed') return
+  if (reason === 'policy_changed') blockWork(store, workItemId, reason, at)
+}
+
+/**
+ * A launch that cannot run says so (§17, decision #26): its attempt ends `failed` and its work
+ * blocks with the reason. A second call changes nothing, because the queue retries the row.
+ */
+export function failLaunch(store: Store, payload: Json, reason: LaunchFailureReason, at: string): void {
+  const { work_item_id: workItemId, attempt_id: attemptId } = launchFields(payload)
+  const attempt = store.attempts.get(attemptId)
+  if (attempt !== undefined && canTransition(ATTEMPT_MACHINE, String(attempt.state), 'attempt_failed')) {
+    store.attempts.save({
+      ...attempt,
+      state: transition(ATTEMPT_MACHINE, String(attempt.state), 'attempt_failed'),
+      terminal_reason: reason,
+      updatedAt: at,
+    })
+    appendEvent(store, `attempt:${attemptId}`, 'attempt.failed', { attemptId, reason, at }, at)
+  }
+  blockWork(store, workItemId, reason, at)
+}
+
+/** Why this launch's attempt failed, when it did: the queue's retry of the row must keep failing. */
+export function launchFailure(store: Store, payload: Json): string | undefined {
+  const attempt = store.attempts.get(launchFields(payload).attempt_id)
+  return attempt?.state === 'failed' ? String(attempt.terminal_reason) : undefined
+}
+
+/** The machine refuses a second block, so blocked work keeps its first reason. */
+function blockWork(store: Store, workItemId: string, reason: string, at: string): void {
   const work = store.workItems.get(workItemId)
   if (work === undefined || !canTransition(WORK_ITEM_MACHINE, String(work.state), 'block')) return
   store.workItems.save({

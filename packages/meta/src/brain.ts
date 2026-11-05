@@ -30,7 +30,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { EngineEvent, IsolationProfile, LaunchSpec } from '@mec/contracts'
+import type { AttemptHandle, EngineEvent, IsolationProfile, LaunchSpec } from '@mec/contracts'
+import { Later } from '@mec/contracts'
 import { ClaudeAdapter } from '../../engines/src/claude/adapter'
 import { MecToolsServer } from '../../mec-tools/src/server'
 import { issueToken } from '../../mec-tools/src/tokens'
@@ -102,6 +103,8 @@ export type PlannerBrainOptions = {
    * (`readMetaProtocol`); tests inject their own text.
    */
   readProtocol?: () => string
+  /** §16.1: the user's prompt store; the default is `~/.mec/prompts`. */
+  promptsRoot?: string
 }
 
 /** Read-only, sandboxed, prompt-free: the meta agent plans, it never writes. */
@@ -126,6 +129,12 @@ const DEFAULT_ACK = 'On it.'
 const DEFAULT_BUDGET_TURNS = 12
 const WALL_CLOCK_MS = 5 * 60_000
 const MAX_ACK_CHARS = 240
+
+/**
+ * §20 Shutdown: a turn the close cut short. It rejects with `Later`, because it is no failure:
+ * the service keeps no receipt and its queue row stays for the next start.
+ */
+export const turnCutShort = (): Later => new Later('the server is closing')
 
 /** The bridge is never asked under `permission_mode: 'none'`; this only satisfies launch. */
 const PERMIT_ALL_BRIDGE = { request: async () => 'allow' as const }
@@ -177,11 +186,19 @@ export class PlannerBrain {
   /** The turn currently bound to the shared tools server (decides are single-flight). */
   #currentExecutor: PlannerTools | null = null
   #gate: Promise<unknown> = Promise.resolve()
+  /** §20: set once the server is closing; from then on no engine starts. */
+  #closing = false
+  /** The engine run in flight, so a close past its bound can stop it. */
+  #running: AttemptHandle | null = null
 
   constructor(opts: PlannerBrainOptions) {
     this.#opts = opts
     this.#engine = opts.adapter ?? new ClaudeAdapter()
-    this.#readProtocol = opts.readProtocol ?? (() => readMetaProtocol() || DEFAULT_PLANNER_PROTOCOL)
+    this.#readProtocol =
+      opts.readProtocol ??
+      (() =>
+        readMetaProtocol(opts.promptsRoot === undefined ? {} : { promptsRoot: opts.promptsRoot }) ||
+        DEFAULT_PLANNER_PROTOCOL)
     this.#root = mkdtempSync(join(tmpdir(), 'mec-planner-'))
   }
 
@@ -224,6 +241,17 @@ export class PlannerBrain {
     return run
   }
 
+  /** §20's first step: the run in flight may finish, but no engine starts after this. */
+  quiesce(): void {
+    this.#closing = true
+  }
+
+  /** §20, past the bound: stops the run in flight too, so it holds nothing open. */
+  async abort(): Promise<void> {
+    this.quiesce()
+    if (this.#running !== null) await this.#stopEngine(this.#running)
+  }
+
   /** Stops the tools server and removes the brain-owned tmpdir; decides must be done. */
   async close(): Promise<void> {
     await this.#gate
@@ -238,12 +266,25 @@ export class PlannerBrain {
   // ── One turn ──────────────────────────────────────────────────────────────────────────────
 
   async #decideOnce(turn: PlannerTurnInput): Promise<PlannerDecision> {
-    const first = await this.#runEngine(turn, this.#assembleBundle(turn))
-    if (first.protocolIncomplete === true) {
+    try {
+      const first = await this.#runEngine(turn, this.#assembleBundle(turn))
+      if (first.protocolIncomplete !== true) return first
       // One corrective retry (the v0 discipline): same tools, a reminder in the delivery.
-      return await this.#runEngine(turn, this.#assembleBundle(turn, true))
+      const retried = await this.#runEngine(turn, this.#assembleBundle(turn, true))
+      if (retried.protocolIncomplete === true && this.#closing) throw turnCutShort()
+      return retried
+    } catch (error) {
+      if (this.#closing) throw turnCutShort()
+      throw error
     }
-    return first
+  }
+
+  async #stopEngine(handle: AttemptHandle): Promise<void> {
+    try {
+      await this.#engine.stop(handle)
+    } catch {
+      // A finished one-shot is already gone; stopping is best-effort cleanup.
+    }
   }
 
   #assembleBundle(turn: PlannerTurnInput, reminder = false): CompiledBundle {
@@ -296,6 +337,8 @@ export class PlannerBrain {
     const { url, token } = await this.#ensureTools(turn)
     const settings = this.#writeEngineConfig(url, token)
     const budgetTurns = this.#opts.budgetTurns ?? DEFAULT_BUDGET_TURNS
+    // The one place an engine starts: a first run, a corrective retry or a turn behind the gate.
+    if (this.#closing) throw turnCutShort()
     const handle = await this.#engine.launch({
       brief: {
         attempt_id: META_ATTEMPT_ID,
@@ -341,16 +384,15 @@ export class PlannerBrain {
       cwd: this.#root,
       bridge: PERMIT_ALL_BRIDGE,
     } satisfies LaunchSpec)
+    this.#running = handle
+    // An abort that landed during the launch found nothing to stop.
+    if (this.#closing) await this.#stopEngine(handle)
 
     const events: EngineEvent[] = []
     for await (const event of this.#engine.events(handle)) events.push(event)
-    try {
-      await this.#engine.stop(handle)
-    } catch {
-      // A finished one-shot is already gone; stopping is best-effort cleanup.
-    } finally {
-      this.#currentExecutor = null
-    }
+    this.#running = null
+    await this.#stopEngine(handle)
+    this.#currentExecutor = null
 
     let exitReason: string | undefined
     const assistant: string[] = []

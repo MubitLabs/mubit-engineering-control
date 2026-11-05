@@ -33,6 +33,7 @@ import {
   SetupAgent,
   type SetupSettingsApi,
   type StopOutcome,
+  stableMessageId,
   stopWorkItem,
 } from '@mec/meta'
 import type { ConfirmationRecord } from '@mec/policy'
@@ -122,6 +123,8 @@ export type ServerDeps = {
       referencesWorkItem?: string
       repoId?: string
       explicitNew?: boolean
+      idempotencyKey?: string
+      intent?: 'new' | 'follow_up'
     }): Promise<{
       acknowledged: string
       workItemId?: string
@@ -129,11 +132,14 @@ export type ServerDeps = {
       launchesEnqueued: string[]
       escalated: boolean
     }>
-    /** T5 wakes: an answered question re-invokes the planner with the answer in context. */
+    /** T5 wakes: records the answer and queues the planner's wake, in one transaction. */
     onQuestionAnswered?(
       questionId: string,
       answer: string,
-    ): Promise<{ status: 'answered' | 'not_open' | 'missing'; outcome?: unknown }>
+    ):
+      | { status: 'answered'; answer: string }
+      | { status: 'not_open' | 'missing' }
+      | Promise<{ status: 'answered'; answer: string } | { status: 'not_open' | 'missing' }>
     /** §12.5 owner commands. Without them, hold and stop write directly (see the routes). */
     holdWork?(id: string, reason: string, sourceMessageId?: string): HoldOutcome
     liftHold?(id: string): LiftOutcome
@@ -199,10 +205,15 @@ const SSE_POLL_MS = 500
 
 let idCounter = 0
 
-/** A contract-shaped id (`msg_…`, `wi_…`): clock + counter + random, url-safe by construction. */
+/**
+ * A contract-shaped id (`msg_…`, `wi_…`): clock + counter + random, url-safe by construction.
+ * The counter is fixed-width so ids from one millisecond sort in order: message lists tie-break
+ * on id, and an unpadded `z` sorts after `10`.
+ */
 function freshId(prefix: string): string {
   idCounter += 1
-  return `${prefix}${Date.now().toString(36)}${idCounter.toString(36)}${randomBytes(4).toString('hex')}`
+  const counter = idCounter.toString(36).padStart(4, '0')
+  return `${prefix}${Date.now().toString(36)}${counter}${randomBytes(4).toString('hex')}`
 }
 
 /** §5.8 zero-token validity probe for Anthropic API keys: GET /v1/models costs no tokens. */
@@ -652,7 +663,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       reply.code(400).send({ error: "intent must be 'new' or 'follow_up'" })
       return
     }
-    const intent = body.intent
+    const intent = body.intent as 'new' | 'follow_up' | undefined
     if (intent === 'follow_up' && referencesWorkItem === undefined) {
       reply.code(400).send({ error: 'follow_up_needs_reference' })
       return
@@ -696,19 +707,23 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       }
     }
 
-    const messageId = freshId('msg_')
+    // A retry after a crash lands on the same id, so the service finds the message it started.
+    const messageId = idempotencyKey !== undefined ? stableMessageId(idempotencyKey) : freshId('msg_')
     const at = now().toISOString()
 
     // Composed path: the meta-agent service owns message persistence, routing, the ack,
-    // the plan and the launch enqueues (§6). The route only adds the idempotency key.
+    // the plan and the launch enqueues (§6), and stores the key and the submission before the
+    // brain runs, so the replay check above answers a retry from the doc without waiting.
     if (deps.metaAgent !== undefined) {
       const outcome = await deps.metaAgent.onUserMessage({
         messageId,
         text,
-        referencesWorkItem,
+        ...submitted,
         explicitNew,
         ...repo,
+        ...(idempotencyKey !== undefined && { idempotencyKey }),
       })
+      // The seam does not promise to store these: a meta agent that did rewrites the same fields.
       if (idempotencyKey !== undefined) {
         store.atomic(() => {
           const doc = store.messages.get(messageId)
@@ -1794,18 +1809,25 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       reply.code(409).send({ error: 'already_answered', status: String(doc.status) })
       return
     }
+    // T5 wake: the service records the answer and queues the planner's turn together, so this
+    // returns after that commit and never waits on a turn (§1's gap).
+    if (deps.metaAgent?.onQuestionAnswered !== undefined) {
+      const result = await deps.metaAgent.onQuestionAnswered(raw, answer)
+      if (result.status !== 'answered') {
+        if (result.status === 'missing') reply.code(404).send({ error: 'question not found' })
+        else reply.code(409).send({ error: 'already_answered', status: result.status })
+        return
+      }
+      return { id: raw, status: 'answered', answer: result.answer }
+    }
+    // A meta agent without the wake surface is told the answer only through the store, honestly.
+    const stored = redact(answer, [], [])
     const at = now().toISOString()
     store.atomic(() => {
-      store.engines.save({ ...doc, status: 'answered', answer, answeredAt: at, updatedAt: at })
-      appendEvent(store, docId, 'question_answered', { questionId: raw, answer, at }, at)
+      store.engines.save({ ...doc, status: 'answered', answer: stored, answeredAt: at, updatedAt: at })
+      appendEvent(store, docId, 'question_answered', { questionId: raw, answer: stored, at }, at)
     })
-    // T5 wake: the planner re-runs with the answer in context (§1's gap). A meta agent
-    // without the wake surface is told the answer only through the store — honestly.
-    let woke: unknown
-    if (deps.metaAgent?.onQuestionAnswered !== undefined) {
-      woke = await deps.metaAgent.onQuestionAnswered(raw, answer)
-    }
-    return { id: raw, status: 'answered', answer, ...(woke !== undefined && { wake: woke }) }
+    return { id: raw, status: 'answered', answer: stored }
   })
 
   // The store-backed Settings API the default setup agent drafts against. The T1/T4

@@ -5,14 +5,17 @@ export type {
   HoldOutcome,
   LaunchAuthority,
   LaunchDropReason,
+  LaunchFailureReason,
   LiftOutcome,
   Processing,
   StopOutcome,
 } from './authority'
 export {
+  failLaunch,
   holdWorkItem,
   isHeld,
   launchAuthority,
+  launchFailure,
   mandateOf,
   processingOf,
   refuseLaunch,
@@ -57,8 +60,9 @@ export type {
   MetaPlanTask,
   MetaWake,
   TurnOutcome,
+  WakeRequest,
 } from './service'
-export { fakeBrain, MetaAgentService } from './service'
+export { fakeBrain, MetaAgentService, stableMessageId } from './service'
 // T7 setup agent (review 2026-11-04 §7).
 export type {
   SetupAgentTurnResult,

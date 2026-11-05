@@ -482,7 +482,7 @@ Conversation ──message──► WorkItem(mandate) ──plan──► Tasks(
 | --- | --- | --- |
 | WorkItem | proposed → admitted → planning → executing → reviewing → integrating → done | blocked (reason); held (by the user); stopped by the user; dropped |
 | Task | ready → active → awaiting_review → accepted → integrated | cancelled; blocked (dependency/capacity/confirmation); dropped |
-| Attempt | queued → running → work_complete → succeeded / checks_failed | quota_wait; auth_required; provider_down; interrupted; stalled |
+| Attempt | queued → running → work_complete → succeeded / checks_failed | quota_wait; auth_required; provider_down; interrupted; stalled; failed (terminal, from queued or running: it could not run or errored) |
 | Confirmation | pending → approved / denied | expired; stale (input changed) |
 | Slot | draft → home_ready → login_pending → healthy | degraded (reason); retired |
 
@@ -660,7 +660,7 @@ What MEC does after a decision — launching an attempt, delivering an input, wa
 | `external` | outbox: `git push`, `gh pr …` after a settled confirmation | 1 | uncertain-send reconciliation by idempotency marker before any retry |
 | `probe` | slots: local status and capability probes | 2 | bounded |
 
-Shutdown drains the queue without losing rows; a restart resumes it.
+Shutdown finishes the jobs in flight, starts none and loses no rows; a restart resumes them.
 
 ---
 
@@ -710,10 +710,10 @@ The full v3 evaluation stack (datasets, paired experiments, promotion policy) is
 | Duplicate dispatch / message | Idempotency keys; unique indexes; duplicates return the existing record |
 | Integration conflict | Mid-merge repair worktree with both sides (§14) |
 | gh / git push failure | Receipt marks uncertain; reconcile by idempotency marker (branch name, head SHA) before retry |
-| Pause processing | Stops launches, deliveries, relays and outbound messages; running turns are not interrupted; messages keep being recorded; deadlines and timers move later by the pause's length; a message to an ended item waits and resumes it on the first pass after the pause if its mandate holds |
+| Pause processing | Stops launches, deliveries, relays and outbound messages; running turns are not interrupted; messages keep being recorded, and a new request's planner turn runs after resume, so nothing spends quota; deadlines and timers move later by the pause's length; a message to an ended item waits and resumes it on the first pass after the pause if its mandate holds |
 | Database corruption | `mec backup` (SQLite online backup + state dir tar **excluding** slot credential files and keystores) on schedule and on demand; `mec restore` with a drill script (v1 port); after restore every slot re-probes before scheduling |
 
-Shutdown cancels turns gracefully, waits a bounded time (default 10 s per attempt) for background work, drains the effects queue and releases the lock. Retention: operational logs 30 days, delivery evidence 90 days, decisions and merge records kept (configurable). Cleanup is a resumable job with eligibility checks that never touches slot homes — never an agent deciding what to delete.
+Shutdown cancels turns gracefully, waits a bounded time (default 10 s per attempt) for work already in flight, leaves pending effects for the restart and releases the lock. Retention: operational logs 30 days, delivery evidence 90 days, decisions and merge records kept (configurable). Cleanup is a resumable job with eligibility checks that never touches slot homes — never an agent deciding what to delete.
 
 ---
 

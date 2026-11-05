@@ -65,7 +65,14 @@ A proposal first showed its patch as plain text, which missed what requirement 1
 - **Apply sends `preview.base`, not the section's newest read.** The two differ when the text moves after the comparison was drawn. Sending the newest would pass the stale check and overwrite text the owner never compared. A stale refusal now redraws the comparison, and so does a save in the editor.
 - **Policy is compared re-spaced on both sides.** The default and many saved files are compact JSON, so a line diff would mark the whole file changed. Spacing has no meaning there. The stored text is unchanged.
 - **Plain text stays where nothing compares:** a new repository, or a stored text that no longer loads. That one costs the comparison, not the list.
-- **A models comparison shows the whole table,** in the 320px scrolling block. An unchanged stretch is not folded, so a one-line change in the 88-line default can sit below the fold.
+- **Unchanged runs fold to three lines of context.** A one-line models change once sat 1965px down a block showing 318px, with no marked line in the first view. `foldDiff` keeps every line behind a Show or Hide control, and leaves a single hidden line in place. All comparisons share `DiffView`: proposals and the prompts compare.
+
+## A proposal and trust
+
+Requirement 13 makes trust a two-step control in Settings, but applying a repository proposal stored `patch.trust`, so a chat suggestion could trust a repository in one Apply. `registerRepositoryDoc` now always stores `trust: false`.
+
+- **The other caller keeps its behaviour.** The agent's `register_repository` tool passes trust as a string, which never equalled `true`, so it already stored false. The pass-through is gone and a test holds the result. `POST /api/repositories` does not go through this function: the owner's own form still chooses.
+- **The card says so.** It prints the patch verbatim, so `trust: true` would read as a promise. `GET /api/setup/drafts` sets `trustIgnored` when a repository proposal carried any trust value but `false`, a string included, because the printed patch looks the same. The card then says it starts untrusted.
 
 ## Left open
 

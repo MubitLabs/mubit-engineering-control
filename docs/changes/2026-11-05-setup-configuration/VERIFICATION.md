@@ -116,3 +116,35 @@ Playwright gates, by hand, each restored after its run.
 Real routes, on a rebuilt scratch server with `MEC_FAKE_ENGINE=1`: saved a policy with `install: repo_a`, then sent `propose policy` with `repo_prop` through `POST /api/chat/messages` with `setup: true`. The draft's `preview` showed `repo_a` before and only `repo_prop` after. That run read the route, not the screen. Apply itself is covered by the route and contract tests.
 
 Not observed: a proposal on the real route in a browser, a models or prompts proposal on a scratch server, and a prompts part with a long text on screen.
+
+## Proposal trust and folded comparisons
+
+Fixed test first.
+
+| Test | Red | Green |
+| --- | --- | --- |
+| `repository-edit`: `a proposal cannot trust a repository` | `expected true to be false` | Pass |
+| `repository-edit`: `says so on the card…` | `trustIgnored` undefined | Pass |
+| `repository-edit`: `the setup agent's own tool…`, `the owner's own form…` | Guards on behaviour that must not move, so they passed throughout | Pass |
+| `config-contract`: `reads that a proposal carried a trust setting…` | `trustIgnored` undefined | Pass |
+| `config-model`: five `compare` tests of `foldDiff` | `foldDiff is not a function` | Pass, after correcting one expected length of ours: a leading run of five does fold |
+| `config.screens`: `a one-line change in a long table…` | First change past the block's height | Pass |
+| `config.screens`: `a folded comparison opens and closes…` | No fold control | Pass |
+| `config.screens`: `a repository proposal that carried trust…` | No note on the card | Pass |
+| `config.screens`: `a prompts comparison folds the same way` | Passed at first, because its sample changed the first line. Rewritten on a long default; its red is the `view does not fold` gate | Pass |
+
+| Command | Result |
+| --- | --- |
+| `python3 tools/mutants/run.py tools/mutants/m3.3-config.json` | 43 of 43 killed, 10 new |
+| `pnpm check` | 1 failed, 2305 passed, 15 skipped. The failure is the permitted `login-cards.test.ts` node-pty case |
+| `pnpm --dir apps/web test:screens`, under the lock | 243 passed, baselines unchanged |
+
+Playwright gates, by hand, each restored after its run.
+
+| Gate | Mutation | Tests | Result |
+| --- | --- | --- | --- |
+| `view does not fold` | `DiffView` maps `lines` directly | `a one-line change…`, `a folded comparison…`, `a prompts comparison…` | 3 failed, as they should |
+| `card omits the note` | The `trustIgnored` branch never renders | `a repository proposal that carried trust…` | Failed, as it should |
+| `a fold never opens` | The open lines never render | `a folded comparison…` | Failed, as it should |
+
+Not observed: either change in a browser on a scratch server. The screen tests use the sample server, and the route and contract tests use the real routes.

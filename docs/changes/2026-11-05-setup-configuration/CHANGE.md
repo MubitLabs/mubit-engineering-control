@@ -74,9 +74,18 @@ Requirement 13 makes trust a two-step control in Settings, but applying a reposi
 - **The other caller keeps its behaviour.** The agent's `register_repository` tool passes trust as a string, which never equalled `true`, so it already stored false. The pass-through is gone and a test holds the result. `POST /api/repositories` does not go through this function: the owner's own form still chooses.
 - **The card says so.** It prints the patch verbatim, so `trust: true` would read as a promise. `GET /api/setup/drafts` sets `trustIgnored` when a repository proposal carried any trust value but `false`, a string included, because the printed patch looks the same. The card then says it starts untrusted.
 
+## A check and a retire
+
+`POST /api/slots/:id/probe` and `/validate` read the slot, awaited the engine or the provider, and saved from what they had read. A retire confirmed during that wait was overwritten with `healthy`, and placement takes any healthy slot, so the connection came back and could receive work. For an API-key slot the key had already been shredded. `/validate` predates this branch, but `/key` now drives it.
+
+Both routes now re-read through `liveSlot` inside the transaction. A retired or missing slot gets no write and no event, and the route answers 409 `slot is retired`. `/key` keeps its 200, because the key was replaced, and its `probe` carries that reason, so the screen does not say "no verdict".
+
+Building on the fresh doc also fixes a second loss: a `/validate` running while the key was replaced put the old fingerprint back.
+
 ## Left open
 
 - A sign-in that failed to start leaves its `home_ready` connection. The form says the sign-in did not start, and trying the same name is refused with "retire it first". The row offers Check and Retire but no sign-in, because `connectionActions` offers that only for `auth_expired`.
+- `mec slot probe` in `apps/desktop/src/slot-cli.ts` (`cmdProbe`) still saves from a doc read before its await. It is the same pattern in another process, and this fix leaves it alone.
 - Stage B: `capabilities.switchWork`, parked notices, Switch work.
 - `NoRepositories` in `live/surfaces.tsx` still links to classic Setup, and `next.screens` pins that. It belongs to `31`'s surfaces.
 - The sidebar footnote still says "Conversation and Work are live", in `LiveApp`'s shared area.

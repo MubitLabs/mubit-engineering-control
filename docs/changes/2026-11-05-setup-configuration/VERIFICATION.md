@@ -148,3 +148,24 @@ Playwright gates, by hand, each restored after its run.
 | `a fold never opens` | The open lines never render | `a folded comparison…` | Failed, as it should |
 
 Not observed: either change in a browser on a scratch server. The screen tests use the sample server, and the route and contract tests use the real routes.
+
+## A check and a retire
+
+Fixed test first, in `slot-sensitive.test.ts`, with the check held open at a gate while the other request lands.
+
+| Test | Red | Green |
+| --- | --- | --- |
+| `a local probe that finishes afterwards…` | 200, not 409 | Pass |
+| `a local probe keeps what was saved while it ran` | The label saved meanwhile was lost | Pass |
+| `a local probe answers 409 when the slot is gone` | 200, not 409 | Pass |
+| `a provider answer of 200` and `of 401…does not bring the slot back` | 200, not 409 | Pass |
+| `a key replacement says the slot was retired…` | `probe` was `{ ok: true }` | Pass |
+| `a provider answer of 200…keeps a key replaced while it ran` | `abcd`, not `wxyz` | Pass |
+| `a provider answer of 401…keeps a key…` | Added after the first green, so its red is the `a rejected check builds on the captured doc` mutant | Pass |
+
+| Command | Result |
+| --- | --- |
+| `python3 tools/mutants/run.py tools/mutants/m3.3-config.json` | 52 of 52 killed, 9 new |
+| `pnpm check` | 1 failed, 2313 passed, 15 skipped. The failure is the permitted `login-cards.test.ts` node-pty case |
+
+Not run: `test:screens`, because no web file changed, and any engine, because the routes are tested with a fake probe and a fake provider.

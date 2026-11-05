@@ -1,6 +1,7 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -226,6 +227,38 @@ afterEach(() => {
 })
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+describe('scratch data dirs (§5.4)', () => {
+  it('prompts and models resolve under the data dir', async () => {
+    const dataDir = scratch()
+    const handle = await startServer({ dataDir })
+    try {
+      copyFileSync(
+        fileURLToPath(new URL('../../../packages/prompts/defaults/models.yaml', import.meta.url)),
+        join(dataDir, 'models.yaml'),
+      )
+      const models = (await (await fetch(`${handle.url}/api/models`)).json()) as {
+        provenance: { source: string; path: string }
+      }
+      // The read comes first: on a tree without the fix the write below would land in ~/.mec.
+      expect(models.provenance).toMatchObject({ source: 'user', path: join(dataDir, 'models.yaml') })
+
+      const res = await fetch(`${handle.url}/api/prompts`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          base_revision: 0,
+          origin: 'panel',
+          parts: [{ path: 'roles/implementer.md', text: 'Scratch rules.\n' }],
+        }),
+      })
+      expect(res.status).toBe(200)
+      expect(existsSync(join(dataDir, 'prompts/roles/implementer.md'))).toBe(true)
+    } finally {
+      await handle.close()
+    }
+  }, 12_000)
+})
 
 describe('startServer', () => {
   it('serves status, writes health.json and releases the lock on close', async () => {

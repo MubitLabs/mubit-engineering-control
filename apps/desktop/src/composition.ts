@@ -22,7 +22,7 @@ import {
   saveProcessing,
 } from '@mec/meta'
 import { loadPolicy } from '@mec/policy'
-import { defaultsRoot, loadModelsTable } from '@mec/prompts'
+import { defaultsRoot, loadModelsTable, userModelsPath } from '@mec/prompts'
 import { parkFromEvents } from '@mec/runtime'
 import { probeModelAvailabilitySync } from '@mec/slots'
 import type { EffectHandler, HealthClaim, Json } from '@mec/store'
@@ -175,6 +175,8 @@ export async function startServer(opts: {
     inspection: new InspectionReads(db),
     policyText: opts.policyText ?? DEFAULT_POLICY_TEXT,
     pauseControl,
+    // The data dir is the keystore root (§5.4), so a scratch server never reads real state.
+    keystoreRoot: opts.dataDir,
     // §6 composed path: the meta-agent executor owns chat turns. MEC_FAKE_ENGINE=1 uses the
     // scripted fake; otherwise the REAL brain (R1.4): the meta agent on a dedicated Claude
     // slot (MEC_META_SLOT) through the platform tools.
@@ -212,7 +214,7 @@ export async function startServer(opts: {
           // falls back to an EMPTY table, every tier is unplaceable, every plan rejected.
           modelsTable: () => {
             try {
-              const loaded = loadModelsTable()
+              const loaded = loadModelsTable({ userPath: userModelsPath(opts.dataDir) })
               return {
                 table: loaded.table,
                 provenance: {

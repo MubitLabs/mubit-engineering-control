@@ -1,7 +1,13 @@
 export { ClaudeAdapter, type ClaudeAdapterDeps } from './claude/adapter'
 export { buildClaudeArgv, type ClaudeArgvInput } from './claude/argv'
 export { type ClaudeProbeResult, type ProbeRun, probeClaude, REQUIRED_FLAGS } from './claude/probe'
-export { classifyClaudeError, type ParseOptions, parseClaudeStream } from './claude/stream'
+export {
+  type ClaudeEventParser,
+  classifyClaudeError,
+  createClaudeEventParser,
+  type ParseOptions,
+  parseClaudeStream,
+} from './claude/stream'
 // Codex app-server (plan §9): one `codex app-server` per slot, one thread per attempt.
 export {
   CODEX_PERMISSION_DEADLINE_MS,

@@ -1,6 +1,6 @@
 # Meta-agent journey checkpoint
 
-Updated 5 November 2026. **Execution authorized by the owner and in progress (5 November 2026).** Authority is bounded by the Execution contract below and `docs/DECISIONS.md` #14-22.
+Updated 5 November 2026. **Execution authorized by the owner and in progress (5 November 2026).** Authority is bounded by the Execution contract below and `docs/DECISIONS.md` #14-23.
 
 ## Goal and decisions
 
@@ -30,8 +30,8 @@ Owner-authorized, 5 November 2026 (`docs/DECISIONS.md` #14-18; binds this overha
 
 1. **Release environment (#14):** isolated scratch repositories and state first, then the owner's existing local install.
 2. **Rollout authority (#15):** PR creation, merges, version bumps, tags, GitHub Releases, local reinstall and restart, and enabling flags after each increment is verified. Excludes npm publication, vendor or account changes, and any SQL migration or stored-data deletion, which stay separately approved.
-3. **Confirmation cards (#16):** every push, PR and merge card opens on a scratch-state MEC server and the owner clicks each one; the owner's ~/.mec gets no build records. Decision #8's scripted resolve is not used.
-4. **Squash bootstrap (#17):** release.ts merges with --merge, which linear history refuses. The PR correcting it to squash is squash-merged by the owner by hand on GitHub, once; no agent runs a raw merge. Later merges use the repaired card.
+3. **Confirmation cards (#23, superseding #16):** every push, PR and merge card opens, settles and journals on a scratch-state MEC server; the operator resolves them by script without per-card owner approval. The owner's ~/.mec gets no build records.
+4. **Squash bootstrap (#23, superseding #17):** the bootstrap PR merges through its own repaired squash card; no raw merge.
 5. **Real-engine budget (#18):** Claude, Codex and OpenCode, at most 10 bounded runs per engine on scratch repositories or mec-sandbox, through existing slots; stop and ask at the cap. Credentials are never read.
 
 ## Exact next action
@@ -51,4 +51,4 @@ Live deliverable preview: `http://127.0.0.1:54318/ui-overhaul-preview.html`; par
 
 ## Wave status
 
-Wave 0 scouting complete at base a102313. Baseline: `pnpm check` has one environment failure only (node-pty spawn-helper lacks execute bit in fresh installs); `test:screens` 21 passed. Scout finding: the card path did not work, because UI approve burned cards without running gh, push had no card, and cards hid their payload; the bootstrap PR therefore repairs the whole path, not only the squash flag. Decisions #19-22 answered four open spec questions. Wave 1 running on local branches, nothing pushed: `fix/release-cards` (bootstrap, carries blockers-only review), `fix/http-recovery` (M1.1), `feat/visual-foundation` (VF0, default off). Next: owner clicks push and PR cards on a scratch server running the unmerged fix, then hand-squash-merges that PR once. M1.4a gets one blockers-only review because it changes who holds authority.
+Wave 0 scouting complete at base a102313. Baseline: `pnpm check` has one environment failure only (node-pty spawn-helper lacks execute bit in fresh installs); `test:screens` 21 passed. Scout finding: the card path did not work, because UI approve burned cards without running gh, push had no card, and cards hid their payload; the bootstrap PR therefore repairs the whole path, not only the squash flag. Decisions #19-22 answered four open spec questions. Wave 1 running on local branches, nothing pushed: `fix/release-cards` (bootstrap, carries blockers-only review), `fix/http-recovery` (M1.1), `feat/visual-foundation` (VF0, default off). Next: the operator resolves cards by script on a scratch server running the unmerged fix (#23). M1.4a gets one blockers-only review because it changes who holds authority.

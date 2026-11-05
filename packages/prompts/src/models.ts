@@ -401,13 +401,13 @@ export function validateModelsTable(parsed: unknown): CapabilityTable {
   throw new ModelsTableError(`the models table does not match the capability-table schema — ${details}`)
 }
 
-/** The shipped default (§3), verbatim. THREE candidate locations (issue #16): the
- *  module's sibling `defaults/` (source), `dist/prompts-defaults/` beside the esbuild
- *  bundle (the artifact ships it there — scripts/pack-tarball copies it), and the
- *  repo-relative path from `apps/desktop/dist` (dev bundles). First existing wins. */
+/** The shipped default (§3), verbatim. THREE candidate locations (issue #16), the same as
+ *  the loader's: `dist/prompts-defaults/` beside the esbuild bundle (the artifact ships it
+ *  there — scripts/pack-tarball copies it), the module's sibling `defaults/` (source), and
+ *  the repo-relative path from `apps/desktop/dist` (dev bundles). First existing wins. */
 const DEFAULT_MODELS_YAML_CANDIDATES = [
+  new URL('./prompts-defaults/models.yaml', import.meta.url),
   new URL('../defaults/models.yaml', import.meta.url),
-  new URL('../prompts-defaults/models.yaml', import.meta.url),
   new URL('../../../packages/prompts/defaults/models.yaml', import.meta.url),
 ]
 const DEFAULT_MODELS_YAML_URL = DEFAULT_MODELS_YAML_CANDIDATES.find((u) => existsSync(fileURLToPath(u)))

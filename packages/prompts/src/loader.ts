@@ -15,8 +15,29 @@ import { fileURLToPath } from 'node:url'
 import type { BundleComponent, BundleLayer, CompiledBundle } from './bundles'
 import { compileBundle, componentHash } from './bundles'
 
-/** The shipped defaults tree, resolved from this module so it works from any cwd or importer. */
-export const DEFAULTS_ROOT: string = fileURLToPath(new URL('../defaults', import.meta.url))
+/**
+ * Where the shipped tree can be, from this module so it works from any cwd or importer. Beside
+ * the bundle comes first (`dist/prompts-defaults/`, where scripts/pack-tarball ships it), then
+ * the package's own `defaults/` (source), then the repo from `apps/desktop/dist` (a dev bundle).
+ */
+const DEFAULTS_CANDIDATES: readonly string[] = [
+  new URL('./prompts-defaults', import.meta.url),
+  new URL('../defaults', import.meta.url),
+  new URL('../../../packages/prompts/defaults', import.meta.url),
+].map((url) => fileURLToPath(url))
+
+/**
+ * The shipped defaults tree: the first candidate that carries the planner's protocol. No tree
+ * throws, because a build without its prompts must fail where it is noticed: an empty catalogue
+ * looks like a healthy answer, and the planner would run on its short built-in text.
+ */
+export function defaultsRoot(candidates: readonly string[] = DEFAULTS_CANDIDATES): string {
+  const root = candidates.find((dir) => existsSync(join(dir, 'roles', 'meta_agent', 'protocol.md')))
+  if (root === undefined) {
+    throw new Error(`the shipped prompt defaults are missing: looked in ${candidates.join(', ')}`)
+  }
+  return root
+}
 
 /**
  * A part path → the layer it compiles into. `shared/delivery.md` is the one deliberate crossover:
@@ -66,15 +87,15 @@ export function listDefaultParts(): string[] {
       }
     }
   }
-  walk(DEFAULTS_ROOT, '')
+  walk(defaultsRoot(), '')
   return paths.sort()
 }
 
-/** Reads one shipped default. Undefined when the tree or the part is missing — never a throw. */
+/** Reads one shipped default. Undefined when the part is missing; a missing tree throws. */
 export function readDefaultPart(path: string): DefaultPart | undefined {
   const layer = layerOfPart(path)
   if (layer === undefined) return undefined
-  const file = join(DEFAULTS_ROOT, ...path.split('/'))
+  const file = join(defaultsRoot(), ...path.split('/'))
   if (!existsSync(file)) return undefined
   const text = readFileSync(file, 'utf8')
   return { path, layer, name: partName(path), text, hash: componentHash(text) }
@@ -100,9 +121,10 @@ export function defaultParts(): DefaultPart[] {
  * Empty for a role the tree does not know.
  */
 export function rolePartPaths(role: string): string[] {
+  const root = defaultsRoot()
   const single = `roles/${role}.md`
-  if (existsSync(join(DEFAULTS_ROOT, single))) return [single]
-  const dir = join(DEFAULTS_ROOT, 'roles', role)
+  if (existsSync(join(root, single))) return [single]
+  const dir = join(root, 'roles', role)
   if (existsSync(dir) && statSync(dir).isDirectory()) {
     return readdirSync(dir)
       .filter((entry) => entry.endsWith('.md'))
@@ -110,7 +132,7 @@ export function rolePartPaths(role: string): string[] {
       .map((entry) => `roles/${role}/${entry}`)
   }
   const subagent = `roles/subagents/${role}.md`
-  if (existsSync(join(DEFAULTS_ROOT, subagent))) return [subagent]
+  if (existsSync(join(root, subagent))) return [subagent]
   return []
 }
 

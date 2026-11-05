@@ -7,6 +7,7 @@ import { componentHash } from '../src/bundles'
 import {
   assemble,
   defaultParts,
+  defaultsRoot,
   layerOfPart,
   listDefaultParts,
   listRoles,
@@ -27,6 +28,33 @@ const AT = () => new Date('2026-11-04T12:00:00.000Z')
 
 /** The T4 manifest: 21 markdown parts; models.yaml is the capability table, not a part. */
 const SHIPPED_PARTS = 21
+
+describe('defaultsRoot: where the shipped tree is', () => {
+  const tree = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'mec-defaults-root-'))
+    mkdirSync(join(dir, 'roles', 'meta_agent'), { recursive: true })
+    writeFileSync(join(dir, 'roles', 'meta_agent', 'protocol.md'), '# protocol\n')
+    return dir
+  }
+
+  it('finds the source tree from the module', () => {
+    expect(defaultsRoot().endsWith(join('packages', 'prompts', 'defaults'))).toBe(true)
+  })
+
+  it('takes the first candidate that holds the tree, and skips a folder that does not', () => {
+    const first = tree()
+    const second = tree()
+    const empty = mkdtempSync(join(tmpdir(), 'mec-defaults-root-'))
+    expect(defaultsRoot([empty, first, second])).toBe(first)
+    for (const dir of [first, second, empty]) rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('throws, naming where it looked, when no candidate holds the tree', () => {
+    expect(() => defaultsRoot(['/nowhere/a', '/nowhere/b'])).toThrow(
+      /prompt defaults are missing.*\/nowhere\/a, \/nowhere\/b/,
+    )
+  })
+})
 
 const ENGINES = ['claude', 'codex', 'opencode'] as const
 

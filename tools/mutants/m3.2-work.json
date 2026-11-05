@@ -390,5 +390,40 @@
     "find": "        settledAsked.add(id)\n        await readEvidence(id)\n",
     "replace": "        settledAsked.add(id)\n        void readEvidence(id)\n",
     "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "a wake reads as the person's",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "    if (isWake(line)) return ack\n",
+    "replace": "",
+    "tests": ["apps/web/test/work-model.test.ts", "apps/web/test/inspection-contract.test.ts"]
+  },
+  {
+    "name": "a wake loses its acknowledgement",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "    if (isWake(line)) return ack\n",
+    "replace": "    if (isWake(line)) return []\n",
+    "tests": ["apps/web/test/work-model.test.ts", "apps/web/test/inspection-contract.test.ts"]
+  },
+  {
+    "name": "a wake is found by its text, not its id",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "line.id.startsWith('msg_wake_')",
+    "replace": "line.text === 'question answered'",
+    "tests": ["apps/web/test/work-model.test.ts", "apps/web/test/inspection-contract.test.ts"]
+  },
+  {
+    "name": "a wake is found only by its stored kind",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "line.id.startsWith('msg_wake_')",
+    "replace": "line.kind === 'wake'",
+    "tests": ["apps/web/test/work-model.test.ts", "apps/web/test/inspection-contract.test.ts"]
+  },
+  {
+    "name": "an acknowledgement drops the work's title on a wake",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "text: withTitles(line.ackText, work) }]\n    if (isWake",
+    "replace": "text: line.ackText }]\n    if (isWake",
+    "tests": ["apps/web/test/work-model.test.ts", "apps/web/test/inspection-contract.test.ts"]
   }
 ]

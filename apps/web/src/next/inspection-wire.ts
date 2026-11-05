@@ -179,7 +179,7 @@ export type ChatLine = {
   text: string
   createdAt: string
   workItemId: string | null
-  /** Stored messages have no kind yet: null is the person's own message. */
+  /** Stored messages have no kind yet: null is the person's own message, unless it is a wake's. */
   kind: string | null
   /** The meta agent's acknowledgement, stored on the message it answers. */
   ackText?: string

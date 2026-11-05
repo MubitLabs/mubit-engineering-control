@@ -797,9 +797,13 @@ function withTitles(text: string, work: readonly WorkRow[]): string {
   return work.reduce((line, row) => (row.title === null ? line : line.replaceAll(row.id, row.title)), text)
 }
 
+/** A turn no person started (§6): the id is the server's own, and no text a person sends can make it. */
+const isWake = (line: ChatLine): boolean => line.id.startsWith('msg_wake_')
+
 /**
  * Acknowledgement, plan and quiet progress. A stored message has no kind and is the person's; any
- * other unknown kind is a trace, and traces stay out (§18.1).
+ * other unknown kind is a trace, and traces stay out (§18.1). A wake also has no kind, and its row
+ * only holds the planner's reply: its text is why the turn ran, so only the reply shows.
  */
 export function conversationView(input: {
   row: WorkRow | null
@@ -810,14 +814,17 @@ export function conversationView(input: {
   const work = input.work ?? []
   const delivery = input.detail ? deliveryDetail(input.detail, null) : null
   const entries = input.messages.flatMap((line): ConversationEntry[] => {
+    const ack =
+      line.ackText === undefined
+        ? []
+        : [{ id: `${line.id}:ack`, kind: 'agent' as const, text: withTitles(line.ackText, work) }]
+    if (isWake(line)) return ack
     const kind = line.kind === null ? 'user' : ENTRY_KINDS[line.kind]
     if (kind === undefined) return []
     const text = kind === 'user' ? line.text : withTitles(line.text, work)
     return [
       { id: line.id, kind, text },
-      ...(line.ackText === undefined
-        ? []
-        : [{ id: `${line.id}:ack`, kind: 'agent' as const, text: withTitles(line.ackText, work) }]),
+      ...ack,
       ...(line.secretGuard === true
         ? [
             {

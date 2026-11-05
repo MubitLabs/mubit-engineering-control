@@ -38,6 +38,7 @@ import {
   storedLines,
   TASK_HEAD,
   taskDetails,
+  wakeLines,
   workDetails,
   workPage,
   workRows,
@@ -506,6 +507,18 @@ describe('live data', () => {
   it('a stored message with no kind is the person’s, and its acknowledgement follows', () => {
     const view = conversationView({ row: null, detail: null, messages: storedLines })
     expect(view.entries.map((entry) => entry.kind)).toEqual(['user', 'agent', 'user', 'note'])
+  })
+
+  it('a wake is no one’s message: its text goes and its acknowledgement stays', () => {
+    const view = conversationView({ row: null, detail: null, messages: wakeLines, work: rows })
+    expect(view.entries).toEqual([
+      {
+        id: 'msg_wake_0a1b2c:ack',
+        kind: 'agent',
+        text: expect.stringContaining('search for the console'),
+      },
+      { id: 'msg_said', kind: 'user', text: 'question answered' },
+    ])
   })
 
   it('an acknowledgement names work by title, never by id', () => {

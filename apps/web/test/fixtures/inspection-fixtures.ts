@@ -488,3 +488,29 @@ export const storedLines = [
     secretGuard: true,
   },
 ] satisfies ChatLine[]
+
+/** Stored by a wake turn: no kind and no person, with the turn's reason as its text. */
+export const wakeLines = [
+  {
+    id: 'msg_wake_0a1b2c',
+    text: 'question answered',
+    createdAt: OBSERVED,
+    workItemId: 'work_working',
+    kind: null,
+    ackText: 'SAMPLE-ONLY carrying on with work_working',
+  },
+  {
+    id: 'msg_wake_3d4e5f',
+    text: 'question "SAMPLE-ONLY which one?" answered: SAMPLE-ONLY that one',
+    createdAt: OBSERVED,
+    workItemId: 'work_working',
+    kind: null,
+  },
+  {
+    id: 'msg_said',
+    text: 'question answered',
+    createdAt: OBSERVED,
+    workItemId: 'work_working',
+    kind: null,
+  },
+] satisfies ChatLine[]

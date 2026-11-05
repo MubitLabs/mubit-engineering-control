@@ -19,8 +19,9 @@ Read-only, bounded `GET /api/inspect/*` routes. A client can read any repository
 ## Decisions made inside the brief
 
 - **A work item whose own state is `blocked`** maps to the person/blocked row ("Blocked"). The spec words that row by report ("the latest report is blocked or failed"), but §10's states table has `blocked` as a parked state that needs a person, and no report is recorded yet. Easy to drop if the owner wants reports only.
-- **Open needs are capped at 200** per kind, not paged: an open set is small (cards expire, questions get answered). `needsCount` is the length of the same list. A pending card past its `expiresAt` reads as `expired` and is not counted.
-- **`needs` has no cursor** (`nextCursor` is always null) for that reason.
+- **Open needs are not capped.** The pending set is walked whole by keyset; expiry and repo filters run before any limit, and the work stage and every count read the same uncapped list, so a live need cannot vanish behind older ones. (The earlier 200 cap dropped live needs and turned person stages into Working.) `needsCount` is the length of that list.
+- **`needs` is paged** by position (`cursor`, `limit` default 50, max 100, 1 MiB), ending early with a valid cursor. With `recent=1` the recent items follow the open ones; they are filtered to the repository before their cap of 20, from at most 2,000 newest rows per kind (recent items count toward nothing).
+- **Task detail is bounded**: newest 50 attempts, 200 checks, 500 diff files. `attemptsTruncated`, `checks.truncated` and `diff.truncated` count what was left out (additive fields).
 - **Snapshot cursors** cover `repositories` and the newest 100 `work:<id>` streams in scope.
 - **Reset time** in the quota label is shown in the server's local time (it is the user's own machine).
 

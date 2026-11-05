@@ -115,11 +115,15 @@ export type TaskDetail = TaskRow & {
   repoId: string | null
   objective: string
   attempts: AttemptView[]
-  checks: { headSha: string | null; results: CheckView[] }
+  /** Older attempts left out of `attempts` (the newest are kept). */
+  attemptsTruncated: number
+  /** `truncated` counts what was cut to keep the answer under 1 MiB. */
+  checks: { headSha: string | null; results: CheckView[]; truncated: number }
   diff: {
     headSha: string | null
     summary: string | null
     files: { path: string; added: number; removed: number }[]
+    truncated: number
   }
   usage: { reportedUsd: number | null; missingAttempts: number; mode: 'api' | 'subscription' | 'unknown' }
   coverage: Coverage
@@ -216,9 +220,13 @@ class BadRequest extends Error {}
 
 const QUESTION_PREFIX = 'question/'
 const REPO_PREFIX = 'repo_'
-/** An open set is naturally small (cards expire, questions get answered); this only bounds the pathological case. */
-const OPEN_CAP = 200
 const RECENT_CAP = 20
+/** Most rows read per kind looking for recent items in one scope; recent items never count toward anything. */
+const RECENT_SCAN_CAP = 2000
+/** A task answer is cut to these before it is built; what was cut is counted in the response. */
+const ATTEMPT_CAP = 50
+const CHECK_CAP = 200
+const DIFF_FILE_CAP = 500
 const TASK_CAP = 200
 const SNAPSHOT_STREAM_CAP = 100
 const SEARCH_CAP = 20
@@ -269,7 +277,8 @@ class Inspector {
 
   // ── needs: open questions and pending cards ──
 
-  #collect(kind: string, options: Parameters<InspectionReads['pageDocs']>[1], cap: number): StoreDoc[] {
+  /** Walks the whole set by keyset. Nothing is dropped here: a count must be the truth (§18). */
+  #collect(kind: string, options: Parameters<InspectionReads['pageDocs']>[1]): StoreDoc[] {
     const docs: StoreDoc[] = []
     let cursor: string | null = null
     do {
@@ -280,8 +289,8 @@ class Inspector {
       })
       docs.push(...page.rows.map((row) => row.doc))
       cursor = page.nextCursor
-    } while (cursor !== null && docs.length < cap)
-    return docs.slice(0, cap)
+    } while (cursor !== null)
+    return docs
   }
 
   #workRepo(workItemId: string | null): string | null {
@@ -354,36 +363,71 @@ class Inspector {
 
   /** Everything that needs a person now, all repositories, oldest first. The single source of every count. */
   openNeeds(): NeedItem[] {
-    const questions = this.#collect(
-      'engine',
-      { idPrefix: QUESTION_PREFIX, equals: { status: 'open' } },
-      OPEN_CAP,
-    )
-    const cards = this.#cardItems(this.#collect('confirmation', { equals: { status: 'pending' } }, OPEN_CAP))
+    const questions = this.#collect('engine', { idPrefix: QUESTION_PREFIX, equals: { status: 'open' } })
+    const cards = this.#cardItems(this.#collect('confirmation', { equals: { status: 'pending' } }))
     return [...questions.map((doc) => this.#questionItem(doc)), ...cards].filter(
       (item) => item.status === 'open' || item.status === 'pending',
     )
   }
 
+  /** Newest first, filtered to the scope before the cap, so another repository's items cannot push these out. */
+  #recentOf(kind: string, toItems: (docs: StoreDoc[]) => NeedItem[], repoId: string | undefined): NeedItem[] {
+    const found: NeedItem[] = []
+    let cursor: string | null = null
+    let scanned = 0
+    do {
+      const page: ReturnType<InspectionReads['pageDocs']> = this.#reads.pageDocs(kind, {
+        ...(kind === 'engine' && { idPrefix: QUESTION_PREFIX }),
+        order: 'desc',
+        limit: MAX_PAGE_LIMIT,
+        cursor,
+      })
+      scanned += page.rows.length
+      for (const item of toItems(page.rows.map((row) => row.doc))) {
+        if (item.status === 'open' || item.status === 'pending') continue
+        if (repoId === undefined || item.repoId === repoId) found.push(item)
+      }
+      cursor = page.nextCursor
+    } while (cursor !== null && found.length < RECENT_CAP && scanned < RECENT_SCAN_CAP)
+    return found.slice(0, RECENT_CAP)
+  }
+
   /** Recently settled and expired items, newest first. Never counted as needing anyone. */
-  recentNeeds(): NeedItem[] {
-    const settledQuestions = this.#reads
-      .pageDocs('engine', { idPrefix: QUESTION_PREFIX, order: 'desc', limit: MAX_PAGE_LIMIT })
-      .rows.map((row) => row.doc)
-      .filter((doc) => (str(doc.status) ?? 'open') !== 'open')
-    const cards = this.#cardItems(
-      this.#reads
-        .pageDocs('confirmation', { order: 'desc', limit: MAX_PAGE_LIMIT })
-        .rows.map((row) => row.doc),
-    ).filter((item) => item.kind === 'card' && item.status !== 'pending')
-    return [...settledQuestions.map((doc) => this.#questionItem(doc)), ...cards].slice(0, RECENT_CAP * 2)
+  recentNeeds(repoId: string | undefined): NeedItem[] {
+    return [
+      ...this.#recentOf('engine', (docs) => docs.map((doc) => this.#questionItem(doc)), repoId),
+      ...this.#recentOf('confirmation', (docs) => this.#cardItems(docs), repoId),
+    ].slice(0, RECENT_CAP)
   }
 
   needs(repoId: string | undefined, recent: boolean): NeedItem[] {
-    const scoped = (items: NeedItem[]): NeedItem[] =>
-      repoId === undefined ? items : items.filter((item) => item.repoId === repoId)
-    const open = scoped(this.openNeeds())
-    return recent ? [...open, ...scoped(this.recentNeeds()).slice(0, RECENT_CAP)] : open
+    const open = this.openNeeds().filter((item) => repoId === undefined || item.repoId === repoId)
+    return recent ? [...open, ...this.recentNeeds(repoId)] : open
+  }
+
+  /** One page of needs by position in the list; ends early at the row limit or 1 MiB. */
+  needsPage(
+    repoId: string | undefined,
+    recent: boolean,
+    cursor: string | null,
+    limit: number,
+  ): Page<NeedItem> {
+    const all = this.needs(repoId, recent)
+    const start = cursor === null ? 0 : decodeCursor(cursor)
+    const items: NeedItem[] = []
+    let bytes = ENVELOPE_BYTES
+    for (const item of all.slice(start, start + limit)) {
+      const size = Buffer.byteLength(JSON.stringify(scrub(item)))
+      if (items.length > 0 && bytes + size > MAX_PAGE_BYTES) break
+      bytes += size
+      items.push(item)
+    }
+    const end = start + items.length
+    return {
+      items,
+      nextCursor: end < all.length ? encodeCursor(end) : null,
+      observedAt: this.observedAt(),
+    }
   }
 
   // ── work ──
@@ -620,9 +664,10 @@ class Inspector {
     const attempts = this.#reads
       .docsByField('attempt', 'taskId', [id])
       .sort((a, b) => (num(a.generation) ?? 0) - (num(b.generation) ?? 0))
-    const lastAt = this.#reads.lastEventAt(attempts.map((a) => `attempt:${String(a.id)}`))
+    const lastAt = this.#reads.lastEventAt(attempts.slice(-ATTEMPT_CAP).map((a) => `attempt:${String(a.id)}`))
     const modelRequest = obj(task.modelRequest)
-    const views = attempts.map((attempt): AttemptView => {
+    const shown = attempts.slice(-ATTEMPT_CAP)
+    const views = shown.map((attempt): AttemptView => {
       const slotId = str(attempt.slotId)
       const model = str(attempt.model)
       const engine = str(attempt.engine)
@@ -653,7 +698,7 @@ class Inspector {
     const head = str(named?.headSha)
     // Checks and diff belong to the exact head they ran on, never inherited from another scope.
     const checkList = named?.checks
-    const checks: CheckView[] = Array.isArray(checkList)
+    const allChecks: CheckView[] = Array.isArray(checkList)
       ? checkList.flatMap((entry): CheckView[] => {
           const check = obj(entry)
           if (check === null || str(check.name) === null || str(check.headSha) !== head) return []
@@ -669,9 +714,10 @@ class Inspector {
           ]
         })
       : []
+    const checks = allChecks.slice(0, CHECK_CAP)
     const diffRecord = obj(named?.diff)
     const fileList = diffRecord?.files
-    const files = Array.isArray(fileList)
+    const allFiles = Array.isArray(fileList)
       ? fileList.flatMap((entry) => {
           const file = obj(entry)
           return file !== null && str(file.path) !== null
@@ -685,6 +731,7 @@ class Inspector {
             : []
         })
       : []
+    const files = allFiles.slice(0, DIFF_FILE_CAP)
     const costs = attempts.map((attempt) => num(attempt.costUsd))
     const reported = costs.filter((cost): cost is number => cost !== null)
     const modes = new Set(attempts.map((attempt) => str(attempt.usageMode)).filter((mode) => mode !== null))
@@ -695,11 +742,17 @@ class Inspector {
       repoId: repoIdOf(task) ?? repoIdOf(workDoc),
       objective: cutText(str(task.objective) ?? '', 20000),
       attempts: views,
-      checks: { headSha: checks.length > 0 ? head : null, results: checks },
+      attemptsTruncated: attempts.length - views.length,
+      checks: {
+        headSha: checks.length > 0 ? head : null,
+        results: checks,
+        truncated: allChecks.length - checks.length,
+      },
       diff: {
         headSha: diffRecord === null ? null : head,
         summary: str(diffRecord?.summary) === null ? null : cutText(String(diffRecord?.summary), 2000),
         files,
+        truncated: allFiles.length - files.length,
       },
       usage: {
         reportedUsd: reported.length === 0 ? null : reported.reduce((sum, cost) => sum + cost, 0),
@@ -936,12 +989,9 @@ export function registerInspectionRoutes(app: FastifyInstance, deps: InspectDeps
     '/api/inspect/needs',
     serve((request): Page<NeedItem> => {
       const repoId = repoFilter(request)
-      const recent = (request.query as { recent?: unknown }).recent
-      return {
-        items: inspector.needs(repoId, recent === '1' || recent === 'true'),
-        nextCursor: null,
-        observedAt: inspector.observedAt(),
-      }
+      const query = request.query as Record<string, unknown>
+      const { cursor, limit } = pageParams(query)
+      return inspector.needsPage(repoId, query.recent === '1' || query.recent === 'true', cursor, limit)
     }),
   )
 

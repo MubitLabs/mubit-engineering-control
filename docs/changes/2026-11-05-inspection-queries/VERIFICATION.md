@@ -21,7 +21,7 @@ After the implementation the first full run of the desktop file had 3 failures, 
 
 ## Mutants
 
-`python3 tools/mutants/run.py tools/mutants/m3.1-queries.json`: 8 of 8 killed.
+`python3 tools/mutants/run.py tools/mutants/m3.1-queries.json`: 15 of 15 killed after the fix wave (seven added: open walk stopped at 200, needs byte cap, needs cursor, recent filtered after its cap, and the three task-detail caps).
 
 | Mutant | Verdict |
 | --- | --- |
@@ -67,3 +67,7 @@ The keyset itself is instant. The cost is each JSON-field equality (task and att
 - The verifier steps listed at the top.
 - Behaviour on the built product (the tests drive `buildServer` over a real `SqliteStore`, not the packaged binary).
 - A restart: the routes keep no state of their own, so links should hold, but it was not run.
+
+## Fix wave
+
+Failing tests first (5 red): 230 heavy open questions paged under 1 MiB at 50 rows; a fresh beta question behind 235 older ones; 200 expired cards plus one fresh; recent needs scoped to a repository; a 20,000-file task under 1 MiB. Then green. The migration trip wire stays fired and awaits the owner decision: approve the expression-index migration, or rule that 50,000 per kind is not a target. Open needs now walk the whole pending set, which is the cost that decision bears on.

@@ -433,8 +433,8 @@ describe('inspection routes: honesty', () => {
       delivery: false,
     })
     expect(none.usage).toEqual({ reportedUsd: null, missingAttempts: 0, mode: 'unknown' })
-    expect(none.checks).toEqual({ headSha: null, results: [] })
-    expect(none.diff).toEqual({ headSha: null, summary: null, files: [] })
+    expect(none.checks).toEqual({ headSha: null, results: [], truncated: 0 })
+    expect(none.diff).toEqual({ headSha: null, summary: null, files: [], truncated: 0 })
     expect(none.attempts).toEqual([])
     const work = (await get('/api/inspect/work/wi_1')).json()
     expect(work.coverage.delivery).toBe(false)
@@ -715,5 +715,172 @@ describe('inspection routes: titles, counts, details, search, snapshot', () => {
     expect(work[0]).toHaveProperty('taskCounts')
     expect(work[0]).toHaveProperty('stage')
     expect((await get('/api/inspect/nope')).status).toBe(404)
+  })
+})
+
+describe('inspection routes: honest counts and bounded needs (fix wave)', () => {
+  const seedQuestions = (n: number, workItemId: string, prefix: string, heavy = false): void => {
+    store.atomic(() => {
+      for (let i = 0; i < n; i++) {
+        store.engines.save({
+          id: `question/${prefix}${i}`,
+          questionId: `${prefix}${i}`,
+          question: heavy ? 'q'.repeat(2000) : `q ${i}`,
+          options: heavy ? Array.from({ length: 20 }, () => 'o'.repeat(200)) : [],
+          workItemId,
+          status: 'open',
+          askedAt: AT,
+        })
+      }
+    })
+  }
+
+  it('needs is paged: 230 heavy open questions all arrive, each page under 1 MiB and 50 rows by default', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    seedQuestions(230, 'wi_1', 'h', true)
+    const seen: string[] = []
+    let cursor: string | null = null
+    let pages = 0
+    do {
+      const res = await get(`/api/inspect/needs${cursor === null ? '' : `?cursor=${cursor}`}`)
+      expect(res.body.length).toBeLessThanOrEqual(1024 * 1024)
+      const page = res.json()
+      expect(page.items.length).toBeLessThanOrEqual(50)
+      seen.push(...page.items.map((i: any) => i.id))
+      cursor = page.nextCursor
+      pages += 1
+    } while (cursor !== null)
+    expect(pages).toBeGreaterThan(1)
+    expect(new Set(seen).size).toBe(230)
+    expect((await get('/api/inspect/snapshot')).json().needsCount).toBe(230)
+    expect((await get('/api/inspect/needs?limit=1000')).json().items.length).toBeLessThanOrEqual(100)
+    expect((await get('/api/inspect/needs?cursor=!!')).status).toBe(400)
+  })
+
+  it('a fresh question on another repository is not lost behind 235 older open ones', async () => {
+    seedWork('wi_a', { repoId: 'repo_a' })
+    seedWork('wi_late', { repoId: 'repo_b' })
+    seedQuestions(235, 'wi_a', 'a')
+    seedQuestions(1, 'wi_late', 'late')
+    const beta = (await get('/api/inspect/needs?repoId=repo_b')).json()
+    expect(beta.items.map((i: any) => i.id)).toEqual(['late0'])
+    const snap = (await get('/api/inspect/snapshot')).json()
+    expect(snap.needsCount).toBe(236)
+    expect(snap.repositories.find((r: any) => r.id === 'repo_b').needsCount).toBe(1)
+    const work = (await get('/api/inspect/work/wi_late')).json()
+    expect(work.stage.key).toBe('person/decision')
+  })
+
+  it('200 expired pending cards do not hide a fresh one', async () => {
+    seedWork('wi_fresh', { repoId: 'repo_a' })
+    store.atomic(() => {
+      for (let i = 0; i < 200; i++) {
+        store.confirmations.save({
+          id: `conf_old${i}`,
+          cls: 'install',
+          status: 'pending',
+          operationHash: 'h',
+          createdAt: AT,
+          expiresAt: '2000-01-01T00:00:00.000Z',
+          workItemId: 'wi_fresh',
+        })
+      }
+      store.confirmations.save({
+        id: 'conf_fresh',
+        cls: 'install',
+        status: 'pending',
+        operationHash: 'h',
+        createdAt: AT,
+        expiresAt: '2999-01-01T00:00:00.000Z',
+        workItemId: 'wi_fresh',
+      })
+    })
+    expect((await get('/api/inspect/snapshot')).json().needsCount).toBe(1)
+    expect((await get('/api/inspect/needs')).json().items.map((i: any) => i.id)).toEqual(['conf_fresh'])
+    expect((await get('/api/inspect/work/wi_fresh')).json().stage.key).toBe('person/decision')
+  })
+
+  it("recent needs for a repository are not sliced away by other repositories' newer items", async () => {
+    seedWork('wi_a', { repoId: 'repo_a' })
+    seedWork('wi_b', { repoId: 'repo_b' })
+    store.atomic(() => {
+      store.engines.save({
+        id: 'question/beta_old',
+        questionId: 'beta_old',
+        question: 'beta',
+        options: [],
+        workItemId: 'wi_b',
+        status: 'answered',
+        answer: 'yes',
+        askedAt: AT,
+      })
+      for (let i = 0; i < 60; i++) {
+        store.engines.save({
+          id: `question/alpha${i}`,
+          questionId: `alpha${i}`,
+          question: 'alpha',
+          options: [],
+          workItemId: 'wi_a',
+          status: 'answered',
+          answer: 'yes',
+          askedAt: AT,
+        })
+      }
+    })
+    const beta = (await get('/api/inspect/needs?repoId=repo_b&recent=1')).json()
+    expect(beta.items.map((i: any) => i.id)).toEqual(['beta_old'])
+  })
+
+  it('a task with 20,000 diff files, checks and attempts answers under 1 MiB and says what it cut', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    const head = 'a'.repeat(40)
+    store.atomic(() => {
+      store.tasks.save({
+        id: 'task_big',
+        workItemId: 'wi_1',
+        repoId: 'repo_a',
+        localKey: 'k',
+        objective: 'Do it',
+        status: 'ready',
+        dependsOn: [],
+      })
+      for (let g = 1; g <= 300; g++) {
+        store.attempts.save({
+          id: `att_${g}`,
+          taskId: 'task_big',
+          workItemId: 'wi_1',
+          generation: g,
+          state: 'done',
+          ...(g === 300 && {
+            headSha: head,
+            diff: {
+              summary: 's',
+              files: Array.from({ length: 20_000 }, (_, i) => ({
+                path: `src/dir${i}/${'f'.repeat(60)}.ts`,
+                added: 1,
+                removed: 1,
+              })),
+            },
+            checks: Array.from({ length: 2_000 }, (_, i) => ({
+              name: `check ${i}`,
+              state: 'passed',
+              headSha: head,
+              detail: 'd'.repeat(500),
+            })),
+          }),
+        })
+      }
+    })
+    const res = await get('/api/inspect/tasks/task_big')
+    expect(res.status).toBe(200)
+    expect(res.body.length).toBeLessThanOrEqual(1024 * 1024)
+    const task = res.json()
+    expect(task.diff.files.length).toBeLessThan(20_000)
+    expect(task.diff.truncated).toBe(20_000 - task.diff.files.length)
+    expect(task.checks.results.length).toBeLessThan(2_000)
+    expect(task.checks.truncated).toBe(2_000 - task.checks.results.length)
+    expect(task.attempts.length).toBeLessThan(300)
+    expect(task.attemptsTruncated).toBe(300 - task.attempts.length)
+    expect(task.attempts.at(-1).id).toBe('att_300')
   })
 })

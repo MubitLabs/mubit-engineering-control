@@ -147,7 +147,9 @@ export const TASK_MACHINE: TransitionTable<TaskState, TaskEvent> = [
 // only means the agent stopped; checks decide the outcome. Parked states preserve the
 // workspace and release the slot, then resume in place (§11). A stalled attempt (process
 // died, journal silent) is reconciled before any replacement starts; reconciliation either
-// finds it alive (back to running) or dead (interrupted, from which it resumes).
+// finds it alive (back to running) or dead (interrupted, from which it resumes). An attempt
+// that cannot run or errored ends `failed` (decision #26): a check never ran, so it is not
+// `checks_failed`, and it does not resume, so it is not `interrupted`.
 export const ATTEMPT_STATES = [
   'queued',
   'running',
@@ -159,6 +161,7 @@ export const ATTEMPT_STATES = [
   'provider_down',
   'interrupted',
   'stalled',
+  'failed',
 ] as const
 export type AttemptState = (typeof ATTEMPT_STATES)[number]
 
@@ -175,20 +178,23 @@ export const ATTEMPT_EVENTS = [
   'resume',
   'reconciled_running',
   'reconciled_stopped',
+  'attempt_failed',
 ] as const
 export type AttemptEvent = (typeof ATTEMPT_EVENTS)[number]
 
-export const ATTEMPT_TERMINAL: readonly AttemptState[] = ['succeeded', 'checks_failed']
+export const ATTEMPT_TERMINAL: readonly AttemptState[] = ['succeeded', 'checks_failed', 'failed']
 
 export const ATTEMPT_MACHINE: TransitionTable<AttemptState, AttemptEvent> = [
   { from: 'queued', event: 'agent_started', to: 'running' },
   { from: 'queued', event: 'interrupt_confirmed', to: 'interrupted' },
+  { from: 'queued', event: 'attempt_failed', to: 'failed' },
   { from: 'running', event: 'agent_finished', to: 'work_complete' },
   { from: 'running', event: 'quota_exhausted', to: 'quota_wait' },
   { from: 'running', event: 'auth_expired', to: 'auth_required' },
   { from: 'running', event: 'provider_unreachable', to: 'provider_down' },
   { from: 'running', event: 'interrupt_confirmed', to: 'interrupted' },
   { from: 'running', event: 'stall_detected', to: 'stalled' },
+  { from: 'running', event: 'attempt_failed', to: 'failed' },
   { from: 'work_complete', event: 'checks_passed', to: 'succeeded' },
   { from: 'work_complete', event: 'checks_failed', to: 'checks_failed' },
   { from: 'quota_wait', event: 'resume', to: 'running' },

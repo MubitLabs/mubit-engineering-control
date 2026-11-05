@@ -116,9 +116,11 @@ describe('attempt machine', () => {
       'interrupted --resume--> running',
       'provider_down --resume--> running',
       'queued --agent_started--> running',
+      'queued --attempt_failed--> failed',
       'queued --interrupt_confirmed--> interrupted',
       'quota_wait --resume--> running',
       'running --agent_finished--> work_complete',
+      'running --attempt_failed--> failed',
       'running --auth_expired--> auth_required',
       'running --interrupt_confirmed--> interrupted',
       'running --provider_unreachable--> provider_down',
@@ -141,6 +143,8 @@ describe('attempt machine', () => {
     expect(canTransition(ATTEMPT_MACHINE, 'succeeded', 'resume')).toBe(false)
     expect(canTransition(ATTEMPT_MACHINE, 'queued', 'agent_finished')).toBe(false)
     expect(canTransition(ATTEMPT_MACHINE, 'quota_wait', 'reconciled_running')).toBe(false)
+    expect(canTransition(ATTEMPT_MACHINE, 'failed', 'resume')).toBe(false)
+    expect(ATTEMPT_TERMINAL).toContain('failed')
   })
 
   it('applies a transition and names from and event when refusing', () => {

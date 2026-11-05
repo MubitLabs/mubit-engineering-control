@@ -482,7 +482,7 @@ Conversation ──message──► WorkItem(mandate) ──plan──► Tasks(
 | --- | --- | --- |
 | WorkItem | proposed → admitted → planning → executing → reviewing → integrating → done | blocked (reason); held (by the user); stopped by the user; dropped |
 | Task | ready → active → awaiting_review → accepted → integrated | cancelled; blocked (dependency/capacity/confirmation); dropped |
-| Attempt | queued → running → work_complete → succeeded / checks_failed | quota_wait; auth_required; provider_down; interrupted; stalled |
+| Attempt | queued → running → work_complete → succeeded / checks_failed | quota_wait; auth_required; provider_down; interrupted; stalled; failed (terminal, from queued or running: it could not run or errored) |
 | Confirmation | pending → approved / denied | expired; stale (input changed) |
 | Slot | draft → home_ready → login_pending → healthy | degraded (reason); retired |
 

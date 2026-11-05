@@ -21,7 +21,7 @@ After the implementation the first full run of the desktop file had 3 failures, 
 
 ## Mutants
 
-`python3 tools/mutants/run.py tools/mutants/m3.1-queries.json`: 30 of 30 killed at the second fix round (exit 0), and `--self-check` gave SURVIVED for the no-op and INVALID for the syntax error, as it should.
+`python3 tools/mutants/run.py tools/mutants/m3.1-queries.json`: 30 of 30 killed at the second fix round (exit 0; 51 of 51 at the final fix round, below), and `--self-check` gave SURVIVED for the no-op and INVALID for the syntax error, as it should.
 
 | Mutant | Verdict |
 | --- | --- |
@@ -35,7 +35,7 @@ After the implementation the first full run of the desktop file had 3 failures, 
 | treat absent repoId as readOnly false | KILLED |
 | stop the open walk at 200 | KILLED |
 | needs never returns a cursor | KILLED |
-| recent filters by repo after the cap | KILLED |
+| recent ignores its repo scope (was: recent filters by repo after the cap) | KILLED |
 | diff files uncapped | KILLED |
 | checks uncapped | KILLED |
 | attempts uncapped | KILLED |
@@ -101,6 +101,28 @@ Failing tests first (5 red): 230 heavy open questions paged under 1 MiB at 50 ro
 Failing tests first: 13 red, each for the expected reason. responses over 1 MiB on `tasks/:id`, `work/:id`, `work` and `needs` (the seven size failures ranged from 1.86 MB to 116 MB), missing truncated counts, a row skipped after an earlier one was answered, a recent row skipped after a newer one settled, questions and cards not sharing one order, a newer card pushed out by settled questions, one oversized card over 1 MiB, and an unknown cursor phase accepted. Then green. Two new tests passed before the fix because they pin behaviour that already held: `100 cards with long wide cls` (it exists to kill the byte-cap mutant) and `recent=1 pages the open rows`. Sizes are `Buffer.byteLength`; the older tests' `res.body.length` counts UTF-16 units, not bytes.
 
 **Mutant run.** The first run was 27 of 30: three cursor mutants showed SURVIVED. Applying one by hand showed why: the mutant made a cursor repeat forever, the test's page loop never ended, and vitest stopped with 7 tests pending, 0 failed, and exit 1. The tests were not passing. Both page loops in the test file now fail past 50 pages, and all three are killed. `tools/mutants/run.py` reads pending tests with zero failures as SURVIVED; that is safe, since it never reads as killed, but it is misleading. The runner is unchanged here.
+
+## Final fix round
+
+**Correction.** The second fix round and CHANGE.md said the cuts and budgets hold every response to 1 MiB. They do not: `repositories[].id` and other fields are served whole, so a snapshot with one oversized repository id went out at over 1 MiB with a 200. The ceiling is now one check in `serve`.
+
+Failing tests first: 10 red, each for the expected reason. A 1.2 MB answer of 400,000 wide characters served with a 200; an answer one byte over the limit not refused; `repositoriesTruncated` undefined; `done24` ahead of a just-answered old question; the same with 2,100 newer rows; questions and cards in rowid order, not settle order; a walk of 15 instead of 20 when five rows settled mid-walk; a row served as open then served again in the recent phase; a recent cursor with no settle key; and in the store, a cursor that dropped `t` and `n`. Then green. `a key-shaped settle time cannot leave through the recent cursor` passed before the fix because there was no time in the cursor; it pins the change and kills `settle time leaves unredacted`.
+
+**The cap stays 20 per walk.** Applying the cursor before a plain cap of 20 made every page offer 20 more, so a walk served all 30 settled rows and broke two existing tests. The recent cursor therefore carries `n`, the rows the walk has served, and each page's room is `20 - n`. The existing tests are unchanged.
+
+**Mutant run.** 21 added, 5 repointed at the rewritten lines (`recent filters by repo after the cap` became `recent ignores its repo scope`, since the check moved). The first run was 46 of 51, and all five were test gaps: the 2,100-row test's old row sat on the first page of the now ascending walk, so a walk that stopped early still found it; the settled card's time and the lapsed card's expiry sat in the same order as the `createdAt` fallback; and a spent cursor had too few rows left to show a negative slice. The tests were tightened and the run is 51 of 51 (exit 0).
+
+**`pnpm check`:** typecheck and lint clean; 1,847 tests passed, 15 skipped, 1 failed: `login-cards` "drives a real interactive shell through the seam", the one permitted failure, pre-existing and unrelated.
+
+**Cost of `recent=1`.** The whole of both kinds is now read on each `recent=1` request. Measured once on this machine (a throwaway test, Node, real better-sqlite3, in-memory database, every row settled, on `/api/inspect/needs?recent=1`, with plain `/api/inspect/needs` beside it):
+
+| Questions + cards | `recent=1` | plain |
+| --- | --- | --- |
+| 2,000 + 2,000 | 30 ms | 6 ms |
+| 10,000 + 10,000 | 132 ms | 7 ms |
+| 50,000 + 50,000 | 667 ms | 36 ms |
+
+A walk repeats that per page, and it runs inside one read transaction per request. It is over the 100 ms bar at about 8,000 of each kind. An index on settle time would be a migration, which this branch's ruling excludes, so it stays an owner question with the one below.
 
 ## Trip wire: coordinator ruling for this branch
 

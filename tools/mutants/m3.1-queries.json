@@ -65,15 +65,15 @@
   {
     "name": "needs never returns a cursor",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "        last !== undefined && served.length < rows.length\n          ? encodeCursor(last.rowid, served.length > open.length)\n          : null,",
+    "find": "        last !== undefined && served.length < rows.length\n          ? served.length > open.length\n            ? encodeCursor(last.rowid, true, {\n                at: last.settledAt,\n                served: servedBefore + served.length - open.length,\n              })\n            : encodeCursor(last.rowid)\n          : null,",
     "replace": "        null,",
     "tests": ["apps/desktop/test/inspection.test.ts"]
   },
   {
-    "name": "recent filters by repo after the cap",
+    "name": "recent ignores its repo scope",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "        if (repoId === undefined || row.item.repoId === repoId) found.push(row)",
-    "replace": "        if (found.length < RECENT_CAP) found.push(row)",
+    "find": "(repoId === undefined || item.repoId === repoId) &&\n      (after === null",
+    "replace": "(after === null",
     "tests": ["apps/desktop/test/inspection.test.ts"]
   },
   {
@@ -121,22 +121,22 @@
   {
     "name": "recent keyset ignored",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "this.#recentRows(repoId).filter((row) => !at.recent || row.rowid < at.r)",
-    "replace": "this.#recentRows(repoId)",
+    "find": "at.recent ? { at: at.at ?? '', r: at.r } : null,",
+    "replace": "null,",
     "tests": ["apps/desktop/test/inspection.test.ts"]
   },
   {
     "name": "recent cursor loses its phase",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "encodeCursor(last.rowid, served.length > open.length)",
-    "replace": "encodeCursor(last.rowid)",
+    "find": "encodeCursor(last.rowid, true, {",
+    "replace": "encodeCursor(last.rowid, false, {",
     "tests": ["apps/desktop/test/inspection.test.ts"]
   },
   {
     "name": "recent rows not merged newest first",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "      .sort((a, b) => b.rowid - a.rowid)\n      .slice(0, RECENT_CAP)",
-    "replace": "      .slice(0, RECENT_CAP)",
+    "find": "      .sort(bySettledDesc)\n      .slice(0, room)",
+    "replace": "      .slice(0, room)",
     "tests": ["apps/desktop/test/inspection.test.ts"]
   },
   {
@@ -206,6 +206,153 @@
     "name": "cursor phase unchecked",
     "file": "packages/store/src/inspection.ts",
     "find": "  if (p !== undefined && p !== 'recent') throw new CursorError('cursor phase is not valid')\n",
+    "replace": "",
+    "tests": ["packages/store/test/inspection.test.ts"]
+  },
+  {
+    "name": "ceiling far too high",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "Buffer.byteLength(json) > MAX_PAGE_BYTES",
+    "replace": "Buffer.byteLength(json) > MAX_PAGE_BYTES * 3",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "ceiling measures characters",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "Buffer.byteLength(json) > MAX_PAGE_BYTES",
+    "replace": "json.length > MAX_PAGE_BYTES",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "ceiling off by one",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "Buffer.byteLength(json) > MAX_PAGE_BYTES",
+    "replace": "Buffer.byteLength(json) >= MAX_PAGE_BYTES",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "ceiling answers 200",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "          reply.code(500)\n          return { error: 'response_too_large'",
+    "replace": "          return { error: 'response_too_large'",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "ceiling error code changed",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "error: 'response_too_large'",
+    "replace": "error: 'server_error'",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "served answer not typed as JSON",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "        reply.type('application/json; charset=utf-8')\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "recent ordered by rowid",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "a.settledAt === b.settledAt ? b.rowid - a.rowid : a.settledAt < b.settledAt ? 1 : -1",
+    "replace": "b.rowid - a.rowid",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "settle-time tie not broken by rowid",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "a.settledAt === b.settledAt ? b.rowid - a.rowid :",
+    "replace": "a.settledAt === b.settledAt ? 0 :",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "recent walk stops at the first page",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    } while (cursor !== null)\n    return found",
+    "replace": "    } while (false)\n    return found",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "recent walk stops once it has room",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    } while (cursor !== null)\n    return found",
+    "replace": "    } while (cursor !== null && found.length < room)\n    return found",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "recent cursor drops the settle time",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "settledAt < after.at || (settledAt === after.at && rowid < after.r)",
+    "replace": "rowid < after.r",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "recent cursor drops the tiebreak",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "(settledAt === after.at && rowid < after.r)",
+    "replace": "false",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "recent cap is per page",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "Math.max(0, RECENT_CAP - servedBefore)",
+    "replace": "RECENT_CAP",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "spent recent cursor wraps the cap",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "Math.max(0, RECENT_CAP - servedBefore)",
+    "replace": "RECENT_CAP - servedBefore",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "question settle time is when asked",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "str(doc.answeredAt) ?? str(doc.askedAt) ?? ''",
+    "replace": "str(doc.askedAt) ?? ''",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "card settle time ignores resolvedAt",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "(lapsed ? expiresAt : str(doc.resolvedAt))",
+    "replace": "(lapsed ? expiresAt : null)",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "lapsed card has no expiry key",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "(lapsed ? expiresAt : str(doc.resolvedAt))",
+    "replace": "str(doc.resolvedAt)",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "settle time leaves unredacted",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "settledAt: shortText(str(doc.answeredAt) ?? str(doc.askedAt) ?? '')",
+    "replace": "settledAt: str(doc.answeredAt) ?? str(doc.askedAt) ?? ''",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "repositories truncated count dropped",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "repositoriesTruncated: repositories.truncated,",
+    "replace": "repositoriesTruncated: 0,",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "repositories uncapped",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "const rows = all.slice(0, MAX_PAGE_LIMIT)",
+    "replace": "const rows = all",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "settled cursor fields unchecked",
+    "file": "packages/store/src/inspection.ts",
+    "find": "  if (typeof t !== 'string' || typeof n !== 'number' || !Number.isSafeInteger(n) || n < 0)\n    throw new CursorError('cursor position is not valid')\n",
     "replace": "",
     "tests": ["packages/store/test/inspection.test.ts"]
   }

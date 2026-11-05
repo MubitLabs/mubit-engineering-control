@@ -1,0 +1,86 @@
+/* The approved design tokens (docs/changes/2026-11-05-visual-foundation/CHANGE.md). Two values
+   differ from the design because they failed its own contrast rules: --secondary (light) was
+   #626b78, 4.34:1 on --selected; --control-line is new because --line is a 1.3:1 hairline,
+   which cannot carry a control boundary. */
+:root {
+  color-scheme: light;
+  --canvas: #f7f8fa;
+  --rail: #f0f2f5;
+  --surface: #ffffff;
+  --ink: #20252d;
+  --secondary: #5b6470;
+  --line: #e1e5eb;
+  --control-line: #7d8590;
+  --focus: #20252d;
+  --selected: #e2e7ed;
+  --hover: #eceff3;
+  --amber: #80520b;
+  --attention: #fff4dc;
+  --green: #34734b;
+  --red: #ac3b3b;
+  --scrim: #11182759;
+  --shadow: 0 16px 64px #17223420;
+
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --rail-width: 216px;
+  --inspector-width: 336px;
+  --measure: 680px;
+  --toolbar-height: 64px;
+  --gutter: 32px;
+  --target: 32px;
+  --target-primary: 40px;
+  --motion: 160ms;
+}
+
+@media (max-width: 760px) {
+  :root {
+    --gutter: 16px;
+    --toolbar-height: 56px;
+    --target: 44px;
+    --target-primary: 44px;
+  }
+}
+
+/* Keep the next two blocks identical; apps/web/test/next-boundary.test.ts enforces it. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --canvas: #171a20;
+    --rail: #1d2128;
+    --surface: #20252d;
+    --ink: #edf0f5;
+    --secondary: #a4adba;
+    --line: #333a45;
+    --control-line: #7c8593;
+    --focus: #edf0f5;
+    --selected: #343d49;
+    --hover: #2a303a;
+    --amber: #edc677;
+    --attention: #3a3020;
+    --green: #88c79d;
+    --red: #ef9f9f;
+    --scrim: #00000080;
+    --shadow: 0 16px 64px #00000088;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: #171a20;
+  --rail: #1d2128;
+  --surface: #20252d;
+  --ink: #edf0f5;
+  --secondary: #a4adba;
+  --line: #333a45;
+  --control-line: #7c8593;
+  --focus: #edf0f5;
+  --selected: #343d49;
+  --hover: #2a303a;
+  --amber: #edc677;
+  --attention: #3a3020;
+  --green: #88c79d;
+  --red: #ef9f9f;
+  --scrim: #00000080;
+  --shadow: 0 16px 64px #00000088;
+}

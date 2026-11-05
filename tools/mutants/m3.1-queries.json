@@ -44,8 +44,8 @@
   {
     "name": "join a card by branch name",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "      const workItemId = str(doc.workItemId) ?? (mandateId === null ? null : (byMandate.get(mandateId) ?? null))",
-    "replace": "      const workItemId =\n        str(doc.workItemId) ??\n        (mandateId === null ? null : (byMandate.get(mandateId) ?? null)) ??\n        str(this.#reads.docsByField('work_item', 'branch', [String(obj(doc.payload)?.branch)])[0]?.id)",
+    "find": "      const workItemId =\n        str(doc.workItemId) ?? (mandateId === null ? null : (byMandate.get(mandateId) ?? null))\n",
+    "replace": "      const workItemId =\n        str(doc.workItemId) ??\n        (mandateId === null ? null : (byMandate.get(mandateId) ?? null)) ??\n        str(this.#reads.docsByField('work_item', 'branch', [String(obj(doc.payload)?.branch)])[0]?.id)\n",
     "tests": ["apps/desktop/test/inspection.test.ts"]
   },
   {

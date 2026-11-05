@@ -134,9 +134,12 @@ describe('POST /api/questions/:id/answer', () => {
           launchesEnqueued: [],
           escalated: false,
         }),
+        // The service owns the answer now: the write is its, so the stub does it (M1.4b).
         onQuestionAnswered: async (questionId, answer) => {
           woke.push({ questionId, answer })
-          return { status: 'answered' }
+          const doc = store.engines.get(`question/${questionId}`)!
+          store.atomic(() => store.engines.save({ ...doc, status: 'answered', answer }))
+          return { status: 'answered', answer }
         },
       },
     })

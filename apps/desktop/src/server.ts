@@ -33,6 +33,7 @@ import {
   SetupAgent,
   type SetupSettingsApi,
   type StopOutcome,
+  stableMessageId,
   stopWorkItem,
 } from '@mec/meta'
 import type { ConfirmationRecord } from '@mec/policy'
@@ -122,6 +123,7 @@ export type ServerDeps = {
       referencesWorkItem?: string
       repoId?: string
       explicitNew?: boolean
+      idempotencyKey?: string
     }): Promise<{
       acknowledged: string
       workItemId?: string
@@ -129,11 +131,14 @@ export type ServerDeps = {
       launchesEnqueued: string[]
       escalated: boolean
     }>
-    /** T5 wakes: an answered question re-invokes the planner with the answer in context. */
+    /** T5 wakes: records the answer and queues the planner's wake, in one transaction. */
     onQuestionAnswered?(
       questionId: string,
       answer: string,
-    ): Promise<{ status: 'answered' | 'not_open' | 'missing'; outcome?: unknown }>
+    ):
+      | { status: 'answered'; answer: string }
+      | { status: 'not_open' | 'missing' }
+      | Promise<{ status: 'answered'; answer: string } | { status: 'not_open' | 'missing' }>
     /** §12.5 owner commands. Without them, hold and stop write directly (see the routes). */
     holdWork?(id: string, reason: string, sourceMessageId?: string): HoldOutcome
     liftHold?(id: string): LiftOutcome
@@ -696,11 +701,13 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       }
     }
 
-    const messageId = freshId('msg_')
+    // A retry after a crash lands on the same id, so the service finds the message it started.
+    const messageId = idempotencyKey !== undefined ? stableMessageId(idempotencyKey) : freshId('msg_')
     const at = now().toISOString()
 
     // Composed path: the meta-agent service owns message persistence, routing, the ack,
-    // the plan and the launch enqueues (§6). The route only adds the idempotency key.
+    // the plan and the launch enqueues (§6), and stores the key before the brain runs, so the
+    // replay check above answers a retry from the doc without waiting on the turn.
     if (deps.metaAgent !== undefined) {
       const outcome = await deps.metaAgent.onUserMessage({
         messageId,
@@ -708,13 +715,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         referencesWorkItem,
         explicitNew,
         ...repo,
+        ...(idempotencyKey !== undefined && { idempotencyKey }),
       })
-      if (idempotencyKey !== undefined) {
-        store.atomic(() => {
-          const doc = store.messages.get(messageId)
-          if (doc !== undefined) store.messages.save({ ...doc, ...submitted, idempotencyKey })
-        })
-      }
       return {
         messageId,
         ...(outcome.workItemId !== undefined && { workItemId: outcome.workItemId }),
@@ -1794,18 +1796,28 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       reply.code(409).send({ error: 'already_answered', status: String(doc.status) })
       return
     }
+    // T5 wake: the service records the answer and queues the planner's turn together, so this
+    // returns after that commit and never waits on a turn (§1's gap).
+    if (deps.metaAgent?.onQuestionAnswered !== undefined) {
+      const result = await deps.metaAgent.onQuestionAnswered(raw, answer)
+      if (result.status === 'missing') {
+        reply.code(404).send({ error: 'question not found' })
+        return
+      }
+      if (result.status === 'not_open') {
+        reply.code(409).send({ error: 'already_answered', status: result.status })
+        return
+      }
+      return { id: raw, status: 'answered', answer: result.answer }
+    }
+    // A meta agent without the wake surface is told the answer only through the store, honestly.
+    const stored = redact(answer, [], [])
     const at = now().toISOString()
     store.atomic(() => {
-      store.engines.save({ ...doc, status: 'answered', answer, answeredAt: at, updatedAt: at })
-      appendEvent(store, docId, 'question_answered', { questionId: raw, answer, at }, at)
+      store.engines.save({ ...doc, status: 'answered', answer: stored, answeredAt: at, updatedAt: at })
+      appendEvent(store, docId, 'question_answered', { questionId: raw, answer: stored, at }, at)
     })
-    // T5 wake: the planner re-runs with the answer in context (§1's gap). A meta agent
-    // without the wake surface is told the answer only through the store — honestly.
-    let woke: unknown
-    if (deps.metaAgent?.onQuestionAnswered !== undefined) {
-      woke = await deps.metaAgent.onQuestionAnswered(raw, answer)
-    }
-    return { id: raw, status: 'answered', answer, ...(woke !== undefined && { wake: woke }) }
+    return { id: raw, status: 'answered', answer: stored }
   })
 
   // The store-backed Settings API the default setup agent drafts against. The T1/T4

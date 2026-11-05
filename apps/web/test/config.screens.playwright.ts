@@ -191,6 +191,43 @@ test('a proposal changes nothing until Apply', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Apply' })).toBeEnabled()
 })
 
+test('a proposal marks what it replaces against the saved policy', async ({ page }) => {
+  await open(page, 'settings')
+  const proposal = page.locator('.proposal')
+  await expect(proposal.locator('.diff-removed').first()).toHaveText(/"preAuthorised": \{\}/)
+  await expect(proposal.locator('.diff-added').filter({ hasText: 'repo_prop' })).toBeVisible()
+  await expect(proposal.getByText('Policy file', { exact: true })).toBeVisible()
+  await expect(proposal.locator('.diff-same').first()).toBeVisible()
+})
+
+test('saving an edit redraws a proposal against the new text', async ({ page }) => {
+  await open(page, 'settings')
+  await page.getByLabel('Policy file').fill('{"preAuthorised":{},"capsOverride":{"usd":5}}')
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(page.getByText('Saved, not yet in force')).toBeVisible()
+  await expect(page.locator('.proposal .diff-removed').first()).toHaveText(/capsOverride/)
+})
+
+test('Apply answers for the comparison on screen, not a newer read', async ({ page }) => {
+  await open(page, 'settings')
+  await expect(page.locator('.proposal .diff-removed').first()).toBeVisible()
+  await page.evaluate(() => window.__server.freezeDrafts())
+  await page.getByLabel('Policy file').fill('{"preAuthorised":{},"capsOverride":{"usd":5}}')
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(page.getByText('Saved, not yet in force')).toBeVisible()
+  await page.getByRole('button', { name: 'Apply' }).click()
+  await expect(page.getByRole('alert')).toContainText('nothing was applied')
+})
+
+test('a stale proposal says so and redraws against the text that moved', async ({ page }) => {
+  await open(page, 'settings')
+  await expect(page.locator('.proposal .diff-removed').first()).toBeVisible()
+  await page.evaluate(() => window.__server.saveElsewhere())
+  await page.getByRole('button', { name: 'Apply' }).click()
+  await expect(page.getByRole('alert')).toContainText('nothing was applied')
+  await expect(page.locator('.proposal').getByText('capsOverride')).toBeVisible()
+})
+
 test('compare shows what differs from the default', async ({ page }) => {
   await open(page, 'settings')
   await page.getByRole('button', { name: 'Prompts' }).click()

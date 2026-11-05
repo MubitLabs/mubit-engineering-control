@@ -152,5 +152,82 @@
     "find": "return error.detail === undefined ? reason : `${reason}: ${error.detail}`",
     "replace": "return error.detail ?? reason",
     "tests": ["apps/web/test/config-contract.test.ts"]
+  },
+  {
+    "name": "a policy comparison shows the patch alone",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "after: spaced(proposed) }],",
+    "replace": "after: spaced(JSON.stringify(draft.patch)) }],",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "a compact policy reads as all changed",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "before: spaced(current.text), after",
+    "replace": "before: current.text, after",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "a policy comparison drops its base",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "        base: current.sha256,\n",
+    "replace": "        base: '',\n",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "a models comparison hides the current table",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "            before: readFileSync(provenance.path, 'utf8'),\n            after: draft.patch.yaml,",
+    "replace": "            before: '',\n            after: draft.patch.yaml,",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "a part with no text still previews",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "if (typeof part?.path !== 'string' || typeof part.text !== 'string') return undefined",
+    "replace": "if (typeof part?.path !== 'string') continue",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "a prompts comparison reads the default over an edit",
+    "file": "apps/desktop/src/server.ts",
+    "find": "      prompts.config().parts.find((part) => part.path === path)?.text ??\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "a prompts comparison drops its revision",
+    "file": "apps/desktop/src/server.ts",
+    "find": "promptRevision: () => prompts.config().revision,",
+    "replace": "promptRevision: () => 0,",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "a settled draft keeps a comparison",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "if (status === 'pending') preview = previewDraft(",
+    "replace": "preview = previewDraft(",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "a bad stored text fails the list",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "          // A stored text that no longer loads costs the comparison, never the list of proposals.\n          preview = undefined\n",
+    "replace": "          throw new Error('no comparison')\n",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "Apply answers for the newest read",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "  draft?.preview?.base ?? newest\n",
+    "replace": "  newest ?? draft?.preview?.base\n",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "the decoder drops the comparison",
+    "file": "apps/web/src/config-decode.ts",
+    "find": "      ...(draft.preview !== undefined && { preview: decodeDraftPreview(path, draft.preview) }),\n",
+    "replace": "",
+    "tests": ["apps/web/test/config-contract.test.ts"]
   }
 ]

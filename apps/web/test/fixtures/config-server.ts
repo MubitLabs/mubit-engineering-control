@@ -195,11 +195,33 @@ export function sampleServer({
     restartRequired: policyRevision > 0,
   })
 
+  // Drawn from the policy as it stands, as the real route draws it, unless a test froze the answer.
+  const draftsNow = () =>
+    drafts.map((draft) => ({
+      ...draft,
+      preview: {
+        base: hash(policyText),
+        changes: [
+          {
+            label: 'Policy file',
+            before: policyText.trimEnd(),
+            after: '{\n  "preAuthorised": {\n    "install": [\n      "repo_prop"\n    ]\n  }\n}',
+          },
+        ],
+      },
+    }))
+  let frozenDrafts: ReturnType<typeof draftsNow> | null = null
+
   return {
     /** Another tab saved: the next save from this page is stale. */
     saveElsewhere() {
       policyText = '{\n  "preAuthorised": {},\n  "capsOverride": {}\n}\n'
       policyRevision += 1
+    },
+
+    /** The proposals answer as they stand now, whatever is saved next. */
+    freezeDrafts() {
+      frozenDrafts = draftsNow()
     },
 
     respond(path: string, method: string, rawBody: unknown): Response {
@@ -228,9 +250,10 @@ export function sampleServer({
       if (route === 'GET /api/repositories') return json(repositories)
       if (route === 'GET /api/setup/readiness') return json(readiness())
       if (route === 'GET /api/connections') return json({ rows: slots, options })
-      if (route === 'GET /api/setup/drafts') return json(drafts)
+      if (route === 'GET /api/setup/drafts') return json(frozenDrafts ?? draftsNow())
       // The one sample proposal asks for what no policy may hold, so Apply shows a refusal.
       if (route === 'POST /api/setup/drafts/draft_sample/apply') {
+        if (body.base !== hash(policyText)) return json({ error: 'stale_base' }, 409)
         return json({ error: 'invalid_policy', detail: ALWAYS_CONFIRM }, 400)
       }
       if (route === 'POST /api/slots/dedicated') {

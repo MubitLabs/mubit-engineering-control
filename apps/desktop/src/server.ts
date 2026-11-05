@@ -1938,22 +1938,6 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     ...(deps.setupDecide !== undefined && { decide: deps.setupDecide }),
   })
 
-  // The setup agent's open drafts — the inbox-shaped view of §7's propose_change cards.
-  app.get('/api/setup/drafts', async () =>
-    store.engines
-      .list()
-      .filter((doc) => String(doc.id).startsWith('draft/'))
-      .map((doc) => ({
-        id: String(doc.draftId ?? String(doc.id).slice('draft/'.length)),
-        target: String(doc.target ?? ''),
-        reason: String(doc.reason ?? ''),
-        diff: String(doc.diff ?? ''),
-        ...(doc.cls !== undefined && { cls: String(doc.cls) }),
-        status: String(doc.status ?? 'pending'),
-        createdAt: String(doc.createdAt ?? ''),
-      })),
-  )
-
   // ─── T1 model routes (review 2026-11-04 §3 + §6.2 — GET/PUT /api/models) ────────
   // ONE additive block, deliberately self-contained: every import it needs is made
   // here, dynamically, so nothing above this comment moves. Route blocks from other
@@ -2234,6 +2218,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     slotLabel: SLOT_LABEL,
     bootstrapOf: (input) => argvArrayOf(input, 'bootstrapCmds'),
     checksOf: checkArrayOf,
+    promptRevision: () => prompts.config().revision,
+    promptText: (path) =>
+      prompts.config().parts.find((part) => part.path === path)?.text ??
+      defaultParts().find((part) => part.path === path)?.text,
     registerDraftRepository: (draft: SetupDraftRecord) => {
       const patch = draft.patch as { label?: unknown; url_or_path?: unknown }
       return registerRepositoryDoc(

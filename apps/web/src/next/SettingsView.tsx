@@ -103,7 +103,16 @@ export function Proposals({
       {drafts.map((draft) => (
         <article key={draft.id} className="proposal">
           <p>{draft.reason}</p>
-          <pre className="code-block">{draft.diff}</pre>
+          {draft.preview === undefined ? (
+            <pre className="code-block">{draft.diff}</pre>
+          ) : (
+            draft.preview.changes.map((change) => (
+              <div key={change.label}>
+                <p className="field-note mono">{change.label}</p>
+                <DiffView lines={lineDiff(change.before, change.after)} />
+              </div>
+            ))
+          )}
           <p className="field-note">Nothing has changed. Apply checks this the way a save does.</p>
           <div className="form-actions">
             <Button variant="quiet" disabled={busyId === draft.id} onClick={() => onDismiss(draft.id)}>

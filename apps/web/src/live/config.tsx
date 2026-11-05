@@ -28,6 +28,7 @@ import {
   type PromptsConfig,
   parseChecks,
   parseLines,
+  proposalBase,
   type Readiness,
   type RepositoryView,
   rebaseDraft,
@@ -540,27 +541,35 @@ function useDrafts(target: string, baseOf: () => string | number | undefined, on
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const drafts: DraftView[] = draftsFor(read.value ?? [], target)
+  // A save moves the base, which redraws every comparison against the new text.
+  const newest = baseOf()
+  useEffect(() => {
+    if (newest !== undefined) refresh()
+  }, [newest, refresh])
   const element = (
     <Proposals
       drafts={drafts}
       busyId={busyId}
       error={error}
       onApply={(id) => {
+        const base = proposalBase(
+          drafts.find((entry) => entry.id === id),
+          baseOf(),
+        )
         setBusyId(id)
         setError(null)
         configApi
-          .applyDraft(id, baseOf())
+          .applyDraft(id, base)
           .then(() => {
             refresh()
             onApplied()
           })
-          .catch((failure: unknown) =>
-            setError(
-              failure instanceof StaleError
-                ? 'This changed since you loaded it, so nothing was applied. Reload and check the proposal again.'
-                : failureText(failure),
-            ),
-          )
+          .catch((failure: unknown) => {
+            if (failure instanceof StaleError) {
+              refresh()
+              setError('This changed since you loaded it, so nothing was applied. Check the proposal again.')
+            } else setError(failureText(failure))
+          })
           .finally(() => setBusyId(null))
       }}
       onDismiss={(id) => {

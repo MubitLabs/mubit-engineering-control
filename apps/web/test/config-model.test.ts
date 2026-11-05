@@ -16,6 +16,7 @@ import {
   openStage,
   parseChecks,
   parseLines,
+  proposalBase,
   rebaseDraft,
   roleOfPart,
   saveBar,
@@ -265,6 +266,22 @@ describe('proposals', () => {
       draft('c', 'policy', 'applied'),
     ]
     expect(draftsFor(drafts, 'policy').map((entry) => entry.id)).toEqual(['a'])
+  })
+
+  it('applies against the version its comparison was drawn from, not the newest read', () => {
+    const shown = {
+      id: 'a',
+      target: 'policy',
+      reason: 'r',
+      diff: 'd',
+      status: 'pending',
+      createdAt: '',
+      preview: { base: 'shown', changes: [] },
+    }
+    expect(proposalBase(shown, 'newest')).toBe('shown')
+    const { preview: _none, ...plain } = shown
+    expect(proposalBase(plain, 'newest')).toBe('newest')
+    expect(proposalBase({ ...plain, preview: { base: 0, changes: [] } }, 7)).toBe(0)
   })
 })
 

@@ -151,6 +151,26 @@ describe('the configuration client against the real routes', () => {
     expect(applied).toContain("class 'pr_merge' is always-confirm")
   })
 
+  it("reads a proposal's comparison, and Apply with its base saves that text", async () => {
+    const policy = await configApi.policy()
+    store.engines.save({
+      id: 'draft/d3',
+      draftId: 'd3',
+      target: 'policy',
+      patch: { preAuthorised: { install: [{ scope: 'repo', repoId: 'repo_prop' }] } },
+      reason: 'a reason',
+      diff: 'a diff',
+      status: 'pending',
+      conversationId: 'setup',
+      createdAt: AT.toISOString(),
+    })
+    const [draft] = await configApi.drafts()
+    expect(draft?.preview?.base).toBe(policy.sha256)
+    expect(draft?.preview?.changes[0]?.after).toContain('repo_prop')
+    await configApi.applyDraft('d3', draft?.preview?.base)
+    expect((await configApi.policy()).text).toBe(draft?.preview?.changes[0]?.after)
+  })
+
   it('a refused models table says which line', async () => {
     const models = await configApi.modelsText()
     const said = await refusalOf(configApi.saveModels('tiers: [fast', models.sha256))

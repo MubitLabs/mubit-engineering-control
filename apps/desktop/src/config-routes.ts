@@ -73,9 +73,18 @@ export type ConfigDeps = {
   slotLabel: RegExp
   bootstrapOf(input: unknown): string[]
   checksOf(input: unknown): Array<{ name: string; cmd: string }>
+  /** The prompt revision a save compares with, and a part's text as it stands: edited, or the default. */
+  promptRevision(): number
+  promptText(path: string): string | undefined
   registerDraftRepository(
     draft: SetupDraftRecord,
   ): Promise<{ ok: true; id: string } | { ok: false; error: string }>
+}
+
+/** What Apply would do, read from the code Apply runs. `base` is the version `before` was read at. */
+export type DraftPreview = {
+  base: string | number
+  changes: Array<{ label: string; before: string; after: string }>
 }
 
 export type DraftOutcome =
@@ -464,6 +473,88 @@ export function registerConfigRoutes(
     return JSON.stringify({ ...current, ...fields }, null, 2)
   }
 
+  const promptPartsOf = (draft: SetupDraftRecord): unknown[] | undefined => {
+    const { patch } = draft
+    if (Array.isArray(patch.parts)) return patch.parts
+    return typeof patch.path === 'string' && typeof patch.text === 'string'
+      ? [{ path: patch.path, text: patch.text }]
+      : undefined
+  }
+
+  /** Spacing means nothing in the policy's JSON, so a compact file must not read as all changed. */
+  const spaced = (policy: string): string => {
+    try {
+      return JSON.stringify(JSON.parse(policy), null, 2)
+    } catch {
+      return policy
+    }
+  }
+
+  const previewDraft = (draft: SetupDraftRecord): DraftPreview | undefined => {
+    if (draft.target === 'policy') {
+      const proposed = policyTextOf(draft)
+      if (proposed === undefined) return undefined
+      const current = readPolicy(store, deps.policyText)
+      return {
+        base: current.sha256,
+        changes: [{ label: 'Policy file', before: spaced(current.text), after: spaced(proposed) }],
+      }
+    }
+    if (draft.target === 'models') {
+      if (typeof draft.patch.yaml !== 'string') return undefined
+      const { provenance } = loadModelsTable({ userPath: join(keystoreRoot, 'models.yaml') })
+      return {
+        base: provenance.sha256,
+        changes: [
+          {
+            label: 'Capability table',
+            before: readFileSync(provenance.path, 'utf8'),
+            after: draft.patch.yaml,
+          },
+        ],
+      }
+    }
+    if (draft.target === 'prompts') {
+      const parts = promptPartsOf(draft)
+      if (parts === undefined) return undefined
+      const changes: DraftPreview['changes'] = []
+      for (const part of parts as Array<{ path?: unknown; text?: unknown }>) {
+        if (typeof part?.path !== 'string' || typeof part.text !== 'string') return undefined
+        changes.push({ label: part.path, before: deps.promptText(part.path) ?? '', after: part.text })
+      }
+      return { base: deps.promptRevision(), changes }
+    }
+    return undefined
+  }
+
+  // The setup agent's open drafts: the inbox-shaped view of §7's propose_change cards.
+  app.get('/api/setup/drafts', async () =>
+    store.engines
+      .list()
+      .filter((doc) => String(doc.id).startsWith(DRAFT_PREFIX))
+      .map((doc) => {
+        const id = String(doc.draftId ?? String(doc.id).slice(DRAFT_PREFIX.length))
+        const status = String(doc.status ?? 'pending')
+        let preview: DraftPreview | undefined
+        try {
+          if (status === 'pending') preview = previewDraft({ ...(doc as unknown as SetupDraftRecord), id })
+        } catch {
+          // A stored text that no longer loads costs the comparison, never the list of proposals.
+          preview = undefined
+        }
+        return {
+          id,
+          target: String(doc.target ?? ''),
+          reason: String(doc.reason ?? ''),
+          diff: String(doc.diff ?? ''),
+          ...(doc.cls !== undefined && { cls: String(doc.cls) }),
+          status,
+          createdAt: String(doc.createdAt ?? ''),
+          ...(preview !== undefined && { preview }),
+        }
+      }),
+  )
+
   /** Answers as the save route answered: its status and its refusal, unchanged. */
   const viaRoute = async (
     method: 'PUT',
@@ -503,12 +594,7 @@ export function registerConfigRoutes(
         : { ok: false, status: 400, error: 'invalid_policy', detail: saved.detail }
     }
     if (draft.target === 'prompts') {
-      const { patch } = draft
-      const parts = Array.isArray(patch.parts)
-        ? patch.parts
-        : typeof patch.path === 'string' && typeof patch.text === 'string'
-          ? [{ path: patch.path, text: patch.text }]
-          : undefined
+      const parts = promptPartsOf(draft)
       if (parts === undefined) return { ok: false, status: 400, error: 'the draft carries no prompt parts' }
       return viaRoute('PUT', '/api/prompts', { base_revision: base, origin: 'agent', parts })
     }

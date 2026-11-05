@@ -129,6 +129,11 @@ export interface CheckProfile {
   name: string
   cmd: string
 }
+export interface DraftPreview {
+  /** The version `before` was read at. */
+  base: string | number
+  changes: Array<{ label: string; before: string; after: string }>
+}
 export interface DraftView {
   id: string
   target: string
@@ -137,6 +142,8 @@ export interface DraftView {
   status: string
   createdAt: string
   cls?: string
+  /** Absent when there is nothing to compare with, as for a new repository. */
+  preview?: DraftPreview
 }
 export interface BackupsRecord {
   lastAt?: string
@@ -322,6 +329,10 @@ export const checksText = (checks: readonly CheckProfile[]): string =>
 
 export const draftsFor = (drafts: readonly DraftView[], target: string): DraftView[] =>
   drafts.filter((draft) => draft.target === target && draft.status === 'pending')
+
+/** Apply answers for the comparison on screen: if the text moved since, the stale refusal fires. */
+export const proposalBase = (draft: DraftView | undefined, newest: string | number | undefined) =>
+  draft?.preview?.base ?? newest
 
 /** `roles/reviewer.md` and `roles/meta_agent/protocol.md` both belong to a role by that name. */
 export const roleOfPart = (path: string): string | null => /^roles\/([^/.]+)/.exec(path)?.[1] ?? null

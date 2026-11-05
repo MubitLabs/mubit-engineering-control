@@ -143,6 +143,121 @@ describe('a saved policy at boot', () => {
   })
 })
 
+type Preview = { base: string | number; changes: Array<{ label: string; before: string; after: string }> }
+const previewOf = async (ctx: ConfigServer, id: string): Promise<Preview | undefined> => {
+  const drafts = (await ctx.get('/api/setup/drafts')).json() as Array<{ id: string; preview?: Preview }>
+  return drafts.find((entry) => entry.id === id)?.preview
+}
+
+describe('GET /api/setup/drafts compares each proposal with what it replaces', () => {
+  it('a policy proposal shows the entry its key replaces, and Apply saves exactly that', async () => {
+    const ctx = server()
+    const { sha256 } = await read(ctx)
+    await ctx.put('/api/policy', { text: TIGHT, base_sha256: sha256 })
+    const saved = await read(ctx)
+    draft(ctx, 'p1', 'policy', { preAuthorised: { install: [{ scope: 'repo', repoId: 'repo_prop' }] } })
+
+    const preview = await previewOf(ctx, 'p1')
+    expect(preview?.base).toBe(saved.sha256)
+    expect(preview?.changes).toHaveLength(1)
+    const change = preview?.changes[0]
+    expect(change?.before).toContain('repo_a')
+    expect(change?.after).toContain('repo_prop')
+    expect(change?.after).not.toContain('repo_a')
+
+    expect((await ctx.post('/api/setup/drafts/p1/apply', { base: preview?.base })).statusCode).toBe(200)
+    expect(JSON.parse((await read(ctx)).text)).toEqual(JSON.parse(change?.after ?? ''))
+  })
+
+  it('a policy comparison shows only what changes, whatever the saved spacing', async () => {
+    const ctx = server()
+    const { sha256 } = await read(ctx)
+    await ctx.put('/api/policy', {
+      text: '{"capsOverride":{"usd":5},"preAuthorised":{"install":[{"scope":"repo","repoId":"repo_a"}]}}',
+      base_sha256: sha256,
+    })
+    draft(ctx, 'p2', 'policy', { preAuthorised: {} })
+    const change = (await previewOf(ctx, 'p2'))?.changes[0]
+    expect(change?.before.split('\n')).toContain('  "capsOverride": {')
+    expect(change?.after.split('\n')).toContain('  "capsOverride": {')
+  })
+
+  it('a whole policy text is compared as proposed, even one that will not load', async () => {
+    const ctx = server()
+    draft(ctx, 'p3', 'policy', { text: 'not json' })
+    expect((await previewOf(ctx, 'p3'))?.changes[0]?.after).toBe('not json')
+  })
+
+  it('a models proposal compares the table with the one Apply saves', async () => {
+    const ctx = server()
+    const { yaml, sha256 } = (await ctx.get('/api/models/text')).json() as { yaml: string; sha256: string }
+    draft(ctx, 'p4', 'models', { yaml: `${yaml}\n# proposed\n` })
+    expect(await previewOf(ctx, 'p4')).toEqual({
+      base: sha256,
+      changes: [{ label: 'Capability table', before: yaml, after: `${yaml}\n# proposed\n` }],
+    })
+  })
+
+  it('a prompts proposal compares each part with its current text, edited or default', async () => {
+    const ctx = server()
+    const { parts } = (await ctx.get('/api/prompts/defaults')).json() as {
+      parts: Array<{ path: string; text: string }>
+    }
+    const [first, second] = parts
+    const edited = first?.path ?? ''
+    await ctx.put('/api/prompts', { base_revision: 0, parts: [{ path: edited, text: 'my edit' }] })
+    draft(ctx, 'p5', 'prompts', {
+      parts: [
+        { path: edited, text: 'proposed one' },
+        { path: second?.path, text: 'proposed two' },
+      ],
+    })
+    expect(await previewOf(ctx, 'p5')).toEqual({
+      base: 1,
+      changes: [
+        { label: edited, before: 'my edit', after: 'proposed one' },
+        { label: second?.path, before: second?.text, after: 'proposed two' },
+      ],
+    })
+
+    draft(ctx, 'p6', 'prompts', { path: edited, text: 'proposed three' })
+    expect((await previewOf(ctx, 'p6'))?.changes).toEqual([
+      { label: edited, before: 'my edit', after: 'proposed three' },
+    ])
+  })
+
+  it('a stale comparison cannot apply: its base is refused once the text moves', async () => {
+    const ctx = server()
+    const { sha256 } = await read(ctx)
+    draft(ctx, 'p7', 'policy', { preAuthorised: {} })
+    const preview = await previewOf(ctx, 'p7')
+    await ctx.put('/api/policy', { text: TIGHT, base_sha256: sha256 })
+    expect((await ctx.post('/api/setup/drafts/p7/apply', { base: preview?.base })).statusCode).toBe(409)
+    expect(ctx.store.engines.get('draft/p7')?.status).toBe('pending')
+  })
+
+  it('a stored text that no longer loads costs the comparison, not the list', async () => {
+    const ctx = server()
+    ctx.store.engines.save({ id: 'settings/policy', text: 'not json', revision: 1 })
+    draft(ctx, 'p13', 'policy', { preAuthorised: {} })
+    const res = await ctx.get('/api/setup/drafts')
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject([{ id: 'p13', status: 'pending' }])
+    expect(await previewOf(ctx, 'p13')).toBeUndefined()
+  })
+
+  it('has nothing to compare for a new repository, a settled draft or an empty one', async () => {
+    const ctx = server()
+    draft(ctx, 'p8', 'repository', { label: 'repo', url_or_path: '/tmp/repo' })
+    draft(ctx, 'p9', 'policy', { preAuthorised: {} })
+    await ctx.post('/api/setup/drafts/p9/dismiss', {})
+    draft(ctx, 'p10', 'policy', {})
+    draft(ctx, 'p11', 'models', {})
+    draft(ctx, 'p12', 'prompts', { parts: [{ path: 'no text' }] })
+    for (const id of ['p8', 'p9', 'p10', 'p11', 'p12']) expect(await previewOf(ctx, id)).toBeUndefined()
+  })
+})
+
 describe('POST /api/setup/drafts/:id/apply', () => {
   it('an applied draft goes through the same validation', async () => {
     const ctx = server()

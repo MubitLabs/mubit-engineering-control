@@ -12,6 +12,7 @@ import type {
   ConnectionPath,
   ConnectionRow,
   Connections,
+  DraftPreview,
   DraftView,
   MetaCandidate,
   ModelsText,
@@ -319,6 +320,22 @@ export function decodeRepositories(raw: unknown): RepositoryView[] {
   })
 }
 
+function decodeDraftPreview(path: string, raw: unknown): DraftPreview {
+  const preview = obj(path, raw, 'draft.preview')
+  const { base } = preview
+  return {
+    base: typeof base === 'number' ? base : str(path, base, 'draft.preview.base'),
+    changes: arr(path, preview.changes, 'draft.preview.changes').map((entry) => {
+      const change = obj(path, entry, 'draft.preview.change')
+      return {
+        label: str(path, change.label, 'change.label'),
+        before: str(path, change.before, 'change.before'),
+        after: str(path, change.after, 'change.after'),
+      }
+    }),
+  }
+}
+
 export function decodeDrafts(raw: unknown): DraftView[] {
   const path = '/api/setup/drafts'
   return arr(path, raw, 'the body').map((entry) => {
@@ -331,6 +348,7 @@ export function decodeDrafts(raw: unknown): DraftView[] {
       status: str(path, draft.status, 'draft.status'),
       createdAt: str(path, draft.createdAt, 'draft.createdAt'),
       ...optional('cls', draft.cls),
+      ...(draft.preview !== undefined && { preview: decodeDraftPreview(path, draft.preview) }),
     }
   })
 }

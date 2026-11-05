@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { describeApproval, liveStreams } from '../src/release-cards'
+import { canApprove, describeApproval, liveStreams } from '../src/release-cards'
+
+describe('canApprove: a card with no evidence on screen cannot be approved', () => {
+  it('holds while the evidence is loading or failed to load', () => {
+    expect(canApprove(null)).toBe(false)
+  })
+
+  it('opens once the server has answered, including that a card has no detail', () => {
+    expect(canApprove({ absent: true } as never)).toBe(true)
+    expect(canApprove({ what: 'Push' } as never)).toBe(true)
+  })
+})
 
 describe('describeApproval: the toast says what happened, never more', () => {
   it('a merged card says merged', () => {

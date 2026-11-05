@@ -117,7 +117,8 @@ function WorkbenchShell() {
       const inboxItem = current.inbox.find((item) => item.id === id)
       if (event.key.toLowerCase() === 'a' && inboxItem !== undefined) {
         event.preventDefault()
-        void current.approveDecision(inboxItem)
+        // Through the button, so A obeys everything that disables it.
+        activeCard.querySelector<HTMLButtonElement>('[data-approve]')?.click()
       }
       if (event.key.toLowerCase() === 'd' && inboxItem !== undefined) {
         event.preventDefault()

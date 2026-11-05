@@ -1,4 +1,12 @@
-import type { ResolveResult } from './api'
+import type { DecisionDetail, ResolveResult } from './api'
+
+/**
+ * §13: an approval is the action, so it waits until the server has said what it approves.
+ * `null` is evidence still loading or failed to load; deny needs no evidence and stays live.
+ */
+export function canApprove(detail: DecisionDetail | null): boolean {
+  return detail !== null
+}
 
 /**
  * What an Approve click really did, in words (§13: a settled approval acts, and the UI says
@@ -25,7 +33,8 @@ const HOLDS: Record<string, string> = {
   pr_unreadable: 'The PR could not be read from GitHub.',
   pr_not_open: 'The PR is no longer open.',
   head_unreadable: 'The branch head could not be read.',
-  remote_unreadable: 'The remote could not be read.',
+  remote_unreadable: 'The remote could not be read, or it is not the clone’s origin.',
+  invalid_ref: 'The clone’s origin is not a plain owner/name repository.',
   card_unbound: 'This card has no bound head. Deny it and open a new one.',
 }
 

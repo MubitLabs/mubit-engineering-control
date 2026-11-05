@@ -28,6 +28,8 @@ const PR = 12
 const HEAD = 'a'.repeat(40)
 const MOVED = 'b'.repeat(40)
 const SECRET = `sk-ant-${'a1B2c3D4'.repeat(6)}`
+const GH_KEY = `ghp_${'a1B2'.repeat(8)}`
+const REMOTE_URL = `https://github.com/${REPO}`
 
 const ok = (stdout: string): GhResult => ({ code: 0, stdout, stderr: '' })
 const fail = (stderr: string, code = 1): GhResult => ({ code, stdout: '', stderr })
@@ -39,6 +41,7 @@ type World = {
   prState: string
   mergeState: string
   title: string
+  prBranch: string
   checks: GhResult
   create: GhResult
   merge: GhResult
@@ -57,11 +60,12 @@ const world = (over: Partial<World> = {}): World => ({
   prState: 'OPEN',
   mergeState: 'CLEAN',
   title: 'Ship the smoke test',
+  prBranch: BRANCH,
   checks: ok('[{"name":"unit","state":"SUCCESS"}]'),
   create: ok(`https://github.com/${REPO}/pull/${PR}\n`),
   merge: ok(''),
   afterMerge: 'MERGED',
-  remoteUrl: 'https://github.com/owner/repo',
+  remoteUrl: REMOTE_URL,
   defaultBranch: 'main',
   ...over,
 })
@@ -89,7 +93,7 @@ function fakeGh(state: World): { run: GhRun; calls: Array<readonly string[]> } {
         JSON.stringify({
           state: state.prState,
           title: state.title,
-          headRefName: BRANCH,
+          headRefName: state.prBranch,
           headRefOid: state.prHead,
           mergeStateStatus: state.mergeState,
         }),
@@ -575,11 +579,16 @@ describe('deny and expiry are honoured before any gate', () => {
   })
 })
 
-/** A real clone of a real bare repository; the gh fake reports the bare path as the remote url. */
+/**
+ * A real clone of a real bare repository. Its origin is a GitHub remote, and git rewrites the
+ * URL gh reports onto the bare path: the push is real and no test reaches GitHub.
+ */
 function gitWorld(): {
   bare: string
   work: string
   git(...args: string[]): string
+  reroute(url: string): void
+  unroute(): void
   headOf(ref: string): string
 } {
   const root = mkdtempSync(join(tmpdir(), 'mec-release-cards-'))
@@ -601,10 +610,19 @@ function gitWorld(): {
   git('checkout', '-q', '-b', BRANCH)
   writeFileSync(join(work, 'a.txt'), 'two\n')
   git('commit', '-q', '-am', 'two')
+  git('remote', 'set-url', 'origin', `git@github.com:${REPO}.git`)
+  const reroute = (url: string): void => {
+    git('config', '--add', `url.${bare}.insteadOf`, url)
+  }
+  reroute(REMOTE_URL)
   return {
     bare,
     work,
     git,
+    reroute,
+    unroute: () => {
+      git('config', '--remove-section', `url.${bare}`)
+    },
     headOf: (ref) =>
       execFileSync('git', ['-C', bare, 'rev-parse', '--verify', '-q', ref], { encoding: 'utf8' }).trim(),
   }
@@ -624,7 +642,7 @@ const register = async (h: Harness, urlOrPath: string): Promise<string> => {
 describe('the push card (§13: git push always confirms)', () => {
   it('round trip: card binds the head, approve pushes exactly it to a real bare repo', async () => {
     const g = gitWorld()
-    const { run } = fakeGh(world({ remoteUrl: g.bare }))
+    const { run } = fakeGh(world())
     const h = await harness(run)
     const repoId = await register(h, g.work)
     const head = g.git('rev-parse', 'HEAD')
@@ -651,7 +669,7 @@ describe('the push card (§13: git push always confirms)', () => {
 
   it('the dedicated resolve route pushes too, and answers already_handled on replay', async () => {
     const g = gitWorld()
-    const { run } = fakeGh(world({ remoteUrl: g.bare }))
+    const { run } = fakeGh(world())
     const h = await harness(run)
     const repoId = await register(h, g.work)
     const opened = await h.post('/api/release/push', { repoId, branch: BRANCH })
@@ -668,25 +686,173 @@ describe('the push card (§13: git push always confirms)', () => {
     ['https', 'https://github.com/owner/repo.git'],
     ['https without .git', 'https://github.com/owner/repo'],
     ['a trailing slash', 'https://github.com/owner/repo/'],
+    ['ssh://', 'ssh://git@github.com/owner/repo.git'],
+    ['another letter case', 'https://github.com/Owner/Repo.git'],
   ])('the GitHub repository comes from the clone origin, %s', async (_, origin) => {
     const g = gitWorld()
+    g.unroute()
     g.git('remote', 'set-url', 'origin', origin)
-    const { run, calls } = fakeGh(world({ remoteUrl: g.bare }))
+    const { run, calls } = fakeGh(world())
     const h = await harness(run)
     const repoId = await register(h, g.work)
     const opened = await h.post('/api/release/push', { repoId, branch: BRANCH })
     expect(opened.status).toBe(200)
-    expect(calls[0]?.slice(0, 3)).toEqual(['repo', 'view', REPO])
+    expect(calls[0]?.slice(0, 2)).toEqual(['repo', 'view'])
+    expect(String(calls[0]?.[2]).toLowerCase()).toBe(REPO)
   })
 
-  it('a clone whose origin changed after the card opened does not push', async () => {
+  it.each([
+    ['a long flag', 'https://x/--branch=a/b'],
+    ['a short flag that fits the slug characters', 'https://github.com/-b/x'],
+    ['a flag over ssh', 'git@github.com:--web/repo.git'],
+  ])('an origin that gh would read as a flag never reaches gh, %s', async (_, origin) => {
     const g = gitWorld()
-    const { run } = fakeGh(world({ remoteUrl: g.bare }))
+    g.git('remote', 'set-url', 'origin', origin)
+    const { run, calls } = fakeGh(world())
+    const h = await harness(run)
+    const repoId = await register(h, g.work)
+    const res = await h.post('/api/release/push', { repoId, branch: BRANCH })
+    expect(res.status).toBe(422)
+    expect(res.body.error).toBe('invalid_ref')
+    expect(calls).toHaveLength(0)
+    expect(h.store.confirmations.list({ status: 'pending' })).toHaveLength(0)
+  })
+
+  it('an origin turned into a flag after the card opened holds the card; gh never sees it', async () => {
+    const g = gitWorld()
+    const { run, calls } = fakeGh(world())
     const h = await harness(run)
     const repoId = await register(h, g.work)
     const opened = await h.post('/api/release/push', { repoId, branch: BRANCH })
     const id = String(opened.body.confirmationId)
-    g.git('remote', 'set-url', 'origin', 'https://github.com/someone/else.git')
+    g.git('remote', 'set-url', 'origin', 'https://x/--branch=a/b')
+    await expect(h.web.api.resolve(id, 'approve')).resolves.toMatchObject({
+      status: 'pending',
+      reason: 'invalid_ref',
+    })
+    expect(calls.flat()).not.toContain('--branch=a/b')
+    expect(() => g.headOf(`refs/heads/${BRANCH}`)).toThrow()
+  })
+
+  it('a caller-named repo that gh would read as a flag is refused too', async () => {
+    const { run, calls } = fakeGh(world())
+    const h = await harness(run)
+    const res = await h.post('/api/release/merge', { repo: '-b/x', prNumber: PR })
+    expect(res.status).toBe(422)
+    expect(res.body.error).toBe('invalid_ref')
+    expect(calls).toHaveLength(0)
+  })
+
+  it.each([
+    ['another host', 'https://ghe.corp.example/owner/repo.git'],
+    ['a lookalike host', 'https://github.com.evil.example/owner/repo'],
+    ['a deeper path', 'https://gitlab.com/group/owner/repo.git'],
+    ['a local path', '/tmp/x/owner/repo.git'],
+    ['a file url', 'file:///tmp/x/owner/repo.git'],
+    ['plain http', 'http://github.com/owner/repo.git'],
+    ['ssh to another host', 'git@gitlab.com:owner/repo.git'],
+  ])('a same-named repository is not the origin: %s opens no card', async (_, origin) => {
+    const g = gitWorld()
+    g.git('remote', 'set-url', 'origin', origin)
+    const { run } = fakeGh(world())
+    const h = await harness(run)
+    const repoId = await register(h, g.work)
+    const res = await h.post('/api/release/push', { repoId, branch: BRANCH })
+    expect(res.status).toBe(422)
+    expect(res.body.error).toBe('remote_unreadable')
+    expect(JSON.stringify(res.body)).not.toContain(origin)
+    expect(h.store.confirmations.list({ status: 'pending' })).toHaveLength(0)
+  })
+
+  it('gh naming another repository than the origin opens no card', async () => {
+    const g = gitWorld()
+    const { run } = fakeGh(world({ remoteUrl: 'https://github.com/someone/repo' }))
+    const h = await harness(run)
+    const repoId = await register(h, g.work)
+    const res = await h.post('/api/release/push', { repoId, branch: BRANCH })
+    expect(res.status).toBe(422)
+    expect(res.body.error).toBe('remote_unreadable')
+  })
+
+  it('an origin on the host gh serves is that repository, enterprise hosts included', async () => {
+    const g = gitWorld()
+    g.git('remote', 'set-url', 'origin', 'https://ghe.corp.example/owner/repo.git')
+    const { run } = fakeGh(world({ remoteUrl: 'https://ghe.corp.example/owner/repo' }))
+    const h = await harness(run)
+    const repoId = await register(h, g.work)
+    const res = await h.post('/api/release/push', { repoId, branch: BRANCH })
+    expect(res.status).toBe(200)
+  })
+
+  it('the card names the remote, and a same-named repository on another host does not satisfy it', async () => {
+    const g = gitWorld()
+    const state = world()
+    const { run } = fakeGh(state)
+    const h = await harness(run)
+    const repoId = await register(h, g.work)
+    const opened = await h.post('/api/release/push', { repoId, branch: BRANCH })
+    const id = String(opened.body.confirmationId)
+    const detail = await h.get(`/api/inbox/${id}/detail`)
+    expect(detail.body.facts).toContainEqual({ label: 'Remote', value: REMOTE_URL, mono: true })
+
+    const moved = 'https://ghe.corp.example/owner/repo'
+    g.reroute(moved)
+    g.git('remote', 'set-url', 'origin', 'git@ghe.corp.example:owner/repo.git')
+    state.remoteUrl = moved
+    await expect(h.web.api.resolve(id, 'approve')).resolves.toMatchObject({
+      status: 'pending',
+      reason: 'remote_unreadable',
+    })
+    expect(() => g.headOf(`refs/heads/${BRANCH}`)).toThrow()
+  })
+
+  it('approve pushes to the URL it checked: gh is asked once, not again at the push', async () => {
+    const g = gitWorld()
+    const { run, calls } = fakeGh(world())
+    const h = await harness(run)
+    const repoId = await register(h, g.work)
+    const opened = await h.post('/api/release/push', { repoId, branch: BRANCH })
+    calls.length = 0
+    await expect(h.web.api.resolve(String(opened.body.confirmationId), 'approve')).resolves.toMatchObject({
+      pushed: true,
+    })
+    expect(calls.filter((a) => a[0] === 'repo' && a[1] === 'view')).toHaveLength(1)
+  })
+
+  it('a key-shaped branch or repository is refused, and the refusal does not repeat it', async () => {
+    const g = gitWorld()
+    g.git('branch', GH_KEY)
+    const { run, calls } = fakeGh(world())
+    const h = await harness(run)
+    const repoId = await register(h, g.work)
+    const pushed = await h.post('/api/release/push', { repoId, branch: GH_KEY })
+    const pr = await h.post('/api/release/pr', { repo: REPO, branch: GH_KEY, title: 'T', body: 'B' })
+    const repo = await h.post('/api/release/pr', {
+      repo: `owner/${GH_KEY}`,
+      branch: BRANCH,
+      title: 'T',
+      body: 'B',
+    })
+    for (const res of [pushed, pr, repo]) {
+      expect(res.status).toBe(422)
+      expect(res.body.error).toBe('invalid_ref')
+      expect(JSON.stringify(res.body)).not.toContain(GH_KEY)
+    }
+    expect(calls).toHaveLength(0)
+    expect(h.store.confirmations.list({ status: 'pending' })).toHaveLength(0)
+  })
+
+  it('a clone whose origin changed after the card opened does not push', async () => {
+    const g = gitWorld()
+    const state = world()
+    const { run } = fakeGh(state)
+    const h = await harness(run)
+    const repoId = await register(h, g.work)
+    const opened = await h.post('/api/release/push', { repoId, branch: BRANCH })
+    const id = String(opened.body.confirmationId)
+    g.reroute('https://github.com/someone/else')
+    g.git('remote', 'set-url', 'origin', 'git@github.com:someone/else.git')
+    state.remoteUrl = 'https://github.com/someone/else'
     await expect(h.web.api.resolve(id, 'approve')).resolves.toMatchObject({
       status: 'pending',
       reason: 'remote_unreadable',
@@ -696,7 +862,7 @@ describe('the push card (§13: git push always confirms)', () => {
 
   it('deny pushes nothing', async () => {
     const g = gitWorld()
-    const { run } = fakeGh(world({ remoteUrl: g.bare }))
+    const { run } = fakeGh(world())
     const h = await harness(run)
     const repoId = await register(h, g.work)
     const opened = await h.post('/api/release/push', { repoId, branch: BRANCH })
@@ -707,7 +873,7 @@ describe('the push card (§13: git push always confirms)', () => {
 
   it('never takes a path from the caller: the repo must be registered', async () => {
     const g = gitWorld()
-    const { run } = fakeGh(world({ remoteUrl: g.bare }))
+    const { run } = fakeGh(world())
     const h = await harness(run)
     const res = await h.post('/api/release/push', { repoId: 'repo_nope', gitDir: g.work, branch: BRANCH })
     expect(res.status).toBe(404)
@@ -728,7 +894,7 @@ describe('the push card (§13: git push always confirms)', () => {
 
   it('refuses the default branch, whatever it is called', async () => {
     const g = gitWorld()
-    const { run } = fakeGh(world({ remoteUrl: g.bare, defaultBranch: BRANCH }))
+    const { run } = fakeGh(world({ defaultBranch: BRANCH }))
     const h = await harness(run)
     const repoId = await register(h, g.work)
     const res = await h.post('/api/release/push', { repoId, branch: BRANCH })
@@ -749,7 +915,7 @@ describe('the push card (§13: git push always confirms)', () => {
 
   it('a stated head that is not the local head is refused; a missing branch is refused', async () => {
     const g = gitWorld()
-    const { run } = fakeGh(world({ remoteUrl: g.bare }))
+    const { run } = fakeGh(world())
     const h = await harness(run)
     const repoId = await register(h, g.work)
     const stale = await h.post('/api/release/push', { repoId, branch: BRANCH, headSha: MOVED })
@@ -762,7 +928,7 @@ describe('the push card (§13: git push always confirms)', () => {
 
   it('a head that moved after the card opened stales the card and pushes nothing', async () => {
     const g = gitWorld()
-    const { run } = fakeGh(world({ remoteUrl: g.bare }))
+    const { run } = fakeGh(world())
     const h = await harness(run)
     const repoId = await register(h, g.work)
     const opened = await h.post('/api/release/push', { repoId, branch: BRANCH })
@@ -778,7 +944,7 @@ describe('the push card (§13: git push always confirms)', () => {
 
   it('an unreachable remote at approve leaves the card pending', async () => {
     const g = gitWorld()
-    const state = world({ remoteUrl: g.bare })
+    const state = world()
     const { run } = fakeGh(state)
     const h = await harness(run)
     const repoId = await register(h, g.work)
@@ -794,7 +960,7 @@ describe('the push card (§13: git push always confirms)', () => {
 
   it('never forces: a diverged remote rejects, the remote keeps its head, the failure is on record', async () => {
     const g = gitWorld()
-    const { run } = fakeGh(world({ remoteUrl: g.bare }))
+    const { run } = fakeGh(world())
     const h = await harness(run)
     const repoId = await register(h, g.work)
     // The remote branch diverges from what the card will push.
@@ -803,7 +969,7 @@ describe('the push card (§13: git push always confirms)', () => {
     writeFileSync(join(g.work, 'b.txt'), 'theirs\n')
     g.git('add', '.')
     g.git('commit', '-q', '-m', 'theirs')
-    g.git('push', '-q', 'origin', `other:refs/heads/${BRANCH}`)
+    g.git('push', '-q', g.bare, `other:refs/heads/${BRANCH}`)
     const theirs = g.headOf(`refs/heads/${BRANCH}`)
 
     const opened = await h.post('/api/release/push', { repoId, branch: BRANCH, headSha: local })
@@ -823,7 +989,7 @@ describe('the push card (§13: git push always confirms)', () => {
       args.includes('push')
         ? fail(`remote: bad token ${SECRET}`)
         : ok(execFileSync('git', [...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }))
-    const { run } = fakeGh(world({ remoteUrl: g.bare }))
+    const { run } = fakeGh(world())
     const h = await harness(run, exec)
     const repoId = await register(h, g.work)
     const opened = await h.post('/api/release/push', { repoId, branch: BRANCH })
@@ -847,6 +1013,28 @@ describe('the push card (§13: git push always confirms)', () => {
     )
     expect(out).toEqual({ pushed: true })
     expect(seen).toEqual(['push', 'ls-remote'])
+  })
+})
+
+describe('nothing key-shaped from GitHub becomes durable (§13 invariant 3)', () => {
+  it('a key-shaped PR head branch is stored and shown redacted', async () => {
+    const { run } = fakeGh(world({ prBranch: GH_KEY }))
+    const h = await harness(run)
+    const id = await openMerge(h)
+    expect(JSON.stringify(h.store.confirmations.get(id))).not.toContain(GH_KEY)
+    const detail = await h.get(`/api/inbox/${id}/detail`)
+    expect(JSON.stringify(detail.body)).not.toContain(GH_KEY)
+  })
+
+  it('key-shaped check rows are redacted in the ci_observed event', async () => {
+    const checks = ok(JSON.stringify([{ name: GH_KEY, state: `PENDING ${GH_KEY}` }]))
+    const { run } = fakeGh(world({ checks }))
+    const h = await harness(run)
+    const id = await openMerge(h)
+    await expect(h.web.api.resolve(id, 'approve')).resolves.toMatchObject({ status: 'pending' })
+    const events = h.store.events.read(`release:${REPO}:pr-${PR}`)
+    expect(events.map((event) => event.type)).toContain('ci_observed')
+    expect(JSON.stringify(events)).not.toContain(GH_KEY)
   })
 })
 
@@ -892,7 +1080,7 @@ describe('the card shows exactly what is approved (§13 "the exact diff or comma
 
   it('serves repo, branch and head for a push card, and never claims to open a PR', async () => {
     const g = gitWorld()
-    const { run } = fakeGh(world({ remoteUrl: g.bare }))
+    const { run } = fakeGh(world())
     const h = await harness(run)
     const repoId = await register(h, g.work)
     const opened = await h.post('/api/release/push', { repoId, branch: BRANCH })

@@ -77,7 +77,7 @@ Every card binds the exact head SHA it shows (`inputSha`). A card that cannot re
 
 | Method | Path | Body | What it does |
 | --- | --- | --- | --- |
-| POST | `/api/release/push` | `{ repoId, branch, headSha? }` | Opens a `push` card. `repoId` is a repository registered by local path; its clone is the git directory and its `origin` names the GitHub repository, so no path or repo is taken from the caller. Refuses the default branch. |
+| POST | `/api/release/push` | `{ repoId, branch, headSha? }` | Opens a `push` card. `repoId` is a repository registered by local path; its clone is the git directory and its `origin` names the GitHub repository, so no path or repo is taken from the caller. The URL `gh` reports for that repository must be on the origin's host, or the card does not open (`remote_unreadable`), and the card binds and shows that URL. Refuses the default branch. |
 | POST | `/api/release/push/:confirmationId/resolve` | `{ answer }` | On approve pushes exactly the bound SHA to `refs/heads/<branch>`. Never forces: a diverged branch is rejected. A failure spends the card and leaves a `push_failed` event. |
 | POST | `/api/release/pr` | `{ repo, branch, title, body?, headSha? }` | Opens a `pr_create` confirmation card for the exact PR; nothing leaves the machine while it is pending. The branch must already be on GitHub. |
 | POST | `/api/release/pr/:confirmationId/resolve` | `{ answer }` | Settles the card; on approve opens the PR through your own `gh`. It does not push; that is the `push` card. |

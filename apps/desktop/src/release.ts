@@ -197,14 +197,17 @@ export async function pushIntegrationBranch(
   run: GhRun,
   repo: string,
   gitDir: string,
-  target: { branch: string; headSha: string },
+  target: { branch: string; headSha: string; remoteUrl?: string },
   execGit: GitExec = defaultGitExec,
 ): Promise<{ pushed: true } | { pushed: false; error: string }> {
-  // gh repo view takes the repository as a POSITIONAL argument (-R is not a repo-view flag).
-  const viewed = await run(['repo', 'view', repo, '--json', 'url', '--jq', '.url'])
-  const repoUrl = viewed.code === 0 ? viewed.stdout.trim() : ''
+  let repoUrl = target.remoteUrl ?? ''
   if (repoUrl === '') {
-    return { pushed: false, error: `gh repo view failed for ${repo}: ${viewed.stderr.trim()}` }
+    // gh repo view takes the repository as a POSITIONAL argument (-R is not a repo-view flag).
+    const viewed = await run(['repo', 'view', repo, '--json', 'url', '--jq', '.url'])
+    repoUrl = viewed.code === 0 ? viewed.stdout.trim() : ''
+    if (repoUrl === '') {
+      return { pushed: false, error: `gh repo view failed for ${repo}: ${viewed.stderr.trim()}` }
+    }
   }
   const ref = `refs/heads/${target.branch}`
   const pushed = await execGit(['-C', gitDir, 'push', repoUrl, `${target.headSha}:${ref}`])
@@ -304,7 +307,7 @@ export type PrCreatePayload = { repo: string; branch: string; title: string; bod
 export type PrMergePayload = { repo: string; prNumber: number; title?: string; branch?: string }
 
 /** The push card payload: where it pushes, by registration, never a caller's path. */
-export type PushPayload = { repoId: string; repo: string; branch: string }
+export type PushPayload = { repoId: string; repo: string; remoteUrl: string; branch: string }
 
 /** The classes this module acts on; anything else in the inbox settles without touching GitHub. */
 const RELEASE_CLASSES = ['push', 'pr_create', 'pr_merge'] as const
@@ -332,15 +335,24 @@ export function refusalOf(error: unknown): { status: number; error: string; deta
   return { status: code === 'unknown_repo' ? 404 : 422, error: code, detail: rest.join(': ') }
 }
 
-/** `-R` and the ref API path take these verbatim; one plain name each, or the card never opens. */
-const REPO_SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+/**
+ * `-R`, `repo view` and the ref API path take these verbatim; one plain name each, or the card
+ * never opens. The owner starts with a letter or digit because `repo view` takes the slug as
+ * its first argument, where a leading dash would be read as a flag.
+ */
+const REPO_SLUG = /^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9_.-]+$/
 const BRANCH_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/
 
+/** Names are stored unredacted because they are matched and sent verbatim, so a key-shaped one has no place on a card. */
+const keyShaped = (name: string): boolean => redact(name, [], []) !== name
+
 function assertRepo(repo: string): void {
+  if (keyShaped(repo)) throw codedError('invalid_ref', 'the repository name is key-shaped')
   if (!REPO_SLUG.test(repo)) throw codedError('invalid_ref', `'${repo}' is not owner/name`)
 }
 
 function assertBranch(branch: string): void {
+  if (keyShaped(branch)) throw codedError('invalid_ref', 'the branch name is key-shaped')
   if (!BRANCH_NAME.test(branch) || branch.includes('..'))
     throw codedError('invalid_ref', `'${branch}' is not a plain branch name`)
 }
@@ -598,7 +610,7 @@ export async function openMergeCard(
     repo: input.repo,
     prNumber: input.prNumber,
     title: redact(pr.title, [], []),
-    branch: pr.headRefName,
+    branch: redact(pr.headRefName, [], []),
     ...(input.originConfirmationId !== undefined && { originConfirmationId: input.originConfirmationId }),
   }
   deps.store.atomic(() => {
@@ -715,7 +727,15 @@ export async function mergeBehindCard(
         deps.store,
         stream,
         'ci_observed',
-        { repo: input.repo, prNumber: input.prNumber, checks, at },
+        {
+          repo: input.repo,
+          prNumber: input.prNumber,
+          checks: checks.map((row) => ({
+            name: redact(row.name, [], []),
+            state: redact(row.state, [], []),
+          })),
+          at,
+        },
         at,
       )
     })
@@ -778,18 +798,30 @@ export async function mergeBehindCard(
 }
 
 /** The registered repository a push goes through; resolved from the registry on every use. */
-type PushTarget = { gitDir: string; repo: string }
+type PushTarget = { gitDir: string; repo: string; remoteUrl: string }
 
-/** `owner/name` from any remote form git reports: https, ssh, scp-like or a path. */
-const slugOf = (remote: string): string | undefined =>
-  /([^/:]+\/[^/:]+?)(?:\.git)?\/?$/.exec(remote.trim())?.[1]
+const REMOTE_FORMS = [
+  /^(?:https|ssh):\/\/(?:[^/@]+@)?([^/@]+)\/([^/]+\/[^/]+?)(?:\.git)?\/?$/,
+  /^[^/@:]+@([^/:]+):([^/]+\/[^/]+?)(?:\.git)?\/?$/,
+]
+
+/** Host and `owner/name` of a remote: https, ssh or scp-like. A path or any other form has neither. */
+function parseRemote(remote: string): { host: string; slug: string } | undefined {
+  for (const form of REMOTE_FORMS) {
+    const [, host, slug] = form.exec(remote.trim()) ?? []
+    if (host !== undefined && slug !== undefined) return { host: host.toLowerCase(), slug }
+  }
+  return undefined
+}
 
 /**
  * §13/§14: where a push may come from and go to. The git directory is the local path a
  * repository was registered with, never anything a caller sends. The GitHub repository is
- * that clone's own `origin`, so one repository's commits cannot be sent to another. The
- * default branch is refused here, on both opening and approving: an always-confirm card
- * still does not make the default branch a place MEC pushes to.
+ * that clone's own `origin`, and gh names a host of its own, so the URL gh reports must be the
+ * origin's host and repository; one repository's commits cannot be sent to another, a
+ * same-named one elsewhere included. The default branch is refused here, on both opening and
+ * approving: an always-confirm card still does not make the default branch a place MEC
+ * pushes to.
  */
 async function pushTarget(deps: ReleaseDeps, repoId: string, branch: string): Promise<PushTarget> {
   assertBranch(branch)
@@ -799,17 +831,26 @@ async function pushTarget(deps: ReleaseDeps, repoId: string, branch: string): Pr
   if (!isAbsolute(gitDir)) throw codedError('repo_not_local', `${repoId} has no local git directory`)
   const git = deps.git ?? defaultGitExec
   const origin = await git(['-C', gitDir, 'remote', 'get-url', 'origin'])
-  const repo = origin.code === 0 ? slugOf(origin.stdout) : undefined
-  if (repo === undefined) throw codedError('remote_unreadable', `${repoId} has no readable origin`)
+  const remote = origin.code === 0 ? parseRemote(origin.stdout) : undefined
+  if (remote === undefined)
+    throw codedError('remote_unreadable', `${repoId} has no origin on a host gh can answer for`)
+  const repo = remote.slug
+  assertRepo(repo)
   const viewed = await deps.run(['repo', 'view', repo, '--json', 'url,defaultBranchRef'])
   const facts =
-    viewed.code === 0 ? parseJson<{ defaultBranchRef?: { name?: string } }>(viewed.stdout) : undefined
+    viewed.code === 0
+      ? parseJson<{ url?: string; defaultBranchRef?: { name?: string } }>(viewed.stdout)
+      : undefined
+  const remoteUrl = facts?.url ?? ''
+  const reported = parseRemote(remoteUrl)
+  if (reported?.host !== remote.host || reported.slug.toLowerCase() !== repo.toLowerCase())
+    throw codedError('remote_unreadable', `gh does not report ${repo} on the host of this clone's origin`)
   const defaultBranch = facts?.defaultBranchRef?.name
   if (defaultBranch === undefined || defaultBranch === '')
     throw codedError('remote_unreadable', `the default branch of ${repo} cannot be read`)
   if (branch === defaultBranch)
     throw codedError('default_branch', `${branch} is the default branch of ${repo}`)
-  return { gitDir, repo }
+  return { gitDir, repo, remoteUrl }
 }
 
 async function localHead(deps: ReleaseDeps, gitDir: string, branch: string): Promise<string | undefined> {
@@ -837,12 +878,17 @@ export async function openPushCard(
     id: freshConfirmationId(),
     cls: 'push',
     operationHash: createHash('sha256')
-      .update(`push:${input.repoId}:${target.repo}:${input.branch}:${head}`)
+      .update(`push:${input.repoId}:${target.remoteUrl}:${input.branch}:${head}`)
       .digest('hex'),
     inputSha: head,
     expiresAt: expiresAt(deps.now),
   })
-  const payload: Record<string, Json> = { repoId: input.repoId, repo: target.repo, branch: input.branch }
+  const payload: Record<string, Json> = {
+    repoId: input.repoId,
+    repo: target.repo,
+    remoteUrl: target.remoteUrl,
+    branch: input.branch,
+  }
   deps.store.atomic(() => {
     deps.store.confirmations.save({ ...(record as unknown as StoreDoc), payload })
     appendEvent(
@@ -881,7 +927,7 @@ export async function resolvePush(
       if (refusal === undefined) throw error
       return { status: 'pending', reason: refusal.error }
     }
-    if (target.repo !== payload.repo) return { status: 'pending', reason: 'remote_unreadable' }
+    if (target.remoteUrl !== payload.remoteUrl) return { status: 'pending', reason: 'remote_unreadable' }
     head = await localHead(deps, target.gitDir, payload.branch)
     if (head === undefined) return { status: 'pending', reason: 'head_unreadable' }
   }
@@ -904,7 +950,7 @@ export async function resolvePush(
     deps.run,
     payload.repo,
     target.gitDir,
-    { branch: payload.branch, headSha: head },
+    { branch: payload.branch, headSha: head, remoteUrl: target.remoteUrl },
     deps.git,
   )
   if (!pushed.pushed) {
@@ -948,7 +994,12 @@ export type CardOutcome = {
 export function isReleaseCard(doc: StoreDoc): boolean {
   const payload = doc.payload as Record<string, unknown> | undefined
   if (typeof payload !== 'object' || payload === null) return false
-  if (doc.cls === 'push') return typeof payload.repoId === 'string' && typeof payload.branch === 'string'
+  if (doc.cls === 'push')
+    return (
+      typeof payload.repoId === 'string' &&
+      typeof payload.remoteUrl === 'string' &&
+      typeof payload.branch === 'string'
+    )
   if (doc.cls === 'pr_create') return typeof payload.repo === 'string' && typeof payload.branch === 'string'
   if (doc.cls === 'pr_merge') return typeof payload.repo === 'string' && typeof payload.prNumber === 'number'
   return false
@@ -1012,7 +1063,7 @@ export function cardDetail(doc: StoreDoc): Record<string, Json> | undefined {
       what: `Push ${branch.value} to ${repo.value}`,
       verb: 'push',
       why: 'A push leaves this machine, so it always asks you.',
-      facts: [repo, branch, headFact],
+      facts: [repo, { label: 'Remote', value: String(payload.remoteUrl), mono: true }, branch, headFact],
       approve:
         'MEC pushes exactly this commit to this branch. It never forces; a diverged branch is rejected.',
       deny: 'Nothing is pushed.',

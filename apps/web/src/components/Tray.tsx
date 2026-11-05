@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api, type DecisionDetail, type InboxItem, type Question } from '../api'
+import { canApprove } from '../release-cards'
 import { useWorkbench } from '../workbench'
 import { Btn } from './base'
 
@@ -31,24 +32,40 @@ function humanClass(cls: string): string {
 export function DecisionCard({ item }: { item: InboxItem }) {
   const wb = useWorkbench()
   const [detail, setDetail] = useState<DecisionDetail | null>(null)
+  const [detailFailed, setDetailFailed] = useState(false)
   const resolution = wb.resolutions[item.id]
   const remaining = new Date(item.expiresAt).getTime() - wb.now
   const expired = remaining <= 0
   const dead = resolution !== undefined || expired
   const armed = wb.armedId === item.id
 
+  const readDetail = useCallback(
+    (live: () => boolean) =>
+      api
+        .decisionDetail(item.id)
+        .then((d) => {
+          if (live()) setDetail(d)
+        })
+        .catch(() => {
+          if (live()) setDetailFailed(true)
+        }),
+    [item.id],
+  )
+
   useEffect(() => {
     let alive = true
-    api
-      .decisionDetail(item.id)
-      .then((d) => {
-        if (alive) setDetail(d)
-      })
-      .catch(() => {})
+    void readDetail(() => alive)
     return () => {
       alive = false
     }
-  }, [item.id])
+  }, [readDetail])
+
+  // The retry button leaves with the failure, so focus moves to the card first.
+  const readDetailAgain = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.currentTarget.closest<HTMLElement>('.decision')?.focus()
+    setDetailFailed(false)
+    void readDetail(() => true)
+  }
 
   // Enter on the card opens the evidence — but never when focus is on one of the
   // card's own buttons: those keep their native Enter behaviour.
@@ -66,7 +83,15 @@ export function DecisionCard({ item }: { item: InboxItem }) {
       ? detail.facts
       : [
           { label: 'Operation', value: item.operationHash, mono: true },
-          { label: 'Evidence', value: 'not served by the server yet' },
+          {
+            label: 'Evidence',
+            value:
+              detail !== null
+                ? 'not served by the server yet'
+                : detailFailed
+                  ? 'could not be read, so this card cannot be approved yet'
+                  : 'loading',
+          },
         ]
 
   return (
@@ -102,7 +127,7 @@ export function DecisionCard({ item }: { item: InboxItem }) {
         <div className="decision-actions">
           <Btn
             variant={armed ? 'confirm' : 'primary'}
-            disabled={dead || wb.busyAnswer === item.id}
+            disabled={dead || wb.busyAnswer === item.id || !canApprove(detail)}
             data-approve={item.id}
             onClick={() => void wb.approveDecision(item)}
           >
@@ -120,6 +145,11 @@ export function DecisionCard({ item }: { item: InboxItem }) {
             Deny
           </Btn>
         </div>
+        {detailFailed ? (
+          <button type="button" className="link" onClick={readDetailAgain}>
+            Read the evidence again
+          </button>
+        ) : null}
         <button
           type="button"
           className="link"

@@ -152,5 +152,89 @@
     "find": "    return { closes: false, kind: 'handled', note: why, toast: `${why} The card stays open.` }\n",
     "replace": "    return { closes: true, kind: 'approved', note: 'Approved', toast: 'Approved.' }\n",
     "tests": ["apps/web/test/release-cards.test.ts"]
+  },
+  {
+    "name": "the origin slug skips assertRepo",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  const repo = remote.slug\n  assertRepo(repo)\n",
+    "replace": "  const repo = remote.slug\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "a leading dash passes REPO_SLUG",
+    "file": "apps/desktop/src/release.ts",
+    "find": "const REPO_SLUG = /^[A-Za-z0-9][A-Za-z0-9_.-]*\\/",
+    "replace": "const REPO_SLUG = /^[A-Za-z0-9_.-]+\\/",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "the gh host need not match the origin",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (reported?.host !== remote.host || reported.slug.toLowerCase() !== repo.toLowerCase())\n",
+    "replace": "  if (reported === undefined || reported.slug.toLowerCase() !== repo.toLowerCase())\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "the gh repository need not match the origin",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (reported?.host !== remote.host || reported.slug.toLowerCase() !== repo.toLowerCase())\n",
+    "replace": "  if (reported?.host !== remote.host)\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "a local path counts as a remote",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (remote === undefined)\n    throw codedError('remote_unreadable', `${repoId} has no origin on a host gh can answer for`)\n  const repo = remote.slug\n",
+    "replace": "  const repo = remote?.slug ?? /([^/:]+\\/[^/:]+?)(?:\\.git)?\\/?$/.exec(origin.stdout.trim())?.[1] ?? ''\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "approve ignores the bound remote URL",
+    "file": "apps/desktop/src/release.ts",
+    "find": "    if (target.remoteUrl !== payload.remoteUrl) return { status: 'pending', reason: 'remote_unreadable' }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "the push asks gh for its URL again",
+    "file": "apps/desktop/src/release.ts",
+    "find": "    { branch: payload.branch, headSha: head, remoteUrl: target.remoteUrl },\n",
+    "replace": "    { branch: payload.branch, headSha: head },\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "a key-shaped branch opens a card",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (keyShaped(branch)) throw codedError('invalid_ref', 'the branch name is key-shaped')\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "a key-shaped repository opens a card",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (keyShaped(repo)) throw codedError('invalid_ref', 'the repository name is key-shaped')\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "the PR head branch is stored raw",
+    "file": "apps/desktop/src/release.ts",
+    "find": "    branch: redact(pr.headRefName, [], []),\n",
+    "replace": "    branch: pr.headRefName,\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "check rows are stored raw",
+    "file": "apps/desktop/src/release.ts",
+    "find": "          checks: checks.map((row) => ({\n            name: redact(row.name, [], []),\n            state: redact(row.state, [], []),\n          })),\n",
+    "replace": "          checks,\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "Approve opens with no evidence",
+    "file": "apps/web/src/release-cards.ts",
+    "find": "  return detail !== null\n",
+    "replace": "  return true\n",
+    "tests": ["apps/web/test/release-cards.test.ts"]
   }
 ]

@@ -31,7 +31,7 @@ With `MEC_REAL_RUNNER=1`, a launch effect starts one Claude specialist on a regi
 - **`info/exclude` must name `.mec/*`, not `.mec/`.** With the directory excluded, `commitAll`'s `git add --all -- ':!.mec'` stages everything and exits 1. The fake-CLI runner tests caught this.
 - **The guard walks the commits, not the end state.** A token added and then removed leaves `base..head` clean and stays in history a push would publish.
 - **An exit with no `result` and a code below 128 read as `completed`.** `finish` now says `crashed` for anything but 0. A `result` with no `terminal_reason` also fell through to an empty reason.
-- **`Supervisor.stop` confirmed the leader, not the group.** A child outliving its leader counted as stopped. It probes `-pid` now.
+- **`Supervisor.stop` confirmed the leader, not the group.** A child outliving its leader counted as stopped. It probes `-pid` now. macOS answers EPERM when a group holds only zombies, and that no longer fails the stop: the confirmation loop decides.
 - **Real run 1: `mcp__mec__confirm` was never asked** on a linked slot. Argv now passes `--permission-mode default`, and settings set `autoAllowBashIfSandboxed: false`.
 - **Real run 2: `confirm` read the wrong field.** Claude sends `input`, not `tool_input`, so every ask looked empty, and an empty Bash command was allowed. It reads both now, and a request with nothing to judge is denied.
 - **`git push` and `gh` are also refused by engine deny rules** (`--disallowedTools`), because a linked slot runs under the user's own settings and their allow rules can answer first.
@@ -61,7 +61,7 @@ No contracts change, no SQL migration, no new dependency.
 ## Risks
 
 - **Repo checks run agent-written code on the host.** Decision #25 limits this to scratch repos and `mec-sandbox`, and the flag stays off for real repositories.
-- **Stopping during checks leaves `work_complete`.** `Later` work is not resumed, and nothing recovers a `work_complete` attempt after a restart. M2.4.
+- **Stopping during checks leaves `work_complete`,** and nothing recovers such an attempt after a restart. M2.4.
 - **A crash after spawn but before `session_started` leaves an orphan** and a queued attempt, whose row would start a second engine. Orphan cleanup is M2.4.
 - **A wall-clock stop leaves the work `executing`** with an `interrupted` attempt and nothing to resume it. M2.4.
 

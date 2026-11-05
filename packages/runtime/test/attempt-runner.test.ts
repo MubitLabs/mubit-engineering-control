@@ -166,7 +166,7 @@ async function rig(
     objective: 'do it',
     owned_paths: [],
     acceptance_checks: [],
-    budget: { turns: 3, wall_clock_ms: wallClockMs ?? 20_000 },
+    budget: { turns: 3, wall_clock_ms: wallClockMs ?? 55_000 },
     bundle_revision: 'r1',
     tools: { url: 'http://127.0.0.1:1', token: SECRET },
     env: {

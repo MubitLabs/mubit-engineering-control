@@ -20,6 +20,7 @@ import { pathToFileURL } from 'node:url'
 import type {
   AttemptBrief,
   AttemptRef,
+  Input,
   IsolationProfile,
   Json,
   KeyFingerprint,
@@ -217,6 +218,11 @@ export class AttemptLauncher {
     return this.#deps.store.slots
       .list()
       .flatMap((slot) => (slot.fingerprint === undefined ? [] : [slot.fingerprint as KeyFingerprint]))
+  }
+
+  /** §12.3: resolves once the engine took it. A rejection is a failed delivery. */
+  deliver(attempt: AttemptRef, input: Input): Promise<void> {
+    return this.#runner.deliver(attempt, input)
   }
 
   /** From here on no engine starts. */
@@ -503,6 +509,7 @@ export class AttemptLauncher {
     const onStderr = this.#stderr.get(brief.attempt_id)
     return new ClaudeAdapter({
       binary: resolveBinary('claude', process.env.PATH),
+      streamInput: true,
       spawnFn: ownedSpawn(this.#supervisor, owner, { ...(onStderr !== undefined && { onStderr }) }),
     })
   }

@@ -92,6 +92,14 @@ export type AttemptRunnerDeps = {
   planFor: (brief: AttemptBrief) => AttemptPlan
 }
 
+/** Engines whose `send` a real run has proven. Codex and OpenCode arrive with M2.4. */
+const PROVEN_INPUT: readonly string[] = ['claude']
+
+/** What an adapter may add to `send`: the moment the turn that carried an input ended. */
+type InputEvidence = {
+  inputFinished?: (handle: Live['handle'], inputId: string) => Promise<void>
+}
+
 type StopReason = 'stop_requested' | 'wall_clock' | 'server_closing'
 
 type Live = {
@@ -155,8 +163,22 @@ export class AttemptRunner {
     })
   }
 
-  deliver(_attempt: AttemptRef, _input: Input): Promise<void> {
-    return Promise.reject(new NotWiredError('deliver', 'M2.2'))
+  /**
+   * Resolves once the engine took the input; a rejection is a failed delivery (§12.4). The end of
+   * the turn that carried it comes later, as `inputsRead`, when the adapter can say so.
+   */
+  async deliver(attempt: AttemptRef, input: Input): Promise<void> {
+    const { facts } = this.#deps
+    const live = this.#live.get(keyOf(attempt))
+    if (live === undefined) throw new Error(`runtime: ${attempt.attempt_id} has no running engine`)
+    const { engine } = live.brief
+    if (!PROVEN_INPUT.includes(engine)) throw new Error(`runtime: engine ${engine} has no proven input`)
+    await live.adapter.send(live.handle, input)
+    const { inputFinished } = live.adapter as InputEvidence
+    inputFinished
+      ?.call(live.adapter, live.handle, input.id)
+      .then(() => facts.atomic(() => facts.inputsRead(attempt, [input.id])))
+      .catch(() => {})
   }
 
   replay(_attempt: AttemptRef): Promise<void> {

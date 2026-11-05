@@ -14,6 +14,7 @@ import { Later } from '@mec/contracts'
 import { headSha } from '@mec/git'
 import { BridgeImpl, MecToolsServer } from '@mec/mec-tools'
 import {
+  FollowUps,
   failLaunch,
   fakeBrain,
   launchAuthority,
@@ -143,12 +144,14 @@ export async function startServer(opts: {
   // The launch handler reads this late too: the launcher needs the tools server, which is up
   // before the first queue pass. It stays undefined with the runner flag off.
   let launcher: AttemptLauncher | undefined
+  const followups = new FollowUps({ store, effects: store.effects, runtime: () => launcher })
   registerEffectHandlers(
     store,
     health,
     policy.versionHash,
     () => metaAgent,
     () => launcher,
+    followups,
   )
 
   // §26 Restart mid-attempt: a previous process's attempts stuck in 'running' reconcile to
@@ -171,6 +174,15 @@ export async function startServer(opts: {
   const stored = processingOf(store)
   let paused = stored.paused
   let pausedAt = stored.pausedAt
+  // §11: never while paused, and a failed pass is the next pass's to retry.
+  const schedulerPass = (): void => {
+    if (paused) return
+    try {
+      metaAgent?.runPass()
+    } catch (error) {
+      console.error(`[scheduler] pass failed: ${String(error)}`)
+    }
+  }
   const pauseControl = {
     pause(): void {
       if (paused) return
@@ -191,13 +203,14 @@ export async function startServer(opts: {
       })
       // After the shift, so a message the pause held back runs on the next pass (#27).
       metaAgent?.enqueueResumes()
+      schedulerPass()
     },
     isPaused(): boolean {
       return paused
     },
   }
 
-  const planner = composePlanner(store, { ...opts, policyText }, metaSlot)
+  const planner = composePlanner(store, { ...opts, policyText }, metaSlot, followups)
   metaAgent = planner?.service
   // §20 App crash: a turn the crash cut short resumes through the queue, never inline. While
   // paused, resume does this instead, and it comes after the deadline shift.
@@ -226,11 +239,15 @@ export async function startServer(opts: {
     store,
     <T>(attemptId: string, value: T): T =>
       redactEvent(value as never, launcher?.fingerprints() ?? [], launcher?.exactsFor(attemptId) ?? []) as T,
+    undefined,
+    { followups, changed: () => setImmediate(schedulerPass) },
   )
+  const closing = new AbortController()
+  const cards = { followups, policy, signal: closing.signal }
   const tools = new MecToolsServer({
     secret: toolsSecret,
     bridge: DENY_BRIDGE,
-    onCall: specialistTools({ store, facts, headOf: headSha }),
+    onCall: specialistTools({ store, facts, headOf: headSha, cards }),
   })
   const { url: toolsUrl } = await tools.start()
   const realRunner = process.env.MEC_REAL_RUNNER === '1'
@@ -245,7 +262,7 @@ export async function startServer(opts: {
         secret: toolsSecret,
         bumpGeneration: (attemptId) => tools.bumpGeneration(attemptId),
       },
-      bridge: specialistBridge(store),
+      bridge: specialistBridge(store, cards),
       gate: (payload) => launchAuthority(store, payload, new Date().toISOString(), policy.versionHash),
       drop: (payload, { reason }) => {
         store.atomic(() => refuseLaunch(store, payload, reason, new Date().toISOString()))
@@ -255,12 +272,18 @@ export async function startServer(opts: {
 
   // The first pass waits for the tools server: a launch needs its URL. Rows a previous process
   // left running went back to pending above, before this.
+  // §11: due effects first, then the scheduler. The queue's pass waits for its jobs, so the
+  // scheduler runs on the timer itself and a slow launch never holds the next one back.
   const queueTimer = setInterval(() => {
     if (paused) return
     void store.effects.run().catch(() => {})
+    schedulerPass()
   }, PASS_INTERVAL_MS)
   queueTimer.unref()
-  if (!paused) void store.effects.run().catch(() => {})
+  if (!paused) {
+    void store.effects.run().catch(() => {})
+    schedulerPass()
+  }
 
   const app = buildServer({
     store,
@@ -286,6 +309,7 @@ export async function startServer(opts: {
   const close = async (): Promise<void> => {
     if (closed) return
     closed = true
+    closing.abort()
     clearInterval(queueTimer)
     clearInterval(healthTimer)
     planner?.quiesce()
@@ -350,8 +374,10 @@ function composePlanner(
   store: SqliteStore,
   opts: { dataDir: string; brain?: MetaBrain; policyText: string },
   metaSlot: MetaSlot | undefined,
+  followups: FollowUps,
 ): ({ service: MetaAgentService } & PlannerLifetime) | undefined {
-  const placement = plannerPlacement(store, opts.dataDir)
+  const launchRowState = (key: string): string | undefined => store.effects.snapshot('launch', key)?.state
+  const placement = { ...plannerPlacement(store, opts.dataDir), followups, launchRowState }
   if (opts.brain !== undefined) {
     return {
       service: new MetaAgentService({
@@ -370,6 +396,8 @@ function composePlanner(
         store,
         effects: store.effects,
         policyText: opts.policyText,
+        followups,
+        launchRowState,
         brain: fakeBrain({
           ack: 'On it: I will split this into implementation and review tasks.',
           plan: {
@@ -416,7 +444,8 @@ function composePlanner(
   }
 }
 
-const EFFECT_KINDS = ['launch', 'deliver', 'relay', 'note', 'reply', 'external', 'probe'] as const
+/** A pass starts kinds in this order, so a delivery goes before a launch that is also due (§11). */
+const EFFECT_KINDS = ['deliver', 'launch', 'relay', 'note', 'reply', 'external', 'probe'] as const
 
 /**
  * §26 Capability drift: a startup probe degrades the slot before any attempt starts. The
@@ -504,6 +533,7 @@ function registerEffectHandlers(
   policyHash: string,
   metaAgent: () => MetaAgentService | undefined,
   launcher: () => AttemptLauncher | undefined,
+  followups: FollowUps,
 ): void {
   for (const kind of EFFECT_KINDS) {
     const claim = health.claim(`effects:${kind}`)
@@ -513,7 +543,11 @@ function registerEffectHandlers(
         ? launchHandler(store, policyHash, launcher)
         : kind === 'relay'
           ? relayHandler(metaAgent)
-          : unsupportedHandler(kind)
+          : kind === 'deliver'
+            ? (payload) => followups.runDeliver(payload)
+            : kind === 'note'
+              ? (payload) => followups.runNote(payload)
+              : unsupportedHandler(kind)
     store.effects.handle(
       kind,
       guard(claim, run),

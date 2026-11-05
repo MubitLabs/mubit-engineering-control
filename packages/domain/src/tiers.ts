@@ -74,6 +74,13 @@ export type SlotModelsView = {
   healthy: boolean
   /** mark key (`provider/id` on opencode, bare id elsewhere) → availability; a missing key is `unlisted`. */
   marks: Record<string, ModelAvailability>
+  /** The slot's provider, which picks the table's block on OpenCode. */
+  provider?: string
+  slotClass?: string
+  /** Last reported window utilisation (0-1); absent means no reading yet. */
+  utilisation?: number
+  /** Units the slot takes at once; absent means the policy's per-slot cap. */
+  concurrency?: number
 }
 
 /**

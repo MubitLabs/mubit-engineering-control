@@ -35,6 +35,7 @@ import {
   type SetupDraftRecord,
   type SetupSettingsApi,
   type StopOutcome,
+  settleSpecialistCard,
   stableMessageId,
   stopWorkItem,
 } from '@mec/meta'
@@ -870,10 +871,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         // what the card rendered (audit #5 — absent, every bound resolution went stale).
         expectedInputSha: typeof pending.inputSha === 'string' ? pending.inputSha : undefined,
       })
-      store.atomic(() => {
+      const continues = store.atomic(() => {
         store.confirmations.save(outcome as unknown as StoreDoc)
+        return settleSpecialistCard(store, deps.effects, outcome as unknown as StoreDoc)
       })
-      return { id: outcome.id, status: outcome.status }
+      return { id: outcome.id, status: outcome.status, ...(continues && { continues }) }
     } catch (error) {
       // The first answer won (§13): a second resolve is a CAS race, not a server error.
       if (error instanceof Error && error.message.startsWith('already_handled')) {
@@ -916,6 +918,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         // then the work item's own lifecycle state is the honest stage.
         stage: state,
         held: isHeld(doc),
+        ...(typeof doc.blockedReason === 'string' && { blockedReason: doc.blockedReason }),
         taskCounts: { total: tasks.length, byStatus },
         updatedAt: String(doc.updatedAt ?? ''),
       }

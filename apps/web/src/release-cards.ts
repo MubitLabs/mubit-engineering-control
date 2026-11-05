@@ -75,7 +75,9 @@ export function describeApproval(result: ResolveResult): ApprovalShown {
   if (result.pushed === true) return shown('Pushed', 'Pushed.')
   if (result.prNumber !== undefined)
     return shown(`PR #${result.prNumber} opened`, `PR #${result.prNumber} opened.`)
-  return shown('Approved', 'Approved — the agent was told to continue.')
+  // §13: only the server knows whether an agent was waiting on this answer.
+  if (result.continues === true) return shown('Approved', 'Approved — the agent was told to continue.')
+  return shown('Approved', 'Approved. Your approval is on record; nothing runs from this click.')
 }
 
 const shown = (note: string, toast: string): ApprovalShown => ({

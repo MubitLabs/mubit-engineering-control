@@ -89,7 +89,7 @@ describe('a turn writes nothing key-shaped (§13 invariant 3)', () => {
         },
       ],
       questions: [{ id: 'q_1', question: `Use ${KEY}?`, options: [KEY], at: NOW() }],
-      reports: [{ workItemId: 'wi_x', summary: `done ${KEY}`, artifacts: [{ kind: 'k', ref: KEY }], at: NOW() }],
+      reports: [{ workItemId: 'wi_x', summary: `done ${KEY}`, artifacts: [{ kind: 'k', ref: KEY }] }],
     }
     const { service, store } = rig(decision)
     const outcome = await service.onUserMessage({ messageId: 'msg_1', text: 'go', repoId: REPO })
@@ -191,7 +191,8 @@ describe('MetaAgentService (plan §6/§12)', () => {
     expect(outcome.launchesEnqueued).toEqual([])
     expect(store.workItems.list()).toHaveLength(1)
     expect(store.tasks.list()).toHaveLength(0)
-    expect(store.snapshot().effects).toHaveLength(0)
+    // §6, §12.3: with no attempt to own it, the message gets a planner turn instead of nothing.
+    expect(store.snapshot().effects.map((row) => row.kind)).toEqual(['relay'])
     expect(store.messages.get('msg_1')?.routing).toBe('attach')
     expect(store.events.read('work:wi_live').map((event) => event.type)).toEqual(['message_attached'])
   })

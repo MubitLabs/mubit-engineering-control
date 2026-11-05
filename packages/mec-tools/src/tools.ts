@@ -88,6 +88,12 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
               acceptance_checks: { type: 'array', items: { type: 'string' } },
               depends_on: { type: 'array', items: { type: 'string' } },
               role: { type: 'string' },
+              base_policy: {
+                type: 'string',
+                enum: ['integration', 'contract'],
+                description:
+                  'integration (default): starts from the merged result of its dependencies. contract: starts from the pinned base once they are accepted',
+              },
               model_request: {
                 type: 'object',
                 properties: {

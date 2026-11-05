@@ -13,6 +13,8 @@ import type { EngineEventBody, ErrorClass, RateLimitStatus, TerminalReason, Wind
  *   `terminal_reason` says `api_error`; exit keys off `terminal_reason`
  * - one `rate_limit_event` fans out per `unifiedWindows` entry; `resetsAt` arrives in
  *   unix seconds; `allowed_warning` maps to `warning`
+ * - with stream input each turn opens with its own `system/init`; one session started is one
+ *   event, and the last `result` decides the exit
  * - with no `result` (a crash), the caller supplies the process exit code and the exit
  *   is synthesised as `crashed` for anything but 0: no `result` means no finished turn
  */
@@ -50,6 +52,7 @@ export type ClaudeEventParser = {
 export function createClaudeEventParser(): ClaudeEventParser {
   const pendingTools = new Map<string, { tool: string; input: unknown }>()
   let terminalReason: string | undefined
+  let started = false
 
   const push = (line: string): EngineEventBody[] => {
     const events: EngineEventBody[] = []
@@ -63,7 +66,8 @@ export function createClaudeEventParser(): ClaudeEventParser {
     const type = str(parsed.type)
 
     if (type === 'system') {
-      if (str(parsed.subtype) === 'init') {
+      if (str(parsed.subtype) === 'init' && !started) {
+        started = true
         events.push({
           type: 'session_started',
           session_id: str(parsed.session_id),

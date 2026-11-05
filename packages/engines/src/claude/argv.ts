@@ -6,8 +6,10 @@
  */
 
 export type ClaudeArgvInput = {
-  /** The prompt for `-p`; the runtime composes it from the brief. */
-  prompt: string
+  /** The prompt for `-p`; the runtime composes it from the brief. Absent with `streamInput`. */
+  prompt?: string
+  /** §9: the objective and every later input arrive on stdin, one user message per line. */
+  streamInput?: boolean
   sessionId: string
   /** Per-attempt settings JSON path (plan §8.4). */
   settingsPath: string
@@ -33,10 +35,13 @@ export type ClaudeArgvInput = {
 }
 
 export function buildClaudeArgv(input: ClaudeArgvInput): string[] {
-  const argv = ['claude', '-p', input.prompt, '--verbose', '--output-format', 'stream-json']
-  // NOTE: --input-format stream-json is deliberately absent in v0: with it, `-p` waits on a
-  // stdin user-message that a one-shot spawn must write and close. Steering (send) brings the
-  // two-way wiring; until then the objective rides the -p prompt.
+  // With --input-format stream-json `-p` waits on stdin and stays up until it closes, so only a
+  // caller that owns that pipe asks for it. `--replay-user-messages` makes the engine say which
+  // message it took. A planner turn is one-shot, and its prompt rides argv.
+  const argv = input.streamInput
+    ? ['claude', '-p', '--verbose', '--output-format', 'stream-json']
+    : ['claude', '-p', input.prompt ?? '', '--verbose', '--output-format', 'stream-json']
+  if (input.streamInput) argv.push('--input-format', 'stream-json', '--replay-user-messages')
   if (input.resumeSessionId) {
     argv.push('--resume', input.resumeSessionId)
   } else {

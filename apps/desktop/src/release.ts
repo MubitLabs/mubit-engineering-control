@@ -1060,10 +1060,11 @@ function plannerCardDetail(doc: StoreDoc): Record<string, Json> | undefined {
   if (evidence.length === 0) return undefined
   const facts = [...factsFrom('Operation', operation), ...evidence]
   const cls = shownSafe(String(doc.cls ?? ''))
+  const asker = doc.requestedBy === 'specialist' ? 'The specialist' : 'The meta agent'
   return {
-    what: `The meta agent asks for: ${cls.replaceAll('_', ' ')}`,
+    what: `${asker} asks for: ${cls.replaceAll('_', ' ')}`,
     verb: 'approve',
-    why: 'The meta agent cannot approve its own requests, so this one waits for you.',
+    why: `${asker} cannot approve its own requests, so this one waits for you.`,
     facts: [
       { label: 'Class', value: cls, mono: true },
       ...(typeof doc.workItemId === 'string'
@@ -1072,12 +1073,17 @@ function plannerCardDetail(doc: StoreDoc): Record<string, Json> | undefined {
       ...facts,
     ],
     operation: String(doc.operationHash ?? ''),
-    requestedBy: 'The meta agent',
+    requestedBy: asker,
     consequences: {
       approve: (ALWAYS_CONFIRM as readonly string[]).includes(cls)
         ? 'Nothing here can run this card, so an approve is refused. Deny it.'
-        : 'MEC records your approval of exactly this operation. The click itself runs nothing.',
-      deny: 'MEC records the denial. Nothing runs.',
+        : doc.requestedBy === 'specialist'
+          ? 'The specialist is told yes and carries on with exactly this operation.'
+          : 'MEC records your approval of exactly this operation. The click itself runs nothing.',
+      deny:
+        doc.requestedBy === 'specialist'
+          ? 'The specialist is told no. Nothing runs.'
+          : 'MEC records the denial. Nothing runs.',
     },
     checks: [],
     findings: [],

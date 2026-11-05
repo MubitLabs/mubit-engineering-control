@@ -1,0 +1,282 @@
+[
+  {
+    "name": "queued not counted",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "const OCCUPYING: readonly AttemptState[] = ['queued', ...ACTIVE_ATTEMPT_STATES]",
+    "replace": "const OCCUPYING: readonly AttemptState[] = [...ACTIVE_ATTEMPT_STATES]",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "gave-up launch holds capacity",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (state === 'queued') return deps.launchRowState?.(launchKey(attempt)) !== 'failed'\n",
+    "replace": "  if (state === 'queued') return true\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "ignore hold",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    if (isHeld(work)) {\n",
+    "replace": "    if (false as boolean) {\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "ignore stopped",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    if (isTerminal(listed) || mandateOf(listed).status === 'withdrawn') continue\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "pass during a pause",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (processingOf(store).paused) return []\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "pin ignored",
+    "file": "packages/domain/src/scheduling.ts",
+    "find": "    (task.slotId === undefined || slot.id === task.slotId) &&\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "model ignored",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "      const { modelSlots, resolved } = modelFit(deps, task, views)\n",
+    "replace": "      const { resolved } = modelFit(deps, task, views)\n      const modelSlots = undefined as string[] | undefined\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "accept without a verdict",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    if (latest.state === 'succeeded') {\n",
+    "replace": "    if (latest.state === 'succeeded' || latest.state === 'work_complete') {\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "dependent runs after failure",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  blockDependents(store, workItemId, at)\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "integration dependent starts on accepted",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "const basePolicyOf = (task: StoreDoc): BasePolicy =>\n  task.basePolicy === 'contract' ? 'contract' : 'integration'\n",
+    "replace": "const basePolicyOf = (_task: StoreDoc): BasePolicy => 'contract'\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "reserved unit ignored",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    reservedWakeSlot: followups.deliveryWaiting(),\n",
+    "replace": "    reservedWakeSlot: false,\n",
+    "tests": ["apps/desktop/test/coordination.test.ts"]
+  },
+  {
+    "name": "replan resets status",
+    "file": "packages/meta/src/service.ts",
+    "find": "          status: prior?.status ?? 'ready',\n",
+    "replace": "          status: 'ready',\n",
+    "tests": ["packages/meta/test/replan.test.ts"]
+  },
+  {
+    "name": "dropped key forgotten",
+    "file": "packages/meta/src/service.ts",
+    "find": "      if (started || !canTransition(TASK_MACHINE, status, 'cancel')) {\n",
+    "replace": "      if (status !== '') {\n",
+    "tests": ["packages/meta/test/replan.test.ts"]
+  },
+  {
+    "name": "progress wakes",
+    "file": "packages/meta/src/followups.ts",
+    "find": "    if (classifyWake(event) === 'wake') {\n",
+    "replace": "    if (classifyWake(event) !== 'ignore') {\n",
+    "tests": ["packages/meta/test/wakes-composed.test.ts"]
+  },
+  {
+    "name": "fake delivered",
+    "file": "packages/meta/src/followups.ts",
+    "find": "    try {\n      await runtime.deliver(ref, input)\n    } catch (error) {\n",
+    "replace": "    this.#store.atomic(() => this.#delivered(attemptId, input))\n    try {\n      await runtime.deliver(ref, input)\n    } catch (error) {\n",
+    "tests": ["packages/meta/test/followups.test.ts"]
+  },
+  {
+    "name": "read from transport",
+    "file": "packages/meta/src/followups.ts",
+    "find": "    if (moved.turn_ended === input.id) this.#move(moved, 'read', at)\n",
+    "replace": "    this.#move(moved, 'read', at)\n",
+    "tests": ["packages/meta/test/followups.test.ts"]
+  },
+  {
+    "name": "reroute while owned",
+    "file": "packages/meta/src/followups.ts",
+    "find": "    if (refused.length === 0 && !replanned) return decision\n",
+    "replace": "    if (decision.ack !== '') return decision\n",
+    "tests": ["packages/meta/test/followups.test.ts"]
+  },
+  {
+    "name": "handback to the same attempt",
+    "file": "packages/meta/src/followups.ts",
+    "find": "    const owner = this.ownerOf(workItemId, handback.attemptId)\n",
+    "replace": "    const owner = this.ownerOf(workItemId)\n",
+    "tests": ["packages/meta/test/followups.test.ts"]
+  },
+  {
+    "name": "held item gets input",
+    "file": "packages/meta/src/followups.ts",
+    "find": "    if (work !== undefined && isHeld(work)) throw new Later(`${String(work.id)} is held`)\n",
+    "replace": "",
+    "tests": ["packages/meta/test/followups.test.ts"]
+  },
+  {
+    "name": "replayed row delivers twice",
+    "file": "packages/meta/src/followups.ts",
+    "find": "    if (delivered?.includes(input.id) === true) return\n",
+    "replace": "",
+    "tests": ["packages/meta/test/followups.test.ts"]
+  },
+  {
+    "name": "answer wakes the planner",
+    "file": "packages/meta/src/service.ts",
+    "find": "      if (typeof doc.attemptId === 'string') {\n        this.#followups.answerSpecialist(doc, stored, at)\n        return { status: 'answered' as const, answer: stored }\n      }\n",
+    "replace": "",
+    "tests": ["packages/meta/test/followups.test.ts"]
+  },
+  {
+    "name": "extras written raw",
+    "file": "packages/meta/src/service.ts",
+    "find": "    const decision = { ...unredacted, questions, confirmations, routes, reports }\n",
+    "replace": "    const decision = unredacted\n",
+    "tests": ["packages/meta/test/service.test.ts"]
+  },
+  {
+    "name": "always-confirm requestable",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "  if ((ALWAYS_CONFIRM as readonly string[]).includes(cls)) {\n    throw new Error(`mec-tools: ${cls} needs the owner's confirmation; a worker cannot request it`)\n  }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  },
+  {
+    "name": "anything settled allows",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "    if (card?.status === 'approved') return { allow: true, reason: 'the owner approved this' }\n",
+    "replace": "    if (card?.status !== 'pending') return { allow: true, reason: 'the owner approved this' }\n",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  },
+  {
+    "name": "install skips the card",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "      if (pattern.test(command)) return { allow: false, reason: `${what} needs a confirmation`, card: cls }\n",
+    "replace": "      if (pattern.test(command) && what === '') return { allow: false, reason: what, card: cls }\n",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  },
+  {
+    "name": "pre-authorised anywhere",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "  if (policyPreAuthorises(cards.policy, verdict.card, { ...(repoId !== undefined && { repoId }) })) {\n",
+    "replace": "  if (Object.keys(cards.policy.preAuthorised).length > 0) {\n",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  },
+  {
+    "name": "stopped attempt keeps waiting",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "    if (state !== 'running') return { allow: false, reason: `${verdict.reason}: the attempt is ${state}` }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  },
+  {
+    "name": "dead attempt told to continue",
+    "file": "packages/meta/src/followups.ts",
+    "find": "  if (attempt?.state !== 'running') return false\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  },
+  {
+    "name": "no-evidence approve settles",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    if (body.answer === 'approve' && cardDetail(doc) === undefined) {\n",
+    "replace": "    if (body.answer === 'approve' && id === '') {\n",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "field names shown raw",
+    "file": "apps/desktop/src/release.ts",
+    "find": "    label: `${section}: ${shownSafe(key)}`,\n",
+    "replace": "    label: `${section}: ${key}`,\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "class shown raw",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  const cls = shownSafe(String(doc.cls ?? ''))\n",
+    "replace": "  const cls = String(doc.cls ?? '')\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "pause moves what it held",
+    "file": "packages/store/src/effects-queue.ts",
+    "find": " WHERE state IN ('pending', 'waiting') AND next_run_at > ?`,\n      )\n      .run(ms, this.now().toISOString())\n",
+    "replace": " WHERE state IN ('pending', 'waiting')`,\n      )\n      .run(ms)\n",
+    "tests": ["packages/store/test/effects.test.ts"]
+  },
+  {
+    "name": "toast promises an agent",
+    "file": "apps/web/src/release-cards.ts",
+    "find": "  if (result.continues === true) return shown(",
+    "replace": "  if (result.status !== '') return shown(",
+    "tests": ["apps/web/test/release-cards.test.ts"]
+  },
+  {
+    "name": "stdin closes at the first result",
+    "file": "packages/engines/src/claude/adapter.ts",
+    "find": "    if ([...launch.commands.values()].every((entry) => entry.done)) this.#closeInput(launch)\n",
+    "replace": "    this.#closeInput(launch)\n",
+    "tests": ["packages/engines/test/claude-input.test.ts"]
+  },
+  {
+    "name": "send resolves on the write",
+    "file": "packages/engines/src/claude/adapter.ts",
+    "find": "      await Promise.race([command.taken.promise, late])\n",
+    "replace": "",
+    "tests": ["packages/engines/test/claude-input.test.ts"]
+  },
+  {
+    "name": "stdin never closes",
+    "file": "packages/engines/src/claude/adapter.ts",
+    "find": "    launch.inputOpen = false\n    launch.proc.stdin?.end()\n",
+    "replace": "    launch.inputOpen = false\n",
+    "tests": ["packages/engines/test/claude-input.test.ts"]
+  },
+  {
+    "name": "second session started",
+    "file": "packages/engines/src/claude/stream.ts",
+    "find": "      if (str(parsed.subtype) === 'init' && !started) {\n",
+    "replace": "      if (str(parsed.subtype) === 'init') {\n",
+    "tests": ["packages/engines/test/claude-input.test.ts"]
+  },
+  {
+    "name": "unproven engine sends",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "    if (!PROVEN_INPUT.includes(engine)) throw new Error(`runtime: engine ${engine} has no proven input`)\n",
+    "replace": "",
+    "tests": ["packages/runtime/test/attempt-runner.test.ts"]
+  },
+  {
+    "name": "note handler unsupported",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "            : kind === 'note'\n              ? (payload) => followups.runNote(payload)\n              : unsupportedHandler(kind)\n",
+    "replace": "            : unsupportedHandler(kind)\n",
+    "tests": ["apps/desktop/test/coordination.test.ts"]
+  },
+  {
+    "name": "no pass after effects",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    void store.effects.run().catch(() => {})\n    schedulerPass()\n  }, PASS_INTERVAL_MS)\n",
+    "replace": "    void store.effects.run().catch(() => {})\n  }, PASS_INTERVAL_MS)\n",
+    "tests": ["apps/desktop/test/coordination.test.ts"]
+  }
+]

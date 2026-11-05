@@ -338,7 +338,7 @@ describe('the fence', () => {
     expect(rpc.error?.message).toContain('meta agent')
   })
 
-  it('unwired tools answer an error, never success', async () => {
+  it('a tool with nothing behind it answers an error, never success', async () => {
     for (const [tool, args] of [
       ['ask_user', { question: 'which one?' }],
       ['handback', { message_id: 'msg_1', reason: 'not mine' }],
@@ -346,7 +346,7 @@ describe('the fence', () => {
     ] as const) {
       const rpc = await call(own, tool, args)
       expect(rpc.result, tool).toBeUndefined()
-      expect(rpc.error?.message).toContain('not wired until M2.2')
+      expect(rpc.error?.message).toMatch(/not wired|not available here/)
     }
   })
 

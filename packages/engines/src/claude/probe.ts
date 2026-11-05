@@ -20,6 +20,7 @@ export const REQUIRED_FLAGS: readonly string[] = [
   '--verbose',
   '--output-format',
   '--input-format',
+  '--replay-user-messages',
   '--session-id',
   '--resume',
   '--settings',

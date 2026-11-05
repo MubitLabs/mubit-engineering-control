@@ -71,7 +71,10 @@ function makeServer(metaFor?: (store: Store) => ServerDeps['metaAgent']): {
   return { store, app: buildServer(deps) }
 }
 
-const CARD_PAYLOAD = { operation: { command: 'pnpm add left-pad' }, evidence: { reason: 'the task needs it' } }
+const CARD_PAYLOAD = {
+  operation: { command: 'pnpm add left-pad' },
+  evidence: { reason: 'the task needs it' },
+}
 
 function pendingConfirmation(id: string): ConfirmationRecord {
   return {

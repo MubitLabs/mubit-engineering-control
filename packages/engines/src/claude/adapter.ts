@@ -22,6 +22,9 @@ import { classifyClaudeError, createClaudeEventParser } from './stream'
  * settings and MCP config files and hands them over in the LaunchSpec; the adapter only
  * builds argv, starts the process inside the caller's process group and normalises its
  * stream. `deps.spawn` is injectable for tests.
+ *
+ * With `streamInput` the adapter owns stdin as well (§9, §12.4): the objective is the first line,
+ * every line carries a uuid the engine reports back on, and stdin closes when the last turn ends.
  */
 
 export type SpawnFn = (
@@ -32,14 +35,17 @@ export type SpawnFn = (
   stdout: AsyncIterable<string>
   exited: Promise<number>
   kill(signal?: string): void
+  /** The engine's input, for a launch that asks for stream input. */
+  stdin?: { write(text: string): void; end(): void }
 }
 
 const defaultSpawn: SpawnFn = (argv, opts) => {
   const child: ChildProcess = spawn(argv[0] ?? 'claude', argv.slice(1), {
     cwd: opts.cwd,
     env: opts.env,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
   })
+  child.stdin?.on('error', () => {})
   child.stderr?.on('data', (chunk: Buffer) => {
     const line = chunk.toString().trim()
     if (line !== '') console.error(`[engine:stderr] ${line}`)
@@ -54,18 +60,55 @@ const defaultSpawn: SpawnFn = (argv, opts) => {
     pid: child.pid,
     stdout: child.stdout ? createInterface({ input: child.stdout }) : emptyLineStream,
     exited,
+    stdin: {
+      write: (text) => {
+        child.stdin?.write(text)
+      },
+      end: () => {
+        child.stdin?.end()
+      },
+    },
     kill: (signal: string = 'SIGTERM') => {
       child.kill(signal as NodeJS.Signals)
     },
   }
 }
 
+type Waiter = { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void }
+
+function waiter(): Waiter {
+  let resolve: () => void = () => {}
+  let reject: (error: Error) => void = () => {}
+  const promise = new Promise<void>((yes, no) => {
+    resolve = yes
+    reject = no
+  })
+  // Nobody may be waiting when the engine exits.
+  promise.catch(() => {})
+  return { promise, resolve, reject }
+}
+
+/** One message on stdin: taken when the engine said so, finished when its turn ended. */
+type Command = {
+  uuid: string
+  inputId?: string
+  taken: Waiter
+  finished: Waiter
+  replayed: boolean
+  done: boolean
+}
+
 type Launch = {
   handle: AttemptHandle & { exitCode?: number }
   proc: ReturnType<SpawnFn>
   spec: LaunchSpec
-  inputs: Input[]
+  commands: Map<string, Command>
+  sawLifecycle: boolean
+  inputOpen: boolean
 }
+
+/** How long the engine has to say it took an input before the delivery counts as failed. */
+const INPUT_TIMEOUT_MS = 10_000
 
 export type ClaudeAdapterDeps = {
   spawnFn?: SpawnFn
@@ -74,6 +117,12 @@ export type ClaudeAdapterDeps = {
    * holds a `claude` that fails by name (§8.3), so a bare name would start the shim.
    */
   binary?: string
+  /**
+   * §9: the objective goes on stdin, `send` works, and stdin closes when nothing is left, which
+   * is what ends the process. A planner turn is one-shot and leaves this off.
+   */
+  streamInput?: boolean
+  inputTimeoutMs?: number
 }
 
 export class ClaudeAdapter implements EngineAdapter {
@@ -112,8 +161,9 @@ export class ClaudeAdapter implements EngineAdapter {
     const spawnFn = this.deps.spawnFn ?? defaultSpawn
     // Claude's --session-id must be a UUID; mint one per launch (resume keeps its own).
     const sessionId = spec.resume?.session_id ?? randomUUID()
+    const streamInput = this.deps.streamInput === true
     const argv = buildClaudeArgv({
-      prompt: spec.brief.objective,
+      ...(streamInput ? { streamInput } : { prompt: spec.brief.objective }),
       sessionId,
       settingsPath: (spec.brief.env.MEC_SETTINGS_PATH as string | undefined) ?? '/dev/null',
       mcpConfigPath: (spec.brief.env.MEC_MCP_CONFIG_PATH as string | undefined) ?? '/dev/null',
@@ -139,14 +189,114 @@ export class ClaudeAdapter implements EngineAdapter {
       pid: proc.pid,
       session_id: sessionId,
     }
-    this.spawns.set(spec.brief.attempt_id, { handle, proc, spec, inputs: [] })
+    const launch: Launch = {
+      handle,
+      proc,
+      spec,
+      commands: new Map(),
+      sawLifecycle: false,
+      inputOpen: streamInput && proc.stdin !== undefined,
+    }
+    this.spawns.set(spec.brief.attempt_id, launch)
+    if (launch.inputOpen) this.#write(launch, spec.brief.objective)
     return handle
   }
 
+  /**
+   * §12.4: resolves when the engine said it took the input, not when the write returned. On
+   * 2.1.318 `command_lifecycle` says so at once, even for a message that waits for the next turn;
+   * a version with only `--replay-user-messages` says so when that turn starts.
+   */
   async send(handle: AttemptHandle, input: Input): Promise<void> {
     const launch = this.spawns.get(handle.attempt_id)
     if (!launch) throw new Error(`claude adapter: unknown attempt ${handle.attempt_id}`)
-    launch.inputs.push(input)
+    if (this.deps.streamInput !== true) throw new Error('claude adapter: this launch has no stream input')
+    if (!launch.inputOpen) throw new Error('claude adapter: the engine input is closed: its last turn ended')
+    const command = this.#write(launch, input.text, input.id)
+    let timer: NodeJS.Timeout | undefined
+    const late = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`claude adapter: the engine did not take input ${input.id}`)),
+        this.deps.inputTimeoutMs ?? INPUT_TIMEOUT_MS,
+      )
+    })
+    try {
+      await Promise.race([command.taken.promise, late])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /** Resolves when the turn that carried this input ended: the evidence for `read` (§12.4). */
+  async inputFinished(handle: AttemptHandle, inputId: string): Promise<void> {
+    const commands = this.spawns.get(handle.attempt_id)?.commands
+    const command = [...(commands?.values() ?? [])].find((entry) => entry.inputId === inputId)
+    await command?.finished.promise
+  }
+
+  #write(launch: Launch, text: string, inputId?: string): Command {
+    const uuid = randomUUID()
+    const command: Command = {
+      uuid,
+      ...(inputId !== undefined && { inputId }),
+      taken: waiter(),
+      finished: waiter(),
+      replayed: false,
+      done: false,
+    }
+    launch.commands.set(uuid, command)
+    const message = {
+      type: 'user',
+      message: { role: 'user', content: text },
+      parent_tool_use_id: null,
+      session_id: launch.handle.session_id,
+      uuid,
+    }
+    launch.proc.stdin?.write(`${JSON.stringify(message)}\n`)
+    return command
+  }
+
+  /** Reads what the engine says about stdin; the stream parser never sees any of this. */
+  #observe(launch: Launch, line: string): void {
+    if (!launch.inputOpen || !/"command_lifecycle"|"isReplay"|"result"/.test(line)) return
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(line) as Record<string, unknown>
+    } catch {
+      return
+    }
+    if (parsed.type === 'command_lifecycle') {
+      launch.sawLifecycle = true
+      const command = launch.commands.get(String(parsed.command_uuid))
+      if (parsed.state === 'completed') this.#finish(launch, command)
+      else command?.taken.resolve()
+    } else if (parsed.type === 'user' && parsed.isReplay === true) {
+      const command = launch.commands.get(String(parsed.uuid))
+      command?.taken.resolve()
+      if (command !== undefined) command.replayed = true
+    } else if (parsed.type === 'result') {
+      if (!launch.sawLifecycle) {
+        for (const command of launch.commands.values()) {
+          if (command.replayed && !command.done) this.#finish(launch, command)
+        }
+      }
+      // A turn that ended badly leaves nothing to wait for: the engine cannot go on.
+      if (parsed.terminal_reason !== 'completed') this.#closeInput(launch)
+    }
+  }
+
+  #finish(launch: Launch, command: Command | undefined): void {
+    if (command === undefined) return
+    command.finished.resolve()
+    command.done = true
+    if ([...launch.commands.values()].every((entry) => entry.done)) this.#closeInput(launch)
+  }
+
+  /** EOF is what ends a stream-input process, so the last finished turn closes it. */
+  #closeInput(launch: Launch): void {
+    if (!launch.inputOpen) return
+    launch.inputOpen = false
+    launch.proc.stdin?.end()
   }
 
   async interrupt(handle: AttemptHandle): Promise<void> {
@@ -170,10 +320,18 @@ export class ClaudeAdapter implements EngineAdapter {
       generation: handle.generation,
     })
     for await (const line of launch.proc.stdout) {
+      this.#observe(launch, line)
       for (const body of parser.push(line)) yield stamped(body)
     }
     // The exit event carries the real exit code, so it is the one thing that waits for the end.
-    for (const body of parser.finish(await launch.proc.exited)) yield stamped(body)
+    const code = await launch.proc.exited
+    launch.inputOpen = false
+    const gone = new Error('claude adapter: the engine exited')
+    for (const command of launch.commands.values()) {
+      command.taken.reject(gone)
+      command.finished.reject(gone)
+    }
+    for (const body of parser.finish(code)) yield stamped(body)
   }
 
   classify(error: unknown): ErrorClass {

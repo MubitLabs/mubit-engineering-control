@@ -450,7 +450,9 @@ describe('the launch path', { timeout: 60_000 }, () => {
 
     // The brief is true about the shared clone: its writes are denied, so a worker's own commit
     // fails, and the worker is told to leave that to MEC instead of finding out and retrying.
-    const prompt = argv.join('\n')
+    // §9: the objective goes on stdin, the first of the engine's input lines.
+    const stdin = readFileSync(join(bin, 'stdin.jsonl'), 'utf8')
+    const prompt = String(JSON.parse(stdin.split('\n')[0] ?? '{}').message.content)
     expect(prompt).toContain('Your shell is sandboxed')
     expect(prompt).toMatch(/shared clone[^.]*read-only/)
     expect(prompt).toContain('Do not run git add or git commit')

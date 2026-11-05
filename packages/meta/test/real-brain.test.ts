@@ -165,6 +165,41 @@ describe('RealClaudeBrain over a fake adapter', () => {
     for (const spec of specs) expect(spec.env).not.toHaveProperty('CLAUDE_CONFIG_DIR')
   })
 
+  it('carries base_policy, the model request and the slot pin into the plan', async () => {
+    const { engine } = fakeEngine([
+      started(),
+      toolCall('mcp__mec__acknowledge', { message_id: 'msg_turn', text: 'On it' }),
+      toolCall('mcp__mec__propose_plan', {
+        work_item: 'wi_turn',
+        tasks: [
+          { id: 'task_a', objective: 'A' },
+          {
+            id: 'task_b',
+            objective: 'B',
+            depends_on: ['task_a'],
+            base_policy: 'contract',
+            model_request: { tier: 'strong', reason: 'hard' },
+            slot_hint: { slot_id: 'slot_x' },
+          },
+        ],
+      }),
+      exited(),
+    ])
+    const brain = new RealClaudeBrain({
+      slotDir: '/slots/claude/meta-a',
+      toolsSecret: 'unit-secret',
+      now: NOW,
+      adapter: engine,
+    })
+    const decision = await brain.decide({ messageText: 'Two', liveWork: [] })
+    expect(decision.plan?.tasks[0]?.basePolicy).toBeUndefined()
+    expect(decision.plan?.tasks[1]).toMatchObject({
+      basePolicy: 'contract',
+      modelRequest: { tier: 'strong', reason: 'hard' },
+      slotHint: { slotId: 'slot_x' },
+    })
+  })
+
   it('uses the LAST valid plan when an invalid one comes first', async () => {
     const { engine } = fakeEngine([
       started(),

@@ -60,7 +60,7 @@ async function stubApi(
     if (path === '/api/inbox') return json(demoInbox)
     if (broken.detail && /^\/api\/inbox\/[^/]+\/detail$/.test(path)) return json({ error: 'boom' }, 500)
     if (/^\/api\/inbox\/[^/]+\/resolve$/.test(path) && method === 'POST')
-      return json({ id: 'conf_71', status: 'approved' })
+      return json({ id: 'conf_71', status: 'approved', continues: true })
     if (path === '/api/questions' && method === 'GET') return json(serverQuestions)
     if (path === '/api/prompts' && method === 'GET') return json(serverPrompts)
     if (path === '/api/models' && method === 'GET') return json(serverModels)

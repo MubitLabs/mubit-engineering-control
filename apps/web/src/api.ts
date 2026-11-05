@@ -241,6 +241,8 @@ export type ResolveResult = {
   merged?: boolean
   pushed?: boolean
   prNumber?: number
+  /** A running agent was waiting on this answer, and now has it. */
+  continues?: boolean
 }
 
 /**

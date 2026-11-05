@@ -156,7 +156,7 @@ export function launchFailure(store: Store, payload: Json): string | undefined {
 }
 
 /** The machine refuses a second block, so blocked work keeps its first reason. */
-function blockWork(store: Store, workItemId: string, reason: string, at: string): void {
+export function blockWork(store: Store, workItemId: string, reason: string, at: string): void {
   const work = store.workItems.get(workItemId)
   if (work === undefined || !canTransition(WORK_ITEM_MACHINE, String(work.state), 'block')) return
   store.workItems.save({

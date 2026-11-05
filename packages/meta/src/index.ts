@@ -49,11 +49,15 @@ export {
   slotViewsFromStore,
 } from './context'
 export { EscalationCounter } from './escalation'
+export type { DeliveryRuntime, FollowUpsDeps, SpecialistCard } from './followups'
+export { enqueueWake, FollowUps, settleSpecialistCard, unreadNotes } from './followups'
 export { handBack } from './handback'
 export type { BrainEngine, RealClaudeBrainOptions, RecordedToolCall } from './real-brain'
 export { RealClaudeBrain } from './real-brain'
 export type { LiveWork, RoutingDecision } from './routing'
 export { routeMessage } from './routing'
+export type { LaunchRecord, PlacementTable, SchedulerDeps } from './scheduler'
+export { schedulePass } from './scheduler'
 export type {
   MetaBrain,
   MetaDecision,

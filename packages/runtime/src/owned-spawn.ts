@@ -17,6 +17,7 @@ export type OwnedSpawn = (
   stdout: AsyncIterable<string>
   exited: Promise<number>
   kill(signal?: string): void
+  stdin: { write(text: string): void; end(): void }
 }
 
 export type OwnedSpawnHooks = {
@@ -43,8 +44,10 @@ export function ownedSpawn(
       cwd: opts.cwd,
       env: opts.env,
       detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     })
+    // A write to an engine that just died is its exit, which the monitor already reads.
+    child.stdin.on('error', () => {})
     // spawn() reports ENOENT and friends through an async 'error' event; without a pid there is
     // no process to own, and the caller hears it as a throw.
     let startError: Error | undefined
@@ -76,6 +79,14 @@ export function ownedSpawn(
       pid,
       stdout: createInterface({ input: child.stdout }),
       exited,
+      stdin: {
+        write: (text) => {
+          child.stdin.write(text)
+        },
+        end: () => {
+          child.stdin.end()
+        },
+      },
       kill: (signal = 'SIGTERM') => {
         try {
           process.kill(-pid, signal as NodeJS.Signals)

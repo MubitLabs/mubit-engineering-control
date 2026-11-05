@@ -331,14 +331,14 @@ describe('truthful launch (§17, decision #26)', () => {
   it('an effect kind with no handler throws', async () => {
     const dataDir = scratch()
     const { db, store } = openStore(dataDir)
-    for (const kind of ['deliver', 'note', 'reply', 'external', 'probe'] as const) {
+    for (const kind of ['reply', 'external', 'probe'] as const) {
       store.effects.enqueue(kind, 'k1', {})
     }
 
     const handle = await startServer({ dataDir })
     await sleep(100)
 
-    for (const kind of ['deliver', 'note', 'reply', 'external', 'probe']) {
+    for (const kind of ['reply', 'external', 'probe']) {
       expect(effectRow(db, kind, 'k1')).toMatchObject({
         attempts: 1,
         last_error: `unsupported effect: ${kind}`,

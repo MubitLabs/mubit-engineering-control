@@ -14,7 +14,15 @@
  * ceiling). Four consecutive invalid proposals escalate (the v1 coordinator discipline).
  */
 import { createHash } from 'node:crypto'
-import type { AttemptState, Caps, ModelTier, SlotModelsView, TaskState, TierTableLike } from '@mec/domain'
+import type {
+  AttemptState,
+  BasePolicy,
+  Caps,
+  ModelTier,
+  SlotModelsView,
+  TaskState,
+  TierTableLike,
+} from '@mec/domain'
 import {
   ATTEMPT_TERMINAL,
   BUILTIN_ROLE_NAMES,
@@ -43,6 +51,8 @@ export type PlannerPlanTask = {
   acceptanceChecks: string[]
   dependsOn: string[]
   role: string
+  /** §10, §14: what the task builds on. */
+  basePolicy: BasePolicy
   modelRequest?: { tier?: ModelTier; model?: string; effort?: string; variant?: string; reason: string }
   slotHint?: { slotClass?: string; slotId?: string }
   budget?: { turns: number; wallClockMs: number; usd?: number }
@@ -355,6 +365,13 @@ export class PlannerTools {
             }
           }
         }
+        if (
+          task.base_policy !== undefined &&
+          task.base_policy !== 'integration' &&
+          task.base_policy !== 'contract'
+        ) {
+          issues.push(`tasks[${index}].base_policy must be 'integration' or 'contract'`)
+        }
         tasks.push({
           taskId: id,
           objective,
@@ -369,6 +386,7 @@ export class PlannerTools {
           })(),
           dependsOn: stringArray(task.depends_on),
           role: typeof task.role === 'string' && task.role !== '' ? task.role : 'implementer',
+          basePolicy: task.base_policy === 'contract' ? 'contract' : 'integration',
           ...(modelRequest !== undefined && { modelRequest }),
           ...(slotHint !== undefined && { slotHint }),
           ...(budget !== undefined && { budget }),
@@ -387,7 +405,7 @@ export class PlannerTools {
           ownedPaths: task.ownedPaths,
           acceptanceChecks: task.acceptanceChecks.length > 0 ? task.acceptanceChecks : ['manual-review'],
           maxAttempts: caps.repairAttemptsPerTask + 1,
-          basePolicy: 'integration',
+          basePolicy: task.basePolicy,
           role: task.role,
         })),
         { knownChecks, knownRoles: BUILTIN_ROLE_NAMES },

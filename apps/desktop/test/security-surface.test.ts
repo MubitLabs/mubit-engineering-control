@@ -76,6 +76,15 @@ function track(server: ReturnType<typeof buildServer>): ReturnType<typeof buildS
   return server
 }
 
+async function registerRepo(app: ReturnType<typeof buildServer>): Promise<string> {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/repositories',
+    payload: { urlOrPath: 'https://example.test/a', trusted: true, bootstrapCmds: [], checkCmds: [] },
+  })
+  return (res.json() as { id: string }).id
+}
+
 describe('§22 leg 1: non-local origins are rejected before any route runs', () => {
   it('a mutation from https://evil.com is 403 and nothing is stored', async () => {
     const { app } = makeServer()
@@ -136,10 +145,11 @@ describe('§22 leg 2: browser-shaped mutations need the custom client header', (
 
   it('the same POST with x-mec-client is accepted (the workbench request() wrapper)', async () => {
     const { app } = makeServer()
-    const res = await track(app).inject({
+    const repoId = await registerRepo(track(app))
+    const res = await app.inject({
       method: 'POST',
       url: '/api/chat/messages',
-      payload: { text: 'hello' },
+      payload: { text: 'hello', repoId },
       headers: { origin: 'http://localhost:5173', 'x-mec-client': '1' },
     })
     expect(res.statusCode).toBe(200)
@@ -159,10 +169,11 @@ describe('§22 leg 2: browser-shaped mutations need the custom client header', (
 
   it('a local non-browser client (the CLI, tests, the engine MCP client) posts unchanged', async () => {
     const { app } = makeServer()
-    const res = await track(app).inject({
+    const repoId = await registerRepo(track(app))
+    const res = await app.inject({
       method: 'POST',
       url: '/api/chat/messages',
-      payload: { text: 'hello from the CLI' },
+      payload: { text: 'hello from the CLI', repoId },
     })
     expect(res.statusCode).toBe(200)
   })

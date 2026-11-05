@@ -179,11 +179,11 @@ describe('repo identity at the chat route', () => {
     expect(res.json()).toMatchObject({ error: 'repo_mismatch' })
   })
 
-  it('absent repoId stays Unassigned, and repo reads are filtered', async () => {
-    const { app } = makeServer()
+  it('legacy rows stay in the global read, and repo reads are filtered', async () => {
+    const { store, app } = makeServer()
     track(app)
     const repoA = await registerRepo(app, 'a')
-    const bare = await postMessage(app, { text: 'no repo' })
+    store.atomic(() => store.workItems.save({ id: 'wi_legacy', state: 'stopped' }))
     const scoped = await postMessage(app, { text: 'in a', repoId: repoA })
     expect(scoped.routing).toBe('new_work')
 
@@ -193,7 +193,7 @@ describe('repo identity at the chat route', () => {
     }[]
     expect(work.map((row) => [row.id, row.repoId])).toEqual([[scoped.workItemId, repoA]])
     const all = (await app.inject({ method: 'GET', url: '/api/work' })).json() as { id: string }[]
-    expect(all.map((row) => row.id)).toEqual([bare.workItemId, scoped.workItemId])
+    expect(all.map((row) => row.id)).toEqual(['wi_legacy', scoped.workItemId])
     const messages = (
       await app.inject({ method: 'GET', url: `/api/chat/messages?repoId=${repoA}` })
     ).json() as { id: string }[]
@@ -274,6 +274,61 @@ describe('repo identity at the chat route', () => {
       error: 'Internal Server Error',
       message: 'disk gone',
     })
+  })
+})
+
+describe('repoId is required on the chat route', () => {
+  const inject = (app: ReturnType<typeof buildServer>, payload: Record<string, unknown>) =>
+    app.inject({ method: 'POST', url: '/api/chat/messages', payload })
+
+  it('absent repoId is 400 and writes nothing', async () => {
+    const { store, app } = makeServer()
+    const res = await inject(track(app), { text: 'ship it' })
+    expect(res.statusCode).toBe(400)
+    expect(res.json()).toEqual({ error: 'repo_required' })
+    expect(store.messages.list()).toHaveLength(0)
+    expect(store.workItems.list()).toHaveLength(0)
+  })
+
+  it('absent repoId is 400 on the composed path, before the meta agent runs', async () => {
+    let called = 0
+    const store: Store = new MemoryRepositories()
+    const app = track(
+      buildServer({
+        store,
+        effects: store.effects,
+        health: new FakeHealthBoard(),
+        policyText: '{"preAuthorised":{}}',
+        now: () => new Date(AT),
+        metaAgent: {
+          onUserMessage: async () => {
+            called += 1
+            return { acknowledged: 'On it', tasksCreated: 0, launchesEnqueued: [], escalated: false }
+          },
+        },
+      }),
+    )
+    const res = await inject(app, { text: 'ship it' })
+    expect(res.statusCode).toBe(400)
+    expect(res.json()).toEqual({ error: 'repo_required' })
+    expect(called).toBe(0)
+  })
+
+  it('setup mode needs no repoId', async () => {
+    const { store, app } = makeServer()
+    const res = await inject(track(app), { text: 'help me set up', setup: true })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ mode: 'setup' })
+    expect(store.messages.list()).toHaveLength(1)
+  })
+
+  it('a secret paste with no repoId is still redacted and answered', async () => {
+    const { store, app } = makeServer()
+    const key = `sk-ant-${'a'.repeat(40)}`
+    const res = await inject(track(app), { text: `here it is ${key}` })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ routing: 'conversation', secretGuard: true })
+    expect(JSON.stringify(store.messages.list())).not.toContain(key)
   })
 })
 
@@ -495,7 +550,8 @@ describe('buildServer', () => {
 
   it('admits a message with nothing live as new work', async () => {
     const { store, app } = makeServer()
-    const body = await postMessage(track(app), { text: 'ship the smoke test' })
+    const repoId = await registerRepo(track(app), 'a')
+    const body = await postMessage(app, { text: 'ship the smoke test', repoId })
     expect(body.messageId).toMatch(/^msg_/)
     expect(body.workItemId).toMatch(/^wi_/)
     expect(body.routing).toBe('new_work')
@@ -509,8 +565,13 @@ describe('buildServer', () => {
 
   it('attaches a referencing message without creating a second work item', async () => {
     const { store, app } = makeServer()
-    const first = await postMessage(track(app), { text: 'ship the smoke test' })
-    const second = await postMessage(app, { text: 'and the fixtures', referencesWorkItem: first.workItemId })
+    const repoId = await registerRepo(track(app), 'a')
+    const first = await postMessage(app, { text: 'ship the smoke test', repoId })
+    const second = await postMessage(app, {
+      text: 'and the fixtures',
+      repoId,
+      referencesWorkItem: first.workItemId,
+    })
 
     expect(second.routing).toBe('attach')
     expect(second.workItemId).toBe(first.workItemId)
@@ -523,8 +584,9 @@ describe('buildServer', () => {
 
   it('replays the same answer for a repeated idempotency key', async () => {
     const { store, app } = makeServer()
-    const first = await postMessage(track(app), { text: 'ship it' }, { 'x-idempotency-key': 'k1' })
-    const replay = await postMessage(app, { text: 'ship it' }, { 'x-idempotency-key': 'k1' })
+    const repoId = await registerRepo(track(app), 'a')
+    const first = await postMessage(app, { text: 'ship it', repoId }, { 'x-idempotency-key': 'k1' })
+    const replay = await postMessage(app, { text: 'ship it', repoId }, { 'x-idempotency-key': 'k1' })
 
     expect(replay.messageId).toBe(first.messageId)
     expect(replay.workItemId).toBe(first.workItemId)
@@ -534,12 +596,13 @@ describe('buildServer', () => {
 
   it('a message with no live work and no reference starts work even after one item is done', async () => {
     const { store, app } = makeServer()
-    const first = await postMessage(track(app), { text: 'first' })
+    const repoId = await registerRepo(track(app), 'a')
+    const first = await postMessage(app, { text: 'first', repoId })
     const item = store.workItems.get(first.workItemId!) as StoreDoc
     item.state = 'done'
     store.workItems.save(item)
 
-    const second = await postMessage(app, { text: 'second' })
+    const second = await postMessage(app, { text: 'second', repoId })
     expect(second.routing).toBe('new_work')
     expect(second.workItemId).not.toBe(first.workItemId)
   })
@@ -614,7 +677,8 @@ describe('buildServer', () => {
   it('GET /api/work lists work items with task counts and stages', async () => {
     const { store, app } = makeServer()
     const server = track(app)
-    const { workItemId } = await postMessage(app, { text: 'ship the smoke test' })
+    const repoId = await registerRepo(app, 'a')
+    const { workItemId } = await postMessage(app, { text: 'ship the smoke test', repoId })
     store.tasks.save({ id: 'task_a', workItemId: workItemId!, status: 'ready' })
     store.tasks.save({ id: 'task_b', workItemId: workItemId!, status: 'active' })
 
@@ -638,8 +702,9 @@ describe('buildServer', () => {
   it('GET /api/chat/messages lists newest-last', async () => {
     const { app } = makeServer()
     const server = track(app)
-    const first = await postMessage(app, { text: 'first' })
-    const second = await postMessage(app, { text: 'second', referencesWorkItem: first.workItemId })
+    const repoId = await registerRepo(app, 'a')
+    const first = await postMessage(app, { text: 'first', repoId })
+    const second = await postMessage(app, { text: 'second', repoId, referencesWorkItem: first.workItemId })
 
     const res = await server.inject({ method: 'GET', url: '/api/chat/messages' })
     expect(res.statusCode).toBe(200)

@@ -133,6 +133,13 @@
     "tests": ["apps/desktop/test/server.test.ts"]
   },
   {
+    "name": "accept absent repoId",
+    "file": "apps/desktop/src/server.ts",
+    "find": "      reply.code(400).send({ error: 'repo_required' })\n      return\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
     "name": "follow_up needs no reference",
     "file": "apps/desktop/src/server.ts",
     "find": "    if (intent === 'follow_up' && referencesWorkItem === undefined) {",

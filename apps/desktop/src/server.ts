@@ -564,7 +564,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       reply.code(400).send({ error: 'repoId must be a non-empty string' })
       return
     }
-    // §12.1, decision #10: absent is Unassigned; unknown or crossing is refused before any write.
+    // §12.1, decision #10: unknown or crossing is refused before any write.
     const repoId = typeof body.repoId === 'string' ? body.repoId : undefined
     const repo: { repoId?: string } = repoId !== undefined ? { repoId } : {}
     const referencesWorkItem =
@@ -632,6 +632,13 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         ...(result.openLoginCard !== undefined && { openLoginCard: result.openLoginCard }),
         ...(result.openKeyForm !== undefined && { openKeyForm: result.openKeyForm }),
       }
+    }
+
+    // §12.1, decision #10: every message belongs to a repository's conversation. Setup and the
+    // secret guard answer above this line, so Setup works with zero repositories.
+    if (repoId === undefined) {
+      reply.code(400).send({ error: 'repo_required' })
+      return
     }
 
     // §12.1: a follow-up names its work and a New request names none, so the routing rules

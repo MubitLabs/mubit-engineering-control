@@ -26,7 +26,7 @@ import { defaultsRoot, loadModelsTable } from '@mec/prompts'
 import { parkFromEvents } from '@mec/runtime'
 import { probeModelAvailabilitySync } from '@mec/slots'
 import type { EffectHandler, HealthClaim, Json } from '@mec/store'
-import { DirLock, HealthBoardImpl, MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
+import { DirLock, HealthBoardImpl, InspectionReads, MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import { FakeEngine } from '@mec/testkit'
 import Database from 'better-sqlite3'
 import { buildHealthSnapshot, buildServer } from './server'
@@ -172,6 +172,7 @@ export async function startServer(opts: {
     store,
     effects: store.effects,
     health,
+    inspection: new InspectionReads(db),
     policyText: opts.policyText ?? DEFAULT_POLICY_TEXT,
     pauseControl,
     // §6 composed path: the meta-agent executor owns chat turns. MEC_FAKE_ENGINE=1 uses the

@@ -59,6 +59,19 @@ Every route in `apps/desktop/src/server.ts`. **Auth model: loopback only** — t
 | POST | `/api/processing/pause`, `/api/processing/resume` | — | Stops or restarts queue passes: `{ status: 'paused' \| 'running' }`. Idempotent. A pause is stored and survives restart; resume moves waiting deadlines later by its length. 404 when the server has no pause control. |
 | GET | `/api/processing` | — | `{ paused, pausedAt? }`. `/api/status`, `health.json` and `mec status` report `paused` too. |
 
+### Inspection (read-only, bounded)
+
+Additive routes for the overhaul's views; `/api/work` and the other routes above are unchanged. Every string is redacted on the way out. A page is at most 100 rows (default 50, a larger `limit` is held to 100), and a byte cap ends a page early at 1 MiB of JSON with a valid `nextCursor`. In a detail answer each list has a count and a byte budget, and a `*Truncated` or `truncated` field counts what it left out. Many long ids, times and names are cut. Those bounds do not cover every field, so 1 MiB is enforced once more on the finished response: no response over 1,048,576 bytes of JSON is sent, and the route answers 500 with `{"error":"response_too_large","detail":...}` instead. Only an oversized record can cause that, and nothing writes one; retrying gives the same answer. The cursor is opaque. A malformed `limit` or `cursor`, or an unknown `repoId`, is a 400 before any query. A row with no `repoId` is Unassigned: `repoId: null`, `repoLabel: null`, `readOnly: true`. What is not recorded yet is `null`, `[]` or `coverage: false`, never zero. The stage is computed from facts (spec §10); an ended item shows its outcome.
+
+| Method | Path | Query | What it does |
+| --- | --- | --- | --- |
+| GET | `/api/inspect/snapshot` | `?repoId=` | The oldest 100 registered repositories with their needs counts (`repositoriesTruncated` counts those left out), the needs count for the scope, and the event cursors (`repositories` and the newest 100 `work:<id>` streams) read in one consistent call. |
+| GET | `/api/inspect/work` | `?repoId=&cursor=&limit=` | A page of work rows: title, repository, stage (`key`, `label`, `waitingOn`), reason, next action, task counts, last activity. |
+| GET | `/api/inspect/work/:id` | — | One work item: its tasks (`tasksTruncated` counts those left out, and each task's `dependsOnTruncated` the ids left out), hold, delivery, `delegation` (empty until attempts record parents), coverage and cursors (`cursorsTruncated` counts attempt streams left out; the work stream and the newest attempts are kept). 404 for an id that is not a work item. |
+| GET | `/api/inspect/tasks/:id` | — | One task: attempts (requested and actual model kept apart), checks and diff for the exact head only, reported usage, coverage. What was cut is counted: `dependsOnTruncated`, `attemptsTruncated` (older attempts; the newest are kept), `checks.truncated`, `diff.truncated`. |
+| GET | `/api/inspect/needs` | `?repoId=&recent=1&cursor=&limit=` | A page of open questions and pending cards together, oldest first. `recent=1` adds up to 20 recently settled and expired ones after them, latest settled first (`answeredAt`, `resolvedAt`, or the expiry of a card that lapsed unanswered, then record order). The cursor is keyed by record, so an item settling between pages never skips another, and one walk serves at most 20 recent items; an item that settles while the walk is still on the open rows can appear again under `recent=1` with its new status. A card's `workItemId` is set only from a stored `workItemId` or `mandateId`, never from a branch name. |
+| GET | `/api/inspect/search` | `?q=&repoId=` | Messages by text or id, work by title, tasks by name, and references (`#12`, a GitHub PR URL, a SHA) where a stored field holds them. At most 20 per kind. |
+
 ### Slots
 
 | Method | Path | Body | What it does |

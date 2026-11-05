@@ -403,11 +403,18 @@ function toPartEntry(entry: { state: string; detail?: string }): PartEntry {
 
 /**
  * The optional `repoId` read filter: every row when absent, and a 400 for an id that is not
- * registered, the same answer the chat route gives.
+ * registered, the same answer the chat route gives. A repeated `repoId` arrives as an array,
+ * and `repoId[]=` or `repoId[0]=` arrive under their literal keys: none of those names one
+ * repository, so each is the same 400 and never the unfiltered list.
  */
 function repoFilterOf(store: Store, request: FastifyRequest): { repoId?: string } {
-  const repoId = (request.query as { repoId?: unknown }).repoId
-  if (typeof repoId !== 'string') return {}
+  const query = request.query as Record<string, unknown>
+  const repoId = query.repoId
+  const bracketed = Object.keys(query).some((key) => key.startsWith('repoId['))
+  if (bracketed || (repoId !== undefined && typeof repoId !== 'string')) {
+    throw new RepoAdmissionError('unknown_repo', 'repoId must be one registered repository id')
+  }
+  if (repoId === undefined) return {}
   assertRepoAdmission(store, { repoId })
   return { repoId }
 }

@@ -203,6 +203,30 @@ describe('repo identity at the chat route', () => {
     }
   })
 
+  it('a repoId that is not one string is a 400 on both reads, never every repository’s rows', async () => {
+    const { app } = makeServer()
+    track(app)
+    const repoA = await registerRepo(app, 'a')
+    const repoB = await registerRepo(app, 'b')
+    await postMessage(app, { text: 'in a', repoId: repoA })
+    await postMessage(app, { text: 'in b', repoId: repoB })
+    const queries = [
+      `repoId=${repoA}&repoId=${repoB}`,
+      `repoId=${repoA}&repoId=repo_nope`,
+      `repoId[]=${repoA}`,
+      `repoId%5B%5D=${repoA}`,
+      `repoId[0]=${repoA}`,
+      `repoId[a]=${repoA}`,
+    ]
+    for (const route of ['/api/work', '/api/chat/messages']) {
+      for (const query of queries) {
+        const res = await app.inject({ method: 'GET', url: `${route}?${query}` })
+        expect(res.statusCode, `${route}?${query}`).toBe(400)
+        expect(res.json(), `${route}?${query}`).toMatchObject({ error: 'unknown_repo' })
+      }
+    }
+  })
+
   it('the composed path passes the repo to the meta agent and refuses before calling it', async () => {
     const seen: (string | undefined)[] = []
     const store: Store = new MemoryRepositories()

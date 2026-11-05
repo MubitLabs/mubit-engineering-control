@@ -22,9 +22,11 @@
 
 **Pause (decision #27).** A new request during a pause is stored, with its work item in `planning` and no receipt, and spends no turn. Resume runs `enqueueResumes` after the deadline shift, so the row is due on the next pass. A paused boot skips the scan for the same reason. A relay already running when a pause lands finishes (§20). Messages that need no planner are answered as before.
 
-**Lifetime.** `RealClaudeBrain` is held, and `close` stops the timers, waits for `app.close()` and `settle()` within 10 s, drops any stuck connection, gives the brain 1 s, then closes the database and releases the lock. It never drains (#36, the handoff's shutdown question): pending rows wait for the next boot. A turn past the bound fails at its next write and its row stays `running` for `resumeRunning`.
+**Lifetime.** `RealClaudeBrain` is held, and `close` stops the timers and quiesces the brain, so no engine starts from then on, a corrective retry included. It waits for `app.close()` and `settle()` within 10 s, drops any stuck connection, then gives `abort` and the brain's close 1 s, closes the database and releases the lock. `abort` sends the running engine `stop`, which is SIGTERM on Claude. `bin/mec.js` then calls `process.exit`, because an engine child that outlives close keeps its pipes, and those pipes would keep the process up. It never drains (#36, the handoff's shutdown question): pending rows wait for the next boot.
 
-**Scratch state.** `keystoreRoot: opts.dataDir`, and the planner's models supplier reads the same root. This commit comes first.
+A turn cut short rejects with `Later`, and the service rethrows that instead of running `#failTurn`, which would have stopped the user's work for good. No receipt is written, so a message resumes at the next boot. A relay that ends inside the 1 s grace turns `waiting`, due 30 s after its pass started, with no failure counted. One that ends later fails at its next write and stays `running` for `resumeRunning`. A chat request cut short gets an error, and its message resumes at boot.
+
+**Scratch state.** `keystoreRoot: opts.dataDir`, and the planner's models supplier and protocol read the same root. This commit comes first.
 
 ## Intended test changes
 
@@ -35,6 +37,7 @@
 
 - `packages/domain/src/states.ts` and its test, for #26.
 - `packages/meta/src/authority.ts`: `failLaunch`, `launchFailure`, and the block extracted from `refuseLaunch`.
+- `packages/meta/src/brain.ts`, `packages/meta/src/real-brain.ts` and `apps/desktop/bin/mec.js`, for the shutdown fixes the verifier asked for. `real-brain.ts` and `brain.ts` also gained `promptsRoot`, for requirement 16.
 - `freshId` in `apps/desktop/src/server.ts`. Keyed requests stopped drawing fresh ids, which moved the counter's `z` to `10` rollover onto `GET /api/chat/messages lists newest-last`. The list tie-breaks on id, so the counter is now fixed-width. The test is unchanged.
 
 ## Compatibility
@@ -47,6 +50,6 @@
 ## Risks and limits
 
 - **An answer during a pause wakes late.** `shiftWaiting` moves every waiting row by the pause length, including rows written during the pause. A wake queued an hour into a pause runs up to an hour after resume, and holds later relays until then. Paused messages avoid this because they queue on resume. Fixing it means changing `shiftWaiting` in `packages/store`, outside this handoff.
-- **Shutdown does not cancel a turn.** Neither brain has a cancel, so §20's "cancels turns gracefully" is a wait. A stuck engine child can outlive the process until M2.4.
-- **The real planner still reads `~/.mec/prompts`** through `readMetaProtocol`'s `homedir()`. The real-engine verifier step keeps the real `HOME`, so it reads that one directory, read-only. Requirement 16 covers the server's paths and the models supplier; `real-brain.ts` is outside the table.
+- **An engine that ignores SIGTERM outlives the process.** `BrainEngine` has `stop` and no kill, so nothing escalates to SIGKILL. The process still exits within the bound, and the child is an orphan until M2.4. If it exits by itself after the lock is gone, the tmpdir `mec-planner-*` stays behind: `close` gave up waiting for the turn, so it never removed it. That dir holds a bearer token for a tools server that died with the process.
+- **`kill -9` still orphans the engine.** Nothing here changes that; M2.4 owns it. A boot resume while the orphan runs can have two turns going at once.
 - **A resume for a repository that was removed** fails admission on each retry until the row ends `failed`, holding later relays for those minutes.

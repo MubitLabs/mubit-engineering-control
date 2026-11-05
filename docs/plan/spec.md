@@ -676,7 +676,9 @@ Chat-first, decision-first. Opening the workbench answers three questions in ord
 
 Principles (dsh-superagent's panel principles, adopted): every element answers one of the three questions or is removed; categories have checkable, mutually exclusive, exhaustive definitions (the stage table); one place per concept; honest state — a count equals the length of the list it links to and no state contradicts another fact; quiet by default — problems shown must be actionable, a one-off network error is not; destructive actions confirm; internal identifiers appear only in folded details. The header search finds a message by text or id, a work item by title, a task by name, an attempt by id, and anything by a reference such as `#12`, a GitHub URL or a SHA. A (?) button opens the glossary of §1's concepts.
 
-Design language: compact, terminal-friendly typography, uppercase status labels, one restrained accent — inherited from v1.
+Design language (amended 5 November 2026, owner-approved design direction): a calm engineering workspace with system typography, sentence-case status labels and no tiny uppercase labels, fine separators, restrained controls, and amber only where owner attention is needed. Tokens and measures are `apps/web/src/next/tokens.css`; the amendment record is `docs/changes/2026-11-05-visual-foundation/CHANGE.md`. The new shell is behind a default-off local flag, and the classic shell keeps the earlier compact language until the new one replaces it.
+
+Presentation names: the new shell shows Chat as *Conversation*, Inbox as *Needs you* and the Slots view as *Connections*. These are presentation names only. Hash addresses (`#chat`, `#needs`, `#slots`), HTTP APIs, stored records and the concepts in this spec keep their names.
 
 ---
 

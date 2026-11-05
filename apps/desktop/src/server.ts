@@ -23,7 +23,7 @@ import type { LiveWork } from '@mec/meta'
 // read side plus a safe slot subset, every write a user-applied draft.
 import { routeMessage, SetupAgent, type SetupSettingsApi } from '@mec/meta'
 import type { ConfirmationRecord } from '@mec/policy'
-import { loadPolicy, resolveConfirmation } from '@mec/policy'
+import { ALWAYS_CONFIRM, loadPolicy, resolveConfirmation } from '@mec/policy'
 import { defaultParts, PromptStore, StaleBaseError, UnknownPartError } from '@mec/prompts'
 import {
   API_KEY_PROBE_TARGETS,
@@ -37,18 +37,25 @@ import {
   redact,
   SlotKeystore,
 } from '@mec/slots'
-import Fastify, { type FastifyInstance } from 'fastify'
+import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify'
 import { buildDoctorReport } from './doctor'
 import type { HealthSnapshot, PartEntry } from './health'
 import { type CardEvent, LoginCardManager } from './login-cards'
 import {
+  cardDetail,
   createPrBehindCard,
   defaultGhRun,
   type GhRun,
+  type GitExec,
+  isReleaseCard,
   mergeBehindCard,
   openMergeCard,
+  openPushCard,
   type ReleaseDeps,
+  refusalOf,
   resolvePrCreate,
+  resolvePush,
+  resolveReleaseCard,
 } from './release'
 
 export type ServerDeps = {
@@ -78,6 +85,8 @@ export type ServerDeps = {
    * real repository.
    */
   ghRun?: GhRun
+  /** The push card's git; tests may inject it, production uses the argv-only default. */
+  gitExec?: GitExec
   /**
    * §21.3 first-run wizard probes (each engine's `--version`, `claude auth status`)
    * run through this seam — the default is execFile with a 5s cap that NEVER throws
@@ -405,6 +414,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     store: deps.repoStore ?? store,
     effects: deps.effects,
     now,
+    ...(deps.gitExec !== undefined && { git: deps.gitExec }),
   }
   const app = Fastify({ logger: false })
 
@@ -638,6 +648,25 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       reply.code(404).send({ error: 'confirmation not found' })
       return
     }
+    // §13: approving a release card IS the action, so it goes through the door that acts.
+    // An always-confirm card nothing here can run refuses an approve instead of settling
+    // it as though it had run; a deny needs no executor. 409 stays "someone answered first".
+    const cls = String(doc.cls ?? '')
+    if (isReleaseCard(doc)) {
+      try {
+        return await resolveReleaseCard(releaseDeps, id, body.answer)
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('already_handled')) {
+          reply.code(409).send({ error: 'already_handled', status: doc.status })
+          return
+        }
+        throw error
+      }
+    }
+    if (body.answer === 'approve' && (ALWAYS_CONFIRM as readonly string[]).includes(cls)) {
+      reply.code(422).send({ error: 'no_executor', detail: `nothing here can run a '${cls}' card` })
+      return
+    }
     const pending = doc as unknown as ConfirmationRecord
     try {
       const { outcome } = resolveConfirmation(pending, {
@@ -661,6 +690,18 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       }
       throw error
     }
+  })
+
+  // The evidence a release card states (§13): what the owner is approving, never a bare hash.
+  app.get('/api/inbox/:id/detail', async (request, reply) => {
+    const id = String((request.params as { id?: string }).id ?? '')
+    const doc = releaseDeps.store.confirmations.get(id)
+    const detail = doc === undefined ? undefined : cardDetail(doc)
+    if (detail === undefined) {
+      reply.code(404).send({ error: 'no detail for this confirmation' })
+      return
+    }
+    return detail
   })
 
   app.get('/api/work', async () =>
@@ -1218,9 +1259,71 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // §14/R1.7 — the release agent's GitHub leg. `pr_create` and `pr_merge` are
   // always-confirm classes (§13): the create routes only OPEN cards (nothing leaves the
   // machine unresolved); the resolve routes re-check existence, pending status and class
-  // before anything runs, settle the card, and only then call the user's gh.
+  // before anything runs, settle the card, and only then call the user's gh. A card that
+  // cannot state what it would approve never opens: the refusal names why.
+  const refuse = (error: unknown, reply: FastifyReply): void => {
+    const refusal = refusalOf(error)
+    if (refusal === undefined) throw error
+    reply.code(refusal.status).send({ error: refusal.error, detail: refusal.detail })
+  }
+
+  // §13 `git push` always confirms. The repository is named by its registration id and
+  // nothing else: a caller can choose which registered repository, never a path on disk.
+  app.post('/api/release/push', async (request, reply) => {
+    const body = (request.body ?? {}) as { repoId?: unknown; branch?: unknown; headSha?: unknown }
+    const repoId = typeof body.repoId === 'string' ? body.repoId.trim() : ''
+    const branch = typeof body.branch === 'string' ? body.branch.trim() : ''
+    if (repoId === '' || branch === '') {
+      reply.code(400).send({ error: 'repoId and branch are required' })
+      return
+    }
+    const headSha = typeof body.headSha === 'string' ? body.headSha.trim() : undefined
+    try {
+      return await openPushCard(releaseDeps, { repoId, branch, ...(headSha !== undefined && { headSha }) })
+    } catch (error) {
+      return refuse(error, reply)
+    }
+  })
+
+  app.post('/api/release/push/:confirmationId/resolve', async (request, reply) => {
+    const id = String((request.params as { confirmationId?: string }).confirmationId ?? '')
+    const body = (request.body ?? {}) as { answer?: unknown }
+    if (body.answer !== 'approve' && body.answer !== 'deny') {
+      reply.code(400).send({ error: "answer must be 'approve' or 'deny'" })
+      return
+    }
+    const doc = releaseDeps.store.confirmations.get(id)
+    if (doc === undefined) {
+      reply.code(404).send({ error: 'confirmation not found' })
+      return
+    }
+    if (doc.cls !== 'push' || !isReleaseCard(doc)) {
+      reply.code(400).send({ error: `confirmation is class '${String(doc.cls)}', not a push card` })
+      return
+    }
+    if (doc.status !== 'pending') {
+      reply.code(409).send({ error: 'already_handled', status: doc.status })
+      return
+    }
+    try {
+      return await resolvePush(releaseDeps, { confirmationId: id, answer: body.answer })
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('already_handled')) {
+        reply.code(409).send({ error: 'already_handled', status: doc.status })
+        return
+      }
+      throw error
+    }
+  })
+
   app.post('/api/release/pr', async (request, reply) => {
-    const body = (request.body ?? {}) as { repo?: unknown; branch?: unknown; title?: unknown; body?: unknown }
+    const body = (request.body ?? {}) as {
+      repo?: unknown
+      branch?: unknown
+      title?: unknown
+      body?: unknown
+      headSha?: unknown
+    }
     const repo = typeof body.repo === 'string' ? body.repo.trim() : ''
     const branch = typeof body.branch === 'string' ? body.branch.trim() : ''
     const title = typeof body.title === 'string' ? body.title.trim() : ''
@@ -1229,7 +1332,18 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       reply.code(400).send({ error: 'repo, branch and title are required' })
       return
     }
-    return createPrBehindCard(releaseDeps, { repo, branch, title, body: prBody })
+    const headSha = typeof body.headSha === 'string' ? body.headSha.trim() : undefined
+    try {
+      return await createPrBehindCard(releaseDeps, {
+        repo,
+        branch,
+        title,
+        body: prBody,
+        ...(headSha !== undefined && { headSha }),
+      })
+    } catch (error) {
+      return refuse(error, reply)
+    }
   })
 
   app.post('/api/release/pr/:confirmationId/resolve', async (request, reply) => {
@@ -1289,11 +1403,15 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       reply.code(404).send({ error: 'confirmation not found' })
       return
     }
-    return openMergeCard(releaseDeps, {
-      repo,
-      prNumber,
-      ...(originConfirmationId !== undefined && { originConfirmationId }),
-    })
+    try {
+      return await openMergeCard(releaseDeps, {
+        repo,
+        prNumber,
+        ...(originConfirmationId !== undefined && { originConfirmationId }),
+      })
+    } catch (error) {
+      return refuse(error, reply)
+    }
   })
 
   app.post('/api/release/merge/:confirmationId/resolve', async (request, reply) => {

@@ -63,7 +63,7 @@ function makeServer(): { store: Store; app: ReturnType<typeof buildServer> } {
 function pendingConfirmation(id: string): ConfirmationRecord {
   return openConfirmation({
     id,
-    cls: 'push',
+    cls: 'install',
     operationHash: 'f'.repeat(64),
     expiresAt: '2999-01-01T00:00:00.000Z',
   })
@@ -151,31 +151,31 @@ describe('buildServer', () => {
   it('lists pending confirmations as inbox cards and resolves an approve exactly once', async () => {
     const { store, app } = makeServer()
     const server = track(app)
-    store.confirmations.save(pendingConfirmation('conf_push_1') as unknown as StoreDoc)
-    store.confirmations.save(pendingConfirmation('conf_push_2') as unknown as StoreDoc)
+    store.confirmations.save(pendingConfirmation('conf_install_1') as unknown as StoreDoc)
+    store.confirmations.save(pendingConfirmation('conf_install_2') as unknown as StoreDoc)
 
     const inbox = await server.inject({ method: 'GET', url: '/api/inbox' })
     expect(inbox.statusCode).toBe(200)
     const cards = inbox.json() as Array<{ id: string; cls: string; operationHash: string; expiresAt: string }>
-    expect(cards.map((card) => card.id)).toEqual(['conf_push_1', 'conf_push_2'])
-    expect(cards[0]).toMatchObject({ cls: 'push', operationHash: 'f'.repeat(64) })
+    expect(cards.map((card) => card.id)).toEqual(['conf_install_1', 'conf_install_2'])
+    expect(cards[0]).toMatchObject({ cls: 'install', operationHash: 'f'.repeat(64) })
 
     const resolved = await server.inject({
       method: 'POST',
-      url: '/api/inbox/conf_push_1/resolve',
+      url: '/api/inbox/conf_install_1/resolve',
       payload: { answer: 'approve' },
     })
     expect(resolved.statusCode).toBe(200)
-    expect(resolved.json()).toEqual({ id: 'conf_push_1', status: 'approved' })
-    expect(store.confirmations.get('conf_push_1')?.status).toBe('approved')
+    expect(resolved.json()).toEqual({ id: 'conf_install_1', status: 'approved' })
+    expect(store.confirmations.get('conf_install_1')?.status).toBe('approved')
 
     const again = await server.inject({
       method: 'POST',
-      url: '/api/inbox/conf_push_1/resolve',
+      url: '/api/inbox/conf_install_1/resolve',
       payload: { answer: 'deny' },
     })
     expect(again.statusCode).toBe(409)
-    expect(store.confirmations.get('conf_push_1')?.status).toBe('approved')
+    expect(store.confirmations.get('conf_install_1')?.status).toBe('approved')
   })
 
   it('rejects a resolve with a bad answer or an unknown id', async () => {
@@ -279,7 +279,7 @@ describe('inbox resolve binds to the card input (audit #5)', () => {
     store.atomic(() => {
       store.confirmations.save({
         id: 'conf_bound_1',
-        cls: 'pr_merge',
+        cls: 'install',
         operationHash: 'op-hash',
         inputSha: '0123456789abcdef0123456789abcdef01234567',
         status: 'pending',

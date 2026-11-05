@@ -1,6 +1,6 @@
 # Meta-agent journey checkpoint
 
-Updated 5 November 2026. **Execution authorized by the owner and in progress (5 November 2026).** Authority is bounded by the Execution contract below and `docs/DECISIONS.md` #14-36.
+Updated 5 November 2026, reconciled with `origin/main` at `1ff5a84`. **Execution authorized by the owner and in progress (5 November 2026).** Authority is bounded by the Execution contract below and `docs/DECISIONS.md` #14-36.
 
 ## Goal and decisions
 
@@ -8,11 +8,11 @@ One meta counterpart coordinates coding agents for repo-attached tasks, with com
 
 ## Current state
 
-- Source: `/Users/shankhadutta/code/mubit-engineering-control`, base `a102313`. Planning records and dated decision append only; no commits. Dirty sibling `/Users/shankhadutta/code/mec` untouched.
+- Source: `/Users/shankhadutta/code/mubit-engineering-control`. `origin/main` is `1ff5a84`; the overhaul started from base `a102313` (now history). Dirty sibling `/Users/shankhadutta/code/mec` untouched.
 - Plan: CHANGE.md; full design: UI-OVERHAUL.md; interactive synthetic preview: ui-overhaul-preview.html; status: agent-progress.html; evidence/commands: VERIFICATION.md; research-user-journey.md, research-orchestration.md, research-observability.md.
 - Older `2026-11-05-journey-ux` plan/report/checkpoint superseded; earlier evidence retained.
 - Source proves non-fake launch no-op, potential global task ID overwrite, missing authority fencing before real workers, mismatched real HTTP/client contracts and incomplete observations. Source finding is not a failing test run. Installed UI observation is separately labelled; no saved screenshots.
-- No implementation, tests, mutants, builds, real model turn, PR, merge, tag, release or reinstall. All acceptance pending. No new feature flags exist; proposed capabilities default off.
+- Source findings above are still source findings. Fixes for them are merged (see Merged on main); the evidence for them is synthetic tests run by the builders. Real-engine evidence: none. Installed behaviour: none.
 
 ## Approved-plan execution order proposed
 
@@ -36,7 +36,7 @@ Owner-authorized, 5 November 2026 (`docs/DECISIONS.md` #14-18; binds this overha
 
 ## Exact next action
 
-Wave 0 scouting running. Bootstrap order: the squash card fix goes first because every other merge depends on it, and that PR also lands the planning records.
+Next: M1.4b (`feat/durable-commands`, in its fix round for shutdown blockers), then handoffs 20, 31 B and 32 at once. Before that, this records PR lands.
 
 ## Latest design steering
 
@@ -51,4 +51,29 @@ Live deliverable preview: `http://127.0.0.1:54318/ui-overhaul-preview.html`; par
 
 ## Wave status
 
-Wave 0 scouting complete at base a102313. Baseline: `pnpm check` has one environment failure only (node-pty spawn-helper lacks execute bit in fresh installs); `test:screens` 21 passed. Scout finding: the card path did not work, because UI approve burned cards without running gh, push had no card, and cards hid their payload; the bootstrap PR therefore repairs the whole path, not only the squash flag. Decisions #19-22 answered four open spec questions. Wave 1 running on local branches, nothing pushed: `fix/release-cards` (bootstrap, carries blockers-only review), `fix/http-recovery` (M1.1), `feat/visual-foundation` (VF0, default off). Next: the operator resolves cards by script on a scratch server running the unmerged fix (#23). M1.4a gets one blockers-only review because it changes who holds authority. Waves 1 and 2 are verified on local branches; decisions #24-36 are recorded; the five base branches are landing serially through scripted cards.
+Wave 0 scouting completed at base a102313 (history). Baseline: `pnpm check` has one environment failure only (node-pty spawn-helper lacks execute bit in fresh installs); `test:screens` 21 passed. Scout finding: the card path did not work, because UI approve burned cards without running gh, push had no card, and cards hid their payload; the bootstrap PR therefore repairs the whole path, not only the squash flag. Decisions #19-22 answered four open spec questions. Wave 1 running on local branches, nothing pushed: `fix/release-cards` (bootstrap, carries blockers-only review), `fix/http-recovery` (M1.1), `feat/visual-foundation` (VF0, default off). Next: the operator resolves cards by script on a scratch server running the unmerged fix (#23). M1.4a gets one blockers-only review because it changes who holds authority. Waves 1 and 2 are verified on local branches; decisions #24-36 are recorded; the five base branches are landing serially through scripted cards.
+
+## State on main (reconciled 5 November 2026)
+
+**Merged on main**, each with 9/9 required checks, through journalled cards: #24 card path, #25 effects, #26 visual foundation, #27 M1.1, #28 records, #29 M1.2, #30 a11y runner, #31 work surfaces on fixtures, #32 M1.4a authority fence, #33 main-gaps fixes, #34 M1.3, #35 M3.1 stage 1. The earlier "Wave 1 running on local branches, nothing pushed" and "landing serially" lines above are history.
+
+**Not done:** no release, tag, install or flag change. No real engine run spent. `classic` stays the default UI. Real-engine evidence: none. Installed behaviour: none.
+
+**Next:** M1.4b (`feat/durable-commands`, in its fix round for shutdown blockers), then 20, 31 B and 32 at once. Decision #37 sets Claude's cap at 20 runs.
+
+**Working method:** stacked branches are started on verified branches. `land.py` takes `ONTO=<old base>` for a stacked rebase. Every landing runs in the coordinator session.
+
+**Records not yet applied:** the spec lines proposed by #32 for §6 and §12.5 are not applied. Handoff 12's Stage A/B notes: the flip's revert-alone criterion was waived because squash merges can't keep it.
+
+**Decision #38 (5 November 2026):** no inspection index or SQL migration for now. Read costs are recorded in `docs/known-limits.md`.
+
+**Open items:**
+- Direct `POST /api/inbox/:id/resolve` still settles a no-evidence non-release card (about 3 lines, 422).
+- `#persistExtras` stores planner operation/evidence unredacted (spec 13 invariant 3).
+- `cardDetail` doesn't redact field names or class.
+- The toast says "agent was told to continue" on a planner card that runs nothing.
+- A `{class}`-only `request_confirmation` is deny-only.
+- next/work-model `canApprove` must map absent to null when wired (31 B).
+- The server logged "stopping on SIGTERM" but stayed alive after a planner turn (handoff 23?).
+- Blocker for release: the real tarball previously had empty models and prompts.
+- One oversized record makes its inspection route answer 500 `response_too_large` until removed (known limit, #38).

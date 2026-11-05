@@ -30,21 +30,42 @@ const BRANCH = 'mec/wi1/integration'
 const FLOW_ID = `prflow:${REPO}:${BRANCH}`
 const TITLE = 'Ship the smoke test'
 const BODY = '## Request\n\nship it\n'
+const HEAD = 'a'.repeat(40)
 
 type Call = { args: readonly string[]; stdin?: string }
 
 const ok = (stdout: string): GhResult => ({ code: 0, stdout, stderr: '' })
 const fail = (stderr: string): GhResult => ({ code: 1, stdout: '', stderr })
 
-/** A recording fake: every call is captured; the responder routes by the joined argv text. */
+/**
+ * A recording fake: every call is captured; the responder routes by the joined argv text.
+ * The branch-head read answers HEAD unless the responder takes it: a card binds the head it
+ * shows (§13), so every pr_create card reads it once when it opens.
+ */
 function fakeGh(respond: (args: readonly string[]) => GhResult | undefined): { run: GhRun; calls: Call[] } {
   const calls: Call[] = []
   const run: GhRun = async (args, opts) => {
     calls.push({ args, stdin: opts?.stdin })
+    if (args.join(' ').includes('/git/ref/heads/')) return ok(`${HEAD}\n`)
     return respond(args) ?? ok('')
   }
   return { run, calls }
 }
+
+/** The calls that change something on GitHub; reads are not side effects (§13 invariant 1). */
+const writes = (calls: Call[]): Call[] =>
+  calls.filter((call) => call.args[0] === 'pr' && ['create', 'merge'].includes(String(call.args[1])))
+
+/** A PR as `gh pr view --json …` reports it: open, mergeable, on the bound head. */
+const PR_FACTS = JSON.stringify({
+  state: 'OPEN',
+  title: TITLE,
+  headRefName: BRANCH,
+  headRefOid: HEAD,
+  mergeStateStatus: 'CLEAN',
+})
+const prFacts = (args: readonly string[]): GhResult | undefined =>
+  args[0] === 'pr' && args[1] === 'view' && args.join(' ').includes('headRefOid') ? ok(PR_FACTS) : undefined
 
 function makeDeps(run: GhRun): { store: Store; deps: ReleaseDeps } {
   const store: Store = new MemoryRepositories()
@@ -157,16 +178,17 @@ describe('buildPrBody (§14 evidence in the PR body)', () => {
 })
 
 describe('pr_create behind a card (§13: always confirm, never pre-authorisable)', () => {
-  it('opens a pending pr_create confirmation and calls gh not at all', async () => {
+  it('opens a pending pr_create confirmation bound to the branch head, and writes nothing', async () => {
     const { run, calls } = fakeGh(() => ok(''))
     const { store, deps } = makeDeps(run)
     const opened = await createPrBehindCard(deps, { repo: REPO, branch: BRANCH, title: TITLE, body: BODY })
     expect(opened.confirmationId).toMatch(/^conf_/)
-    expect(calls).toHaveLength(0)
+    expect(writes(calls)).toHaveLength(0)
     const card = store.confirmations.get(opened.confirmationId) as StoreDoc
     expect(card.cls).toBe('pr_create')
     expect(card.status).toBe('pending')
-    expect(card.operationHash).toBe(sha256(TITLE + BODY + BRANCH))
+    expect(card.operationHash).toBe(sha256(TITLE + BODY + BRANCH + HEAD))
+    expect(card.inputSha).toBe(HEAD)
     // §14: integration complete → the delivery is ready for its PR.
     expect(store.engines.get(FLOW_ID)?.state).toBe('ready_for_pr')
   })
@@ -216,6 +238,7 @@ describe('pr_create behind a card (§13: always confirm, never pre-authorisable)
       title: TITLE,
       body: BODY,
     })
+    calls.length = 0
     const resolved = await resolvePrCreate(deps, { confirmationId, answer: 'deny' })
     expect(resolved).toEqual({ status: 'denied' })
     expect(calls).toHaveLength(0)
@@ -264,6 +287,8 @@ describe('mergeBehindCard (§14: merge confirms, GitHub attests)', () => {
     mergeResult: GhResult = ok(''),
   ): { run: GhRun; calls: Call[] } =>
     fakeGh((args) => {
+      const facts = prFacts(args)
+      if (facts !== undefined) return facts
       const text = args.join(' ')
       if (text.includes('create')) return ok('https://github.com/owner/repo/pull/12\n')
       if (text.includes('checks')) return ok(checks)
@@ -322,10 +347,22 @@ describe('mergeBehindCard (§14: merge confirms, GitHub attests)', () => {
     expect(store.engines.get(FLOW_ID)?.state).toBe('merged')
     const merges = calls.filter((call) => call.args.includes('merge'))
     expect(merges).toHaveLength(1)
-    expect(merges[0]?.args).toContain('--merge')
+    // Squash, because the repository requires linear history (decision #17); the head the
+    // owner saw is the only head GitHub may merge (§13 input binding).
+    expect(merges[0]?.args).toEqual([
+      'pr',
+      'merge',
+      '-R',
+      REPO,
+      '--squash',
+      '--match-head-commit',
+      HEAD,
+      '12',
+    ])
     // And the state read that settled it came after the merge call.
-    const views = calls.filter((call) => call.args.includes('view'))
-    expect(views).toHaveLength(1)
+    const mergeAt = calls.findIndex((call) => call.args.includes('merge'))
+    const statesAfter = calls.slice(mergeAt + 1).filter((call) => call.args.includes('view'))
+    expect(statesAfter).toHaveLength(1)
   })
 
   it('GitHub still says OPEN → merged false with the exact reason, flow stays ci_green', async () => {
@@ -377,7 +414,7 @@ describe('pushIntegrationBranch', () => {
       run,
       REPO,
       '/tmp/mec/repos/owner/repo.git',
-      BRANCH,
+      { branch: BRANCH, headSha: HEAD },
       async (args) => {
         gitCalls.push(args)
         return ok('')
@@ -385,14 +422,21 @@ describe('pushIntegrationBranch', () => {
     )
     expect(out).toEqual({ pushed: true })
     expect(gitCalls).toEqual([
-      ['-C', '/tmp/mec/repos/owner/repo.git', 'push', 'https://github.com/owner/repo', BRANCH],
+      [
+        '-C',
+        '/tmp/mec/repos/owner/repo.git',
+        'push',
+        'https://github.com/owner/repo',
+        `${HEAD}:refs/heads/${BRANCH}`,
+      ],
     ])
   })
 
   it('reports a gh failure without running git', async () => {
     const { run } = fakeGh(() => fail('HTTP 404'))
     const gitCalls: Array<readonly string[]> = []
-    const out = await pushIntegrationBranch(run, REPO, '/tmp/git', BRANCH, async (args) => {
+    const target = { branch: BRANCH, headSha: HEAD }
+    const out = await pushIntegrationBranch(run, REPO, '/tmp/git', target, async (args) => {
       gitCalls.push(args)
       return ok('')
     })
@@ -403,7 +447,8 @@ describe('pushIntegrationBranch', () => {
 
   it('reports a git failure with stderr', async () => {
     const { run } = fakeGh(() => ok('https://github.com/owner/repo\n'))
-    const out = await pushIntegrationBranch(run, REPO, '/tmp/git', BRANCH, async () =>
+    const target = { branch: BRANCH, headSha: HEAD }
+    const out = await pushIntegrationBranch(run, REPO, '/tmp/git', target, async () =>
       fail(' ! [rejected] non-fast-forward'),
     )
     expect(out).toEqual({ pushed: false, error: '! [rejected] non-fast-forward' })
@@ -425,7 +470,7 @@ describe('release routes (cards over HTTP, class-checked)', () => {
     expect(opened.statusCode).toBe(200)
     const card = opened.json() as { confirmationId: string }
     expect(card.confirmationId).toMatch(/^conf_/)
-    expect(calls).toHaveLength(0)
+    expect(writes(calls)).toHaveLength(0)
     expect(store.confirmations.get(card.confirmationId)?.status).toBe('pending')
 
     const resolved = await app.inject({
@@ -451,7 +496,7 @@ describe('release routes (cards over HTTP, class-checked)', () => {
   })
 
   it('a pr_merge card cannot be resolved at the pr endpoint (class mismatch is a 400)', async () => {
-    const { run } = fakeGh(() => ok('[]'))
+    const { run } = fakeGh((args) => prFacts(args) ?? ok('[]'))
     const { app } = makeServer(run)
     const opened = await app.inject({
       method: 'POST',
@@ -470,8 +515,9 @@ describe('release routes (cards over HTTP, class-checked)', () => {
   })
 
   it('merge route: ci pending leaves the card pending and answers the reason', async () => {
-    const { run } = fakeGh((args) =>
-      args.includes('checks') ? ok('[{"name":"unit","state":"pending"}]') : ok(''),
+    const { run } = fakeGh(
+      (args) =>
+        prFacts(args) ?? (args.includes('checks') ? ok('[{"name":"unit","state":"pending"}]') : ok('')),
     )
     const { store, app } = makeServer(run)
     const opened = await app.inject({

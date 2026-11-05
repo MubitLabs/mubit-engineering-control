@@ -20,7 +20,7 @@ import {
 const ROUTES = ['chat', 'needs', 'work', 'slots', 'setup', 'settings'] as const
 const THEMES = ['light', 'dark'] as const
 
-async function stubApi(page: Page): Promise<void> {
+async function stubApi(page: Page, broken: { detail: boolean }): Promise<void> {
   const extraMessages: Array<Record<string, unknown>> = []
   const handler = async (route: Route): Promise<void> => {
     const url = new URL(route.request().url())
@@ -45,6 +45,7 @@ async function stubApi(page: Page): Promise<void> {
       return json({ messageId: `msg_new_${extraMessages.length}`, workItemId: 'wi_a1' })
     }
     if (path === '/api/inbox') return json(demoInbox)
+    if (broken.detail && /^\/api\/inbox\/[^/]+\/detail$/.test(path)) return json({ error: 'boom' }, 500)
     if (/^\/api\/inbox\/[^/]+\/resolve$/.test(path) && method === 'POST')
       return json({ id: 'conf_71', status: 'approved' })
     if (path === '/api/questions' && method === 'POST') return json({ status: 'answered' })
@@ -71,11 +72,12 @@ async function openWorkbench(
   page: Page,
   route: (typeof ROUTES)[number],
   theme: (typeof THEMES)[number] = 'light',
+  broken: { detail: boolean } = { detail: false },
 ): Promise<void> {
   await page.addInitScript((choice) => {
     localStorage.setItem('mec-theme', choice)
   }, theme)
-  await stubApi(page)
+  await stubApi(page, broken)
   await page.goto(`#${route}`)
   // Gate on the data having landed: the runtime line comes from /api/status and
   // the slot dots from /api/slots — capturing mid-fetch produces two recurring
@@ -191,6 +193,28 @@ test('§23 worked example: the chat screen tells the whole story', async ({ page
 })
 
 // ── Keyboard only: no mouse from load to theme change ─────────────────────────────────────
+
+test('a card whose evidence did not load cannot be approved, by click or by key', async ({ page }) => {
+  const broken = { detail: true }
+  await openWorkbench(page, 'chat', 'light', broken)
+  const card = page.locator('[data-decision="conf_71"]')
+
+  const retry = card.getByRole('button', { name: 'Read the evidence again' })
+  await expect(retry).toBeVisible()
+  await expect(card.getByRole('button', { name: 'Approve' })).toBeDisabled()
+  await expect(card.getByRole('button', { name: 'Deny' })).toBeEnabled()
+  await expect(card).toContainText('could not be read')
+
+  await card.focus()
+  await page.keyboard.press('a')
+  await expect(card.getByRole('button', { name: /^Confirm/ })).toHaveCount(0)
+
+  broken.detail = false
+  await retry.click()
+  await expect(card.getByText('Push the branch and open a pull request')).toBeVisible()
+  await expect(card.getByRole('button', { name: 'Approve' })).toBeEnabled()
+  await expect(card).toBeFocused()
+})
 
 test('keyboard-only walkthrough', async ({ page }) => {
   await openWorkbench(page, 'chat')

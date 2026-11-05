@@ -11,6 +11,7 @@ import {
 import {
   api,
   type ChatMessage,
+  HttpError,
   type InboxItem,
   isAlreadyHandled,
   isNotServed,
@@ -22,6 +23,7 @@ import {
   subscribeMerged,
   type WorkItem,
 } from './api'
+import { describeApproval, liveStreams } from './release-cards'
 import { type Route, useHashRoute } from './router'
 import { workItemContext } from './state'
 
@@ -216,14 +218,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     }
   }, [fetchAll])
 
-  // One stream per work item and slot, plus the fixed repositories/wizard streams.
-  const streamKeys = useMemo(() => {
-    const keys: string[] = []
-    for (const item of work) keys.push(`work:${item.id}`)
-    for (const slot of slots) keys.push(`slot:${slot.label}`)
-    keys.push('repositories', 'wizard')
-    return keys
-  }, [work, slots])
+  const streamKeys = useMemo(() => liveStreams(work, slots), [work, slots])
 
   useEffect(() => {
     // ONE connection for every stream (the per-origin cap starved fetches otherwise).
@@ -314,8 +309,14 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
         return next
       })
       try {
-        await api.resolve(item.id, 'approve')
-        resolve(item.id, { kind: 'approved', note: 'Approved' }, 'Approved — the agent was told to continue.')
+        const shown = describeApproval(await api.resolve(item.id, 'approve'))
+        if (shown.closes) {
+          resolve(item.id, { kind: shown.kind, note: shown.note }, shown.toast)
+        } else {
+          disarm()
+          setActionErrors((current) => ({ ...current, [item.id]: shown.note }))
+          toast(shown.toast)
+        }
       } catch (error) {
         if (isAlreadyHandled(error)) {
           resolve(
@@ -325,13 +326,19 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
           )
         } else {
           disarm()
-          setActionErrors((current) => ({ ...current, [item.id]: 'could not reach the runtime — try again' }))
+          setActionErrors((current) => ({
+            ...current,
+            [item.id]:
+              error instanceof HttpError && error.reason !== undefined
+                ? error.reason
+                : 'could not reach the runtime — try again',
+          }))
         }
       } finally {
         setBusyAnswer(null)
       }
     },
-    [armedId, arm, disarm, resolve, resolutions],
+    [armedId, arm, disarm, resolve, resolutions, toast],
   )
 
   const denyDecision = useCallback(

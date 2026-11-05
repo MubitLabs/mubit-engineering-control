@@ -15,6 +15,7 @@
       "!**/fixtures",
       "!docs/design/prototype",
       "!docs/design/prototype",
+      "!docs/changes/**/*.html",
       "!packages/prompts/defaults"
     ]
   },

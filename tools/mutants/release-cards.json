@@ -1,0 +1,240 @@
+[
+  {
+    "name": "restore --merge",
+    "file": "apps/desktop/src/release.ts",
+    "find": "    '--squash',\n",
+    "replace": "    '--merge',\n",
+    "tests": ["apps/desktop/test/release.test.ts", "apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "both --squash and --merge",
+    "file": "apps/desktop/src/release.ts",
+    "find": "    '--squash',\n",
+    "replace": "    '--squash',\n    '--merge',\n",
+    "tests": ["apps/desktop/test/release.test.ts", "apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "drop --match-head-commit",
+    "file": "apps/desktop/src/release.ts",
+    "find": "    '--match-head-commit',\n    pr.headRefOid,\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/release.test.ts", "apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "drop head binding on merge (moved head still merges)",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (pr.headRefOid !== boundHead) return settleWithout(pr.headRefOid)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "drop head binding in the CAS (stale PR and push cards settle approved)",
+    "file": "apps/desktop/src/release.ts",
+    "find": "...((currentHead ?? fresh.inputSha) !== undefined && { expectedInputSha: currentHead ?? fresh.inputSha }),",
+    "replace": "expectedInputSha: fresh.inputSha,",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "no inputSha on the pr_create card",
+    "file": "apps/desktop/src/release.ts",
+    "find": "      .update(title + body + input.branch + head)\n      .digest('hex'),\n    inputSha: head,\n",
+    "replace": "      .update(title + body + input.branch + head)\n      .digest('hex'),\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "allow a default-branch push",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (branch === defaultBranch)\n    throw codedError('default_branch', `${branch} is the default branch of ${repo}`)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "settle a release card without acting (inbox skips the executor)",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    if (isReleaseCard(doc)) {\n      try {\n        return await resolveReleaseCard(releaseDeps, id, body.answer)",
+    "replace": "    if (false && isReleaseCard(doc)) {\n      try {\n        return await resolveReleaseCard(releaseDeps, id, body.answer)",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "settle an always-confirm card with no executor",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    if (body.answer === 'approve' && (ALWAYS_CONFIRM as readonly string[]).includes(cls)) {",
+    "replace": "    if (false && body.answer === 'approve' && (ALWAYS_CONFIRM as readonly string[]).includes(cls)) {",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "force the push",
+    "file": "apps/desktop/src/release.ts",
+    "find": "'push', repoUrl, `${target.headSha}:${ref}`]",
+    "replace": "'push', '--force', repoUrl, `${target.headSha}:${ref}`]",
+    "tests": ["apps/desktop/test/release.test.ts", "apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "push the moving branch name, not the bound head",
+    "file": "apps/desktop/src/release.ts",
+    "find": "'push', repoUrl, `${target.headSha}:${ref}`]",
+    "replace": "'push', repoUrl, target.branch]",
+    "tests": ["apps/desktop/test/release.test.ts", "apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "BEHIND merges anyway (no merge-state pre-flight)",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (!MERGE_STATE_READY.has(pr.mergeStateStatus))\n    return { merged: false, reason: MERGE_STATE_HOLD[pr.mergeStateStatus] ?? 'merge_state_unknown' }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "read all checks, not required ones",
+    "file": "apps/desktop/src/release.ts",
+    "find": "'--required', ",
+    "replace": "",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "remove the CI gate",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (verdict !== 'green') {\n",
+    "replace": "  if (false) {\n",
+    "tests": ["apps/desktop/test/release.test.ts", "apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "SKIPPED holds the merge",
+    "file": "apps/desktop/src/release.ts",
+    "find": "new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED'])",
+    "replace": "new Set(['SUCCESS', 'NEUTRAL'])",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "unreadable checks read as green on a failed exit",
+    "file": "apps/desktop/src/release.ts",
+    "find": "verdict: read.code === 0 ? 'green' : 'ci_unreadable'",
+    "replace": "verdict: 'green'",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "deny waits for the gate",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (!needsPreflight(input.answer, pending, at)) return settleWithout()\n",
+    "replace": "  if (at > pending.expiresAt) return settleWithout()\n",
+    "tests": ["apps/desktop/test/release.test.ts", "apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "the CAS trusts the card read before the pre-flight",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  const fresh = cardFor(deps.store, confirmationId, cls)\n  const { outcome } = resolveConfirmation(fresh, {",
+    "replace": "  const fresh = { ...(deps.store.confirmations.get(confirmationId) as unknown as ConfirmationRecord), status: 'pending' as const }\n  const { outcome } = resolveConfirmation(fresh, {",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "stderr stored unredacted",
+    "file": "apps/desktop/src/release.ts",
+    "find": "redact(stderr.trim(), [], []).slice(-2000)",
+    "replace": "stderr.trim().slice(-2000)",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "release events skip the inbox stream",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  for (const name of [stream, INBOX_STREAM]) {",
+    "replace": "  for (const name of [stream]) {",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "the workbench does not subscribe the inbox stream",
+    "file": "apps/web/src/release-cards.ts",
+    "find": "    'wizard',\n    'inbox',\n",
+    "replace": "    'wizard',\n",
+    "tests": ["apps/web/test/release-cards.test.ts"]
+  },
+  {
+    "name": "a held approval reads as closed",
+    "file": "apps/web/src/release-cards.ts",
+    "find": "    return { closes: false, kind: 'handled', note: why, toast: `${why} The card stays open.` }\n",
+    "replace": "    return { closes: true, kind: 'approved', note: 'Approved', toast: 'Approved.' }\n",
+    "tests": ["apps/web/test/release-cards.test.ts"]
+  },
+  {
+    "name": "the origin slug skips assertRepo",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  const repo = remote.slug\n  assertRepo(repo)\n",
+    "replace": "  const repo = remote.slug\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "a leading dash passes REPO_SLUG",
+    "file": "apps/desktop/src/release.ts",
+    "find": "const REPO_SLUG = /^[A-Za-z0-9][A-Za-z0-9_.-]*\\/",
+    "replace": "const REPO_SLUG = /^[A-Za-z0-9_.-]+\\/",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "the gh host need not match the origin",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (reported?.host !== remote.host || reported.slug.toLowerCase() !== repo.toLowerCase())\n",
+    "replace": "  if (reported === undefined || reported.slug.toLowerCase() !== repo.toLowerCase())\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "the gh repository need not match the origin",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (reported?.host !== remote.host || reported.slug.toLowerCase() !== repo.toLowerCase())\n",
+    "replace": "  if (reported?.host !== remote.host)\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "a local path counts as a remote",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (remote === undefined)\n    throw codedError('remote_unreadable', `${repoId} has no origin on a host gh can answer for`)\n  const repo = remote.slug\n",
+    "replace": "  const repo = remote?.slug ?? /([^/:]+\\/[^/:]+?)(?:\\.git)?\\/?$/.exec(origin.stdout.trim())?.[1] ?? ''\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "approve ignores the bound remote URL",
+    "file": "apps/desktop/src/release.ts",
+    "find": "    if (target.remoteUrl !== payload.remoteUrl) return { status: 'pending', reason: 'remote_unreadable' }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "the push asks gh for its URL again",
+    "file": "apps/desktop/src/release.ts",
+    "find": "    { branch: payload.branch, headSha: head, remoteUrl: target.remoteUrl },\n",
+    "replace": "    { branch: payload.branch, headSha: head },\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "a key-shaped branch opens a card",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (keyShaped(branch)) throw codedError('invalid_ref', 'the branch name is key-shaped')\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "a key-shaped repository opens a card",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (keyShaped(repo)) throw codedError('invalid_ref', 'the repository name is key-shaped')\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "the PR head branch is stored raw",
+    "file": "apps/desktop/src/release.ts",
+    "find": "    branch: redact(pr.headRefName, [], []),\n",
+    "replace": "    branch: pr.headRefName,\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "check rows are stored raw",
+    "file": "apps/desktop/src/release.ts",
+    "find": "          checks: checks.map((row) => ({\n            name: redact(row.name, [], []),\n            state: redact(row.state, [], []),\n          })),\n",
+    "replace": "          checks,\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "Approve opens with no evidence",
+    "file": "apps/web/src/release-cards.ts",
+    "find": "  return detail !== null\n",
+    "replace": "  return true\n",
+    "tests": ["apps/web/test/release-cards.test.ts"]
+  }
+]

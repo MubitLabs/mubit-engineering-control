@@ -320,5 +320,54 @@
     "find": "          slot: metaSlotEnv({ slotDir: this.#slotDir, linked: this.#linked }),",
     "replace": "          slot: { CLAUDE_CONFIG_DIR: this.#slotDir },",
     "tests": ["packages/meta/test/real-brain.test.ts"]
+  },
+  {
+    "name": "control paths matched by case",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "isWithin(folded(path), folded(dir)),",
+    "replace": "isWithin(path, dir),",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
+  },
+  {
+    "name": "realpath keeps the caller's spelling",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "return realpathSync.native(path)\n",
+    "replace": "return realpathSync(path)\n",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
+  },
+  {
+    "name": "a dangling link is not followed",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "  if (lstatSync(real, { throwIfNoEntry: false })?.isSymbolicLink() !== true) return real\n",
+    "replace": "  if (real !== '') return real\n",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
+  },
+  {
+    "name": "a link target reads past a link by spelling",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "`${dirname(real)}${sep}${target}`",
+    "replace": "join(dirname(real), target)",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
+  },
+  {
+    "name": "a link target starts from the spelled path",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "`${dirname(real)}${sep}${target}`",
+    "replace": "resolve(dirname(path), target)",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
+  },
+  {
+    "name": "an unresolvable path is allowed",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "return { allow: false, reason: `cannot resolve that path: ${(error as Error).message}` }",
+    "replace": "return { allow: true, reason: 'inside the worktree' }",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
+  },
+  {
+    "name": "links are followed without a limit",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "  if (links.left < 0) throw new Error(`too many links at ${real}`)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
   }
 ]

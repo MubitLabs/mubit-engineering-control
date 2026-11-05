@@ -58,3 +58,7 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
     records them.
   - The denial covers Claude's Bash on macOS. A real run has not yet proved it, and on Linux it is
     untested. Repo checks and MEC's own git run outside the sandbox.
+  - `confirm` judges a Write or Edit by the on-disk path: it reads a name in any case, follows a
+    dangling link to its target, and denies a link chain it cannot finish. It judges the path at
+    the moment of the ask. A worker's shell can still swap a file for a link after the answer, and
+    Claude's own behaviour past an `allow` on a link has not been observed.

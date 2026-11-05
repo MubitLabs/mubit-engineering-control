@@ -1,6 +1,6 @@
 // M2.1's permission boundary: what a specialist's token reaches, on the real server with real
 // tokens over real HTTP. The fence is the point, so everything goes through `tools/call`.
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Operation } from '@mec/contracts'
@@ -16,6 +16,8 @@ const root = mkdtempSync(join(tmpdir(), 'mec-specialist-'))
 const worktree = join(root, 'work', 'att_1')
 const tempDir = join(root, 'tmp', 'att_1')
 const HEAD = 'a'.repeat(40)
+/** The default volume on a Mac matches names without case, so `.GIT` is `.git` there. */
+const foldsCase = process.platform === 'darwin' && existsSync(tmpdir().toUpperCase())
 
 const db = new Database(':memory:')
 migrate(db, MIGRATIONS_v1)
@@ -56,6 +58,9 @@ beforeAll(async () => {
   mkdirSync(tempDir, { recursive: true })
   mkdirSync(join(root, 'outside'))
   symlinkSync(join(root, 'outside'), join(worktree, 'escape'))
+  writeFileSync(join(worktree, '.git'), 'gitdir: /cache/worktrees/att_1\n')
+  mkdirSync(join(worktree, '.mec'))
+  writeFileSync(join(worktree, '.mec', 'claude-settings.json'), '{}')
   url = (await tools.start()).url
   store.atomic(() => {
     store.messages.save({ id: 'msg_1', text: 'the request' })
@@ -197,6 +202,78 @@ describe('confirm', () => {
       const verdict = await ask('Write', { file_path })
       expect(verdict.behavior, file_path).toBe('deny')
     }
+  })
+
+  it.runIf(foldsCase)('a control path in another case is still the control path', async () => {
+    for (const file_path of [
+      join(worktree, '.GIT'),
+      join(worktree, '.Git'),
+      join(worktree, '.MEC', 'claude-settings.json'),
+      join(worktree, '.MEC', 'x'),
+    ]) {
+      const verdict = await ask('Write', { file_path })
+      expect(verdict.behavior, file_path).toBe('deny')
+      expect(String(verdict.message), file_path).toContain('belongs to MEC')
+    }
+  })
+
+  it.runIf(foldsCase)('a control dir that does not exist yet is guarded in any case', () => {
+    const bare = join(root, 'work', 'att_bare')
+    mkdirSync(bare)
+    const scope = { worktree: bare, tempDir, sandboxRequired: true }
+    const write = (path: string): Operation => ({ kind: 'write', summary: path, paths: [path] })
+    expect(judgeOperation(write(join(bare, '.MEC', 'x')), scope).reason).toContain('belongs to MEC')
+    expect(judgeOperation(write(join(bare, '.Git')), scope).reason).toContain('belongs to MEC')
+  })
+
+  it.runIf(foldsCase)('the worktree in another case is still the worktree', async () => {
+    const respelled = join(root, 'WORK', 'att_1')
+    expect((await ask('Write', { file_path: join(respelled, 'src/a.ts') })).behavior).toBe('allow')
+    expect((await ask('Write', { file_path: join(respelled, '.git') })).behavior).toBe('deny')
+  })
+
+  it('a dangling link is judged by where it points, not where it sits', async () => {
+    const links: [string, string][] = [
+      ['to-outside', join(root, 'outside', 'new.txt')],
+      ['to-outside-relative', join('..', '..', 'outside', 'new.txt')],
+      ['to-sibling', join('..', 'att_2', 'new.txt')],
+      ['to-a-link', 'to-outside'],
+      ['to-missing-dir', join(root, 'outside', 'missing')],
+      ['to-control', join('.mec', 'new.txt')],
+      ['through-a-link', join('escape', 'new.txt')],
+      ['past-a-link', 'escape/../new.txt'],
+    ]
+    for (const [name, target] of links) symlinkSync(target, join(worktree, name))
+
+    for (const file_path of [
+      ...links.filter(([name]) => name !== 'to-missing-dir').map(([name]) => join(worktree, name)),
+      join(worktree, 'to-missing-dir', 'new.txt'),
+    ]) {
+      const verdict = await ask('Write', { file_path })
+      expect(verdict.behavior, file_path).toBe('deny')
+    }
+  })
+
+  it('a dangling link that stays inside is an ordinary new file', async () => {
+    symlinkSync(join('src', 'new.txt'), join(worktree, 'to-inside'))
+    expect((await ask('Write', { file_path: join(worktree, 'to-inside') })).behavior).toBe('allow')
+  })
+
+  it('a relative link target starts from the real directory of the link', async () => {
+    // Read against the spelled path, `../new.txt` lands in the worktree; it really lands in `nest`.
+    mkdirSync(join(root, 'nest', 'deep'), { recursive: true })
+    symlinkSync(join(root, 'nest', 'deep'), join(worktree, 'inner'))
+    symlinkSync(join('..', 'new.txt'), join(root, 'nest', 'deep', 'rel'))
+    const verdict = await ask('Write', { file_path: join(worktree, 'inner', 'rel') })
+    expect(verdict.behavior).toBe('deny')
+  })
+
+  it('a link loop is denied with a reason, and returns', async () => {
+    symlinkSync('loop-b', join(worktree, 'loop-a'))
+    symlinkSync('loop-a', join(worktree, 'loop-b'))
+    const verdict = await ask('Write', { file_path: join(worktree, 'loop-a') })
+    expect(verdict.behavior).toBe('deny')
+    expect(String(verdict.message)).toMatch(/too many links/)
   })
 
   it('denies everything else, with a reason', async () => {

@@ -12,7 +12,7 @@
  *   boundary; these rules exist so a push is refused by name, and shell text is only a heuristic.
  */
 import { createHash } from 'node:crypto'
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, lstatSync, readlinkSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type {
   AttemptRef,
@@ -60,12 +60,32 @@ export type AttemptScope = { worktree: string; tempDir: string; sandboxRequired:
 
 export type Verdict = { allow: boolean; reason: string }
 
-/** A path as the file system resolves it, for a file that may not exist yet. */
-function resolved(path: string): string {
-  if (existsSync(path)) return realpathSync(path)
+/** A chain this long is a loop, or not worth following: past it the path is denied. */
+const MAX_LINKS = 32
+
+/**
+ * Walks up to what exists, then down again. `native` answers the name on disk, not the caller's
+ * spelling. `existsSync` follows links, so a dangling one reads as absent: a write through it lands
+ * at its target, and that target is the path to judge.
+ */
+function follow(path: string, links: { left: number }): string {
+  if (existsSync(path)) return realpathSync.native(path)
   const parent = dirname(path)
-  return parent === path ? path : join(resolved(parent), basename(path))
+  if (parent === path) return path
+  const real = join(follow(parent, links), basename(path))
+  if (lstatSync(real, { throwIfNoEntry: false })?.isSymbolicLink() !== true) return real
+  links.left -= 1
+  if (links.left < 0) throw new Error(`too many links at ${real}`)
+  const target = readlinkSync(real)
+  // Not `join`: it would fold a `..` past a link before the file system has followed that link.
+  return follow(isAbsolute(target) ? target : `${dirname(real)}${sep}${target}`, links)
 }
+
+/** A path as the file system resolves it, for a file that may not exist yet. */
+const resolved = (path: string): string => follow(path, { left: MAX_LINKS })
+
+/** The default volume on a Mac matches names without case, so `.GIT` is `.git` there. */
+const folded = (path: string): string => (process.platform === 'darwin' ? path.toLowerCase() : path)
 
 const isWithin = (path: string, root: string): boolean => {
   const rel = relative(root, path)
@@ -88,14 +108,20 @@ export function judgeOperation(operation: Operation, scope: AttemptScope): Verdi
   if (operation.kind === 'edit' || operation.kind === 'write') {
     const paths = operation.paths ?? []
     if (paths.length === 0) return { allow: false, reason: 'no path to check' }
-    const worktree = resolved(scope.worktree)
-    const tempDir = resolved(scope.tempDir)
-    for (const path of paths.map(resolved)) {
-      const control = [join(worktree, '.mec'), join(worktree, '.git')].some((dir) => isWithin(path, dir))
-      if (control) return { allow: false, reason: `${path} belongs to MEC` }
-      if (!isWithin(path, worktree) && !isWithin(path, tempDir)) {
-        return { allow: false, reason: `${path} is outside this attempt's worktree` }
+    try {
+      const worktree = resolved(scope.worktree)
+      const tempDir = resolved(scope.tempDir)
+      for (const path of paths.map(resolved)) {
+        const control = [join(worktree, '.mec'), join(worktree, '.git')].some((dir) =>
+          isWithin(folded(path), folded(dir)),
+        )
+        if (control) return { allow: false, reason: `${path} belongs to MEC` }
+        if (!isWithin(path, worktree) && !isWithin(path, tempDir)) {
+          return { allow: false, reason: `${path} is outside this attempt's worktree` }
+        }
       }
+    } catch (error) {
+      return { allow: false, reason: `cannot resolve that path: ${(error as Error).message}` }
     }
     return { allow: true, reason: 'inside the worktree' }
   }

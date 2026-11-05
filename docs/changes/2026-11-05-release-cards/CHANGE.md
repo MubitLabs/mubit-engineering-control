@@ -40,6 +40,12 @@ Decision #16 says the owner approves every push, PR and merge on a card. At a102
 
 **Redaction.** Tool stderr, PR titles and bodies now pass `redact()` before they are stored. A key-shaped string in a PR body is sent to GitHub redacted, matching chat.
 
+**A push goes only to the clone's origin.** The origin must parse as an https, ssh or scp-like remote with a host and exactly `owner/name`. The slug passes `assertRepo` before gh sees it, and a slug's owner must now start with a letter or digit, because `gh repo view` takes the slug as its first argument and `-b/x` would otherwise be read as a flag and answer for the server's working directory. The URL gh reports must then have the origin's host and repository, or the card does not open (`remote_unreadable`). The card binds and shows that URL, a different URL at approve holds the card, and the push goes to the URL that was checked, with no second gh read.
+
+**Approve waits for evidence.** The Approve button stays disabled until `/api/inbox/:id/detail` has answered, a failed read offers a retry, and Deny stays live. The A key clicks that same button, because it used to call the approve action directly and would have gone round the disabled state. A 404 still counts as an answer: a card that is not a release card has no detail and must stay answerable.
+
+**Key-shaped names.** A key-shaped branch or repository name is refused with `invalid_ref`, and the refusal does not repeat the name. A PR head branch and check rows from gh are redacted before they are stored.
+
 **`tools/mutants/run.py`.** A stdlib mutant runner every later PR uses, with a `--self-check`. `tools/mutants/release-cards.json` is this PR's spec.
 
 ## Intended behaviour changes to existing tests
@@ -53,6 +59,8 @@ These assertions changed. None was weakened; each change is the behaviour this P
 | `release.test.ts` "calls gh not at all" on open | no gh call | no gh write, and the head read is expected | Binding a head needs one read. A read is not a side effect (§13 invariant 1). The deny test keeps "no gh at all" after opening. |
 | `release.test.ts` state-read count | one `view` in the whole flow | one `view` after the merge call | The pre-flight now reads the PR too. The ordering it was protecting is now asserted directly. |
 | `release.test.ts` `pushIntegrationBranch` argv | the branch name | `<head>:refs/heads/<branch>` | The exact head, never a moving ref. |
+| `release-cards.test.ts` git fixture | origin is the bare path, gh reports the bare path | origin is `git@github.com:owner/repo.git`, gh reports the https URL, and `url.<bare>.insteadOf` sends the real push to the bare repository | A local path is now refused as an origin. The push is still real git to a real bare repository. |
+| `release-cards.test.ts` "origin changed after the card opened" | gh still reports the old repository | gh follows the origin to the new repository | Otherwise the new gh match would refuse first and the bound-URL check would go unexercised. Same outcome asserted. |
 | `server.test.ts` two generic-settle tests | cards of class `push` and `pr_merge` with no payload | class `install` | That settle-without-acting is the bug. The new tests pin the refusal for all release classes. |
 
 ## Risks
@@ -60,6 +68,7 @@ These assertions changed. None was weakened; each change is the behaviour this P
 - **`no_required_checks` holds forever on a repository with no required checks.** That is the fail-closed reading: gh gives the same answer before a required check has started. This repository has required checks, so it is not hit here. It needs an owner decision before MEC is used on a repository without them.
 - **`gh pr create` has no head flag.** The head is compared a moment before the call, not at it.
 - **The push remote is the URL `gh repo view` reports**, as before. It relies on the user's git credentials working for that https URL.
+- **Some working origins are refused.** An ssh host alias such as `git@github-work:o/r.git`, or `ssh.github.com`, has a host that does not match gh's, so it answers `remote_unreadable`. An enterprise host works only when gh's default host is that host (`GH_HOST`). `gh repo view` is not asked about the origin's host directly, because the PR and merge routes use the bare slug too. Refusing is the fail-closed reading.
 - **A push card needs a repository registered by local path.** A repository registered by URL answers `repo_not_local`: the bare cache in §14 does not exist in the code yet.
 
 ## Not in this PR

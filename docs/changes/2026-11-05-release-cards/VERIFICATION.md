@@ -28,8 +28,8 @@ The same run after the implementation: 126 passed. The final count is below.
 
 | Command | Result |
 | --- | --- |
-| `pnpm check` | exit 1. `1 failed | 1674 passed | 15 skipped (1690)`. The one failure is the baseline `login-cards.test.ts` "drives a real interactive shell through the seam". Typecheck and lint clean; biome reports warnings only. |
-| `pnpm test:screens` (under the shared lock) | 21 passed. No baseline changed. |
+| `pnpm check` | exit 1. `1 failed | 1697 passed | 15 skipped (1713)`. The one failure is the baseline `login-cards.test.ts` "drives a real interactive shell through the seam". Typecheck and lint clean; biome reports warnings only. |
+| `pnpm test:screens` (under the shared lock) | 22 passed. No baseline changed. |
 
 Not run on Linux or Node 22/24 here; CI covers those once the branch is pushed.
 
@@ -41,12 +41,37 @@ SURVIVED  self-check no-op (expected SURVIVED)
 INVALID   self-check syntax error (expected INVALID)
 
 python3 tools/mutants/run.py tools/mutants/release-cards.json
-22 of 22 killed
+34 of 34 killed
 ```
 
 The first full run was 21 of 22. "The CAS trusts the card read before the pre-flight" survived because the racing-approvals test never overlapped: the fake gh answers in microtasks. That test now has latency and asserts both answers passed the pre-flight. The final run above is on the final code.
 
+## Review findings: push target, Approve gate, key-shaped names
+
+Tests written first, run against the previous commit:
+
+```
+npx vitest run apps/desktop/test/release-cards.test.ts apps/web/test/release-cards.test.ts
+Tests  20 failed | 98 passed (118)
+```
+
+After the fix, with `release.test.ts` added to the run: 141 passed.
+
+Twelve mutants were added to the spec above. The Playwright test is outside the runner, which runs vitest only, so these were run by hand with `npx playwright test -g "evidence did not load"`:
+
+| Hand mutant | Result |
+| --- | --- |
+| A key calls `approveDecision` directly | failed: a Confirm button appeared |
+| Tray ignores `canApprove` | failed: Approve was not disabled |
+| A failed read does not set the failure | failed: no retry button |
+
+A read-only probe of real gh, run outside any repository: `gh repo view -b/x --json url` answers `failed to run git: fatal: not a git repository`. So gh takes `-b/x` as a flag and falls back to the working directory, which is why a slug's owner may no longer start with a dash.
+
+This repository's origin is `https://github.com/MubitLabs/mubit-engineering-control.git`, a form the tests accept (**read**, not run through a card).
+
 ## Real browser, real server
+
+This driver ran before the review fixes and was not repeated after them.
 
 A one-off driver, not committed: the built server, a scratch `HOME` and `MEC_DATA_DIR`, a fake `gh` on `PATH`, real git to a local bare repository, and Playwright's chromium clicking the real page. `~/.mec/mec.db` mtime was unchanged afterwards.
 
@@ -73,6 +98,7 @@ Run against this repository with gh 2.103.3; these write nothing.
 
 ## Not verified
 
+- No real gh `repo view` URL has been compared with a real origin through the code. The test fake reports the URL form the probe below showed.
 - No real push, PR or merge has gone through a card. The fake gh and the local bare repository stand in for GitHub. The owner hand-merges this PR (decision #17), so the first real use is the first card after it.
 - GitHub's real answers are assumed from documentation or source reading for: `gh pr checks` exit 8 with `--json`, the "no required checks" message text, and a real `BEHIND`. The code holds on all of them either way: no unexpected answer can read as green.
 

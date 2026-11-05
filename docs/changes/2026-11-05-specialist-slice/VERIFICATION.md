@@ -42,6 +42,8 @@ Two defects from the independent verifier, on the same branch. The verifier's re
 
 **The shared clone denial and the linked planner.** No real engine ran. Red: `pnpm exec vitest run --project b isolation.test`: 2 failed, `expected undefined to deeply equal [ '/data/repos/abc.git' ]`. `pnpm exec vitest run --project b attempt-launch.test -t "planner slot|refused git writes|runs the engine to a verdict"`: 3 failed, `expected '/home/someone/.claude' to be null`, `expected '65' to be '0'` and the old brief. `pnpm exec vitest run --project a real-brain.test`: 1 failed, `expected { … } to not have property "CLAUDE_CONFIG_DIR"`. Green: all of them. The brief's assertion changed on purpose: it pinned the old text, which said the clone was not read-only. The Seatbelt test runs the list the launch wrote through `sandbox-exec` around a fake worker's `git add`, `git commit`, `update-ref` and a ref overwrite, with `git status` first as the control, and skips where `sandbox-exec` is absent.
 
+**`confirm` and the path it judges.** No real engine ran. Red: `pnpm exec vitest run apps/desktop/test/specialist-tools.test.ts`: 5 failed, 21 passed. `.GIT` and `.MEC/x` answered `allow`, a dangling link to `<root>/outside/new.txt` answered `allow`, and a link loop answered `allow`. Green: 26 passed. The test now holds a real `.git` file and a real `.mec/`. The case tests run where the temp volume folds case, so they skip on Linux, where `.GIT` is another file.
+
 No real engine ran for these fixes. Whether a subscription accepts each alias, and the shipped path with a real planner, are for the verifier: `Not verified` below still stands for the composed chat path.
 
 ## Not verified
@@ -52,11 +54,12 @@ No real engine ran for these fixes. Whether a subscription accepts each alias, a
 - A real run of the corrected brief, and of `git update-ref` through `confirm`. Tests only.
 - A real Read-tool denial on a text file on the deny list. Confirm's rule covers it, and the test covers the rule, but no real engine has exercised it.
 - `sandbox: required` on Linux.
+- Claude's Write and Edit tools on a link, past an `allow` or a `deny`. The rule is proved through the real `judgeOperation`; what the engine does with a link is not observed. A hard link is not judged: `confirm` allows a hard link to the `.git` file, and whether a sandboxed shell can make one is not tested.
 - The real `--restricted` launch of a read-only role: the argv combines `--permission-prompt-tool` with `--permission-prompts none`, and no real run has tried that.
 - Under a heavy load one full run timed out real-process tests, including the existing `shims.test.ts`. The same three files then passed alone. Their waits were raised.
 
 ## Mutants
 
-`python3 tools/mutants/run.py tools/mutants/m2.1.json`: 36 of 36 killed, the handoff's 12 plus 24 for gates this change added, twelve of them for the verification fixes. The wall clock test then changed, and the two runner mutants it covers were killed again.
+`python3 tools/mutants/run.py tools/mutants/m2.1.json`: 53 of 53 killed on ef1b084, the handoff's 12 plus 41 for gates this change added. Earlier run: 36 of 36, twelve of them for the verification fixes. The wall clock test then changed, and the two runner mutants it covers were killed again.
 
 The first run gave 20 of 23. `shim first` was INVALID: its tests waited out their timeouts past the runner's 300 s limit, so they now fail as soon as the attempt settles on the wrong state. `stop trusts the leader alone` survived because the fake CLI's child could take SIGTERM before its handler was in. `a stopped attempt comes back` survived because no test covered it, so `core-facts.test.ts` was added.

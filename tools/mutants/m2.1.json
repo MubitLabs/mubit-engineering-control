@@ -238,6 +238,13 @@
     "tests": ["apps/desktop/test/attempt-launch.test.ts"]
   },
   {
+    "name": "update-ref allowed",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "  { pattern: new RegExp(`\\\\bgit\\\\b${SEGMENT}\\\\bupdate-ref\\\\b`), what: 'a direct ref update' },\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
+  },
+  {
     "name": "brief promises a read-only clone",
     "file": "apps/desktop/src/attempt-launch.ts",
     "find": "\"the shared clone behind the worktree, which holds other attempts' branches, so leave its refs alone.\",\n",

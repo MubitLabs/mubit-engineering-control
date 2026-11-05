@@ -32,7 +32,10 @@ import { checkDocId, reportDocId } from './core-facts'
 /** §6: a text page is 4,000 characters by default. */
 const PAGE_CHARS = 4000
 
-/** §13 "Always confirm", as shell text: push, PRs, branch delete, force, and `gh` of any kind. */
+/**
+ * §13 "Always confirm", as shell text: push, PRs, branch delete, force, and `gh` of any kind.
+ * `update-ref` is a branch delete by another name, and no worker needs it: MEC does the commit.
+ */
 const SEGMENT = '[^;&|\\n]*'
 const ALWAYS_CONFIRM_SHELL: readonly { pattern: RegExp; what: string }[] = [
   { pattern: new RegExp(`\\bgit\\b${SEGMENT}\\bpush\\b`), what: 'git push' },
@@ -41,6 +44,7 @@ const ALWAYS_CONFIRM_SHELL: readonly { pattern: RegExp; what: string }[] = [
     pattern: new RegExp(`\\bgit\\b${SEGMENT}\\bbranch\\b${SEGMENT}\\s(-d|-D|--delete)\\b`),
     what: 'branch delete',
   },
+  { pattern: new RegExp(`\\bgit\\b${SEGMENT}\\bupdate-ref\\b`), what: 'a direct ref update' },
   { pattern: new RegExp(`\\bgit\\b${SEGMENT}\\s(--force\\b|--force-with-lease\\b)`), what: 'a forced git' },
 ]
 

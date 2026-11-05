@@ -147,6 +147,19 @@ describe('confirm', () => {
     expect(store.confirmations.list()).toEqual([])
   })
 
+  it('a ref delete is a branch delete, however it is spelled', async () => {
+    for (const command of [
+      'git update-ref -d refs/heads/mec/other/task/a1',
+      'git -C . update-ref --delete refs/heads/mec/other/task/a1',
+      'echo "delete refs/heads/mec/other/task/a1" | git update-ref --stdin',
+      'git update-ref refs/heads/mec/other/task/a1 0123456',
+    ]) {
+      const verdict = await ask('Bash', { command })
+      expect(verdict.behavior, command).toBe('deny')
+      expect(String(verdict.message)).toMatch(/confirmation/)
+    }
+  })
+
   it('allows Bash under the required sandbox, with the input it was given', async () => {
     const input = { command: 'pnpm test', description: 'run the tests' }
     expect(await ask('Bash', input)).toEqual({ behavior: 'allow', updatedInput: input })

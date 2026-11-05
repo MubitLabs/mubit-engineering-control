@@ -397,6 +397,17 @@ describe('boot resume (§20 App crash, §26 Acknowledgement)', () => {
     expect(rowsOf(store, 'relay')).toEqual([])
   })
 
+  it('a message answered with a question waits for its answer, not a resume', async () => {
+    const next = countingBrain({ ack: 'Which one?' })
+    const { service, store } = rig(next.brain)
+    await service.onUserMessage({ messageId: 'msg_1', text: 'go', repoId: 'repo_a' })
+
+    service.enqueueResumes()
+
+    expect(String(store.workItems.list()[0]?.state)).toBe('planning')
+    expect(rowsOf(store, 'relay')).toEqual([])
+  })
+
   it('a resume relay answers with the stored text and repo, once', async () => {
     const { store, workItemId } = await crashedAdmission()
     const seen: string[] = []

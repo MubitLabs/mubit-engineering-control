@@ -97,7 +97,7 @@ function PromptsSection() {
         </div>
       ) : null}
       <p className="muted" style={{ marginTop: 12 }}>
-        Saving prompt edits is not served by the server yet — edits hold only for this session.
+        Edits here hold only for this session. Settings in the new workbench saves them (add ?ui=next).
       </p>
     </section>
   )

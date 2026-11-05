@@ -1,5 +1,7 @@
 import {
+  lazy,
   type ReactNode,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -14,7 +16,7 @@ import { ConversationView } from '../next/ConversationView'
 import type { NeedItem } from '../next/inspection-wire'
 import { NeedsView } from '../next/NeedsView'
 import { NextApp } from '../next/NextApp'
-import { ROUTE_LABELS } from '../next/routes'
+import { CONFIGURATION_ROUTES, ROUTE_LABELS } from '../next/routes'
 import { SearchSheet } from '../next/SearchSheet'
 import type { RepositoryOption } from '../next/Sidebar'
 import { StateNotice } from '../next/states'
@@ -49,8 +51,10 @@ import {
   workRowView,
 } from '../next/work-model'
 import { repositoryName } from '../repo-target'
+import { createConfigStore } from './config-store'
 import { createDrafts, type Intent, resolveIntent } from './drafts'
 import { createInspection, liveInspectionClient } from './inspection'
+import { usePause } from './pause'
 import { createSubmissions, draftScope, type Frozen, type Submission } from './submission'
 import {
   InspectorRequest,
@@ -76,6 +80,9 @@ const RECENT_LIMIT = 5
 
 const WORK_CUT = 'The server holds more deliveries than this page reads. Search still finds them.'
 const NEEDS_CUT = 'More is waiting than this page reads, so there is no count.'
+
+/** Its own chunk: only these three routes need the configuration calls. */
+const ConfigSurface = lazy(() => import('./config').then((module) => ({ default: module.ConfigSurface })))
 
 /** One set per page, outside React's render, so a double Enter meets the same guard. */
 function createLive() {
@@ -138,6 +145,8 @@ export function LiveApp() {
   const inspected = useSyncExternalStore(inspection.subscribe, inspection.getState)
   useSyncExternalStore(live.subscribe, live.version)
   useWorkspaceUpkeep(workspace)
+  const [configStore] = useState(createConfigStore)
+  const pause = usePause()
 
   const [notice, setNotice] = useState<string | null>(null)
   /** Work and Needs you start on every repository: the first question is whether anything needs you. */
@@ -435,6 +444,18 @@ export function LiveApp() {
 
   const retryRead = () => workspace.refresh()
   const surface = () => {
+    if (CONFIGURATION_ROUTES.includes(address.route)) {
+      return (
+        <Suspense fallback={<Loading title={`Loading ${ROUTE_LABELS[address.route]}`} />}>
+          <ConfigSurface
+            route={address.route}
+            store={configStore}
+            onNavigate={navigate}
+            onRepositories={retryRead}
+          />
+        </Suspense>
+      )
+    }
     const nothingAnywhere =
       repositoriesReady && repositories.length === 0 && rows.length === 0 && items.length === 0
     if ((address.route === 'work' || address.route === 'needs') && nothingAnywhere) {
@@ -571,6 +592,7 @@ export function LiveApp() {
         onSwitchRepository={switchRepository}
         // §18: a count must equal the list it links to, so it is that list's own, filter included.
         needsCount={needsCount(needs)}
+        pause={pause}
         {...(state.unassigned && {
           unassigned: {
             current: readOnly,

@@ -38,6 +38,53 @@ const ROUTE_ICONS: Record<Route, () => React.JSX.Element> = {
   settings: SettingsIcon,
 }
 
+/** §20: stops everything until resumed, unlike Hold and Stop, which act on one piece of work. */
+export interface PauseControl {
+  /** `unknown` when the read failed: the control never guesses which way it would go. */
+  state: 'running' | 'paused' | 'unknown'
+  busy: boolean
+  pausedAt?: string
+  /** Why it cannot be used here; said before the click. */
+  unavailable?: string
+  error?: string
+  onToggle: () => void
+}
+
+function PauseButton({ pause }: { pause: PauseControl }) {
+  const paused = pause.state === 'paused'
+  return (
+    <div className="pause">
+      {paused && (
+        <p className="pause-state">
+          <strong>Processing paused</strong>
+          {pause.pausedAt ? ` since ${pause.pausedAt}` : ''}. Messages are kept and no new turn runs.
+        </p>
+      )}
+      <button
+        type="button"
+        className="nav-item"
+        disabled={pause.busy || pause.state === 'unknown' || pause.unavailable !== undefined}
+        title={
+          pause.unavailable ??
+          'Stops new launches for all work. Running turns finish. Hold and Stop act on one piece of work.'
+        }
+        onClick={pause.onToggle}
+      >
+        {pause.busy ? 'Working…' : paused ? 'Resume processing' : 'Pause processing'}
+      </button>
+      {pause.state === 'unknown' && (
+        <p className="pause-state">Could not read whether processing is paused.</p>
+      )}
+      {pause.unavailable && <p className="pause-state">{pause.unavailable}</p>}
+      {pause.error && (
+        <p className="pause-state" role="alert">
+          {pause.error}
+        </p>
+      )}
+    </div>
+  )
+}
+
 export interface SidebarProps {
   repositories: readonly RepositoryOption[]
   repositoryId: string | null
@@ -48,6 +95,8 @@ export interface SidebarProps {
   needsCount: number | null
   /** Legacy rows with no repository, offered read-only while any exist. */
   unassigned?: { current: boolean; onOpen: () => void }
+  /** The persistent global control beside Needs you (#22). */
+  pause?: PauseControl
   recent: readonly RecentItem[]
   onOpenRecent: (id: string) => void
   footnote: string
@@ -133,6 +182,7 @@ export function Sidebar(props: SidebarProps) {
 
       <nav className="nav-stack" aria-label="Workspace">
         {WORK_ROUTES.map(navItem)}
+        {props.pause && <PauseButton pause={props.pause} />}
         {props.unassigned && (
           <button
             type="button"

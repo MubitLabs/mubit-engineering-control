@@ -13,7 +13,7 @@ import {
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { AttemptBrief, AttemptRef, EngineEvent, IsolationProfile } from '@mec/contracts'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import { ClaudeAdapter } from '../../engines/src/claude/adapter'
 import { git } from '../../git/src/exec'
 import { historyTouches } from '../../git/src/repos'
@@ -530,7 +530,14 @@ describe('AttemptRunner', { timeout: 60_000 }, () => {
     })
 
     it('the wall clock reaches a hung check', async () => {
-      const { facts, pid } = await during(async () => {}, 6_000)
+      // The clock's own callback, fired once the check runs: a real wait would race a slow start.
+      const LIMIT = 3_600_000
+      const timers = vi.spyOn(globalThis, 'setTimeout')
+      const { facts, pid } = await during(async () => {
+        const fire = timers.mock.calls.find(([, ms]) => ms === LIMIT)![0] as () => void
+        fire()
+      }, LIMIT)
+      timers.mockRestore()
       await until(() => groupGone(pid))
       expect(facts.state).toBe('work_complete')
       expect(facts.note).toContain('stopped during check unit: wall_clock')

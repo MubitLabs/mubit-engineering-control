@@ -36,6 +36,13 @@ With `MEC_REAL_RUNNER=1`, a launch effect starts one Claude specialist on a regi
 - **Real run 2: `confirm` read the wrong field.** Claude sends `input`, not `tool_input`, so every ask looked empty, and an empty Bash command was allowed. It reads both now, and a request with nothing to judge is denied.
 - **`git push` and `gh` are also refused by engine deny rules** (`--disallowedTools`), because a linked slot runs under the user's own settings and their allow rules can answer first.
 
+## Found by verification
+
+- **A stop never reached a running check.** `runCheck` could not be cancelled, and `interruptAttempts` asked the runner only for `running` attempts, so a `work_complete` one was never told. It then ended `succeeded` on work already `stopped`, and on SIGTERM the check outlived the server. `runCheck` takes a signal, `#stop` aborts it, and `stopWorkItem` asks for `work_complete` too. The wall clock reaches a hung check the same way.
+- **A Claude-only store could not plan.** Only opencode slots had marks, so no tier was placeable and `propose_plan`, which requires a `model_request`, had no valid plan. Dispatch also ignored engine, so an opencode slot sorting first took the task and failed `engine_not_launchable`. `apps/desktop/src/planner-placement.ts` fixes both, with the flag on only: a launchable slot's marks are the table's own entries, declared and not probed, and tier validation and dispatch read the same list of launchable slots.
+
+**Owner call:** declared Claude marks depart from rule 2 of `docs/review/2026-11-04/03_MODEL_TIERS_AND_PLANNER.md` (probe before trust), because no zero-token Claude probe exists. It is one commit behind the flag. A model the account refuses fails that attempt with the engine's reason. The probe in `@mec/slots` still answers `unlisted`, and M2.2's placement replaces the slot list.
+
 ## Decisions applied
 
 Base pinned at first dispatch on the work item, repo identity with refusal when there is none, 30 minutes of wall clock, `failed` from #26, one line per request from #24, unsandboxed checks for scratch only from #25. All are #36 or their own rows.
@@ -47,7 +54,9 @@ A repo whose profile changed after admission is refused (`repo_profile_changed`)
 ## Touched outside the handoff's list
 
 - `packages/meta/src/authority.ts`: `LaunchFailureReason` widened to `string`, so one function fails every attempt.
-- `packages/meta/src/service.ts`: one import line beside the named `decision.stops` block.
+- `packages/meta/src/service.ts`: one import line beside the named `decision.stops` block, and `#placementSlots` with its two callers, by the coordinator's call. That placement is M2.2's block.
+- `packages/meta/src/authority.ts`: `interruptAttempts` asks for `work_complete` attempts too.
+- `apps/desktop/src/composition.ts`: the suppliers in `composePlanner` moved to `planner-placement.ts`, and the `brain` test seam now gets them.
 - `packages/git/src/index.ts`, `packages/engines/src/index.ts`, `packages/runtime/src/index.ts`: exports.
 
 No contracts change, no SQL migration, no new dependency.
@@ -61,7 +70,7 @@ No contracts change, no SQL migration, no new dependency.
 ## Risks
 
 - **Repo checks run agent-written code on the host.** Decision #25 limits this to scratch repos and `mec-sandbox`, and the flag stays off for real repositories.
-- **Stopping during checks leaves `work_complete`,** and nothing recovers such an attempt after a restart. M2.4.
+- **Stopping during checks leaves `work_complete`.** The check's group is killed and `checks_note` says which check and why, with no verdict. There is no interrupt row from `work_complete`, so that attempt still counts as active, and nothing recovers it after a restart. M2.4.
 - **A crash after spawn but before `session_started` leaves an orphan** and a queued attempt, whose row would start a second engine. Orphan cleanup is M2.4.
 - **A wall-clock stop leaves the work `executing`** with an `interrupted` attempt and nothing to resume it. M2.4.
 

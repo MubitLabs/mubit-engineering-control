@@ -31,6 +31,15 @@ Three builder runs, logged in `handoffs/engine-runs.md`, with details in `docs/l
 
 The verifier's run 2 prompt is worth wording with care. In run 3 the model declined the refused steps from its own prompt, and that proves nothing about the boundary.
 
+## Verification findings fixed
+
+Two defects from the independent verifier, on the same branch. The verifier's rerun is still to come.
+
+- **A stop reaches a running check.** Red: `pnpm exec vitest run --project b checks.test attempt-runner.test attempt-launch.test -t "cancelled|a stop while the repo check|during its only check|kills a running check"`: 7 failed. `stop kills the group` took 30013 ms, the check's full length, and the server test waited out its 45 s limit, because no stop reached the check. Green: 7 passed. `packages/meta/test/authority.test.ts` adds the `work_complete` request.
+- **A Claude-only store plans and launches.** Red: `pnpm exec vitest run --project b attempt-launch.test -t "a chat request"`: 3 failed, 3 passed. `expected +0 to be 1` on `tasksCreated`, `attempt settled failed: engine_not_launchable: opencode`, and a tier only the opencode slot serves passing the plan. Green: 6 passed, through `POST /api/chat/messages`, the real server and a real process on the fake CLI, with a scripted planner calling the real `propose_plan`. The test's model reached the fake CLI's argv as `haiku`.
+
+No real engine ran for these fixes. Whether a subscription accepts each alias, and the shipped path with a real planner, are for the verifier: `Not verified` below still stands for the composed chat path.
+
 ## Not verified
 
 - The composed chat path with a real planner.
@@ -41,6 +50,6 @@ The verifier's run 2 prompt is worth wording with care. In run 3 the model decli
 
 ## Mutants
 
-`python3 tools/mutants/run.py tools/mutants/m2.1.json`: 24 of 24 killed, the handoff's 12 plus 12 for gates this change added.
+`python3 tools/mutants/run.py tools/mutants/m2.1.json`: 34 of 34 killed, the handoff's 12 plus 22 for gates this change added, ten of them for the two verification fixes.
 
 The first run gave 20 of 23. `shim first` was INVALID: its tests waited out their timeouts past the runner's 300 s limit, so they now fail as soon as the attempt settles on the wrong state. `stop trusts the leader alone` survived because the fake CLI's child could take SIGTERM before its handler was in. `a stopped attempt comes back` survived because no test covered it, so `core-facts.test.ts` was added.

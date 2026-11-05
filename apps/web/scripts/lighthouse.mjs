@@ -37,7 +37,9 @@ export function judgeFile(file, threshold = THRESHOLD) {
 
 function print(label, verdict) {
   const mark = verdict.ok ? 'PASS' : 'FAIL'
-  console.log(`${mark} ${label} accessibility ${verdict.score ?? '-'}${verdict.reason ? ` (${verdict.reason})` : ''}`)
+  console.log(
+    `${mark} ${label} accessibility ${verdict.score ?? '-'}${verdict.reason ? ` (${verdict.reason})` : ''}`,
+  )
 }
 
 async function scoreRoutes(baseUrl, routes) {

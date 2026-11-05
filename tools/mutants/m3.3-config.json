@@ -1,0 +1,128 @@
+[
+  {
+    "name": "drop the retire label check",
+    "file": "apps/desktop/src/server.ts",
+    "find": "if ((request.body as { label?: unknown } | null | undefined)?.label !== doc.label) {",
+    "replace": "if (false) {",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "shred before the guard",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    // §13: destroying a key is never one stray request. The caller repeats the label it was shown.\n",
+    "replace": "    new SlotKeystore(doc.home).shred(doc.provider)\n",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "return the key in the replace response",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "      fingerprint: { provider: fingerprint.provider, last4: fingerprint.last4 },\n      probe: {",
+    "replace": "      fingerprint: { provider: fingerprint.provider, last4: fingerprint.last4, key },\n      probe: {",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "skip the shape gate on replace",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "    if (!shape.pattern.test(key)) {",
+    "replace": "    if (key === '') {",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "allow an always-confirm class in policy",
+    "file": "packages/policy/src/policy.ts",
+    "find": "    if (ALWAYS_CONFIRM.includes(cls))",
+    "replace": "    if (false)",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "skip the policy stale check",
+    "file": "apps/desktop/src/policy-store.ts",
+    "find": "  if (current.sha256 !== input.baseSha256) return { status: 'stale', currentSha256: current.sha256 }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "apply a draft without validation",
+    "file": "apps/desktop/src/policy-store.ts",
+    "find": "    sha256 = loadPolicy(input.text).versionHash\n",
+    "replace": "    sha256 = input.origin === 'draft' ? 'unchecked' : loadPolicy(input.text).versionHash\n",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "allow a non-Claude meta slot",
+    "file": "apps/desktop/src/readiness.ts",
+    "find": "if (slot.engine !== 'claude')",
+    "replace": "if (slot.engine === 'none')",
+    "tests": ["apps/desktop/test/meta-slot.test.ts"]
+  },
+  {
+    "name": "allow an unhealthy meta slot",
+    "file": "apps/desktop/src/readiness.ts",
+    "find": "if (slot.state !== 'healthy')",
+    "replace": "if (slot.state === 'none')",
+    "tests": ["apps/desktop/test/meta-slot.test.ts"]
+  },
+  {
+    "name": "count skipped as done",
+    "file": "apps/desktop/src/readiness.ts",
+    "find": "    facts[id] ? 'done' : skipped.includes(id) ? 'skipped' : 'missing'",
+    "replace": "    facts[id] || skipped.includes(id) ? 'done' : 'missing'",
+    "tests": ["apps/desktop/test/readiness.test.ts"]
+  },
+  {
+    "name": "registerRepositoryDoc leaves the marker unset",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    store.engines.save({\n      id: SETTINGS_REPOSITORIES_ID,\n      repositories: [...previous, id],\n      updatedAt: at,\n    })\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/readiness.test.ts"]
+  },
+  {
+    "name": "edit rewrites a pinned work item",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "      store.engines.save(next)\n      appendEvent(\n        store,\n        'repositories',",
+    "replace": "      store.engines.save(next)\n      for (const work of store.workItems.list({ repoId: id })) store.workItems.save({ ...work, pin: { repoId: id }, updatedAt: at })\n      appendEvent(\n        store,\n        'repositories',",
+    "tests": ["apps/desktop/test/repository-edit.test.ts"]
+  },
+  {
+    "name": "archive includes a keys directory file",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "  if (segments[0] === 'engines' && segments.includes('keys')) return 'engines-keys'\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/backups-route.test.ts"]
+  },
+  {
+    "name": "omit base_sha256 on models save",
+    "file": "apps/web/src/api-config.ts",
+    "find": "send('/api/models', 'PUT', { yaml, base_sha256: baseSha256 })",
+    "replace": "send('/api/models', 'PUT', { yaml })",
+    "tests": ["apps/web/test/config-api.test.ts"]
+  },
+  {
+    "name": "a stale failure loses the draft",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "  ...editor,\n  save: { kind: 'failed', ...failure },",
+    "replace": "  ...editor,\n  draft: null,\n  save: { kind: 'failed', ...failure },",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "a read moves a draft onto the newer version",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "  if (editor !== undefined && (editor.draft !== null || editor.save.kind === 'saving')) return editor\n",
+    "replace": "",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "an unread capability reads as available",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "  if (capabilities?.[name] === true) return { enabled: true }",
+    "replace": "  if (capabilities?.[name] !== false) return { enabled: true }",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "retire opens on a near match",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "export const canRetire = (typed: string, label: string): boolean => typed === label",
+    "replace": "export const canRetire = (typed: string, label: string): boolean => typed.trim().toLowerCase() === label.toLowerCase()",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  }
+]

@@ -145,7 +145,8 @@ describe('bin/mec.js bundle smoke', () => {
         existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map(Number) : []
 
       try {
-        const deadline = Date.now() + 8000
+        // A busy macOS host can hold a new process at `_dyld_start` for over 15 s.
+        const deadline = Date.now() + 40_000
         while (Date.now() < deadline && enginePids().length < 2) await sleep(50)
         expect(enginePids()).toHaveLength(2)
 
@@ -168,6 +169,6 @@ describe('bin/mec.js bundle smoke', () => {
         }
       }
     },
-    25_000,
+    70_000,
   )
 })

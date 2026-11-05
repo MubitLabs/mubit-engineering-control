@@ -473,6 +473,12 @@ describe('bounded shutdown (§20)', () => {
   }, 12_000)
 })
 
+/**
+ * How long a stub may take to start. On a busy macOS host a new process has sat at `_dyld_start`
+ * for over 15 s while the suite's other files ran; this wait is for that, not for the product.
+ */
+const ENGINE_START_MS = 40_000
+
 /** Only what the stub reports it started: a test never signals anything else. */
 const stubPids: number[] = []
 
@@ -508,7 +514,8 @@ const stubClaude = (body: string) => {
     pids,
     home: dir,
     argv: () => (existsSync(argv) ? readFileSync(argv, 'utf8') : ''),
-    untilLaunches: (count: number) => vi.waitFor(() => expect(pids()).toHaveLength(count), { timeout: 8000 }),
+    untilLaunches: (count: number) =>
+      vi.waitFor(() => expect(pids()).toHaveLength(count), { timeout: ENGINE_START_MS }),
   }
 }
 
@@ -545,7 +552,7 @@ describe('shutdown with a real engine process (§20)', () => {
     expect(store.workItems.get('wi_1')?.state).toBe('planning')
     expect(effectRow(db, 'relay', 'resume:msg_1')?.attempts).toBe(0)
     db.close()
-  }, 12_000)
+  }, 60_000)
 
   it('an engine ending without the protocol during close starts no second engine', async () => {
     const stub = stubClaude('sleep 1')
@@ -563,7 +570,7 @@ describe('shutdown with a real engine process (§20)', () => {
     expect(store.workItems.get('wi_1')?.state).toBe('planning')
     expect(effectRow(db, 'relay', 'resume:msg_1')?.attempts).toBe(0)
     db.close()
-  }, 12_000)
+  }, 60_000)
 
   it('the real planner reads its protocol from the data dir, not the real home', async () => {
     const stub = stubClaude('exec sleep 60')
@@ -586,7 +593,7 @@ describe('shutdown with a real engine process (§20)', () => {
     expect(stub.argv()).not.toContain('REAL-HOME PROTOCOL')
     await handle.close()
     db.close()
-  }, 12_000)
+  }, 60_000)
 })
 
 describe('scratch data dirs (§5.4)', () => {

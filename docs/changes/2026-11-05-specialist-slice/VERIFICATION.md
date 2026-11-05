@@ -16,10 +16,10 @@ Base `feat/durable-commands` at `5be0ef8`, a local branch, by coordinator waiver
 | --- | --- |
 | Typecheck | Passes |
 | `biome check .` | 94 warnings, none an error |
-| `vitest run` | 2288 tests: 2272 passed, 1 failed, 15 skipped |
+| `vitest run` | 2302 tests: 2286 passed, 1 failed, 15 skipped |
 | The failure | `apps/desktop/test/login-cards.test.ts > drives a real interactive shell through the seam`, the known environment problem |
 
-The full run before it also failed `a crash fails the attempt`: its attempt hit the rig's 20 s wall clock on a loaded machine and correctly ended `interrupted`. The rig's wall clock is now 55 s. A slow start, not a hang, is the likely cause, but that was not proven.
+Earlier full runs of the verification fixes each timed out one more test under load, and each passed alone: `bundle.test.ts` `exits within the bound…`, and `server.test.ts` `setup mode needs no repoId` at 20 s, three runs of three. The full run before the first gate also failed `a crash fails the attempt`: its attempt hit the rig's 20 s wall clock on a loaded machine and correctly ended `interrupted`. The rig's wall clock is now 55 s. A slow start, not a hang, is the likely cause, but that was not proven.
 
 ## Fake and real-process evidence
 
@@ -50,6 +50,6 @@ No real engine ran for these fixes. Whether a subscription accepts each alias, a
 
 ## Mutants
 
-`python3 tools/mutants/run.py tools/mutants/m2.1.json`: 34 of 34 killed, the handoff's 12 plus 22 for gates this change added, ten of them for the two verification fixes.
+`python3 tools/mutants/run.py tools/mutants/m2.1.json`: 34 of 34 killed, the handoff's 12 plus 22 for gates this change added, ten of them for the two verification fixes. The wall clock test then changed, and the two runner mutants it covers were killed again.
 
 The first run gave 20 of 23. `shim first` was INVALID: its tests waited out their timeouts past the runner's 300 s limit, so they now fail as soon as the attempt settles on the wrong state. `stop trusts the leader alone` survived because the fake CLI's child could take SIGTERM before its handler was in. `a stopped attempt comes back` survived because no test covered it, so `core-facts.test.ts` was added.

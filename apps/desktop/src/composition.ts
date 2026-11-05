@@ -84,6 +84,9 @@ export async function startServer(opts: {
   // 'stalled' with a recovery note — one live attempt per task, no duplicate dispatch (the
   // journal owns deeper replay; this is the state the scheduler re-checks before replacing).
   reconcileRunningAttempts(store)
+  // Plan §17: rows a previous process left running resume here, once, before the first pass.
+  // A later pass must not touch them: the running ones are then this process's own jobs.
+  store.effects.resumeRunning()
   // §26 Capability drift: probe the configured engine slot at startup; a binary that lost a
   // required flag degrades the slot to engine_unsupported BEFORE any attempt starts.
   if (process.env.MEC_PROBE_SLOT !== undefined && process.env.MEC_PROBE_SLOT !== '') {

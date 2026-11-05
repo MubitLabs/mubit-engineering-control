@@ -13,6 +13,12 @@
  * the last error; the failure past the last backoff marks the row `failed` (attempts
  * exhausted). Each kind claims a `effects:<kind>` health entry that turns error after three
  * consecutive failures and clears on the kind's next success (§19).
+ *
+ * Passes overlap by design: a timer starts one every two seconds and a slow launch delays only
+ * its own task (§11), so a pass never waits for an earlier pass's jobs. Picking is synchronous,
+ * which keeps it one at a time, and a job in flight is not picked again: its row stays out of
+ * every later pass and still counts against the kind's concurrency until it settles. Rows left
+ * `running` by a crash are returned to pending once, by `resumeRunning` at boot.
  */
 
 import type {
@@ -76,6 +82,11 @@ interface Registration {
   ordered: boolean
 }
 
+interface InFlightJob {
+  kind: string
+  done: Promise<void>
+}
+
 interface EffectRow {
   kind: string
   key: string
@@ -89,6 +100,8 @@ export class EffectsQueue implements Effects {
   private readonly registrations = new Map<EffectKind, Registration>()
   private readonly consecutiveFailures = new Map<EffectKind, number>()
   private readonly healthHandles = new Map<EffectKind, HealthClaim>()
+  /** Jobs whose handler has not settled, by kind + key; only this process's jobs are here. */
+  private readonly inFlight = new Map<string, InFlightJob>()
   private readonly now: () => Date
   private readonly health?: HealthBoard
   private statements: Statements | undefined
@@ -108,6 +121,14 @@ export class EffectsQueue implements Effects {
         `UPDATE effects SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', julianday(next_run_at) + (? / 86400000.0)) WHERE state IN ('pending', 'waiting')`,
       )
       .run(ms)
+  }
+
+  /**
+   * A crash may have left rows marked running; a restart resumes them (plan §17). Call once at
+   * boot, before the first pass: on a live queue it would hand running jobs to the next pass.
+   */
+  resumeRunning(): void {
+    this.stmt().resumeRunning.run(this.now().toISOString())
   }
 
   /**
@@ -150,12 +171,14 @@ export class EffectsQueue implements Effects {
   }
 
   /**
-   * Runs passes until no due job remains (jobs deferred by backoff or `Later`, or failed for
-   * good, stop the drain).
+   * Runs passes until no due job remains and no job is in flight, an earlier pass's included
+   * (jobs deferred by backoff or `Later`, or failed for good, stop the drain).
    */
   async drain(): Promise<void> {
     for (;;) {
-      if ((await this.runPass(this.now())) === 0) return
+      if ((await this.runPass(this.now())) > 0) continue
+      if (this.inFlight.size === 0) return
+      await Promise.allSettled([...this.inFlight.values()].map((job) => job.done))
     }
   }
 
@@ -181,30 +204,49 @@ export class EffectsQueue implements Effects {
       this.stmt().markRunning.run(nowIso, row.kind, row.key)
     }
     if (picked.length > 0) {
-      await Promise.all(picked.map(({ row, registration }) => this.execute(row, registration, now)))
+      await Promise.all(picked.map(({ row, registration }) => this.track(row, registration, now)))
     }
     return picked.length
+  }
+
+  /** Runs one picked job, holding its in-flight entry until the handler settles. */
+  private track(row: EffectRow, registration: Registration, now: Date): Promise<void> {
+    const id = inFlightId(row.kind, row.key)
+    const done = this.execute(row, registration, now).finally(() => this.inFlight.delete(id))
+    this.inFlight.set(id, { kind: row.kind, done })
+    return done
+  }
+
+  private inFlightOfKind(kind: EffectKind): number {
+    let count = 0
+    for (const job of this.inFlight.values()) if (job.kind === kind) count += 1
+    return count
   }
 
   private pickDue(now: Date): Array<{ row: EffectRow; registration: Registration }> {
     const statements = this.stmt()
     const nowIso = now.toISOString()
-    // A crash may have left rows marked running; a restart resumes them (plan §17).
-    statements.resumeRunning.run(nowIso)
     const picked: Array<{ row: EffectRow; registration: Registration }> = []
     for (const [kind, registration] of this.registrations) {
       if (registration.ordered) {
         // The earliest row of the kind that has not been drained or failed, in arrival order.
         // While it waits on a `Later` deferral or a backoff everything behind it is held; when
         // it is running the kind is busy; once it is `failed` the queue gives up on it and this
-        // query returns the next row instead.
+        // query returns the next row instead. An in-flight head re-enqueued mid-run reads
+        // pending, so the kind's in-flight count decides busy, not the row's state alone.
         const head = statements.headOfKind.get(kind)
         if (head === undefined || head.state === 'running' || head.next_run_at > nowIso) continue
+        if (this.inFlightOfKind(kind) > 0) continue
         picked.push({ row: head, registration })
         continue
       }
-      const due = statements.dueOfKind.all(kind, nowIso, registration.concurrency)
-      for (const row of due) picked.push({ row, registration })
+      // At most the kind's in-flight jobs read as due (re-enqueued mid-run), so asking for the
+      // full limit still leaves every free place filled once they are dropped.
+      const free = registration.concurrency - this.inFlightOfKind(kind)
+      const due = statements.dueOfKind
+        .all(kind, nowIso, registration.concurrency)
+        .filter((row) => !this.inFlight.has(inFlightId(row.kind, row.key)))
+      for (const row of due.slice(0, Math.max(0, free))) picked.push({ row, registration })
     }
     return picked
   }
@@ -237,8 +279,9 @@ export class EffectsQueue implements Effects {
       this.noteFailure(kind, message)
       return
     }
-    // Success drains the row: done is the absence of the row, not a state.
-    this.stmt().deleteRow.run(row.kind, row.key)
+    // Success drains the row: done is the absence of the row, not a state. A new payload
+    // enqueued mid-run is newer work and stays pending; the same payload is the job just done.
+    this.stmt().deleteRow.run(row.kind, row.key, row.payload)
     this.noteSuccess(kind)
   }
 
@@ -266,6 +309,8 @@ export class EffectsQueue implements Effects {
   }
 }
 
+const inFlightId = (kind: string, key: string): string => `${kind}\0${key}`
+
 class Statements {
   readonly upsert: Database.Statement<[string, string, string, string, string], unknown>
   readonly byKindKey: Database.Statement<[string, string], EffectRow & { last_error: string | null }>
@@ -275,7 +320,7 @@ class Statements {
   readonly markRunning: Database.Statement<[string, string, string], unknown>
   readonly reschedule: Database.Statement<[string, number, string, string, string], unknown>
   readonly fail: Database.Statement<[string, number, string, string, string, string, string], unknown>
-  readonly deleteRow: Database.Statement<[string, string], unknown>
+  readonly deleteRow: Database.Statement<[string, string, string], unknown>
 
   constructor(db: Database.Database) {
     this.upsert = db.prepare(
@@ -307,7 +352,7 @@ class Statements {
     this.fail = db.prepare(
       'UPDATE effects SET state = ?, attempts = ?, next_run_at = ?, last_error = ?, updated_at = ? WHERE kind = ? AND key = ?',
     )
-    this.deleteRow = db.prepare('DELETE FROM effects WHERE kind = ? AND key = ?')
+    this.deleteRow = db.prepare('DELETE FROM effects WHERE kind = ? AND key = ? AND payload = ?')
   }
 }
 

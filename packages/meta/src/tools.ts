@@ -564,7 +564,7 @@ export class PlannerTools {
     }
     if (issues.length > 0) return { ok: false, issues }
 
-    const taskId = `adhoc_${this.#nextId()}`
+    const taskId = `task_${this.#nextId()}`
     this.#journal.spawns.push({
       taskId,
       objective,
@@ -654,6 +654,11 @@ export class PlannerTools {
     const summary = typeof args.summary === 'string' ? args.summary.trim() : ''
     const issues: string[] = []
     if (workItemId === '') issues.push('report_result requires a work_item')
+    else if (
+      workItemId !== this.#config.turn.workItemId &&
+      !this.#config.snapshot.work.some((item) => item.id === workItemId)
+    )
+      issues.push(`report_result work item '${workItemId}' is not open work in this repository`)
     if (summary === '') issues.push('report_result requires a non-empty summary')
     else if (countWords(summary) > MAX_REPORT_WORDS)
       issues.push(`report_result summary is bounded at ${MAX_REPORT_WORDS} words (§12.7)`)

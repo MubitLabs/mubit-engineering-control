@@ -38,8 +38,8 @@ Every route in `apps/desktop/src/server.ts`. **Auth model: loopback only** — t
 
 | Method | Path | Body | What it does |
 | --- | --- | --- | --- |
-| POST | `/api/chat/messages` | `{ text, referencesWorkItem? }` (+ `x-idempotency-key` header) | Sends one message. Key-shaped text is stored **redacted** and answered with a Slots pointer; the meta-agent path returns the acknowledgement, routing (`conversation`/`new_work`/`attach`) and launch count; a replayed idempotency key returns the first answer verbatim. |
-| GET | `/api/chat/messages` | — | All messages, oldest first. |
+| POST | `/api/chat/messages` | `{ text, referencesWorkItem?, repoId? }` (+ `x-idempotency-key` header) | Sends one message. `repoId` names the repository's conversation: unknown (`unknown_repo`) or crossing (`repo_mismatch`) is a 400 before any write; absent is Unassigned, which plans but never launches. Key-shaped text is stored **redacted** and answered with a Slots pointer; the meta-agent path returns the acknowledgement, routing (`conversation`/`new_work`/`attach`) and launch count; a replayed idempotency key returns the first answer verbatim. |
+| GET | `/api/chat/messages` | `?repoId=` | All messages, oldest first, or one repository's. An unknown id is a 400. |
 
 ### Inbox (confirmations)
 
@@ -52,7 +52,7 @@ Every route in `apps/desktop/src/server.ts`. **Auth model: loopback only** — t
 
 | Method | Path | Body | What it does |
 | --- | --- | --- | --- |
-| GET | `/api/work` | — | Work items with state, stage and task counts by status. |
+| GET | `/api/work` | `?repoId=` | Work items with state, stage and task counts by status, or one repository's. A row with no `repoId` is Unassigned. An unknown id is a 400. |
 
 ### Slots
 

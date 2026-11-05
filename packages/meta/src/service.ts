@@ -46,6 +46,15 @@ import {
 import { loadPolicy } from '../../policy/src/policy'
 import { Acknowledger } from './acks'
 import {
+  assertRepoAdmission,
+  canonicalizePlan,
+  isReadOnlyWork,
+  planSnapshotId,
+  RepoAdmissionError,
+  repoFields,
+  repoOf,
+} from './admission'
+import {
   type ModelsTableSource,
   type PlannerContextInput,
   plannerContextFromStore,
@@ -88,6 +97,8 @@ export type MetaDecision = {
   stops?: PlannerTurnJournal['stops']
   cancels?: PlannerTurnJournal['cancels']
   escalated?: boolean
+  /** The compiled prompt revision the turn ran under, recorded on the plan snapshot. */
+  bundleRevision?: string
 }
 
 /** The wake descriptor: why a turn runs (user message, specialist report, answered question). */
@@ -120,6 +131,9 @@ export type TurnOutcome = {
   launchesEnqueued: string[]
   escalated: boolean
 }
+
+/** The message a turn serves; `repoId` is its repository's conversation (absent is Unassigned). */
+type TurnInput = { messageId: string; text: string; repoId?: string }
 
 /** A launch this turn enqueued, as persisted on the message doc so replays reuse the key. */
 type LaunchRecord = { attemptId: string; key: string; taskId: string; slotId: string }
@@ -209,15 +223,21 @@ export class MetaAgentService {
     messageId: string
     text: string
     referencesWorkItem?: string
+    /** §12.1, decision #10: the repository's conversation. Absent is Unassigned. */
+    repoId?: string
   }): Promise<TurnOutcome> {
+    assertRepoAdmission(this.#store, input)
+    const prior = this.#store.messages.get(input.messageId)
+    if (prior !== undefined && repoOf(prior) !== input.repoId) {
+      throw new RepoAdmissionError('repo_mismatch', `${input.messageId} belongs to another repository`)
+    }
     // A message already carrying a receipt replays verbatim: same ack, same launch keys —
     // the effects queue coalesces the re-enqueue to the existing rows (CONTRACTS §7).
-    const prior = this.#store.messages.get(input.messageId)
     if (prior !== undefined && typeof prior.ackText === 'string') return this.#replay(prior)
 
     const routing = routeMessage({
       referencesWorkItem: input.referencesWorkItem,
-      liveWork: this.#routingWork(),
+      liveWork: this.#routingWork(input.repoId),
     })
     switch (routing.action) {
       case 'attach':
@@ -237,11 +257,13 @@ export class MetaAgentService {
    * The routing set (§12.1): every work item except `done` ones — done work is history, so
    * a reference to it resolves to nothing and the message falls through to the
    * reference-absent rules. Stopped items stay visible with `stopped: true` so a reference
-   * to them is refused instead of silently attaching or resuming.
+   * to them is refused instead of silently attaching or resuming. One repository's work
+   * never routes another's request, so the set is that repository's alone.
    */
-  #routingWork() {
+  #routingWork(repoId: string | undefined) {
     return this.#store.workItems
       .list()
+      .filter((doc) => repoOf(doc) === repoId)
       .filter((doc) => String(doc.state) !== 'done')
       .map((doc) => ({
         workItemId: String(doc.id),
@@ -254,10 +276,11 @@ export class MetaAgentService {
       }))
   }
 
-  /** Live work for the brain's context: work items in no terminal state (§10). */
-  #liveForBrain(): { workItemId: string; stage: string }[] {
+  /** Live work for the brain's context: this repository's items in no terminal state (§10). */
+  #liveForBrain(repoId: string | undefined): { workItemId: string; stage: string }[] {
     return this.#store.workItems
       .list()
+      .filter((doc) => repoOf(doc) === repoId)
       .filter((doc) => !WORK_ITEM_TERMINAL.includes(String(doc.state) as WorkItemState))
       .map((doc) => ({ workItemId: String(doc.id), stage: String(doc.state) }))
   }
@@ -265,13 +288,14 @@ export class MetaAgentService {
   // ── Turns ────────────────────────────────────────────────────────────────────────────────
 
   /** The executed tool set for one turn (§5.2): built from the store, single source. */
-  #buildTools(turn: { messageId: string; workItemId?: string }): PlannerTools {
+  #buildTools(turn: { messageId: string; workItemId?: string }, repoId: string | undefined): PlannerTools {
     const modelsTable = this.#modelsTable?.()
     const table = modelsTable?.table ?? FALLBACK_EMPTY_TABLE
     return new PlannerTools({
       turn,
       snapshot: this.#buildSnapshot({
         messageId: turn.messageId,
+        repoId,
         turn: { wake: 'user message' },
         ...(turn.workItemId !== undefined && { workItemId: turn.workItemId }),
       }),
@@ -281,12 +305,13 @@ export class MetaAgentService {
       frontierPreAuthorised:
         (loadPolicy(this.#policyText).preAuthorised as Record<string, unknown>).frontier_model !== undefined,
       now: () => new Date(this.#now()),
-      liveWork: this.#routingWork(),
+      liveWork: this.#routingWork(repoId),
     })
   }
 
   #buildSnapshot(opts: {
     messageId: string
+    repoId: string | undefined
     workItemId?: string
     turn: { wake: string; detail?: string }
   }): ReturnType<typeof plannerContextFromStore> {
@@ -298,6 +323,10 @@ export class MetaAgentService {
       },
       policyText: this.#policyText,
       caps: this.#caps,
+      repoScope: {
+        ...(opts.repoId !== undefined && { repoId: opts.repoId }),
+        ...(opts.workItemId !== undefined && { workItemId: opts.workItemId }),
+      },
       ...(this.#marks !== undefined && { marks: this.#marks() }),
       ...(this.#modelsTable !== undefined && { modelsTable: this.#modelsTable }),
     })
@@ -306,49 +335,67 @@ export class MetaAgentService {
   /**
    * §6 WAKES: a specialist report, an answered question, a resolved confirmation — anything
    * that starts a planner turn without a user message. The wake reason travels to the brain
-   * and the decision commits exactly like a message turn.
+   * and the decision commits exactly like a message turn. A wake belongs to an existing
+   * work item and inherits its repo; it never creates work, and read-only work stays as it is.
    */
   async onWake(input: { reason: string; detail?: string; workItemId?: string }): Promise<TurnOutcome> {
-    const messageId = freshId('msg_wake_')
-    const workItemId = input.workItemId ?? freshId('wi_')
-    if (input.workItemId === undefined) {
-      const at = this.#now()
-      this.#store.atomic(() => {
-        this.#store.workItems.save({
-          id: workItemId,
-          state: 'planning',
-          mandate: { originMessageId: messageId },
-          originMessageId: messageId,
-          createdAt: at,
-          updatedAt: at,
-        })
-      })
+    const work = input.workItemId === undefined ? undefined : this.#store.workItems.get(input.workItemId)
+    if (input.workItemId === undefined || work === undefined) return this.#unboundWake(input)
+    const workItemId = input.workItemId
+    if (isReadOnlyWork(work, this.#store.tasks.list({ workItemId }))) {
+      return {
+        acknowledged: `${workItemId} has no repository, so it is read-only.`,
+        workItemId,
+        tasksCreated: 0,
+        launchesEnqueued: [],
+        escalated: false,
+      }
     }
+    const repoId = repoOf(work)
+    const messageId = freshId('msg_wake_')
+    const repo = repoId !== undefined ? { repoId } : {}
     let decision: MetaDecision
     try {
       decision = await this.#brain({
         messageId,
         messageText: input.detail ?? input.reason,
-        liveWork: this.#liveForBrain(),
-        ...(input.workItemId !== undefined && { workItemId: input.workItemId }),
+        liveWork: this.#liveForBrain(repoId),
+        workItemId,
         wake: { reason: input.reason, ...(input.detail !== undefined && { detail: input.detail }) },
-        tools: this.#buildTools({ messageId, workItemId: input.workItemId }),
+        tools: this.#buildTools({ messageId, workItemId }, repoId),
         snapshot: this.#buildSnapshot({
           messageId,
-          ...(input.workItemId !== undefined && { workItemId: input.workItemId }),
+          repoId,
+          workItemId,
           turn: { wake: input.reason, ...(input.detail !== undefined && { detail: input.detail }) },
         }),
       })
     } catch (error) {
       return this.#failTurn(
-        { messageId, text: input.detail ?? input.reason },
+        { messageId, text: input.detail ?? input.reason, ...repo },
         workItemId,
         error instanceof Error ? error.message : String(error),
       )
     }
     const plan = 'plan' in decision ? decision.plan : undefined
-    if (plan === undefined) return this.#ackOnlyTurn({ messageId, text: input.reason }, workItemId, decision)
-    return this.#commitPlan({ messageId, text: input.reason }, workItemId, plan, decision)
+    if (plan === undefined) {
+      return this.#ackOnlyTurn({ messageId, text: input.reason, ...repo }, workItemId, decision)
+    }
+    return this.#commitPlan({ messageId, text: input.reason, ...repo }, workItemId, plan, decision)
+  }
+
+  /** A wake naming no existing work item is recorded and goes no further. */
+  #unboundWake(input: { reason: string; workItemId?: string }): TurnOutcome {
+    const at = this.#now()
+    this.#store.atomic(() => {
+      this.#appendEvent(
+        'wakes',
+        'wake_unbound',
+        { reason: input.reason, ...(input.workItemId !== undefined && { workItemId: input.workItemId }), at },
+        at,
+      )
+    })
+    return { acknowledged: 'Noted.', tasksCreated: 0, launchesEnqueued: [], escalated: false }
   }
 
   /**
@@ -389,7 +436,7 @@ export class MetaAgentService {
   }
 
   /** §6 attach: a message on existing work is acknowledged as a note, nothing more. */
-  #noteAttached(input: { messageId: string; text: string }, workItemId: string): TurnOutcome {
+  #noteAttached(input: TurnInput, workItemId: string): TurnOutcome {
     const at = this.#now()
     const ack = `Noted on ${workItemId}: it lands with the running work.`
     this.#store.atomic(() => {
@@ -406,7 +453,7 @@ export class MetaAgentService {
   }
 
   /** §12.1: a stopped work item never resumes silently — the reference is refused, not attached. */
-  #refuseStopped(input: { messageId: string; text: string }): TurnOutcome {
+  #refuseStopped(input: TurnInput): TurnOutcome {
     const at = this.#now()
     const ack = 'That work is stopped — it will not resume silently; send it again as a new request.'
     this.#store.atomic(() => {
@@ -417,9 +464,9 @@ export class MetaAgentService {
   }
 
   /** §12.1 conversation: with live work present, a reference-less message is context only. */
-  #noteConversation(input: { messageId: string; text: string }): TurnOutcome {
+  #noteConversation(input: TurnInput): TurnOutcome {
     const at = this.#now()
-    const liveIds = this.#liveForBrain().map((work) => work.workItemId)
+    const liveIds = this.#liveForBrain(input.repoId).map((work) => work.workItemId)
     const ack =
       liveIds.length > 0 ? `Noted as context on the running work (${liveIds.join(', ')}).` : 'Noted.'
     this.#store.atomic(() => {
@@ -437,7 +484,7 @@ export class MetaAgentService {
    * resumes planning on the same work item instead of minting a second one.
    */
   async #startNewWork(
-    input: { messageId: string; text: string; referencesWorkItem?: string },
+    input: TurnInput & { referencesWorkItem?: string },
     prior: StoreDoc | undefined,
   ): Promise<TurnOutcome> {
     const workItemId = typeof prior?.workItemId === 'string' ? prior.workItemId : freshId('wi_')
@@ -449,6 +496,7 @@ export class MetaAgentService {
           state: 'planning',
           originMessageId: input.messageId,
           mandate: { originMessageId: input.messageId },
+          ...repoFields(this.#store, input.repoId, this.#policyText),
           createdAt: at,
           updatedAt: at,
         })
@@ -467,12 +515,13 @@ export class MetaAgentService {
       decision = await this.#brain({
         messageId: input.messageId,
         messageText: input.text,
-        liveWork: this.#liveForBrain(),
+        liveWork: this.#liveForBrain(input.repoId),
         workItemId,
         wake: { reason: 'user message', detail: input.text.slice(0, 200) },
-        tools: this.#buildTools({ messageId: input.messageId, workItemId }),
+        tools: this.#buildTools({ messageId: input.messageId, workItemId }, input.repoId),
         snapshot: this.#buildSnapshot({
           messageId: input.messageId,
+          repoId: input.repoId,
           workItemId,
           turn: { wake: 'user message', detail: input.text.slice(0, 200) },
         }),
@@ -493,14 +542,10 @@ export class MetaAgentService {
    * the reply, and the decision's questions/confirmations/routes still persist — the
    * turn's whole write set, not just the words.
    */
-  #ackOnlyTurn(
-    input: { messageId: string; text: string },
-    workItemId: string,
-    decision: MetaDecision,
-  ): TurnOutcome {
+  #ackOnlyTurn(input: TurnInput, workItemId: string, decision: MetaDecision): TurnOutcome {
     const at = this.#now()
     this.#store.atomic(() => {
-      this.#persistExtras(workItemId, decision, at)
+      this.#persistExtras(workItemId, this.#withinRepo(input.messageId, workItemId, decision, at), at)
       this.#saveMessage(input, {
         routing: 'new_work',
         at,
@@ -522,7 +567,7 @@ export class MetaAgentService {
   }
 
   /** A brain failure ends the turn safely: failure ack, stopped work item, error event. */
-  #failTurn(input: { messageId: string; text: string }, workItemId: string, detail: string): TurnOutcome {
+  #failTurn(input: TurnInput, workItemId: string, detail: string): TurnOutcome {
     const at = this.#now()
     const ack = 'I could not start that'
     this.#store.atomic(() => {
@@ -549,13 +594,13 @@ export class MetaAgentService {
 
   /** Validate the brain's plan (§10); an invalid one is answered with the first issue. */
   #commitPlan(
-    input: { messageId: string; text: string },
+    input: TurnInput,
     workItemId: string,
     plan: { tasks: MetaPlanTask[] },
-    decision: MetaDecision,
+    unscoped: MetaDecision,
   ): TurnOutcome {
     const tasks = plan.tasks
-    const ack = decision.ack
+    const ack = unscoped.ack
     // v0: every task gets the pseudo-check (module doc); roles must exist in the registry.
     const issues = validateGraph(
       tasks.map((task) => ({
@@ -607,9 +652,16 @@ export class MetaAgentService {
     // effects.enqueue only runs inside atomic, and this is that atomic).
     const at = this.#now()
     const launches = this.#store.atomic(() => {
+      const decision = this.#withinRepo(input.messageId, workItemId, unscoped, at)
       const work = this.#store.workItems.get(workItemId)
+      const repoId = repoOf(work)
+      const planRevision = (typeof work?.planRevision === 'number' ? work.planRevision : 0) + 1
+      const canonical = canonicalizePlan(tasks, this.#store.tasks.list({ workItemId }), () =>
+        freshId('task_'),
+      )
       if (work !== undefined) {
         work.state = 'executing'
+        work.planRevision = planRevision
         work.updatedAt = at
         this.#store.workItems.save(work)
       }
@@ -620,14 +672,20 @@ export class MetaAgentService {
         at,
       )
 
-      for (const task of tasks) {
+      // Decision #19: a key this work item already holds is the same task, so its id, status
+      // and creation stay and only what the plan says about it changes.
+      for (const { prior, ...task } of canonical) {
         this.#store.tasks.save({
+          ...prior,
           id: task.taskId,
           workItemId,
+          ...(repoId !== undefined && { repoId }),
+          localKey: task.localKey,
+          planRevision,
           objective: task.objective,
-          dependsOn: [...task.dependsOn],
+          dependsOn: task.dependsOn,
           role: task.role,
-          status: 'ready',
+          status: prior?.status ?? 'ready',
           acceptanceChecks:
             task.acceptanceChecks !== undefined && task.acceptanceChecks.length > 0
               ? [...task.acceptanceChecks]
@@ -639,10 +697,27 @@ export class MetaAgentService {
           ...(task.slotHint !== undefined && { slotHint: { ...task.slotHint } }),
           ...(task.budget !== undefined && { budget: { ...task.budget } }),
           ...(task.subagentPolicy !== undefined && { subagentPolicy: { ...task.subagentPolicy } }),
-          createdAt: at,
+          createdAt: prior?.createdAt ?? at,
           updatedAt: at,
         })
       }
+      this.#store.engines.save({
+        id: planSnapshotId(workItemId, planRevision),
+        workItemId,
+        ...(repoId !== undefined && { repoId }),
+        revision: planRevision,
+        messageId: input.messageId,
+        ...(decision.bundleRevision !== undefined && { promptRevision: decision.bundleRevision }),
+        tasks: canonical.map((task) => ({
+          taskId: task.taskId,
+          localKey: task.localKey,
+          objective: task.objective,
+          dependsOn: task.dependsOn,
+          role: task.role,
+        })),
+        createdAt: at,
+        updatedAt: at,
+      })
 
       // §5.2 spawn_agent: ad-hoc specialists outside the plan get task docs and dispatch
       // through the same §11 pass — the executor already bounded them by caps.
@@ -650,6 +725,8 @@ export class MetaAgentService {
         this.#store.tasks.save({
           id: spawn.taskId,
           workItemId: spawn.workItemId,
+          ...(repoId !== undefined && { repoId }),
+          planRevision,
           objective: spawn.objective,
           dependsOn: [],
           role: spawn.role,
@@ -673,18 +750,20 @@ export class MetaAgentService {
       // stops, cancels — one transaction with the plan.
       this.#persistExtras(workItemId, decision, at)
 
-      // Dependency-satisfied tasks only (§14): within a fresh plan every dependency is
-      // still `ready` — an integration dependency needs `integrated` — so a task with any
-      // dependency in this plan is not schedulable yet.
-      const states = new Map<string, 'ready' | 'accepted' | 'integrated'>(
-        tasks.map((task) => [task.taskId, 'ready'] as const),
-      )
+      // Dependency-satisfied tasks only (§14): a fresh task is still `ready` — an integration
+      // dependency needs `integrated` — so only a task a replan kept can satisfy one. A kept
+      // task runs once: nothing launches a key that has moved on or already has an attempt.
+      const states = new Map(canonical.map((task) => [task.taskId, task.prior?.status ?? 'ready']))
       const terminalDep = (dep: string): 'accepted' | 'integrated' | undefined => {
         const state = states.get(dep)
         return state === 'accepted' || state === 'integrated' ? state : undefined
       }
-      const ready: SchedulableTask[] = [
-        ...tasks,
+      const candidates = [
+        ...canonical.filter(
+          (task) =>
+            (task.prior?.status ?? 'ready') === 'ready' &&
+            this.#store.attempts.list({ taskId: task.taskId }).length === 0,
+        ),
         ...(decision.spawns ?? []).map((spawn) => ({
           taskId: spawn.taskId,
           objective: spawn.objective,
@@ -693,6 +772,16 @@ export class MetaAgentService {
           slotHint: spawn.slotHint,
         })),
       ]
+      if (repoId === undefined) {
+        this.#appendEvent(
+          `work:${workItemId}`,
+          'launch_withheld',
+          { workItemId, reason: 'no repository', at },
+          at,
+        )
+      }
+      // Unassigned work is planned but never launched.
+      const ready: SchedulableTask[] = (repoId === undefined ? [] : candidates)
         .filter((task) =>
           task.dependsOn.every(
             (dep) =>
@@ -789,8 +878,44 @@ export class MetaAgentService {
       workItemId,
       tasksCreated: tasks.length,
       launchesEnqueued: launches.map((record) => record.attemptId),
-      escalated: decision.escalated === true,
+      escalated: unscoped.escalated === true,
     }
+  }
+
+  /**
+   * The service's own repo fence over the tools' scoped snapshot: an effect aimed outside the
+   * turn's repository is dropped and recorded, inside the caller's transaction. An Unassigned
+   * turn reaches only its own work item, so a legacy row is never written.
+   */
+  #withinRepo(messageId: string, workItemId: string, decision: MetaDecision, at: string): MetaDecision {
+    const repoId = repoOf(this.#store.workItems.get(workItemId))
+    const allowed = (target: unknown): boolean => {
+      if (target === workItemId) return true
+      if (repoId === undefined || typeof target !== 'string') return false
+      return repoOf(this.#store.workItems.get(target)) === repoId
+    }
+    const routes = decision.routes?.filter((route) => route.target === undefined || allowed(route.target))
+    const spawns = decision.spawns?.filter((spawn) => allowed(spawn.workItemId))
+    const reports = decision.reports?.filter((report) => allowed(report.workItemId))
+    const stops = decision.stops?.filter((stop) =>
+      allowed(this.#store.attempts.get(stop.attemptId)?.workItemId),
+    )
+    const cancels = decision.cancels?.filter((cancel) =>
+      allowed(this.#store.tasks.get(cancel.taskId)?.workItemId),
+    )
+    const sizes = (d: MetaDecision): number =>
+      [d.routes, d.spawns, d.reports, d.stops, d.cancels].reduce((sum, rows) => sum + (rows?.length ?? 0), 0)
+    const scoped = { ...decision, routes, spawns, reports, stops, cancels }
+    const dropped = sizes(decision) - sizes(scoped)
+    if (dropped > 0) {
+      this.#appendEvent(
+        `work:${workItemId}`,
+        'cross_repo_refused',
+        { workItemId, messageId, dropped, at },
+        at,
+      )
+    }
+    return scoped
   }
 
   /**
@@ -950,7 +1075,7 @@ export class MetaAgentService {
 
   /** Upserts the message doc, carrying `createdAt` over once it exists. */
   #saveMessage(
-    input: { messageId: string; text: string },
+    input: TurnInput,
     fields: {
       routing: string
       at: string
@@ -968,6 +1093,7 @@ export class MetaAgentService {
       createdAt: typeof prior?.createdAt === 'string' ? prior.createdAt : fields.at,
       updatedAt: fields.at,
       routing: fields.routing,
+      ...(input.repoId !== undefined && { repoId: input.repoId }),
       ...(fields.workItemId !== undefined && { workItemId: fields.workItemId }),
       ...(fields.ackText !== undefined && { ackText: fields.ackText }),
       ...(fields.tasksCreated !== undefined && { tasksCreated: fields.tasksCreated }),

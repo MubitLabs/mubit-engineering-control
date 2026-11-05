@@ -17,6 +17,9 @@ import { EffectsQueue } from './effects-queue'
 /** A stream seq that leaves a gap or repeats what the stream already holds. */
 export class EventSequenceError extends Error {}
 
+/** A save naming an id another collection already holds; it would replace that row's json. */
+export class DocKindCollisionError extends Error {}
+
 export interface SqliteStoreOptions {
   now?: () => Date
 }
@@ -121,7 +124,8 @@ class DocsRepository implements Repository<StoreDoc> {
   ) {
     this.upsert = db.prepare(
       `INSERT INTO docs (id, kind, json, updated_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT (id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at`,
+       ON CONFLICT (id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at
+       WHERE docs.kind = excluded.kind`,
     )
     this.byId = db.prepare('SELECT json FROM docs WHERE id = ?')
     this.byKind = db.prepare('SELECT json FROM docs WHERE kind = ? ORDER BY rowid')
@@ -135,7 +139,8 @@ class DocsRepository implements Repository<StoreDoc> {
   save(doc: StoreDoc): void {
     const id = doc.id
     if (typeof id !== 'string') throw new Error('mec: a stored document must carry a string id')
-    this.upsert.run(id, this.kind, JSON.stringify(doc), this.now().toISOString())
+    const { changes } = this.upsert.run(id, this.kind, JSON.stringify(doc), this.now().toISOString())
+    if (changes === 0) throw new DocKindCollisionError(`mec: ${id} is already stored as another kind`)
   }
 
   list(filter?: Record<string, unknown>): StoreDoc[] {

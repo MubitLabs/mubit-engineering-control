@@ -42,7 +42,12 @@ const ghostDepPlan: MetaDecision = {
   },
 }
 
+const REPO = 'repo_main'
+
 const rig = (decision: MetaDecision, store = new MemoryRepositories()) => {
+  store.atomic(() => {
+    store.engines.save({ id: REPO, url: 'https://example.test/main', bootstrap: [], checks: [], trust: true })
+  })
   const service = new MetaAgentService({
     store,
     effects: store.effects,
@@ -51,6 +56,10 @@ const rig = (decision: MetaDecision, store = new MemoryRepositories()) => {
   })
   return { service, store }
 }
+
+/** Planner keys are local; the store's ids are canonical (spec §10, decision #19). */
+const taskByKey = (store: MemoryRepositories, workItemId: string | undefined, localKey: string) =>
+  store.tasks.list({ workItemId, localKey })[0]
 
 const seedWork = (store: MemoryRepositories, id: string, state: string): void => {
   store.atomic(() => {
@@ -73,7 +82,11 @@ describe('MetaAgentService (plan §6/§12)', () => {
 
   it('new work: creates the work item executing, acks once, tasks ready, one launch enqueued', async () => {
     const { service, store } = rig(twoTaskPlan)
-    const outcome = await service.onUserMessage({ messageId: 'msg_1', text: 'Add audit-log viewing' })
+    const outcome = await service.onUserMessage({
+      messageId: 'msg_1',
+      text: 'Add audit-log viewing',
+      repoId: REPO,
+    })
     const { workItemId } = outcome
 
     expect(workItemId).toMatch(/^wi_/)
@@ -92,11 +105,12 @@ describe('MetaAgentService (plan §6/§12)', () => {
     const workEvents = store.events.read(`work:${workItemId!}`)
     expect(workEvents.map((event) => event.type)).toEqual(['planning_started', 'execution_started'])
 
-    expect(store.tasks.get('task_view')).toMatchObject({ workItemId, status: 'ready' })
-    expect(store.tasks.get('task_tests')).toMatchObject({
+    const view = taskByKey(store, workItemId, 'task_view')
+    expect(view).toMatchObject({ workItemId, status: 'ready' })
+    expect(taskByKey(store, workItemId, 'task_tests')).toMatchObject({
       workItemId,
       status: 'ready',
-      dependsOn: ['task_view'],
+      dependsOn: [view?.id],
       role: 'test_author',
     })
 
@@ -105,7 +119,7 @@ describe('MetaAgentService (plan §6/§12)', () => {
 
     // The launch is a queued attempt doc plus one launch effect keyed att_1:1.
     expect(store.attempts.get('att_1')).toMatchObject({
-      taskId: 'task_view',
+      taskId: view?.id,
       workItemId: outcome.workItemId,
       slotId: 'fake-slot',
       state: 'queued',
@@ -114,19 +128,23 @@ describe('MetaAgentService (plan §6/§12)', () => {
     const effects = store.snapshot().effects
     expect(effects).toHaveLength(1)
     expect(effects[0]).toMatchObject({ kind: 'launch', key: 'att_1:1' })
-    expect(effects[0]?.payload).toMatchObject({ attempt_id: 'att_1', task_id: 'task_view' })
+    expect(effects[0]?.payload).toMatchObject({ attempt_id: 'att_1', task_id: view?.id })
     expect(store.events.read('attempt:att_1').map((event) => event.type)).toEqual(['attempt_queued'])
   })
 
   it('a dependency holds its task back: only the dependency-free task is launched', async () => {
     const { service, store } = rig(twoTaskPlan)
-    const outcome = await service.onUserMessage({ messageId: 'msg_1', text: 'Add audit-log viewing' })
+    const outcome = await service.onUserMessage({
+      messageId: 'msg_1',
+      text: 'Add audit-log viewing',
+      repoId: REPO,
+    })
     // task_tests depends on task_view, which is merely ready — never integrated — so the
     // dispatch plan launches one task and defers the other on its dependency.
     expect(outcome.launchesEnqueued).toEqual(['att_1'])
     expect(store.attempts.list()).toHaveLength(1)
-    expect(store.attempts.list()[0]?.taskId).toBe('task_view')
-    expect(store.tasks.get('task_tests')?.status).toBe('ready')
+    expect(store.attempts.list()[0]?.taskId).toBe(taskByKey(store, outcome.workItemId, 'task_view')?.id)
+    expect(taskByKey(store, outcome.workItemId, 'task_tests')?.status).toBe('ready')
   })
 
   it('attach: a message referencing live work acks as a note — no new work item, no launches', async () => {
@@ -185,8 +203,9 @@ describe('MetaAgentService (plan §6/§12)', () => {
 
   it('duplicate message: replays the same ack and adds no second work item, task or attempt', async () => {
     const { service, store } = rig(twoTaskPlan)
-    const first = await service.onUserMessage({ messageId: 'msg_1', text: 'Add audit-log viewing' })
-    const second = await service.onUserMessage({ messageId: 'msg_1', text: 'Add audit-log viewing' })
+    const message = { messageId: 'msg_1', text: 'Add audit-log viewing', repoId: REPO }
+    const first = await service.onUserMessage(message)
+    const second = await service.onUserMessage(message)
 
     expect(second).toEqual(first)
     expect(store.workItems.list()).toHaveLength(1)
@@ -196,8 +215,9 @@ describe('MetaAgentService (plan §6/§12)', () => {
 
   it('the replay re-enqueues launches under their original keys: one coalesced row, proving the atomic enqueue', async () => {
     const { service, store } = rig(twoTaskPlan)
-    await service.onUserMessage({ messageId: 'msg_1', text: 'Add audit-log viewing' })
-    await service.onUserMessage({ messageId: 'msg_1', text: 'Add audit-log viewing' })
+    const message = { messageId: 'msg_1', text: 'Add audit-log viewing', repoId: REPO }
+    await service.onUserMessage(message)
+    await service.onUserMessage(message)
 
     // Same kind + key twice (first turn, then the replay) — the queue keeps one row, and
     // MemoryEffects only accepts enqueue inside Store.atomic, so a row at all means both
@@ -301,7 +321,11 @@ describe('MetaAgentService (plan §6/§12)', () => {
   it('without MEC_FAKE_ENGINE there is no slot: tasks are created but nothing launches', async () => {
     delete process.env.MEC_FAKE_ENGINE
     const { service, store } = rig(twoTaskPlan)
-    const outcome = await service.onUserMessage({ messageId: 'msg_1', text: 'Add audit-log viewing' })
+    const outcome = await service.onUserMessage({
+      messageId: 'msg_1',
+      text: 'Add audit-log viewing',
+      repoId: REPO,
+    })
 
     expect(outcome.tasksCreated).toBe(2)
     expect(outcome.launchesEnqueued).toEqual([])

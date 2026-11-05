@@ -5,7 +5,7 @@ import type { DomainEvent } from '@mec/contracts'
 import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MIGRATIONS_v1, migrate } from '../src/migrations'
-import { EventSequenceError, SqliteStore } from '../src/store'
+import { DocKindCollisionError, EventSequenceError, SqliteStore } from '../src/store'
 
 let dir: string
 let db: Database.Database
@@ -28,6 +28,17 @@ function event(stream: string, seq: number, type = 'work_item.opened'): DomainEv
 }
 
 describe('sqlite store', () => {
+  it('save refuses a cross-kind id collision', () => {
+    store.attempts.save({ id: 'att_1', state: 'queued' })
+    expect(() => store.tasks.save({ id: 'att_1', status: 'ready' })).toThrow(DocKindCollisionError)
+    expect(store.attempts.get('att_1')).toEqual({ id: 'att_1', state: 'queued' })
+    expect(store.tasks.list()).toHaveLength(0)
+    expect(store.attempts.list()).toHaveLength(1)
+    // The same kind still upserts.
+    store.attempts.save({ id: 'att_1', state: 'running' })
+    expect(store.attempts.get('att_1')).toEqual({ id: 'att_1', state: 'running' })
+  })
+
   it('opens in WAL with foreign keys on', () => {
     expect(db.pragma('journal_mode', { simple: true })).toBe('wal')
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1)

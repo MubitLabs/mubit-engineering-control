@@ -83,6 +83,8 @@ export type PlannerConversationEntry = {
 
 export type PlannerWorkTask = {
   id: string
+  /** The planner's own key for the task; absent on spawned and legacy tasks. */
+  localKey?: string
   role?: string
   tier?: string
   slotId?: string
@@ -223,7 +225,7 @@ function workSection(input: PlannerContextInput): string {
         task.state !== undefined ? `state:${task.state}` : 'state:?',
         task.head !== undefined ? `head:${task.head}` : 'head:-',
       ].join(' ')
-      return `    - ${task.id} [${bits}]`
+      return `    - ${task.id}${task.localKey !== undefined ? ` (key ${task.localKey})` : ''} [${bits}]`
     })
     return [
       `- ${item.id} stage="${item.stage}" state=${item.state}` +
@@ -482,9 +484,27 @@ export function plannerContextFromStore(
     scorecards?: () => PlannerScorecardRow[] | undefined
     bundleRevision?: string
     todaySpend?: { slotId: string; usd: number }[]
+    /**
+     * One repository's view (§12.1, decision #10). An Unassigned turn sees only its own work
+     * item, so a legacy row is out of the planner's reach. Absent means every repository.
+     */
+    repoScope?: { repoId?: string; workItemId?: string }
   },
 ): PlannerContextInput {
+  const scope = opts.repoScope
+  const inScope = (doc: StoreDoc): boolean => {
+    if (scope === undefined) return true
+    if (scope.repoId !== undefined) return doc.repoId === scope.repoId
+    return doc.repoId === undefined && doc.id === scope.workItemId
+  }
+  const scopedWork = new Set(
+    store.workItems
+      .list()
+      .filter(inScope)
+      .map((doc) => doc.id),
+  )
   const conversation = [...store.messages.list()]
+    .filter((doc) => scope === undefined || doc.repoId === scope.repoId)
     .sort(
       (a, b) =>
         String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')) ||
@@ -502,6 +522,7 @@ export function plannerContextFromStore(
   const open = store.workItems
     .list()
     .filter((doc) => !WORK_ITEM_TERMINAL.includes(String(doc.state) as WorkItemState))
+    .filter(inScope)
   const work: PlannerWorkItem[] = open.map((doc) => {
     const id = String(doc.id)
     const tasks = store.tasks.list({ workItemId: id }).map((task) => {
@@ -512,6 +533,7 @@ export function plannerContextFromStore(
       const modelRequest = task.modelRequest as { tier?: string } | undefined
       return {
         id: String(task.id),
+        ...(typeof task.localKey === 'string' && { localKey: task.localKey }),
         ...(typeof task.role === 'string' && { role: task.role }),
         ...(modelRequest?.tier !== undefined && { tier: modelRequest.tier }),
         ...(latest !== undefined && typeof latest.slotId === 'string' && { slotId: latest.slotId }),
@@ -534,20 +556,27 @@ export function plannerContextFromStore(
     }
   })
 
-  const attempts: PlannerAttemptRow[] = store.attempts.list().map((doc) => ({
-    id: String(doc.id ?? ''),
-    ...(typeof doc.taskId === 'string' && { taskId: doc.taskId }),
-    ...(typeof doc.workItemId === 'string' && { workItemId: doc.workItemId }),
-    ...(typeof doc.slotId === 'string' && { slotId: doc.slotId }),
-    ...(typeof doc.state === 'string' && { state: doc.state }),
-    ...(typeof doc.terminalReason === 'string' && { terminalReason: doc.terminalReason }),
-  }))
+  const attempts: PlannerAttemptRow[] = store.attempts
+    .list()
+    .filter((doc) => scope === undefined || scopedWork.has(doc.workItemId))
+    .map((doc) => ({
+      id: String(doc.id ?? ''),
+      ...(typeof doc.taskId === 'string' && { taskId: doc.taskId }),
+      ...(typeof doc.workItemId === 'string' && { workItemId: doc.workItemId }),
+      ...(typeof doc.slotId === 'string' && { slotId: doc.slotId }),
+      ...(typeof doc.state === 'string' && { state: doc.state }),
+      ...(typeof doc.terminalReason === 'string' && { terminalReason: doc.terminalReason }),
+    }))
 
-  const confirmations = store.confirmations.list({ status: 'pending' }).map((doc) => ({
-    id: String(doc.id),
-    cls: String(doc.cls ?? ''),
-    expiresAt: String(doc.expiresAt ?? ''),
-  }))
+  // A card bound to no work item is not repo-scoped, so every repository still sees it.
+  const confirmations = store.confirmations
+    .list({ status: 'pending' })
+    .filter((doc) => scope === undefined || doc.workItemId === undefined || scopedWork.has(doc.workItemId))
+    .map((doc) => ({
+      id: String(doc.id),
+      cls: String(doc.cls ?? ''),
+      expiresAt: String(doc.expiresAt ?? ''),
+    }))
 
   const tableSource = opts.modelsTable?.() ?? undefined
   const slotRows: PlannerSlotRow[] = slots.map((slot) => {

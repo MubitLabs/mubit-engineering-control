@@ -399,11 +399,14 @@ function toPartEntry(entry: { state: string; detail?: string }): PartEntry {
   return { state: 'ok', ...(entry.detail !== undefined && { detail: entry.detail }) }
 }
 
+/** Legacy rows belong to no repository; every repository id starts `repo_`, so this cannot clash. */
+const UNASSIGNED = 'unassigned'
+
 /**
- * The optional `repoId` read filter: every row when absent, and a 400 for an id that is not
- * registered, the same answer the chat route gives. A repeated `repoId` arrives as an array,
- * and `repoId[]=` or `repoId[0]=` arrive under their literal keys: none of those names one
- * repository, so each is the same 400 and never the unfiltered list.
+ * The optional `repoId` read filter: every row when absent, and a 400 for an id that is neither
+ * registered nor `unassigned`, the same answer the chat route gives. A repeated `repoId`
+ * arrives as an array, and `repoId[]=` or `repoId[0]=` arrive under their literal keys: none
+ * of those names one repository, so each is the same 400 and never the unfiltered list.
  */
 function repoFilterOf(store: Store, request: FastifyRequest): { repoId?: string } {
   const query = request.query as Record<string, unknown>
@@ -413,19 +416,17 @@ function repoFilterOf(store: Store, request: FastifyRequest): { repoId?: string 
     throw new RepoAdmissionError('unknown_repo', 'repoId must be one registered repository id')
   }
   if (repoId === undefined) return {}
-  assertRepoAdmission(store, { repoId })
+  if (repoId !== UNASSIGNED) assertRepoAdmission(store, { repoId })
   return { repoId }
 }
 
-/** Legacy rows belong to no repository; every repository id starts `repo_`, so this cannot clash. */
-const UNASSIGNED = 'unassigned'
-
 /** One repository's rows, the Unassigned rows, or all of them (`repoFilterOf`). */
 function rowsInScope(rows: Store['workItems'], store: Store, request: FastifyRequest): StoreDoc[] {
-  if ((request.query as { repoId?: unknown }).repoId === UNASSIGNED) {
+  const filter = repoFilterOf(store, request)
+  if (filter.repoId === UNASSIGNED) {
     return rows.list().filter((doc) => typeof doc.repoId !== 'string')
   }
-  return rows.list(repoFilterOf(store, request))
+  return rows.list(filter)
 }
 
 const WORK_TITLE_LENGTH = 80

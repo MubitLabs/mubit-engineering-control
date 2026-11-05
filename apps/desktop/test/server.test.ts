@@ -518,6 +518,26 @@ describe('repo reads', () => {
     expect((await get('/api/chat/messages?repoId=unassigned')).map((row) => row.id)).toEqual(['msg_legacy'])
   })
 
+  it('repoId=unassigned beside another repoId is the same 400, not the Unassigned rows', async () => {
+    const { app } = makeServer()
+    track(app)
+    const repo = await registerRepo(app, 'a')
+    const queries = [
+      `repoId=unassigned&repoId=${repo}`,
+      `repoId=unassigned&repoId[]=${repo}`,
+      `repoId=unassigned&repoId%5B%5D=${repo}`,
+      `repoId=unassigned&repoId[0]=${repo}`,
+      'repoId[]=unassigned',
+    ]
+    for (const route of ['/api/work', '/api/chat/messages']) {
+      for (const query of queries) {
+        const res = await app.inject({ method: 'GET', url: `${route}?${query}` })
+        expect(res.statusCode, `${route}?${query}`).toBe(400)
+        expect(res.json(), `${route}?${query}`).toMatchObject({ error: 'unknown_repo' })
+      }
+    }
+  })
+
   it('a work row is titled from the first line of its origin message', async () => {
     const { app } = makeServer()
     track(app)

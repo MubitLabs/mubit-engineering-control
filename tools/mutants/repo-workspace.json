@@ -201,5 +201,12 @@
     "find": "        // Not knowing is not the same as none: the entry stays as it was.\n",
     "replace": "        if (state.unassigned === null) set({ unassigned: false })\n",
     "tests": ["apps/web/test/workspace.test.ts"]
+  },
+  {
+    "name": "unassigned skips the one-repoId check",
+    "file": "apps/desktop/src/server.ts",
+    "find": "  const filter = repoFilterOf(store, request)\n",
+    "replace": "  const filter = (request.query as { repoId?: unknown }).repoId === UNASSIGNED ? { repoId: UNASSIGNED } : repoFilterOf(store, request)\n",
+    "tests": ["apps/desktop/test/server.test.ts"]
   }
 ]

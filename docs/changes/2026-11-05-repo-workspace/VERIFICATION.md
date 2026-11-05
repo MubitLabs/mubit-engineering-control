@@ -61,3 +61,10 @@ The verifier found that reloading `#repo/unassigned/chat` showed a false "Reposi
 - Mutants: `python3 tools/mutants/run.py tools/mutants/repo-workspace.json`: 29 of 29 killed, 5 of them new. `--self-check` behaved as it should.
 - `pnpm check`: exit 1 from the one baseline failure only. 1921 tests: 1905 passed, 1 failed (`login-cards.test.ts`, the known environment problem), 15 skipped.
 - Not rerun on a real server: this fix ran against route mocks and unit tests. The behaviour verifier has not rerun it yet.
+
+## Fix after rebase: `repoId=unassigned` and the one-string rule
+
+Rebased onto `c495b0a`, where #33 made any `repoId` that is not one string a 400. `rowsInScope` tested for `unassigned` before calling `repoFilterOf`, so `repoId=unassigned&repoId[]=<id>` skipped that check and answered 200 with the Unassigned rows. `repoFilterOf` now runs first and lets `unassigned` past admission only.
+
+- Failing first, `pnpm vitest run apps/desktop/test/server.test.ts -t unassigned`: 1 failed, 1 passed (`expected 200 to be 400`). After: all 55 tests in the file passed.
+- Mutants: one added to `tools/mutants/repo-workspace.json`, "unassigned skips the one-repoId check".

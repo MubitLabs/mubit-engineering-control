@@ -1,0 +1,128 @@
+[
+  {
+    "name": "group held as working",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "if (key.includes('held')) return 'held'",
+    "replace": "if (key.includes('held')) return 'working'",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "group dropped as working",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "new Set(['done', 'stopped', 'dropped', 'closed', 'merged'])",
+    "replace": "new Set(['done', 'stopped', 'closed', 'merged'])",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "a hold outranks a person stage",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  if (key.includes('held')) return 'held'\n",
+    "replace": "  if (key.includes('held') || row.state === 'held') return 'held'\n",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "count from a different list",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "count: read.status === 'ready' ? waiting.length : null",
+    "replace": "count: read.status === 'ready' ? items.length : null",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "read failure gives needs count 0",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "count: read.status === 'ready' ? waiting.length : null",
+    "replace": "count: read.status === 'ready' ? waiting.length : 0",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "action uses the selected filter's repo",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  const { repoId } = row\n",
+    "replace": "  const repoId = filter.kind === 'repo' ? filter.repoId : row.repoId\n",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "unassigned work offers actions",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "if (repoId === null || row.readOnly || ended(row)) return []",
+    "replace": "if (row.readOnly || ended(row)) return []",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "coverage false maps to passed",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "return { state: 'unavailable', heading: NOT_RECORDED, detail: 'No check result is stored for this task.' }",
+    "replace": "return { state: 'passed', heading: 'Checks passed', detail: '' }",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "checks fall back to the card's checks",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "const results = detail.checks.results.filter((result) => result.headSha === head)",
+    "replace": "const results = detail.checks.results",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "a running task inherits checks",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  if (!FINISHED_TASKS.has(detail.status)) return notRun('This task is still in progress.')\n",
+    "replace": "",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "a running card check passes the card",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "if (undecided && !failed) {",
+    "replace": "if (undecided && results.length === 0) {",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "a hold closes the card",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "if (outcome?.closes) return { state: 'resolved'",
+    "replace": "if (outcome) return { state: 'resolved'",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "delegation inferred from dependencies",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "delegation: detail.delegation.map((link) => ({\n      parent: link.parentAttemptId,\n      child: link.childAttemptId,\n    })),",
+    "replace": "delegation: detail.tasks.flatMap((task) => task.dependsOn.map((id) => ({ parent: id, child: task.id }))),",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "actual model borrows the requested one",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "{ label: 'Actual model', value: actual?.model ?? NOT_RECORDED },",
+    "replace": "{ label: 'Actual model', value: actual?.model ?? attempt?.requested.model ?? requestedLabel(attempt) },",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "tool activity reaches the chat",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "return kind ? [{ id: line.id, kind, text: line.text }] : []",
+    "replace": "return [{ id: line.id, kind: kind ?? 'note', text: line.text }]",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "a failed read with nothing kept reads as empty",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "hasContent: read.data !== null && !isEmpty(read.data),\n    freshness: read.readAt === null ? null : `Stale. Last read ${timeLabel(read.readAt)}`,",
+    "replace": "hasContent: true,\n    freshness: `Last read ${read.readAt ?? ''}`,",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "decoder accepts a missing cursor",
+    "file": "apps/web/src/inspection-decode.ts",
+    "find": "nextCursor: strOrNull(path, body.nextCursor, 'nextCursor'),",
+    "replace": "nextCursor: strOrNull(path, body.nextCursor ?? null, 'nextCursor'),",
+    "tests": ["apps/web/test/inspection-decode.test.ts"]
+  },
+  {
+    "name": "fixture string reaches the bundle",
+    "file": "apps/web/src/next/NextApp.tsx",
+    "find": "const COMPOSER_UNAVAILABLE = 'Sending is not connected in this preview.'",
+    "replace": "const COMPOSER_UNAVAILABLE = 'SAMPLE-ONLY Sending is not connected in this preview.'",
+    "tests": ["apps/web/test/shell-split.test.ts"]
+  }
+]

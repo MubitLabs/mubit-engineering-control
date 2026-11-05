@@ -129,6 +129,7 @@ export interface ShellProps
   initialInspectorOpen?: boolean
   composer?: Omit<ComposerProps, 'textareaRef'> | null
   commands?: readonly Command[]
+  search?: { onOpen: () => void }
   children: ReactNode
 }
 
@@ -143,6 +144,7 @@ export function Shell({
   initialInspectorOpen = false,
   composer = null,
   commands = [],
+  search,
   children,
   ...sidebar
 }: ShellProps) {
@@ -331,6 +333,7 @@ export function Shell({
             }
             paletteRef={paletteButton}
             onOpenPalette={() => setPaletteOpen(true)}
+            search={search}
           />
           <div className="content">
             <main className="column">

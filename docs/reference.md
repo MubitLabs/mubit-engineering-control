@@ -133,6 +133,13 @@ From `packages/policy/src/policy.ts` — v0 is JSON (the plan's YAML is a later 
 - **Always-confirm means it cannot be turned off by policy:** `push`, `pr_create`, `pr_edit`, `pr_merge`, `branch_delete`, `force_op`. A document that pre-authorises any of them is a `policy_violation` at load; every resolution of these classes is a card a person answers (compare-and-set, first answer wins; expiry is never consent).
 - **Repo overrides only tighten:** every class in `repoTightening` must exist in the base with entries at least as broad (same or narrower scope/repo, spend bound no higher); cap ceilings may only be lowered or added.
 
+## Server flags
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `MEC_REAL_RUNNER=1` | off | A launch effect starts a real Claude specialist through the attempt runner. Off, the launch fails with `no_runner`, the work blocks with that reason and no process starts. The flag grants no authority: mandate, hold and repo checks run on every launch. Decision #25: only on scratch repositories and `mec-sandbox`, because repo checks run unsandboxed. |
+| `MEC_FAKE_ENGINE=1` | off | The fixture replay stands in for an engine. It wins over `MEC_REAL_RUNNER`. |
+
 ## Fixture library layout
 
 Per [`docs/handoff/CONTRACTS.md`](handoff/CONTRACTS.md) §9: `packages/testkit/fixtures/<engine>/<engine_version>/<scenario>/` holding

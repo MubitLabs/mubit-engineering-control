@@ -533,6 +533,33 @@ describe('authority fence', () => {
       )
     })
 
+    it('the planner stop_agent leaves a running attempt to the runner', async () => {
+      const { service, store } = rig(fakeBrain(plan(['a', []])))
+      const id = await start(service)
+      const queued = store.attempts.list()[0]!
+      store.atomic(() => {
+        store.attempts.save({ ...queued, id: 'att_running', state: 'running' })
+        // Finished work leaves the next message to plan, which is the turn that carries extras.
+        store.workItems.save({ ...store.workItems.get(id), id, state: 'done' })
+      })
+      const stopping = fakeBrain({
+        ack: 'Stopping',
+        plan: plan(['b', []]).plan,
+        stops: [{ attemptId: 'att_running' }, { attemptId: String(queued.id) }],
+      })
+      await rig(stopping, store).service.onUserMessage({
+        messageId: 'msg_2',
+        text: 'one more thing',
+        repoId: 'repo_a',
+      })
+
+      expect(store.attempts.get('att_running')?.state).toBe('running')
+      expect(store.events.read('attempt:att_running').map((event) => event.type)).toContain(
+        'attempt.interrupt_requested',
+      )
+      expect(store.attempts.get(String(queued.id))?.state).toBe('interrupted')
+    })
+
     it('a second stop changes nothing', async () => {
       const { service, store } = rig(fakeBrain(plan(['a', []])))
       const id = await start(service)

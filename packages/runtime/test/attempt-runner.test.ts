@@ -313,6 +313,28 @@ describe('AttemptRunner', { timeout: 60_000 }, () => {
     expect(facts.reason).toBe('stop_requested')
   })
 
+  it('stop waits for a child that outlives its leader', async () => {
+    const { attempt, brief, facts, runner, pidOf } = await rig([
+      { init: true },
+      { child: { ignoreTerm: true } },
+      { forever: true },
+    ])
+    await runner.launchAttempt(attempt, brief)
+    await until(() => facts.state === 'running')
+    await until(() => {
+      try {
+        return pidOf('child.pid') > 0
+      } catch {
+        return false
+      }
+    })
+    const child = pidOf('child.pid')
+
+    await runner.stop(attempt)
+
+    expect(() => process.kill(child, 0)).toThrow()
+  })
+
   it('a child left behind by a finished engine goes with it', async () => {
     const { attempt, brief, runner, pidOf } = await rig([
       { init: true },

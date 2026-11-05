@@ -125,8 +125,9 @@ describe('read', () => {
 })
 
 describe('confirm', () => {
-  const ask = async (tool_name: string, tool_input: Record<string, unknown>) =>
-    answer(await call(own, 'confirm', { tool_name, tool_input }))
+  // The shape Claude Code 2.1.318 really sends, recorded in the M2.1 builder runs.
+  const ask = async (tool_name: string, input: Record<string, unknown>) =>
+    answer(await call(own, 'confirm', { tool_name, input, tool_use_id: 'toolu_1' }))
 
   it('git push is denied without a card', async () => {
     for (const command of [
@@ -151,6 +152,14 @@ describe('confirm', () => {
     expect(await ask('Bash', input)).toEqual({ behavior: 'allow', updatedInput: input })
     // Words that merely look like a guarded command do not trip it.
     expect((await ask('Bash', { command: 'echo pushing && git status' })).behavior).toBe('allow')
+  })
+
+  it('reads the schema name for the input too, and denies a request with nothing in it', async () => {
+    const schema = await call(own, 'confirm', { tool_name: 'Bash', tool_input: { command: 'git push' } })
+    expect(answer(schema).behavior).toBe('deny')
+    const empty = answer(await call(own, 'confirm', { tool_name: 'Bash' }))
+    expect(empty).toEqual({ behavior: 'deny', message: 'no command to check' })
+    expect((await ask('Write', {})).behavior).toBe('deny')
   })
 
   it('denies Bash when the attempt has no required sandbox', () => {
@@ -194,6 +203,7 @@ describe('confirm', () => {
       'attempt.permission_requested',
       'attempt.permission_requested',
     ])
+    expect(JSON.stringify(asks[0]?.body)).toContain('git push')
   })
 
   it('the in-process bridge answers by the same rule', async () => {

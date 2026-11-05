@@ -66,3 +66,10 @@ The audit above is unchanged as a record. What moved since, against its own thre
 - **Prompts on disk** (21 shipped defaults, revisions, Default-updated), **the nine-tool planner** with bounded honest context and wakes, **the setup agent** (policy cards it can never apply), **scorecard tier projections** (≥5 gate), **the ported workbench** (two-step approvals, keyboard-first, SSE, Playwright 21/21).
 - **Repo**: branch protection live (nine required checks, linear history), all CI on GitHub-hosted runners, community files, plan files renamed, docs/README.md index.
 - Still open: the Session-2 acceptance demo on mec-sandbox (a tiered plan → cheap-tier attempt visible in resolved_model → cross-provider review → prompt-edit visible in the next attempt → setup-agent draft applied); R1.11 (owner's week); the R2 exit review (DECISIONS #8/#9 expiry); Linux §26 rows.
+
+## M2.1 real specialist slice (5 November 2026)
+
+- **Proven with a real binary, behind `MEC_REAL_RUNNER=1`:** one Claude specialist on a scratch repo through a linked slot, from a seeded launch row to `succeeded` on the exact head, with a real journal, a commit, a check on that SHA and a report through `mcp__mec__report`. Evidence is in `docs/log/HANDSHAKES.md`.
+- **Real-process, on the fake CLI:** process-group stop, wall-clock stop, the journal order, redaction, the `.mec/` guard, close stopping owned groups.
+- **Not built here:** `deliver` and `replay` throw `NotWiredError` until M2.2 and M2.4. `ask_user`, `handback` and `request_confirmation` answer a named error. Orphan cleanup, live parking and second-wave dispatch are M2.4 and M2.2. Only `claude-sub` slots launch.
+- **Superseded above:** "no real engine attempt ran" and "no test executes a process under Seatbelt" no longer hold for Claude on macOS.

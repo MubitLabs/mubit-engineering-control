@@ -61,6 +61,12 @@ const LAUNCHABLE_KINDS: readonly string[] = ['claude-sub']
 /** The engine's own domains (H1's allowance) and nothing else: §14's registry field is unbuilt. */
 const ENGINE_DOMAINS: readonly string[] = ['claude.ai', 'api.claude.com']
 
+/**
+ * §13's always-confirm commands, refused by the engine itself. A linked slot runs under the
+ * user's own settings, whose allow rules can answer a Bash ask before `mcp__mec__confirm` hears it.
+ */
+const ENGINE_DENIED_TOOLS = 'Bash(git push:*),Bash(gh:*)'
+
 /** Decision #36 (§11): until policy carries a value. */
 const DEFAULT_WALL_CLOCK_MS = 30 * 60_000
 
@@ -395,6 +401,7 @@ export class AttemptLauncher {
         MEC_SETTINGS_PATH: settingsPath,
         MEC_MCP_CONFIG_PATH: mcpPath,
         MEC_ALLOWED_TOOLS: 'mcp__mec__*',
+        MEC_DISALLOWED_TOOLS: ENGINE_DENIED_TOOLS,
       },
       isolation,
     })

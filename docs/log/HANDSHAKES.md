@@ -112,3 +112,15 @@ The §8 acceptance paragraph, driven live against the composed server on the rea
 - **Proof (the new gated canary, MEC_REAL_PLANNER=1)**: one real service turn on the real store copy → task created with tier `fast` and a reasoned modelRequest that names the slot by cost ("cost 1 vs 3 for balanced on slot_glm-2") → `launchesEnqueued: ["att_1"]`.
 - **#15 reclassified**: not a 2.1.318 regression — the deterministic api_error turns ran wiper-corrupted bundles; real brain turns on 2.1.318 succeed repeatedly.
 - **#16**: the models default resolves via three candidates and the tarball ships it beside the bundle; the route "shadowing" was a stale-bundle artifact (clean builds serve every block).
+
+## M2.1 real specialist slice — 5 November 2026
+
+Claude Code 2.1.318 (the installed binary, one above the pinned 2.1.317), `claude-haiku-5-5`, a linked slot with `CLAUDE_CONFIG_DIR` unset, real `HOME`, scratch `MEC_DATA_DIR`, fake `gh` first on `PATH`, a scratch repo. A seeded queued attempt and launch row, so no planner ran. Builder evidence, three runs, logged in `engine-runs.md`. Independent verification is still to come.
+
+| Run | Outcome | What it proved |
+| --- | --- | --- |
+| 1 | `queued → running → work_complete → succeeded`, 35 s | Journal 12 events, ack 12. Branch head equal to the recorded SHA, check doc on that SHA, repo identity on the commit, one report stored. `.mec` absent from `git log -p`. No process left. Sandbox refused `cat mec.db`, a `touch` outside and the push. `mcp__mec__confirm` was never asked. |
+| 2 | `failed`, `engine_max_turns` | With `--permission-mode default`, asks arrive. Deny rules refused `git push` and `gh pr list` by name. Found that confirm read the wrong input field, so `git -C . push` was allowed and stopped only by the sandbox, and an outside Write was denied for having no path. Fixed: confirm reads `input`, and an empty command is denied. |
+| 3 | `succeeded` | Confirm saw the real command and path, and allowed `git status` and a Write inside the worktree. The model declined the steps that would have been refused, so this run proves the allow path only. |
+
+Not proven here: the composed chat path with a planner, and a real Read-tool denial on a text file. The token and key-shape sweep over the data dir of runs 1 and 3 found nothing.

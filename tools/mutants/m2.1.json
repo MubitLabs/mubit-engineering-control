@@ -1,0 +1,163 @@
+[
+  {
+    "name": "launch unbound by flag",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  const realRunner = process.env.MEC_REAL_RUNNER === '1'\n",
+    "replace": "  const realRunner = true\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "shim first",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "      binary: resolveBinary('claude', process.env.PATH),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "prune mec branches",
+    "file": "packages/git/src/repos.ts",
+    "find": "'+refs/heads/*:refs/remotes/origin/*'",
+    "replace": "'+refs/heads/*:refs/heads/*'",
+    "tests": ["packages/git/test/repos.test.ts"]
+  },
+  {
+    "name": "skip redaction",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "    const event = redactEvent({ ...raw, seq }, plan.fingerprints, plan.exacts)\n",
+    "replace": "    const event = { ...raw, seq } as EngineEvent\n",
+    "tests": ["packages/runtime/test/attempt-runner.test.ts"]
+  },
+  {
+    "name": "ack before commit",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "    journal.append(event)\n    facts.atomic(() => {\n      facts.engineEvent(attempt, event)\n      this.#factsOf(live, event)\n    })\n    journal.ack(seq)\n",
+    "replace": "    journal.append(event)\n    journal.ack(seq)\n    facts.atomic(() => {\n      facts.engineEvent(attempt, event)\n      this.#factsOf(live, event)\n    })\n",
+    "tests": ["packages/runtime/test/attempt-runner.test.ts"]
+  },
+  {
+    "name": "exit means success",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "    const passed = outcomes.every((outcome) => outcome.status === 'passed')\n",
+    "replace": "    const passed = true\n",
+    "tests": ["packages/runtime/test/attempt-runner.test.ts"]
+  },
+  {
+    "name": "exit means success with no checks",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "        facts.checksSkipped(attempt, head, 'no checks are registered for this repository')\n",
+    "replace": "        facts.checksFinished(attempt, head, [], true)\n",
+    "tests": ["packages/runtime/test/attempt-runner.test.ts"]
+  },
+  {
+    "name": "reuse stale SHA",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "    facts.atomic(() => facts.checksFinished(attempt, head, outcomes, passed))\n",
+    "replace": "    facts.atomic(() => facts.checksFinished(attempt, brief.base_sha, outcomes, passed))\n",
+    "tests": ["packages/runtime/test/attempt-runner.test.ts"]
+  },
+  {
+    "name": "allow push",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "      if (pattern.test(command)) {\n",
+    "replace": "      if (pattern.test('')) {\n",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
+  },
+  {
+    "name": "read anything",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "  if (!inScope(attempt, kind, id) || rest.length > 0) {\n",
+    "replace": "  if (rest.length > 0) {\n",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
+  },
+  {
+    "name": "drop .mec guard",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "      if (await git.historyTouches(brief.worktree, brief.base_sha, head, '.mec')) {\n",
+    "replace": "      if (head === '') {\n",
+    "tests": ["packages/runtime/test/attempt-runner.test.ts"]
+  },
+  {
+    "name": "guard reads the end state only",
+    "file": "packages/git/src/repos.ts",
+    "find": "  const { stdout } = await git(['log', '--format=%H', range, '--', path], { cwd: worktree })\n",
+    "replace": "  const { stdout } = await git(['diff', '--name-only', range, '--', path], { cwd: worktree })\n",
+    "tests": ["packages/git/test/repos.test.ts"]
+  },
+  {
+    "name": "db not denied",
+    "file": "packages/runtime/src/isolation.ts",
+    "find": "    `${dataDir}/mec.db`,\n",
+    "replace": "    `${dataDir}/db`,\n",
+    "tests": ["packages/runtime/test/isolation.test.ts"]
+  },
+  {
+    "name": "no generation bump",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "    tools.bumpGeneration(attemptId)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "confirm reads only the schema name",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "  const toolInput = (input.input ?? input.tool_input ?? {}) as Record<string, unknown>\n",
+    "replace": "  const toolInput = (input.tool_input ?? {}) as Record<string, unknown>\n",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
+  },
+  {
+    "name": "an empty command is allowed",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "    if (command.trim() === '') return { allow: false, reason: 'no command to check' }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
+  },
+  {
+    "name": "write outside by a symlink",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "    for (const path of paths.map(resolved)) {\n",
+    "replace": "    for (const path of paths) {\n",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
+  },
+  {
+    "name": "token stays for the checks",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "      await this.#stopGroup(live)\n      live.plan.seal()\n      await this.#finish(live, exit)\n",
+    "replace": "      await this.#stopGroup(live)\n      await this.#finish(live, exit)\n",
+    "tests": ["packages/runtime/test/attempt-runner.test.ts"]
+  },
+  {
+    "name": "stop trusts the leader alone",
+    "file": "packages/runtime/src/supervisor.ts",
+    "find": "    process.kill(-pid, 0)\n",
+    "replace": "    process.kill(pid, 0)\n",
+    "tests": ["packages/runtime/test/attempt-runner.test.ts"]
+  },
+  {
+    "name": "sandboxed bash skips the bridge",
+    "file": "packages/runtime/src/isolation.ts",
+    "find": "      autoAllowBashIfSandboxed: false,\n",
+    "replace": "      autoAllowBashIfSandboxed: true as false,\n",
+    "tests": ["packages/runtime/test/isolation.test.ts"]
+  },
+  {
+    "name": "no explicit permission mode",
+    "file": "packages/engines/src/claude/argv.ts",
+    "find": "    argv.push('--permission-prompt-tool', 'mcp__mec__confirm', '--permission-mode', 'default')\n",
+    "replace": "    argv.push('--permission-prompt-tool', 'mcp__mec__confirm')\n",
+    "tests": ["packages/engines/test/argv-classify-probe.test.ts"]
+  },
+  {
+    "name": "stop_agent decides for the runner",
+    "file": "packages/meta/src/service.ts",
+    "find": "      if (doc.state === 'queued') {\n        this.#store.attempts.save({\n          ...doc,\n          state: transition(ATTEMPT_MACHINE, 'queued', 'interrupt_confirmed'),\n",
+    "replace": "      if (doc.state !== 'gone') {\n        this.#store.attempts.save({\n          ...doc,\n          state: transition(ATTEMPT_MACHINE, 'queued', 'interrupt_confirmed'),\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "a stopped attempt comes back on a late session",
+    "file": "apps/desktop/src/core-facts.ts",
+    "find": "    if (!canTransition(ATTEMPT_MACHINE, state, event)) return false\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  }
+]

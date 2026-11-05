@@ -73,6 +73,7 @@ const isWithin = (path: string, root: string): boolean => {
 export function judgeOperation(operation: Operation, scope: AttemptScope): Verdict {
   if (operation.kind === 'shell') {
     const command = (operation.command ?? []).join(' ')
+    if (command.trim() === '') return { allow: false, reason: 'no command to check' }
     for (const { pattern, what } of ALWAYS_CONFIRM_SHELL) {
       if (pattern.test(command)) {
         return { allow: false, reason: `${what} needs the owner's confirmation; a worker cannot do it` }
@@ -191,7 +192,9 @@ async function confirm(
   const scope = scopeOf(attempt)
   if (scope === undefined) throw new Error('mec-tools: this attempt has no worktree yet')
   const toolName = typeof input.tool_name === 'string' ? input.tool_name : ''
-  const toolInput = (input.tool_input ?? {}) as Record<string, unknown>
+  // Claude sends `input`; the tool's schema says `tool_input`. Either way, a request with nothing
+  // to judge is denied below, because an empty command is not a harmless one.
+  const toolInput = (input.input ?? input.tool_input ?? {}) as Record<string, unknown>
   const operation = operationOf(toolName, toolInput, scope.worktree)
   const requestId =
     typeof input.tool_use_id === 'string' && input.tool_use_id !== ''

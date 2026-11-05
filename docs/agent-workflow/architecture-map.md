@@ -17,6 +17,8 @@ Base revision / working state: `main` after `e5ae484` (R2 wave complete; working
 
 `POST /api/chat/messages` (`apps/desktop/src/server.ts`) → secrets guard (`matchesSecret` → redact + Slots pointer) → `MetaAgentService` (`packages/meta`) with the real brain (`RealClaudeBrain`, `MEC_META_SLOT` slot home) → plan → task briefs built per `packages/contracts` `AttemptBrief` → `Supervisor.spawn` (`packages/runtime`, argv-only, §5.12 env scrub) → engine adapter (`packages/engines`) streams `EngineEvent`s → journal (fsync/ack) + store events (redacted) → checks on exact SHAs (`packages/runtime/checks.ts`) → review turn (different engine session; §15 independent review) → integration merge (`packages/git`) → release agent (`apps/desktop/src/release.ts`) opens cards for push/PR/merge, settled via the confirmation store (`packages/policy` CAS).
 
+A launch effect with `MEC_REAL_RUNNER=1`: `launchHandler` (`apps/desktop/src/composition.ts`) → `launchAuthority` → `AttemptLauncher` (`attempt-launch.ts`: load and agree, cache, pinned base, worktree, `.mec/`, bootstrap, model, bundle, token, env) → `AttemptRunner.launchAttempt` (`packages/runtime/src/attempt-runner.ts`), which returns once the engine runs. Its monitor journals each event, commits facts through `StoreFacts` (`core-facts.ts`), and after exit commits, guards `.mec/` and runs the repo's checks on the head. The specialist's tools are `specialist-tools.ts`. With the flag off the launch fails with `no_runner`.
+
 ## Dependencies and contracts (verified rules)
 
 - Dependency direction: `apps/*` → `packages/*` → `packages/contracts`. Engines never import the store; the store never imports engines; contracts is the only seam both see.

@@ -31,6 +31,8 @@ import {
   repoFields,
   routeMessage,
   SetupAgent,
+  type SetupDecide,
+  type SetupDraftRecord,
   type SetupSettingsApi,
   type StopOutcome,
   stableMessageId,
@@ -53,10 +55,12 @@ import {
 } from '@mec/slots'
 import type { InspectionReads } from '@mec/store'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
+import { type BackupControl, registerConfigRoutes, repositoryRevision } from './config-routes'
 import { buildDoctorReport } from './doctor'
 import type { HealthSnapshot, PartEntry } from './health'
 import { registerInspectionRoutes } from './inspection'
 import { type CardEvent, LoginCardManager } from './login-cards'
+import { metaSlotRefusal } from './readiness'
 import {
   cardDetail,
   createPrBehindCard,
@@ -153,6 +157,10 @@ export type ServerDeps = {
   setupSettingsApi?: SetupSettingsApi
   /** M3.1: bounded keyset reads over the SQLite store; the `/api/inspect/*` routes exist only when present. */
   inspection?: InspectionReads
+  /** M3.3: takes a backup of the live store; without it `/api/backups` is not served. */
+  backups?: BackupControl
+  /** The setup agent's model seam; absent, it answers from real reads. */
+  setupDecide?: SetupDecide
 }
 
 /** The chat route's setup-mode surface — `SetupAgent` from @mec/meta satisfies it structurally. */
@@ -561,7 +569,17 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 
   app.get('/healthz', async () => ({ ok: true }))
 
-  app.get('/api/status', async () => buildHealthSnapshot(store, deps.health))
+  app.get('/api/status', async () => ({
+    ...buildHealthSnapshot(store, deps.health),
+    // What the workbench may offer. False is said before the click, never after it.
+    capabilities: {
+      switchWork: false,
+      drain: false,
+      backups: deps.backups !== undefined,
+      isolationEdit: false,
+      pause: deps.pauseControl !== undefined,
+    },
+  }))
 
   app.post('/api/chat/messages', async (request, reply) => {
     const body = (request.body ?? {}) as {
@@ -1216,6 +1234,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       reply.code(404).send({ error: 'slot not found' })
       return
     }
+    // §13: destroying a key is never one stray request. The caller repeats the label it was shown.
+    if ((request.body as { label?: unknown } | null | undefined)?.label !== doc.label) {
+      reply.code(400).send({ error: 'label_mismatch', detail: "repeat the slot's label to retire it" })
+      return
+    }
     new SlotKeystore(doc.home).shred(doc.provider)
     const at = now().toISOString()
     store.atomic(() => {
@@ -1410,38 +1433,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       return
     }
 
-    const id = freshId('repo_')
-    const at = now().toISOString()
-    store.atomic(() => {
-      store.engines.save({
-        id,
-        url: urlOrPath,
-        bootstrap,
-        checks,
-        trust: trusted,
-        createdAt: at,
-        updatedAt: at,
-      })
-      // §21.2 has_repository looks for the settings/repositories marker by id; every
-      // registration appends to it, so the flag flips on the first repository.
-      const marker = store.engines.get(SETTINGS_REPOSITORIES_ID)
-      const previous =
-        marker !== undefined && Array.isArray(marker.repositories)
-          ? marker.repositories.filter((entry): entry is string => typeof entry === 'string')
-          : []
-      store.engines.save({
-        id: SETTINGS_REPOSITORIES_ID,
-        repositories: [...previous, id],
-        updatedAt: at,
-      })
-      appendEvent(
-        store,
-        'repositories',
-        'repository_registered',
-        { repositoryId: id, url: urlOrPath, at },
-        at,
-      )
-    })
+    const id = registerRepository(store, { url: urlOrPath, bootstrap, checks, trust: trusted }, now())
     return { id, url: urlOrPath, bootstrap, checks, trust: trusted }
   })
 
@@ -1456,6 +1448,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         bootstrap: Array.isArray(doc.bootstrap) ? doc.bootstrap : [],
         checks: Array.isArray(doc.checks) ? doc.checks : [],
         trust: doc.trust === true,
+        revision: repositoryRevision(doc),
       })),
   )
 
@@ -1468,8 +1461,14 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       reply.code(400).send({ error: 'slotId is required' })
       return
     }
-    if (store.slots.get(slotId) === undefined) {
+    const slot = store.slots.get(slotId)
+    if (slot === undefined) {
       reply.code(400).send({ error: `no slot '${slotId}' — link or add one first` })
+      return
+    }
+    const refusal = metaSlotRefusal(slot)
+    if (refusal !== null) {
+      reply.code(400).send({ error: refusal })
       return
     }
     const at = now().toISOString()
@@ -1860,20 +1859,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
           return { error: `unknown resource '${String(resource)}'` }
       }
     },
-    applyDraft: async (draft) => {
-      if (draft.target === 'repository') {
-        const patch = draft.patch as { label?: unknown; url_or_path?: unknown; trust?: unknown }
-        return await registerRepositoryDoc(
-          typeof patch.label === 'string' ? patch.label : '',
-          typeof patch.url_or_path === 'string' ? patch.url_or_path : '',
-          patch,
-        )
-      }
-      return {
-        ok: false,
-        error: `the settings API for '${draft.target}' is not wired in this build — the draft stands, applying returns with T1/T4`,
-      }
-    },
+    applyDraft: (draft) => applyConfigDraft(draft),
     openLoginCard: () => {},
     openKeyForm: () => {},
     registerRepository: async (input) =>
@@ -1883,6 +1869,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         ...(input.trust !== undefined && { trust: input.trust }),
       }),
     setMetaSlot: (slotId) => {
+      const slot = store.slots.get(slotId)
+      const refusal = slot === undefined ? `no slot '${slotId}'` : metaSlotRefusal(slot)
+      if (refusal !== null) throw new Error(refusal)
       const at = now().toISOString()
       store.atomic(() => {
         store.engines.save({ id: META_SLOT_ID, slotId, updatedAt: at, createdAt: at })
@@ -1907,10 +1896,15 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     const bootstrap = Array.isArray(patch.bootstrap)
       ? patch.bootstrap.filter((entry): entry is string => typeof entry === 'string')
       : []
-    const checks = Array.isArray(patch.checks)
-      ? patch.checks.filter((entry): entry is string => typeof entry === 'string')
-      : []
-    for (const cmd of [...bootstrap, ...checks]) {
+    // The agent's tool takes plain commands and a draft may carry {name, cmd}: both store as {name, cmd}.
+    const checks = (Array.isArray(patch.checks) ? patch.checks : []).flatMap((entry, index) => {
+      if (typeof entry === 'string') return [{ name: `check_${index + 1}`, cmd: entry }]
+      const check = entry as { name?: unknown; cmd?: unknown } | null
+      return typeof check?.name === 'string' && typeof check.cmd === 'string'
+        ? [{ name: check.name, cmd: check.cmd }]
+        : []
+    })
+    for (const cmd of [...bootstrap, ...checks.map((check) => check.cmd)]) {
       if (SHELL_METACHARS.test(cmd))
         return { ok: false, error: `command carries shell metacharacters: ${cmd}` }
     }
@@ -1929,28 +1923,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     } else if (!existsSync(urlOrPath)) {
       return { ok: false, error: `path does not exist: ${urlOrPath}` }
     }
-    const id = freshId('repo_')
-    const at = now().toISOString()
-    store.atomic(() => {
-      store.engines.save({
-        id,
-        label,
-        url: urlOrPath,
-        bootstrap,
-        checks: checks.map((cmd, index) => ({ name: `check_${index + 1}`, cmd })),
-        trust: patch.trust === true,
-        origin: 'setup_agent',
-        createdAt: at,
-        updatedAt: at,
-      })
-      appendEvent(
-        store,
-        id,
-        'repository_registered',
-        { id, label, url: urlOrPath, at, origin: 'setup_agent' },
-        at,
-      )
-    })
+    const id = registerRepository(
+      store,
+      { url: urlOrPath, bootstrap, checks, trust: patch.trust === true, label, origin: 'setup_agent' },
+      now(),
+    )
     return { ok: true, id }
   }
 
@@ -1958,6 +1935,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     store,
     api: deps.setupSettingsApi ?? defaultSetupSettingsApi,
     now,
+    ...(deps.setupDecide !== undefined && { decide: deps.setupDecide }),
   })
 
   // The setup agent's open drafts — the inbox-shaped view of §7's propose_change cards.
@@ -2239,6 +2217,33 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // M3.1 canonical inspection: read-only, bounded, redacted `GET /api/inspect/*`.
   if (deps.inspection !== undefined) registerInspectionRoutes(app, { store, reads: deps.inspection, now })
 
+  // M3.3 setup and configuration: readiness, connections, policy, repository edits, drafts, backups.
+  const applyConfigDraft = registerConfigRoutes(app, {
+    store,
+    now,
+    keystoreRoot,
+    probeCmd,
+    policyText: deps.policyText,
+    ...(deps.backups !== undefined && { backups: deps.backups }),
+    keyShape: (keystoreId) => {
+      const provider = Object.values(API_KEY_PROVIDERS).find((entry) => entry.keystoreId === keystoreId)
+      return provider?.pattern === undefined
+        ? undefined
+        : { pattern: provider.pattern, shape: provider.shape }
+    },
+    slotLabel: SLOT_LABEL,
+    bootstrapOf: (input) => argvArrayOf(input, 'bootstrapCmds'),
+    checksOf: checkArrayOf,
+    registerDraftRepository: (draft: SetupDraftRecord) => {
+      const patch = draft.patch as { label?: unknown; url_or_path?: unknown }
+      return registerRepositoryDoc(
+        typeof patch.label === 'string' ? patch.label : '',
+        typeof patch.url_or_path === 'string' ? patch.url_or_path : '',
+        draft.patch,
+      )
+    },
+  })
+
   const webDist = deps.webDist ?? WEB_DIST
   if (existsSync(webDist)) {
     app.setNotFoundHandler((request, reply) => {
@@ -2270,6 +2275,45 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   }
 
   return app
+}
+
+/**
+ * Registers a repository: the one write, so the marker, the `repositories` stream and the `{name,
+ * cmd}` check shape cannot differ by path. `has_repository` and the workbench both read them.
+ */
+function registerRepository(
+  store: Store,
+  input: {
+    url: string
+    bootstrap: string[]
+    checks: Array<{ name: string; cmd: string }>
+    trust: boolean
+    label?: string
+    origin?: string
+  },
+  when: Date,
+): string {
+  const { url, bootstrap, checks, trust, label, origin } = input
+  const id = freshId('repo_')
+  const at = when.toISOString()
+  const source = { ...(label !== undefined && { label }), ...(origin !== undefined && { origin }) }
+  store.atomic(() => {
+    store.engines.save({ id, url, bootstrap, checks, trust, ...source, createdAt: at, updatedAt: at })
+    // §21.2 has_repository looks for the settings/repositories marker by id; every
+    // registration appends to it, so the flag flips on the first repository.
+    const marker = store.engines.get(SETTINGS_REPOSITORIES_ID)
+    const previous =
+      marker !== undefined && Array.isArray(marker.repositories)
+        ? marker.repositories.filter((entry): entry is string => typeof entry === 'string')
+        : []
+    store.engines.save({
+      id: SETTINGS_REPOSITORIES_ID,
+      repositories: [...previous, id],
+      updatedAt: at,
+    })
+    appendEvent(store, 'repositories', 'repository_registered', { repositoryId: id, url, ...source, at }, at)
+  })
+  return id
 }
 
 /** The pre-authorised class names a policy text carries — [] when it cannot load (honest empty). */

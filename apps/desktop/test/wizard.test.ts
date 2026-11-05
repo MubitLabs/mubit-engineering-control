@@ -317,6 +317,13 @@ describe('first-run wizard routes (§21.3)', () => {
     const unknown = await postJson(ctx.app, '/api/wizard/meta-slot', { slotId: 'slot_none' })
     expect(unknown.statusCode).toBe(400)
 
+    // M3.3 §6: a link that has not passed a probe is not usable yet.
+    const unprobed = await postJson(ctx.app, '/api/wizard/meta-slot', { slotId: 'slot_max-0' })
+    expect(unprobed.statusCode).toBe(400)
+    const linked = ctx.store.slots.get('slot_max-0')
+    if (linked === undefined) throw new Error('the link wrote no slot')
+    ctx.store.slots.save({ ...linked, state: 'healthy' })
+
     const res = await postJson(ctx.app, '/api/wizard/meta-slot', { slotId: 'slot_max-0' })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({ id: 'settings/meta-slot', slotId: 'slot_max-0' })

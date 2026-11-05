@@ -167,7 +167,7 @@ export function backup(input: BackupInput): { archivePath: string; excluded: str
     const dbAbs = resolve(input.dbPath)
     const liveDbFiles = new Set([dbAbs, `${dbAbs}-wal`, `${dbAbs}-shm`, `${dbAbs}-journal`])
     for (const entry of collectStateTree(input.stateDir)) {
-      if (isAtOrUnder(staging, entry.abs)) continue // outDir inside stateDir must not archive itself
+      if (isAtOrUnder(input.outDir, entry.abs)) continue // outDir inside stateDir must not archive itself
       if (entry.kind !== null) {
         if (!entry.dir) excluded.push(entry.rel)
         continue

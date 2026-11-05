@@ -293,7 +293,11 @@ describe('slots api-key routes (§5.4/§5.7/§5.8)', () => {
     const file = keyFileOf(ctx)
     expect(existsSync(file)).toBe(true)
 
-    const res = await ctx.app.inject({ method: 'POST', url: `/api/slots/${SLOT_ID}/retire` })
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/slots/${SLOT_ID}/retire`,
+      payload: { label: LABEL },
+    })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({ id: SLOT_ID, state: 'retired' })
 

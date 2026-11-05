@@ -25,3 +25,10 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
 - **`mec slot` operates on local state only.** The subcommands open the store in the data dir
   directly; they never talk to a running server, and the CLI never sees a credential — keys are
   pasted only in the workbench Slots form (§5.4).
+- **Inspection reads cost time at scale, and there is no index (DECISIONS #38).** M3.1 stage 1
+  adds no inspection index and no SQL migration. At 50,000 docs, reads take 109-182 ms in every
+  kind. The handoff's scenario (50,000 tasks, 1,000 work items) takes 30-54 ms. `needs?recent=1`
+  reads both whole kinds, so it crosses 100 ms at about 8,000 of each kind (in-memory measure):
+  132 ms at 10,000 + 10,000, and 667 ms at 50,000 + 50,000.
+- **One oversized record fails its inspection route.** The route answers 500 `response_too_large`
+  until that record is removed.

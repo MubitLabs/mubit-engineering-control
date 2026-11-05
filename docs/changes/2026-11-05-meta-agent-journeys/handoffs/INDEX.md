@@ -30,17 +30,11 @@ Give an agent one row. Every row assumes `00-README.md`. Base gates: **R** `fix/
 
 ## What can start now
 
-**Nothing, today.** `origin/main` is `a102313`, and none of the five base branches is on it. All five are unpushed. R merges first.
+`origin/main` is `1ff5a84`. Merged: R (#24), E (#25), V (#26), H (#27), I (#29), 10 (#32), 12 (#34), 30 S1 (#35), 31 A (#31), 33 A (#30). Decision #37 sets Claude's cap at 20 runs.
 
-Once all five land, five handoffs can start at once, on nearly disjoint files: **10, 12, 30 S1, 31 A, 33 A**. Partial landings open these earlier:
-
-| On `origin/main` | Opens |
-| --- | --- |
-| R, V | 33 A |
-| R, I | 30 S1 |
-| R, H, V | 31 A |
-| R, H, V, I | 12 |
-| R, H, E, I | 10 |
+- **In progress:** 11 (`feat/durable-commands`), in its fix round for shutdown blockers.
+- **Next, at once:** 20, 31 B, 32.
+- **Waiting:** everything else, per the table above and the sequences below.
 
 ## After M1 merges
 

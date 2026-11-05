@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type ModelTiers, type PromptPart } from '../api'
 import { Btn } from './base'
+import { LoadFailed, useLoad } from './LoadState'
 
 /** Settings: the nav, the prompt part list and editor with its save bar, the model tier table. */
 
@@ -160,22 +161,12 @@ export function PartEditor({ part, onSaved }: { part: PromptPart; onSaved: (note
 }
 
 export function TierTable() {
-  const [tiers, setTiers] = useState<ModelTiers | null>(null)
+  const [load, retry] = useLoad<ModelTiers>(() => api.models(), [])
 
-  useEffect(() => {
-    let alive = true
-    api
-      .models()
-      .then((t) => {
-        if (alive) setTiers(t)
-      })
-      .catch(() => {})
-    return () => {
-      alive = false
-    }
-  }, [])
-
-  if (tiers === null) return <p className="muted">Loading the tier ladder…</p>
+  if (load.status === 'loading') return <p className="muted">Loading the tier ladder…</p>
+  if (load.status === 'error')
+    return <LoadFailed what="the tier ladder" message={load.message} onRetry={retry} />
+  const tiers = load.value
 
   return (
     <>
@@ -209,12 +200,7 @@ export function TierTable() {
           ))}
         </tbody>
       </table>
-      <p className="muted">
-        {tiers.note}
-        {tiers.demo === true
-          ? ' The tier table is not served by the server yet — shown from the §23 worked example.'
-          : ''}
-      </p>
+      <p className="muted">{tiers.note}</p>
     </>
   )
 }

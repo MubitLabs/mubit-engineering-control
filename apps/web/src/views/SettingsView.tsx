@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type BackupsStatus, isNotServed, type PromptPart } from '../api'
+import { LoadFailed, useLoad } from '../components/LoadState'
 import { PartEditor, PartList, SettingsNav, type SettingsSection, TierTable } from '../components/Settings'
 import { useWorkbench } from '../workbench'
 
@@ -53,25 +54,16 @@ function PolicySection() {
 }
 
 function PromptsSection() {
-  const [parts, setParts] = useState<PromptPart[] | null>(null)
+  const [load, retry] = useLoad<PromptPart[]>(() => api.prompts(), [])
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
+  const parts = load.status === 'ready' ? load.value : null
   useEffect(() => {
-    let alive = true
-    api
-      .prompts()
-      .then((all) => {
-        if (!alive) return
-        setParts(all)
-        setSelectedId(
-          (current) => current ?? all.find((part) => part.defaultUpdated === true)?.id ?? all[0]?.id ?? null,
-        )
-      })
-      .catch(() => {})
-    return () => {
-      alive = false
-    }
-  }, [])
+    if (parts === null) return
+    setSelectedId(
+      (current) => current ?? parts.find((part) => part.defaultUpdated === true)?.id ?? parts[0]?.id ?? null,
+    )
+  }, [parts])
 
   const selected = parts?.find((part) => part.id === selectedId) ?? null
 
@@ -81,9 +73,11 @@ function PromptsSection() {
         title="Prompts"
         sub="What each agent reads. Edit any part; your text stays when defaults change, and you decide what to take."
       />
-      {parts === null ? (
-        <p className="muted">Loading the parts…</p>
-      ) : (
+      {load.status === 'loading' ? <p className="muted">Loading the parts…</p> : null}
+      {load.status === 'error' ? (
+        <LoadFailed what="the prompt parts" message={load.message} onRetry={retry} />
+      ) : null}
+      {parts !== null ? (
         <div className="parts">
           <PartList parts={parts} selectedId={selectedId} onSelect={setSelectedId} />
           {selected === null ? (
@@ -101,10 +95,9 @@ function PromptsSection() {
             />
           )}
         </div>
-      )}
+      ) : null}
       <p className="muted" style={{ marginTop: 12 }}>
-        Prompt parts are not served by the server yet — shown from the §23 worked example, and edits hold only
-        for this session.
+        Saving prompt edits is not served by the server yet — edits hold only for this session.
       </p>
     </section>
   )
@@ -159,30 +152,23 @@ function ReposSection() {
 
 function BackupsSection() {
   const wb = useWorkbench()
-  const [backups, setBackups] = useState<BackupsStatus | null>(null)
-
-  useEffect(() => {
-    let alive = true
-    api
-      .backups()
-      .then((b) => {
-        if (alive) setBackups(b)
-      })
-      .catch(() => {})
-    return () => {
-      alive = false
-    }
-  }, [])
+  const [load, retry] = useLoad<BackupsStatus>(() => api.backups(), [])
 
   return (
     <section className="settings-section is-active" id="settings-backups">
       <SectionHead title="Backups" sub="The store, on a schedule, with credentials excluded by rule." />
-      <div className="empty">
-        {backups === null ? (
+      {load.status === 'loading' ? (
+        <div className="empty">
           <p>Loading the backup record…</p>
-        ) : (
+        </div>
+      ) : null}
+      {load.status === 'error' ? (
+        <LoadFailed what="the backup record" message={load.message} onRetry={retry} />
+      ) : null}
+      {load.status === 'ready' ? (
+        <div className="empty">
           <p>
-            Last backup {backups.lastAt ?? 'never'} — {backups.note}{' '}
+            Last backup {load.value.lastAt ?? 'never'} — {load.value.note}{' '}
             <button
               type="button"
               className="link"
@@ -204,8 +190,8 @@ function BackupsSection() {
               Back up now
             </button>
           </p>
-        )}
-      </div>
+        </div>
+      ) : null}
     </section>
   )
 }

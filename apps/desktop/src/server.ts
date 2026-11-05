@@ -73,6 +73,8 @@ export type ServerDeps = {
    * Defaults to `~/.mec`, so keys live under `~/.mec/engines/…` exactly as §5.4 states.
    */
   keystoreRoot?: string
+  /** The built web app to serve; defaults to the bundled or repo `dist`. A test seam. */
+  webDist?: string
   /**
    * §5.8 zero-token validators run through this seam; tests inject a stub, production
    * gets `globalThis.fetch`. The key read straight from the keystore file travels only
@@ -2000,20 +2002,27 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // on the next save.
   app.get('/api/prompts/changes', async () => ({ changes: prompts.changes() }))
 
-  if (existsSync(WEB_DIST)) {
+  const webDist = deps.webDist ?? WEB_DIST
+  if (existsSync(webDist)) {
     app.setNotFoundHandler((request, reply) => {
+      // An unknown API path is a JSON 404 for every method, never the app shell: the web client reads
+      // a 404 as "not served", and an HTML 200 would parse as a broken payload (or, worse, as data).
+      const pathname = decodePath(request.url.split('?')[0] ?? '/')
+      if (pathname === '/api' || pathname.startsWith('/api/')) {
+        reply.code(404).send({ error: 'not found' })
+        return
+      }
       if (request.method !== 'GET' && request.method !== 'HEAD') {
         reply.code(404).send({ error: 'not found' })
         return
       }
       const path = decodePath(request.url.split('?')[0] ?? '/')
       const segments = path.split('/').filter((segment) => segment !== '' && segment !== '.')
-      const candidate =
-        segments.length === 0 ? resolve(WEB_DIST, 'index.html') : resolve(WEB_DIST, ...segments)
-      const withinRoot = candidate === WEB_DIST || candidate.startsWith(WEB_DIST + sep)
+      const candidate = segments.length === 0 ? resolve(webDist, 'index.html') : resolve(webDist, ...segments)
+      const withinRoot = candidate === webDist || candidate.startsWith(webDist + sep)
       const isFile = withinRoot && existsSync(candidate) && statSync(candidate).isFile()
       // SPA fallback: anything that is not a file on disk resolves to the app shell.
-      const file = isFile ? candidate : resolve(WEB_DIST, 'index.html')
+      const file = isFile ? candidate : resolve(webDist, 'index.html')
       if (!existsSync(file)) {
         reply.code(404).send({ error: 'not found' })
         return

@@ -1,12 +1,9 @@
 /**
  * The §23 worked example (docs/plan/spec.md §23, rendered in docs/design/screens/) as
- * fixture data. Two consumers:
- *
- *  - api.ts's not-yet-served endpoints fall back to these payloads (flagged `demo: true`,
- *    which the UI labels honestly — "not served by the server yet").
- *  - apps/web/test/screens.playwright.ts serves them as the /api responses, so the
- *    screenshot suite shows the worked example through the same typed api layer the
- *    real server will speak.
+ * fixture data. One consumer: apps/web/test/screens.playwright.ts serves them as the /api
+ * responses, so the screenshot suite shows the worked example through the same typed api layer
+ * the real server speaks. These are SYNTHETIC and live under test/ on purpose: nothing in
+ * src/ (and so nothing in the production bundle) may import them.
  *
  * Expiry timestamps are computed from load time so countdowns always have something
  * honest to count. Pure data — no React, no DOM.
@@ -28,7 +25,7 @@ import type {
   TaskDetail,
   WorkItem,
   WorkItemDetail,
-} from './api'
+} from '../src/api'
 
 function isoInMinutes(minutes: number): string {
   return new Date(Date.now() + minutes * 60_000).toISOString()
@@ -40,7 +37,6 @@ const AT = '2026-11-04T14:02:00Z'
 
 export const demoDecisionDetails: Record<string, DecisionDetail> = {
   conf_71: {
-    demo: true,
     what: 'Push the branch and open a pull request',
     why: 'The release agent finished the audit-log work. This is the first thing that leaves your machine.',
     facts: [
@@ -90,7 +86,6 @@ export const demoDecisionDetails: Record<string, DecisionDetail> = {
 
 export const demoQuestions: Question[] = [
   {
-    demo: true,
     id: 'q_12',
     eyebrow: 'The console implementer asks',
     what: 'Should deleted users stay identifiable in the audit log?',
@@ -108,7 +103,6 @@ export const demoQuestions: Question[] = [
 
 export const demoWorkItemDetails: Record<string, WorkItemDetail> = {
   wi_a1: {
-    demo: true,
     title: 'Audit-log viewing',
     stage: 'Needs your approval',
     kv: [
@@ -139,7 +133,6 @@ export const demoWorkItemDetails: Record<string, WorkItemDetail> = {
     ],
   },
   wi_b2: {
-    demo: true,
     title: 'Rate-limit headers on the public API',
     stage: 'Working',
     kv: [
@@ -150,7 +143,6 @@ export const demoWorkItemDetails: Record<string, WorkItemDetail> = {
     handoffs: [],
   },
   wi_c3: {
-    demo: true,
     title: 'Flaky integration test in billing',
     stage: 'Waiting for quota',
     kv: [
@@ -165,7 +157,6 @@ export const demoWorkItemDetails: Record<string, WorkItemDetail> = {
 
 export const demoTaskDetails: Record<string, TaskDetail> = {
   task_api: {
-    demo: true,
     name: 'Storage and API for audit events',
     kv: [
       { label: 'Role', value: 'Implementer' },
@@ -178,7 +169,6 @@ export const demoTaskDetails: Record<string, TaskDetail> = {
       'Ready: audit events table, migration 0042, GET /audit with filters and tests. Risk: offset pagination.',
   },
   task_console: {
-    demo: true,
     name: 'Console page with filters',
     kv: [
       { label: 'Role', value: 'Implementer' },
@@ -189,7 +179,6 @@ export const demoTaskDetails: Record<string, TaskDetail> = {
     note: 'The open question is in Needs you.',
   },
   task_tests: {
-    demo: true,
     name: 'Tests for both',
     kv: [
       { label: 'Role', value: 'Test author' },
@@ -226,7 +215,6 @@ Give a specialist a subagent policy only when its task has separable lookups; su
 ]
 
 export const demoModelTiers: ModelTiers = {
-  demo: true,
   providers: ['Claude Code', 'Codex', 'OpenCode on GLM', 'OpenCode on Gemini'],
   rows: [
     {
@@ -265,7 +253,6 @@ export const demoModelTiers: ModelTiers = {
 }
 
 export const demoBackups: BackupsStatus = {
-  demo: true,
   lastAt: '03:00 today',
   note: 'Credentials excluded by rule.',
   excluded: 'credentials',
@@ -519,3 +506,99 @@ export const demoRepositories: RepositoryEntry[] = [
     trust: false,
   },
 ]
+
+// ── Real server shapes for the endpoints whose view types differ from the wire ───────────
+
+/** GET /api/questions as the server serves it (question records), derived from the worked example. */
+export const serverQuestions = demoQuestions.map((q) => ({
+  id: q.id,
+  question: q.what,
+  options: q.options,
+  status: 'open',
+  evidence: {
+    what: q.what,
+    why: q.why,
+    facts: q.options,
+    consequences: 'unknown — not recorded in this build',
+  },
+}))
+
+/** GET /api/prompts as the server serves it: `{revision, parts, overrides}`. */
+export const serverPrompts = {
+  revision: 12,
+  parts: demoPromptParts.map((part) => ({
+    id: part.id,
+    layer: part.layer,
+    name: part.name,
+    edited: part.edited === true,
+    defaultUpdated: part.defaultUpdated === true,
+    ...(part.provenance === undefined ? {} : { provenance: part.provenance }),
+  })),
+  overrides: demoPromptParts
+    .filter((part) => part.text !== undefined)
+    .map((part) => ({ path: part.id, text: part.text, layer: part.layer })),
+}
+
+/** GET /api/models as the server serves it: the capability table, with the worked example's models. */
+export const serverModels = {
+  table: {
+    version: 1,
+    tiers: ['fast', 'balanced', 'strong', 'frontier'],
+    engines: {
+      claude: {
+        models: {
+          haiku: { tier: 'fast', effort: 'medium', speed: 5, cost: 1, vendor_says: 'fast' },
+          sonnet: { tier: 'balanced', effort: 'medium', speed: 3, cost: 3, vendor_says: 'balanced' },
+          opus: { tier: 'strong', effort: 'high', speed: 2, cost: 5, vendor_says: 'strong' },
+          fable: {
+            tier: 'frontier',
+            effort: 'high',
+            bills: 'credits',
+            speed: 1,
+            cost: 9,
+            vendor_says: 'frontier',
+          },
+        },
+      },
+      codex: {
+        models: {
+          'gpt-6-luna': { tier: 'fast', effort: 'low', speed: 5, cost: 1, vendor_says: 'fast' },
+          'gpt-6.1-sol': { tier: 'balanced', effort: 'medium', speed: 3, cost: 3, vendor_says: 'balanced' },
+          'gpt-6-astra': { tier: 'strong', effort: 'high', speed: 2, cost: 5, vendor_says: 'strong' },
+        },
+      },
+      opencode: {
+        providers: {
+          'zai-coding-plan': {
+            models: {
+              'glm-5.3-flash': { tier: 'fast', variant: 'medium', speed: 5, cost: 1, vendor_says: 'fast' },
+              'glm-5.3': { tier: 'balanced', variant: 'medium', speed: 3, cost: 2, vendor_says: 'balanced' },
+            },
+          },
+          google: {
+            models: {
+              'gemini-3.5-flash-lite': {
+                tier: 'fast',
+                variant: 'medium',
+                speed: 5,
+                cost: 1,
+                vendor_says: 'fast',
+              },
+              'gemini-3.8-flash': {
+                tier: 'balanced',
+                variant: 'medium',
+                speed: 4,
+                cost: 2,
+                vendor_says: 'balanced',
+              },
+              'gemini-4-argon': { tier: 'strong', variant: 'high', speed: 2, cost: 5, vendor_says: 'strong' },
+            },
+          },
+        },
+      },
+    },
+    routing: { roles: {}, subagents: {}, frontier: { requires: 'preauthorised' } },
+  },
+  provenance: { source: 'shipped default', path: '', sha256: '0'.repeat(64) },
+  availability: [],
+}

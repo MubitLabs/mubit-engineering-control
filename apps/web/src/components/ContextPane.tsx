@@ -9,6 +9,7 @@ import {
 } from '../api'
 import { type ContextDescriptor, useWorkbench } from '../workbench'
 import { Btn } from './base'
+import { LoadFailed, useLoad } from './LoadState'
 
 /**
  * The context pane: the evidence for whatever is selected, one gesture away
@@ -72,11 +73,11 @@ export function Kv({ rows }: { rows: Array<{ label: string; value: string; mono?
   )
 }
 
-function DemoNote({ demo }: { demo?: true }) {
-  if (demo !== true) return null
+function AbsentNote({ absent }: { absent?: true }) {
+  if (absent !== true) return null
   return (
     <p className="muted" style={{ fontSize: 'var(--t-meta)' }}>
-      This detail is not served by the server yet — shown from the §23 worked example.
+      This detail is not served by the server yet.
     </p>
   )
 }
@@ -154,24 +155,18 @@ function DecisionBody({ id }: { id: string }) {
           </span>
         ))}
       </pre>
-      <DemoNote demo={detail.demo} />
+      <AbsentNote absent={detail.absent} />
     </>
   )
 }
 
 function QuestionBody({ id }: { id: string }) {
-  const [question, setQuestion] = useState<Question | null>(null)
-  useEffect(() => {
-    let alive = true
-    api
-      .questions()
-      .then((all) => alive && setQuestion(all.find((q) => q.id === id) ?? null))
-      .catch(() => {})
-    return () => {
-      alive = false
-    }
-  }, [id])
-  if (question === null) return <p className="muted">Loading the question…</p>
+  const [load, retry] = useLoad(async () => (await api.questions()).find((q) => q.id === id) ?? null, [id])
+  if (load.status === 'loading') return <p className="muted">Loading the question…</p>
+  if (load.status === 'error')
+    return <LoadFailed what="the question" message={load.message} onRetry={retry} />
+  const question: Question | null = load.value
+  if (question === null) return <p className="muted">This question is no longer open.</p>
   return (
     <>
       <h3 style={{ fontSize: 'var(--t-lead)', fontWeight: 600, color: 'var(--ink)' }}>{question.what}</h3>
@@ -191,24 +186,16 @@ function QuestionBody({ id }: { id: string }) {
           </p>
         </>
       )}
-      <DemoNote demo={question.demo} />
     </>
   )
 }
 
 function WorkBody({ id }: { id: string }) {
-  const [detail, setDetail] = useState<WorkItemDetail | null>(null)
-  useEffect(() => {
-    let alive = true
-    api
-      .workItemDetail(id)
-      .then((d) => alive && setDetail(d))
-      .catch(() => {})
-    return () => {
-      alive = false
-    }
-  }, [id])
-  if (detail === null) return <p className="muted">Loading the work item…</p>
+  const [load, retry] = useLoad<WorkItemDetail>(() => api.workItemDetail(id), [id])
+  if (load.status === 'loading') return <p className="muted">Loading the work item…</p>
+  if (load.status === 'error')
+    return <LoadFailed what="the work item" message={load.message} onRetry={retry} />
+  const detail = load.value
   return (
     <>
       <h3 style={{ fontSize: 'var(--t-lead)', fontWeight: 600, color: 'var(--ink)' }}>{detail.title}</h3>
@@ -245,24 +232,16 @@ function WorkBody({ id }: { id: string }) {
           <Kv rows={detail.soFar} />
         </>
       )}
-      <DemoNote demo={detail.demo} />
+      <AbsentNote absent={detail.absent} />
     </>
   )
 }
 
 function TaskBody({ id }: { id: string }) {
-  const [detail, setDetail] = useState<TaskDetail | null>(null)
-  useEffect(() => {
-    let alive = true
-    api
-      .taskDetail(id)
-      .then((d) => alive && setDetail(d))
-      .catch(() => {})
-    return () => {
-      alive = false
-    }
-  }, [id])
-  if (detail === null) return <p className="muted">Loading the task…</p>
+  const [load, retry] = useLoad<TaskDetail>(() => api.taskDetail(id), [id])
+  if (load.status === 'loading') return <p className="muted">Loading the task…</p>
+  if (load.status === 'error') return <LoadFailed what="the task" message={load.message} onRetry={retry} />
+  const detail = load.value
   return (
     <>
       <h3 style={{ fontSize: 'var(--t-lead)', fontWeight: 600, color: 'var(--ink)' }}>{detail.name}</h3>
@@ -278,7 +257,7 @@ function TaskBody({ id }: { id: string }) {
           {detail.note}
         </p>
       )}
-      <DemoNote demo={detail.demo} />
+      <AbsentNote absent={detail.absent} />
     </>
   )
 }

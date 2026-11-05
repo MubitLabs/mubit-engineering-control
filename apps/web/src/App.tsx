@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { ContextPane } from './components/ContextPane'
 import { Palette } from './components/Palette'
+import { PaneBoundary } from './components/PaneBoundary'
 import { Rail, type RailCounts } from './components/Rail'
 import { KeyForm, LoginSheet, SwitchSheet } from './components/Sheets'
 import { Toast } from './components/Toast'
@@ -152,7 +153,9 @@ function WorkbenchShell() {
         onTheme={wb.setTheme}
       />
       <main className="main" id="main">
-        <View />
+        <PaneBoundary key={wb.route} label={`The ${wb.route} view`}>
+          <View />
+        </PaneBoundary>
       </main>
       <ContextPane />
       <Scrim />

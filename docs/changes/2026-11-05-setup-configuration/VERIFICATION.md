@@ -87,3 +87,32 @@ Playwright gates, by hand. Each mutation was applied, its test run, and the file
 | `failure swallowed` | The catch sets no error | Both failed-start tests | Failed, as they should |
 | `section not set` | Setup leaves `store.section` alone | `Open Repositories lands on Repositories` | Failed, as it should |
 | `detail not shown` | `failureText` returns the error text alone | `a refused save…`, `a refused proposal…` | Failed, as they should |
+
+## Proposal comparison
+
+Verification found that a proposal showed its patch and not a comparison. Fixed test first.
+
+| Test | Red | Green |
+| --- | --- | --- |
+| `policy-routes`: six of the seven first written in `GET /api/setup/drafts compares each proposal…`. `has nothing to compare…` guards against a preview and passed throughout. `a stored text that no longer loads…` came after the first green, so its red is the `a bad stored text fails the list` mutant | `preview` undefined; `a stale comparison cannot apply` answered 400, not 409 | Pass |
+| `config-model`: `applies against the version its comparison was drawn from…` | `proposalBase is not a function` | Pass |
+| `config-contract`: `reads a proposal's comparison…` | `preview` undefined | Pass |
+
+| Command | Result |
+| --- | --- |
+| `python3 tools/mutants/run.py tools/mutants/m3.3-config.json` | 33 of 33 killed, 11 new |
+| `pnpm check` | 1 failed, 2295 passed, 15 skipped. The failure is the permitted `login-cards.test.ts` node-pty case |
+| `pnpm --dir apps/web test:screens`, under the lock | 239 passed, baselines unchanged. The four new screen tests were written after the code, so their red is the gates below |
+
+Playwright gates, by hand, each restored after its run.
+
+| Gate | Mutation | Tests | Result |
+| --- | --- | --- | --- |
+| `plain patch` | `Proposals` always prints `draft.diff` | `a proposal marks what it replaces…` and the three that read the comparison | 4 failed, as they should |
+| `no redraw on save` | The base change refreshes nothing | `saving an edit redraws a proposal…` | Failed, as it should |
+| `apply with newest read` | `proposalBase` prefers the newest read | `Apply answers for the comparison on screen…` | Failed, as it should |
+| `no redraw on stale` | The stale branch does not refresh | `a stale proposal says so…` | Failed, as it should |
+
+Real routes, on a rebuilt scratch server with `MEC_FAKE_ENGINE=1`: saved a policy with `install: repo_a`, then sent `propose policy` with `repo_prop` through `POST /api/chat/messages` with `setup: true`. The draft's `preview` showed `repo_a` before and only `repo_prop` after. That run read the route, not the screen. Apply itself is covered by the route and contract tests.
+
+Not observed: a proposal on the real route in a browser, a models or prompts proposal on a scratch server, and a prompts part with a long text on screen.

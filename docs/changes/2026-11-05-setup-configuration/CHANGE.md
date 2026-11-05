@@ -58,6 +58,15 @@ Each was needed by a requirement and is one small block.
 - **The probe route skips capability drift.** It checks sign-in and version only. `mec slot probe` also checks required flags.
 - **A setup-agent repository registered before this change** keeps no marker, so `has_repository` stays false for it. No migration, as ruled. Readiness reads the docs and counts it.
 
+## A proposal's comparison
+
+A proposal first showed its patch as plain text, which missed what requirement 12 asks for. With `install: repo_a` saved, a proposal for `repo_prop` showed only the new key, and Apply dropped `repo_a` with nothing marking it. `GET /api/setup/drafts` now carries `preview` on a pending policy, models or prompts proposal. The route moved from `server.ts` into `config-routes.ts` to sit beside the code Apply runs: the policy merge and the prompt parts are one function each, so the comparison cannot drift from the save. The screen renders `preview` with `lineDiff`.
+
+- **Apply sends `preview.base`, not the section's newest read.** The two differ when the text moves after the comparison was drawn. Sending the newest would pass the stale check and overwrite text the owner never compared. A stale refusal now redraws the comparison, and so does a save in the editor.
+- **Policy is compared re-spaced on both sides.** The default and many saved files are compact JSON, so a line diff would mark the whole file changed. Spacing has no meaning there. The stored text is unchanged.
+- **Plain text stays where nothing compares:** a new repository, or a stored text that no longer loads. That one costs the comparison, not the list.
+- **A models comparison shows the whole table,** in the 320px scrolling block. An unchanged stretch is not folded, so a one-line change in the 88-line default can sit below the fold.
+
 ## Left open
 
 - A sign-in that failed to start leaves its `home_ready` connection. The form says the sign-in did not start, and trying the same name is refused with "retire it first". The row offers Check and Retire but no sign-in, because `connectionActions` offers that only for `auth_expired`.

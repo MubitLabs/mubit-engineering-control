@@ -1,7 +1,7 @@
 import type { HealthBoard, HealthClaim, HealthName, Store, StoreDoc } from '@mec/contracts'
 import { type ConfirmationRecord, openConfirmation } from '@mec/policy'
 import { MemoryRepositories } from '@mec/testkit'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseHealthSnapshot } from '../src/health'
 import { buildServer, type ServerDeps } from '../src/server'
 
@@ -226,6 +226,30 @@ describe('repo identity at the chat route', () => {
     expect(seen).toEqual([repoA])
     expect((await inject(app, { text: 'x', repoId: 'repo_nope' })).statusCode).toBe(400)
     expect(seen).toEqual([repoA])
+  })
+
+  it('the admission error handler leaves every other error as Fastify answers it', async () => {
+    const { store, app } = makeServer()
+    track(app)
+    const malformed = await app.inject({
+      method: 'POST',
+      url: '/api/chat/messages',
+      headers: { 'content-type': 'application/json' },
+      payload: '{not json',
+    })
+    expect(malformed.statusCode).toBe(400)
+    expect(malformed.json()).toMatchObject({ code: 'FST_ERR_CTP_INVALID_JSON_BODY', statusCode: 400 })
+
+    vi.spyOn(store.workItems, 'list').mockImplementation(() => {
+      throw new Error('disk gone')
+    })
+    const thrown = await app.inject({ method: 'GET', url: '/api/work' })
+    expect(thrown.statusCode).toBe(500)
+    expect(thrown.json()).toEqual({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'disk gone',
+    })
   })
 })
 

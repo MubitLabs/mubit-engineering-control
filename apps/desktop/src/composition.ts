@@ -48,7 +48,7 @@ const PASS_INTERVAL_MS = 2000
 /** §20 Shutdown: how long in-flight work gets before the process goes without it. */
 const CLOSE_BOUND_MS = 10_000
 
-/** The brain's own close once its turn is over: tool servers and tmpdirs, nothing slow. */
+/** The stop and the brain's close: a stopped engine ends at once, and the rest is not slow. */
 const BRAIN_CLOSE_GRACE_MS = 1000
 
 /**
@@ -215,6 +215,7 @@ export async function startServer(opts: {
     closed = true
     clearInterval(queueTimer)
     clearInterval(healthTimer)
+    planner?.quiesce()
     // The final snapshot answers `not running` (instances 0, not answering) so `mec status`
     // never reports a dead server as healthy.
     const final = buildHealthSnapshot(store, health)
@@ -222,14 +223,20 @@ export async function startServer(opts: {
     writeFileSync(healthPath, `${JSON.stringify(final, null, 2)}\n`)
     await tools.stop()
     // §20, decision #36: only work already in flight finishes, within the bound. A drain would
-    // start paid planner turns on the way out; pending rows are for the next start. A turn
-    // past the bound fails quietly at its next write, so its row stays running for boot.
+    // start paid planner turns on the way out; pending rows are for the next start. Past the
+    // bound the engine is stopped, or its pipes would keep this process up. A turn that still
+    // answers fails quietly at its next write, so its row stays running for boot.
     await within(
       opts.closeBoundMs ?? CLOSE_BOUND_MS,
       Promise.allSettled([app.close(), store.effects.settle()]),
     )
     app.server.closeAllConnections()
-    if (planner !== undefined) await within(BRAIN_CLOSE_GRACE_MS, planner.close())
+    if (planner !== undefined) {
+      await within(
+        BRAIN_CLOSE_GRACE_MS,
+        planner.abort().then(() => planner.close()),
+      )
+    }
     db.close()
     lock.release()
   }
@@ -253,6 +260,11 @@ async function within(ms: number, work: Promise<unknown>): Promise<void> {
   clearTimeout(timer)
 }
 
+/** The planner's lifetime, as `close` drives it; a scripted brain has no engine to stop. */
+type PlannerLifetime = { quiesce: () => void; abort: () => Promise<void>; close: () => Promise<void> }
+
+const NO_ENGINE: PlannerLifetime = { quiesce: () => {}, abort: async () => {}, close: async () => {} }
+
 /**
  * §6 composed path: the meta-agent executor owns chat turns. MEC_FAKE_ENGINE=1 uses the scripted
  * fake; otherwise the REAL brain (R1.4), the meta agent on a dedicated Claude slot
@@ -262,11 +274,11 @@ function composePlanner(
   store: SqliteStore,
   opts: { dataDir: string; brain?: MetaBrain },
   metaSlotDir: string | undefined,
-): { service: MetaAgentService; close: () => Promise<void> } | undefined {
+): ({ service: MetaAgentService } & PlannerLifetime) | undefined {
   if (opts.brain !== undefined) {
     return {
       service: new MetaAgentService({ store, effects: store.effects, brain: opts.brain }),
-      close: async () => {},
+      ...NO_ENGINE,
     }
   }
   if (process.env.MEC_FAKE_ENGINE === '1') {
@@ -294,7 +306,7 @@ function composePlanner(
           },
         }),
       }),
-      close: async () => {},
+      ...NO_ENGINE,
     }
   }
   if (metaSlotDir === undefined) return undefined
@@ -302,6 +314,8 @@ function composePlanner(
   const brain = new RealClaudeBrain({
     slotDir: metaSlotDir,
     toolsSecret: randomBytes(24).toString('hex'),
+    // §5.4: the data dir is the root, so a scratch server never reads the real prompts.
+    promptsRoot: join(opts.dataDir, 'prompts'),
   })
   return {
     service: new MetaAgentService({
@@ -342,6 +356,8 @@ function composePlanner(
       },
       brain: brain.asBrain(),
     }),
+    quiesce: () => brain.quiesce(),
+    abort: () => brain.abort(),
     close: () => brain.close(),
   }
 }

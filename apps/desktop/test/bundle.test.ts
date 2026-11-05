@@ -4,10 +4,12 @@
  * until `pnpm build:desktop` has produced dist/mec.mjs, so a clean checkout stays green.
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
+import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -75,5 +77,97 @@ describe('bin/mec.js bundle smoke', () => {
       }
     },
     8000,
+  )
+
+  /** What a crash mid-planning leaves, so a resume relay is running when the signal lands. */
+  const seedInterrupted = (dataDir: string): void => {
+    const db = new Database(join(dataDir, 'mec.db'))
+    migrate(db, MIGRATIONS_v1)
+    const store = new SqliteStore(db)
+    store.atomic(() => {
+      store.engines.save({
+        id: 'repo_a',
+        url: 'https://example.test/a',
+        bootstrap: [],
+        checks: [],
+        trust: true,
+      })
+      store.workItems.save({
+        id: 'wi_1',
+        state: 'planning',
+        repoId: 'repo_a',
+        pin: { repoId: 'repo_a' },
+        mandate: { originMessageId: 'msg_1' },
+      })
+      store.messages.save({
+        id: 'msg_1',
+        text: 'request 1',
+        repoId: 'repo_a',
+        routing: 'new_work',
+        workItemId: 'wi_1',
+        createdAt: '2026-11-05T12:00:00.000Z',
+      })
+    })
+    db.close()
+  }
+
+  itWithBundle(
+    'exits within the bound while an engine child ignores the signal and holds its pipes',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'mec-exit-'))
+      tempDirs.push(dir)
+      const dataDir = join(dir, 'data')
+      mkdirSync(dataDir)
+      mkdirSync(join(dir, 'slot'))
+      mkdirSync(join(dir, 'bin'))
+      const log = join(dir, 'engine.log')
+      writeFileSync(
+        join(dir, 'bin', 'claude'),
+        `#!/bin/sh\ntrap '' TERM\nsleep 40 &\necho $! >> '${log}'\necho $$ >> '${log}'\nwait\n`,
+        { mode: 0o755 },
+      )
+      seedInterrupted(dataDir)
+
+      const { MEC_FAKE_ENGINE: _fake, ...inherited } = process.env
+      const child = spawn(process.execPath, [binPath], {
+        env: {
+          ...inherited,
+          HOME: dir,
+          MEC_DATA_DIR: dataDir,
+          MEC_META_SLOT: join(dir, 'slot'),
+          MEC_NO_OPEN: '1',
+          PATH: `${join(dir, 'bin')}:${process.env.PATH}`,
+        },
+        stdio: ['ignore', 'ignore', 'ignore'],
+      })
+      const exited = new Promise<number | null>((resolve) => child.once('exit', resolve))
+      const enginePids = (): number[] =>
+        existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map(Number) : []
+
+      try {
+        const deadline = Date.now() + 8000
+        while (Date.now() < deadline && enginePids().length < 2) await sleep(50)
+        expect(enginePids()).toHaveLength(2)
+
+        const signalled = Date.now()
+        child.kill('SIGTERM')
+        const code = await Promise.race([exited, sleep(14_000).then(() => 'still running')])
+
+        expect(code).toBe(0)
+        expect(Date.now() - signalled).toBeLessThan(13_000)
+        expect(existsSync(join(dataDir, '.mec.lock'))).toBe(false)
+      } finally {
+        child.kill('SIGKILL')
+        // Only the two pids the stub itself reported; each ignores SIGTERM on purpose.
+        for (const pid of enginePids()) {
+          try {
+            process.kill(pid, 'SIGKILL')
+          } catch {
+            // already gone
+          }
+        }
+      }
+    },
+    25_000,
   )
 })

@@ -229,5 +229,110 @@
     "find": "    keystoreRoot: opts.dataDir,\n",
     "replace": "    keystoreRoot: join(opts.dataDir, 'elsewhere'),\n",
     "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "16 abort leaves the engine running",
+    "file": "packages/meta/src/brain.ts",
+    "find": "    if (this.#running !== null) await this.#stopEngine(this.#running)\n  }\n\n  /** Stops the tools server and removes the brain-owned tmpdir",
+    "replace": "  }\n\n  /** Stops the tools server and removes the brain-owned tmpdir",
+    "tests": ["packages/meta/test/durable.test.ts", "apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "16b an engine may start while closing",
+    "file": "packages/meta/src/brain.ts",
+    "find": "    if (this.#closing) throw turnCutShort()\n    const handle = await this.#engine.launch({\n",
+    "replace": "    const handle = await this.#engine.launch({\n",
+    "tests": ["packages/meta/test/durable.test.ts", "apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "16c an abort during a launch stops nothing",
+    "file": "packages/meta/src/brain.ts",
+    "find": "    if (this.#closing) await this.#stopEngine(handle)\n",
+    "replace": "",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "16d a turn ending during close reads as a brain failure",
+    "file": "packages/meta/src/brain.ts",
+    "find": "      if (this.#closing) throw turnCutShort()\n      throw error\n",
+    "replace": "      throw error\n",
+    "tests": ["packages/meta/test/durable.test.ts", "apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "16e an incomplete retry during close is answered",
+    "file": "packages/meta/src/brain.ts",
+    "find": "      if (retried.protocolIncomplete === true && this.#closing) throw turnCutShort()\n",
+    "replace": "",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "16f close does not quiesce the planner",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    planner?.quiesce()\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "16g close never stops the engine",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "        planner.abort().then(() => planner.close()),\n",
+    "replace": "        planner.close(),\n",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "16h the launcher does not exit once close resolves",
+    "file": "apps/desktop/bin/mec.js",
+    "find": "    process.exit()\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/bundle.test.ts"]
+  },
+  {
+    "name": "16i a closing brain builds its planner",
+    "file": "packages/meta/src/real-brain.ts",
+    "find": "      this.#closing ? Promise.reject(turnCutShort()) : this.#plannerBrain().asBrain()(context)\n",
+    "replace": "      this.#plannerBrain().asBrain()(context)\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "16j RealClaudeBrain keeps abort to itself",
+    "file": "packages/meta/src/real-brain.ts",
+    "find": "    await this.#planner?.abort()\n",
+    "replace": "",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "16k the v0 turn is not stopped on abort",
+    "file": "packages/meta/src/real-brain.ts",
+    "find": "    if (this.#running !== null) await this.#stopEngine(this.#running)\n",
+    "replace": "",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "16l the v0 corrective retry runs while closing",
+    "file": "packages/meta/src/real-brain.ts",
+    "find": "    if (this.#closing) throw turnCutShort()\n    this.lastEvents = events\n",
+    "replace": "    this.lastEvents = events\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "16m a cut-short message turn stops its work",
+    "file": "packages/meta/src/service.ts",
+    "find": "      // A shutdown cut the turn short (§20): no receipt, so the next start resumes it.\n      if (error instanceof Later) throw error\n",
+    "replace": "",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "16n a cut-short wake stops its work",
+    "file": "packages/meta/src/service.ts",
+    "find": "      if (error instanceof Later) throw error\n      return this.#failTurn(\n        { ...turn, text: input.detail ?? input.reason },\n",
+    "replace": "      return this.#failTurn(\n        { ...turn, text: input.detail ?? input.reason },\n",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "17 the real planner reads the real home",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    promptsRoot: join(opts.dataDir, 'prompts'),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/composition.test.ts"]
   }
 ]

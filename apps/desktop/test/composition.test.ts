@@ -1,4 +1,12 @@
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -465,15 +473,121 @@ describe('bounded shutdown (§20)', () => {
   }, 12_000)
 })
 
+/** Only what the stub reports it started: a test never signals anything else. */
+const stubPids: number[] = []
+
+const isAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * A real `claude` on PATH, and a scratch HOME so nothing reads the real one. The body runs as
+ * the engine process; $LOG gets one pid per launch and $ARGV the launch's arguments.
+ */
+const stubClaude = (body: string) => {
+  const dir = scratch()
+  const log = join(dir, 'engine.log')
+  const argv = join(dir, 'engine.argv')
+  mkdirSync(join(dir, 'bin'))
+  const script = `#!/bin/sh\nLOG='${log}'\nARGV='${argv}'\necho $$ >> "$LOG"\nprintf '%s\\n' "$@" >> "$ARGV"\n${body}\n`
+  writeFileSync(join(dir, 'bin', 'claude'), script, { mode: 0o755 })
+  vi.stubEnv('PATH', `${join(dir, 'bin')}:${process.env.PATH}`)
+  vi.stubEnv('HOME', dir)
+  const pids = (): number[] => {
+    if (!existsSync(log)) return []
+    const found = readFileSync(log, 'utf8').trim().split('\n').map(Number)
+    stubPids.push(...found.filter((pid) => !stubPids.includes(pid)))
+    return found
+  }
+  return {
+    pids,
+    home: dir,
+    argv: () => (existsSync(argv) ? readFileSync(argv, 'utf8') : ''),
+    untilLaunches: (count: number) => vi.waitFor(() => expect(pids()).toHaveLength(count), { timeout: 8000 }),
+  }
+}
+
 const tempDirs: string[] = []
 
 afterEach(() => {
+  for (const pid of stubPids) {
+    if (isAlive(pid)) process.kill(pid, 'SIGKILL')
+  }
+  stubPids.length = 0
+  vi.unstubAllEnvs()
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true })
   tempDirs.length = 0
   delete process.env.MEC_FAKE_ENGINE
 })
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+describe('shutdown with a real engine process (§20)', () => {
+  it('close stops the engine child, past the bound, and its row resumes', async () => {
+    const stub = stubClaude('exec sleep 60')
+    const dataDir = scratch()
+    const { db, store } = openStore(dataDir)
+    seedInterrupted(store)
+    const handle = await startServer({ dataDir, metaSlotDir: scratch(), closeBoundMs: 100 })
+    await stub.untilLaunches(1)
+    const [engine] = stub.pids()
+
+    await handle.close()
+    await vi.waitFor(() => expect(isAlive(engine!)).toBe(false), { timeout: 2000 })
+
+    expect(stub.pids()).toHaveLength(1)
+    expect(store.messages.get('msg_1')?.ackText).toBeUndefined()
+    expect(store.workItems.get('wi_1')?.state).toBe('planning')
+    expect(effectRow(db, 'relay', 'resume:msg_1')?.attempts).toBe(0)
+    db.close()
+  }, 12_000)
+
+  it('an engine ending without the protocol during close starts no second engine', async () => {
+    const stub = stubClaude('sleep 1')
+    const dataDir = scratch()
+    const { db, store } = openStore(dataDir)
+    seedInterrupted(store)
+    const handle = await startServer({ dataDir, metaSlotDir: scratch() })
+    await stub.untilLaunches(1)
+
+    await handle.close()
+    await sleep(300)
+
+    expect(stub.pids()).toHaveLength(1)
+    expect(store.messages.get('msg_1')?.ackText).toBeUndefined()
+    expect(store.workItems.get('wi_1')?.state).toBe('planning')
+    expect(effectRow(db, 'relay', 'resume:msg_1')?.attempts).toBe(0)
+    db.close()
+  }, 12_000)
+
+  it('the real planner reads its protocol from the data dir, not the real home', async () => {
+    const stub = stubClaude('exec sleep 60')
+    const dataDir = scratch()
+    const part = 'prompts/roles/meta_agent/protocol.md'
+    for (const [root, text] of [
+      [dataDir, 'DATA-DIR PROTOCOL'],
+      [join(stub.home, '.mec'), 'REAL-HOME PROTOCOL'],
+    ] as const) {
+      mkdirSync(join(root, 'prompts/roles/meta_agent'), { recursive: true })
+      writeFileSync(join(root, part), text)
+    }
+    const { db, store } = openStore(dataDir)
+    seedInterrupted(store)
+    const handle = await startServer({ dataDir, metaSlotDir: scratch(), closeBoundMs: 100 })
+    await stub.untilLaunches(1)
+    await vi.waitFor(() => expect(stub.argv()).toContain('PROTOCOL'))
+
+    expect(stub.argv()).toContain('DATA-DIR PROTOCOL')
+    expect(stub.argv()).not.toContain('REAL-HOME PROTOCOL')
+    await handle.close()
+    db.close()
+  }, 12_000)
+})
 
 describe('scratch data dirs (§5.4)', () => {
   it('prompts and models resolve under the data dir', async () => {

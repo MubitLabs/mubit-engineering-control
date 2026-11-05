@@ -48,11 +48,11 @@ export function Palette() {
       label: wb.theme === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme',
       run: () => wb.setTheme(wb.theme === 'dark' ? 'light' : 'dark'),
     })
-    list.push({
-      id: 'pause',
-      label: 'Pause all processing',
-      run: () => void wb.pauseProcessing(),
-    })
+    list.push(
+      wb.status?.runtime.state === 'paused'
+        ? { id: 'resume', label: 'Resume processing', run: () => void wb.resumeProcessing() }
+        : { id: 'pause', label: 'Pause all processing', run: () => void wb.pauseProcessing() },
+    )
     list.push({ id: 'backup', label: 'Back up now', run: () => void wb.backupNow() })
     for (const item of wb.work) {
       if (item.state === 'done' || item.state === 'stopped') continue

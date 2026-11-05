@@ -52,16 +52,39 @@ export function ChatView() {
     try {
       await api.holdWorkItem(live.id)
       wb.toast('Held.')
+      wb.refresh()
     } catch (error) {
       wb.toast(isNotServed(error) ? 'Hold is not served by the server yet.' : 'Hold failed — try again.')
     }
   }
 
+  const lift = async () => {
+    if (live === undefined) return
+    try {
+      await api.liftWorkItem(live.id)
+      wb.toast('Hold lifted.')
+      wb.refresh()
+    } catch (error) {
+      wb.toast(
+        isNotServed(error) ? 'Lift is not served by the server yet.' : 'Lift refused — the hold stays.',
+      )
+    }
+  }
+
+  // A stop is final (§18 "destructive actions confirm"): the first click arms, the second acts.
+  const stopId = `stop:${liveId}`
+  const stopArmed = wb.armedId === stopId
   const stop = async () => {
     if (live === undefined) return
+    if (!stopArmed) {
+      wb.arm(stopId)
+      return
+    }
+    wb.disarm()
     try {
       await api.stopWorkItem(live.id)
       wb.toast('Stopped.')
+      wb.refresh()
     } catch (error) {
       wb.toast(isNotServed(error) ? 'Stop is not served by the server yet.' : 'Stop failed — try again.')
     }
@@ -75,11 +98,17 @@ export function ChatView() {
             <Btn variant="quiet" onClick={() => wb.openContext({ kind: 'work', id: live.id })}>
               Details
             </Btn>
-            <Btn variant="quiet" onClick={() => void hold()}>
-              Hold
-            </Btn>
-            <Btn variant="quiet" onClick={() => void stop()}>
-              Stop
+            {live.held === true ? (
+              <Btn variant="quiet" onClick={() => void lift()}>
+                Lift
+              </Btn>
+            ) : (
+              <Btn variant="quiet" onClick={() => void hold()}>
+                Hold
+              </Btn>
+            )}
+            <Btn variant={stopArmed ? 'confirm' : 'quiet'} data-approve={stopId} onClick={() => void stop()}>
+              {stopArmed ? 'Confirm stop' : 'Stop'}
             </Btn>
           </>
         )}

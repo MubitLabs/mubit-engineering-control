@@ -460,3 +460,220 @@ describe('inbox resolve binds to the card input (audit #5)', () => {
     expect(res.json()).toEqual({ id: 'conf_bound_1', status: 'approved' })
   })
 })
+
+describe('owner commands (M1.4a, §12.5, decision #20)', () => {
+  const executing = (store: Store, id = 'wi_1', extra: StoreDoc = {}): void => {
+    store.atomic(() => {
+      store.engines.save({ id: 'repo_a', url: 'https://example.test/a' })
+      store.workItems.save({
+        id,
+        state: 'executing',
+        repoId: 'repo_a',
+        mandate: { originMessageId: 'msg_1' },
+        ...extra,
+      })
+    })
+  }
+
+  const post = (app: ReturnType<typeof buildServer>, url: string, body?: unknown) =>
+    app.inject({ method: 'POST', url, ...(body !== undefined && { payload: body as object }) })
+
+  const pauseControl = () => {
+    let paused = false
+    return {
+      pause: () => {
+        paused = true
+      },
+      resume: () => {
+        paused = false
+      },
+      isPaused: () => paused,
+    }
+  }
+
+  const fixture = (extra: Partial<ServerDeps> = {}) => {
+    const store: Store = new MemoryRepositories()
+    const app = buildServer({
+      store,
+      effects: store.effects,
+      health: new FakeHealthBoard(),
+      policyText: '{"preAuthorised":{}}',
+      now: () => new Date(AT),
+      ...extra,
+    })
+    return { store, app }
+  }
+
+  it('stop works with no meta agent', async () => {
+    const { store, app } = fixture()
+    executing(store)
+
+    const res = await post(app, '/api/work/wi_1/stop')
+
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ id: 'wi_1', status: 'stopped' })
+    expect(store.workItems.get('wi_1')?.state).toBe('stopped')
+  })
+
+  it('stop withdraws the mandate', async () => {
+    const { store, app } = fixture()
+    executing(store)
+
+    await post(app, '/api/work/wi_1/stop')
+    const again = await post(app, '/api/work/wi_1/stop')
+
+    expect(again.statusCode).toBe(200)
+    expect(again.json()).toEqual({ id: 'wi_1', status: 'stopped' })
+    expect(store.workItems.get('wi_1')?.mandate).toMatchObject({ status: 'withdrawn' })
+  })
+
+  it('stop on done work is 409', async () => {
+    const { store, app } = fixture()
+    executing(store, 'wi_1', { state: 'done' })
+
+    const res = await post(app, '/api/work/wi_1/stop')
+
+    expect(res.statusCode).toBe(409)
+    expect(store.workItems.get('wi_1')?.state).toBe('done')
+  })
+
+  it('stop, hold and lift on an unknown id are 404', async () => {
+    const { app } = fixture()
+    for (const verb of ['stop', 'hold', 'lift']) {
+      expect((await post(app, `/api/work/wi_none/${verb}`)).statusCode).toBe(404)
+    }
+  })
+
+  it('hold then lift over HTTP', async () => {
+    const { store, app } = fixture()
+    const stopWork = vi.fn(() => 'stopped' as const)
+    const liftHold = vi.fn(() => {
+      const doc = store.workItems.get('wi_1')!
+      store.atomic(() => store.workItems.save({ ...doc, hold: { ...(doc.hold as object), liftedAt: AT } }))
+      return { status: 'lifted' as const, launches: ['att_1', 'att_2'] }
+    })
+    const composed = fixture({
+      store,
+      metaAgent: {
+        onUserMessage: vi.fn(),
+        stopWork,
+        liftHold,
+      } as unknown as ServerDeps['metaAgent'],
+    })
+    executing(store)
+
+    const held = await post(composed.app, '/api/work/wi_1/hold', { reason: 'wait' })
+    expect(held.statusCode).toBe(200)
+    expect(held.json()).toEqual({ id: 'wi_1', status: 'held' })
+    const rows = (await app.inject({ method: 'GET', url: '/api/work' })).json() as { held: boolean }[]
+    expect(rows[0]?.held).toBe(true)
+
+    const lifted = await post(composed.app, '/api/work/wi_1/lift')
+    expect(lifted.statusCode).toBe(200)
+    expect(lifted.json()).toEqual({ id: 'wi_1', status: 'lifted', launches: 2 })
+    const after = (await app.inject({ method: 'GET', url: '/api/work' })).json() as { held: boolean }[]
+    expect(after[0]?.held).toBe(false)
+  })
+
+  it('a hold reason is redacted before it is stored', async () => {
+    const { store, app } = fixture()
+    executing(store)
+    const key = `sk-ant-api03-${'a'.repeat(40)}`
+
+    await post(app, '/api/work/wi_1/hold', { reason: `wait ${key}` })
+
+    expect(JSON.stringify(store.workItems.get('wi_1'))).not.toContain(key)
+    expect(JSON.stringify(store.events.read('work:wi_1'))).not.toContain(key)
+  })
+
+  it('hold on stopped work is 409 terminal', async () => {
+    const { store, app } = fixture()
+    executing(store, 'wi_1', { state: 'stopped' })
+
+    const res = await post(app, '/api/work/wi_1/hold')
+
+    expect(res.statusCode).toBe(409)
+    expect(res.json()).toEqual({ error: 'terminal' })
+  })
+
+  it('a refused lift is 409 with the reason and keeps the hold', async () => {
+    const { store } = fixture()
+    const { app } = fixture({
+      store,
+      metaAgent: {
+        onUserMessage: vi.fn(),
+        liftHold: () => ({ status: 'refused', error: 'mandate_withdrawn' }),
+      } as unknown as ServerDeps['metaAgent'],
+    })
+    executing(store, 'wi_1', { hold: { reason: 'wait', at: AT } })
+
+    const res = await post(app, '/api/work/wi_1/lift')
+
+    expect(res.statusCode).toBe(409)
+    expect(res.json()).toEqual({ error: 'mandate_withdrawn' })
+  })
+
+  it('lift with no meta agent: a free item is free, a held one stays held', async () => {
+    const { store, app } = fixture()
+    executing(store)
+    executing(store, 'wi_2', { hold: { reason: 'wait', at: AT } })
+
+    const free = await post(app, '/api/work/wi_1/lift')
+    expect(free.json()).toEqual({ id: 'wi_1', status: 'free', launches: 0 })
+
+    const held = await post(app, '/api/work/wi_2/lift')
+    expect(held.statusCode).toBe(409)
+    expect(held.json()).toEqual({ error: 'no_meta_agent' })
+    expect(store.workItems.get('wi_2')?.hold).toEqual({ reason: 'wait', at: AT })
+  })
+
+  it('pause and resume are idempotent and read back', async () => {
+    const control = pauseControl()
+    const { app } = fixture({ pauseControl: control })
+
+    for (let i = 0; i < 2; i += 1) {
+      const res = await post(app, '/api/processing/pause')
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({ status: 'paused' })
+    }
+    expect(control.isPaused()).toBe(true)
+    for (let i = 0; i < 2; i += 1) {
+      expect((await post(app, '/api/processing/resume')).json()).toEqual({ status: 'running' })
+    }
+    expect(control.isPaused()).toBe(false)
+  })
+
+  it('pause and resume are 404 with no pause control', async () => {
+    const { app } = fixture()
+    expect((await post(app, '/api/processing/pause')).statusCode).toBe(404)
+    expect((await post(app, '/api/processing/resume')).statusCode).toBe(404)
+  })
+
+  it('GET /api/processing reads the stored doc', async () => {
+    const { store, app } = fixture()
+    expect((await app.inject({ method: 'GET', url: '/api/processing' })).json()).toEqual({ paused: false })
+
+    store.atomic(() => {
+      store.engines.save({ id: 'settings/processing', paused: true, pausedAt: AT, updatedAt: AT })
+    })
+
+    expect((await app.inject({ method: 'GET', url: '/api/processing' })).json()).toEqual({
+      paused: true,
+      pausedAt: AT,
+    })
+  })
+
+  it('/api/status reports paused', async () => {
+    const { store, app } = fixture()
+    store.atomic(() => {
+      store.engines.save({ id: 'settings/processing', paused: true, pausedAt: AT, updatedAt: AT })
+    })
+
+    const status = (await app.inject({ method: 'GET', url: '/api/status' })).json() as {
+      runtime: { state: string }
+    }
+
+    expect(status.runtime.state).toBe('paused')
+    expect(parseHealthSnapshot(JSON.stringify(status))?.runtime.state).toBe('paused')
+  })
+})

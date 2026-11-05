@@ -182,6 +182,13 @@ export class EffectsQueue implements Effects {
     }
   }
 
+  /** Waits for the jobs in flight and starts none: a paused close leaves every row for the next start. */
+  async settle(): Promise<void> {
+    while (this.inFlight.size > 0) {
+      await Promise.allSettled([...this.inFlight.values()].map((job) => job.done))
+    }
+  }
+
   /** Test/debug view of one queue row; undefined once the job succeeded (drained). */
   snapshot(kind: EffectKind, key: string): EffectJobSnapshot | undefined {
     const row = this.stmt().byKindKey.get(kind, key)

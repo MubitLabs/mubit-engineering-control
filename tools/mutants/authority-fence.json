@@ -1,0 +1,240 @@
+[
+  {
+    "name": "1 remove the re-read fence in commitPlan",
+    "file": "packages/meta/src/service.ts",
+    "find": "    const fenced = this.#fencedTurn(input, workItemId)\n    if (fenced !== undefined) return fenced\n    const tasks = plan.tasks\n",
+    "replace": "    const tasks = plan.tasks\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "2 remove the terminal check in onWake",
+    "file": "packages/meta/src/service.ts",
+    "find": "    if (isTerminal(work) || mandateOf(work).status === 'withdrawn') return this.#refuseWake(input, work)\n",
+    "replace": "",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "3 launch while held: the held branch falls through to dispatch",
+    "file": "packages/meta/src/service.ts",
+    "find": "    if (isHeld(work)) {\n      this.#appendEvent(`work:${workItemId}`, 'launch_withheld', { workItemId, reason: 'held', at }, at)\n      return []\n    }\n",
+    "replace": "",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "4 allow planner release in persistExtras",
+    "file": "packages/meta/src/service.ts",
+    "find": "      if (route.decision !== 'hold' && route.decision !== 'stop') continue\n",
+    "replace": "      if (route.decision === 'release') {\n        const doc = this.#store.workItems.get(route.target)\n        if (doc !== undefined) {\n          this.#store.workItems.save({ ...doc, hold: { ...(doc.hold as object), liftedAt: at } })\n        }\n      }\n      if (route.decision !== 'hold' && route.decision !== 'stop') continue\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "5 skip withdraw in stopWork",
+    "file": "packages/meta/src/authority.ts",
+    "find": "    mandate: mandate as unknown as Json,\n",
+    "replace": "",
+    "tests": ["packages/meta/test/authority.test.ts", "apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "6 failTurn stops any state",
+    "file": "packages/meta/src/service.ts",
+    "find": "    if (String(this.#store.workItems.get(workItemId)?.state) !== 'planning') return\n",
+    "replace": "",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "7 launchAuthority returns run for held",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (isHeld(work)) return { verdict: 'defer', reason: 'held' }\n",
+    "replace": "",
+    "tests": ["packages/meta/test/authority.test.ts", "apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "8 launchAuthority drops the attempt-is-queued check",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (store.attempts.get(attemptId)?.state !== 'queued') return drop('attempt_not_queued')\n",
+    "replace": "",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "9 close calls drain while paused",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "(paused ? store.effects.settle() : store.effects.drain())",
+    "replace": "store.effects.drain()",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "10 first pass ignores paused",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  if (!paused) void store.effects.run().catch(() => {})\n",
+    "replace": "  void store.effects.run().catch(() => {})\n",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "11 pause rewrites pausedAt when already paused",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "      if (paused) return\n      const at = new Date().toISOString()\n",
+    "replace": "      const at = new Date().toISOString()\n",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "12 lift skips revalidate",
+    "file": "packages/meta/src/service.ts",
+    "find": "      if (!authority.ok) return { status: 'refused', error: `mandate_${authority.reason}` }\n",
+    "replace": "",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "13 honour a planner stop on a wake turn",
+    "file": "packages/meta/src/service.ts",
+    "find": "      if (wake) {\n",
+    "replace": "      if (wake && route.decision !== 'stop') {\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "14 launchAuthority ignores expiresAt",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  return revalidate(mandate, now, hash)\n",
+    "replace": "  return revalidate({ ...mandate, expiresAt: null }, now, hash)\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "15 launchAuthority skips the repo pin match",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (repoId === undefined || pinned !== repoId || repoOf(store.tasks.get(taskId)) !== repoId) {\n    return drop('repo_mismatch')\n  }\n",
+    "replace": "",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "16 honour a planner hold on a wake turn",
+    "file": "packages/meta/src/service.ts",
+    "find": "      if (wake) {\n",
+    "replace": "      if (wake && route.decision !== 'hold') {\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "17 the ack-only turn loses its fence",
+    "file": "packages/meta/src/service.ts",
+    "find": "  #ackOnlyTurn(input: TurnInput, workItemId: string, decision: MetaDecision): TurnOutcome {\n    const fenced = this.#fencedTurn(input, workItemId)\n    if (fenced !== undefined) return fenced\n",
+    "replace": "  #ackOnlyTurn(input: TurnInput, workItemId: string, decision: MetaDecision): TurnOutcome {\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "18 dispatch ignores a stop from the same turn",
+    "file": "packages/meta/src/service.ts",
+    "find": "    if (work === undefined || isTerminal(work) || mandateOf(work).status === 'withdrawn') return []\n",
+    "replace": "    if (work === undefined) return []\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "19 dispatch launches blocked work",
+    "file": "packages/meta/src/service.ts",
+    "find": "    if (String(work.state) === 'blocked') return []\n",
+    "replace": "",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "20 stop leaves queued attempts queued",
+    "file": "packages/meta/src/authority.ts",
+    "find": "    if (state === 'queued') {\n",
+    "replace": "    if (state === 'never') {\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "21 hold accepts legacy read-only work",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (isReadOnlyWork(doc, store.tasks.list({ workItemId }))) return 'read_only'\n",
+    "replace": "",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "22 lift accepts legacy read-only work",
+    "file": "packages/meta/src/service.ts",
+    "find": "      if (isReadOnlyWork(work, tasks)) return { status: 'refused', error: 'read_only' }\n",
+    "replace": "",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "23 launch handler ignores a drop verdict",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    if (authority.verdict === 'drop') {\n      store.atomic(() => refuseLaunch(store, payload, authority.reason, at))\n      return\n    }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "24 a deferral counts as a failure on the health board",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "      if (!(error instanceof Later)) claim.error(error instanceof Error ? error.message : String(error))\n",
+    "replace": "      claim.error(error instanceof Error ? error.message : String(error))\n",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "25 a fake launch wipes the attempt identity",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "        ...store.attempts.get(attemptId),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "26 resume forgets the stored pausedAt",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  let pausedAt = stored.pausedAt\n",
+    "replace": "  let pausedAt: string | undefined\n",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "27 pause is not stored",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "      store.atomic(() => saveProcessing(store, { paused, pausedAt: at }, at))\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  },
+  {
+    "name": "28 status hard-codes ready",
+    "file": "apps/desktop/src/server.ts",
+    "find": "state: processingOf(store).paused ? 'paused' : 'ready'",
+    "replace": "state: 'ready'",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "29 settle runs passes",
+    "file": "packages/store/src/effects-queue.ts",
+    "find": "  async settle(): Promise<void> {\n    while (this.inFlight.size > 0) {\n      await Promise.allSettled([...this.inFlight.values()].map((job) => job.done))\n    }\n  }\n",
+    "replace": "  async settle(): Promise<void> {\n    await this.drain()\n  }\n",
+    "tests": ["packages/store/test/effects.test.ts"]
+  },
+  {
+    "name": "30 settle does not wait",
+    "file": "packages/store/src/effects-queue.ts",
+    "find": "  async settle(): Promise<void> {\n    while (this.inFlight.size > 0) {\n      await Promise.allSettled([...this.inFlight.values()].map((job) => job.done))\n    }\n  }\n",
+    "replace": "  async settle(): Promise<void> {}\n",
+    "tests": ["packages/store/test/effects.test.ts"]
+  },
+  {
+    "name": "31 a planner release passes the route tool",
+    "file": "packages/meta/src/tools.ts",
+    "find": "        case 'conversation':\n          break\n",
+    "replace": "        case 'conversation':\n        case 'release':\n          break\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "32 a held plan keeps the planner's ack",
+    "file": "packages/meta/src/service.ts",
+    "find": "          ? `${unscoped.ack} This work is held, so nothing starts until you lift it.`\n",
+    "replace": "          ? unscoped.ack\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "33 the commit overwrites state on a replan",
+    "file": "packages/meta/src/service.ts",
+    "find": "        if (canTransition(WORK_ITEM_MACHINE, String(work.state), 'execution_started')) {\n          work.state = transition(WORK_ITEM_MACHINE, String(work.state), 'execution_started')\n",
+    "replace": "        {\n          work.state = 'executing'\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "34 a policy-changed launch does not block the work",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (work === undefined || !canTransition(WORK_ITEM_MACHINE, String(work.state), 'block')) return\n",
+    "replace": "  if (work !== undefined || work === undefined) return\n",
+    "tests": ["apps/desktop/test/composition.test.ts"]
+  }
+]

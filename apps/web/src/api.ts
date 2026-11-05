@@ -113,13 +113,14 @@ export type WorkTaskCounts = { total: number; byStatus: Record<string, number> }
 
 /**
  * GET /api/work — one row per work item, exactly as the server serves it:
- * {id, state, stage, taskCounts: {total, byStatus}, updatedAt} (stage is the
+ * {id, state, stage, held, taskCounts: {total, byStatus}, updatedAt} (stage is the
  * item's own lifecycle state until the §10 projection lands).
  */
 export type WorkItem = {
   id: string
   state: string
   stage: string
+  held?: boolean
   taskCounts: WorkTaskCounts
   updatedAt: string
 }
@@ -561,13 +562,21 @@ export const api = {
   },
 
   /**
-   * TODO(server) #9 of 10: hold/stop/pause — the operator commands beyond approve/deny. None is
-   * served today, so each reports the gap honestly instead of pretending the effect happened.
+   * The operator commands beyond approve/deny. An older server without a route still reports
+   * the gap honestly instead of pretending the effect happened.
    */
   holdWorkItem(id: string): Promise<{ status: string }> {
     return requestOrNotServed<{ status: string }>(`/api/work/${encodeURIComponent(id)}/hold`, {
       method: 'POST',
     })
+  },
+
+  /** POST /api/work/:id/lift — the only release of a hold; 409 carries why it was refused. */
+  liftWorkItem(id: string): Promise<{ status: string; launches: number }> {
+    return requestOrNotServed<{ status: string; launches: number }>(
+      `/api/work/${encodeURIComponent(id)}/lift`,
+      { method: 'POST' },
+    )
   },
 
   stopWorkItem(id: string): Promise<{ status: string }> {
@@ -578,6 +587,14 @@ export const api = {
 
   pauseProcessing(): Promise<{ status: string }> {
     return requestOrNotServed<{ status: string }>('/api/processing/pause', { method: 'POST' })
+  },
+
+  resumeProcessing(): Promise<{ status: string }> {
+    return requestOrNotServed<{ status: string }>('/api/processing/resume', { method: 'POST' })
+  },
+
+  processing(): Promise<{ paused: boolean; pausedAt?: string }> {
+    return requestOrNotServed<{ paused: boolean; pausedAt?: string }>('/api/processing')
   },
 
   /** #10 read side: the backups record; rejects with NotServedError until the server serves one. */

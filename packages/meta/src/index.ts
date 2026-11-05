@@ -1,6 +1,24 @@
 export { Acknowledger } from './acks'
 export type { RepoAdmissionCode, RepoPin } from './admission'
 export { assertRepoAdmission, RepoAdmissionError, repoFields } from './admission'
+export type {
+  HoldOutcome,
+  LaunchAuthority,
+  LaunchDropReason,
+  LiftOutcome,
+  Processing,
+  StopOutcome,
+} from './authority'
+export {
+  holdWorkItem,
+  isHeld,
+  launchAuthority,
+  mandateOf,
+  processingOf,
+  refuseLaunch,
+  saveProcessing,
+  stopWorkItem,
+} from './authority'
 export type { PlannerDecision, PlannerTurnInput, PlannerWake } from './brain'
 export { DEFAULT_PLANNER_PROTOCOL, PlannerBrain, readMetaProtocol } from './brain'
 // T5 planner (review 2026-11-04 §5): the context compiler, the executed nine tools, the driver.

@@ -10,8 +10,17 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { LaunchSpec, Store } from '@mec/contracts'
+import { Later } from '@mec/contracts'
 import { BridgeImpl, MecToolsServer } from '@mec/mec-tools'
-import { fakeBrain, MetaAgentService, RealClaudeBrain } from '@mec/meta'
+import {
+  fakeBrain,
+  launchAuthority,
+  MetaAgentService,
+  processingOf,
+  RealClaudeBrain,
+  refuseLaunch,
+  saveProcessing,
+} from '@mec/meta'
 import { loadPolicy } from '@mec/policy'
 import { loadModelsTable } from '@mec/prompts'
 import { parkFromEvents } from '@mec/runtime'
@@ -76,9 +85,9 @@ export async function startServer(opts: {
   const health = new HealthBoardImpl()
   health.claim('runtime').ready('composition root up')
   // Fail fast: a policy that cannot load never starts a server that would enforce it.
-  loadPolicy(opts.policyText ?? DEFAULT_POLICY_TEXT)
+  const policy = loadPolicy(opts.policyText ?? DEFAULT_POLICY_TEXT)
 
-  registerEffectHandlers(store, health)
+  registerEffectHandlers(store, health, policy.versionHash)
 
   // §26 Restart mid-attempt: a previous process's attempts stuck in 'running' reconcile to
   // 'stalled' with a recovery note — one live attempt per task, no duplicate dispatch (the
@@ -95,19 +104,29 @@ export async function startServer(opts: {
 
   // §26 Pause: no launch, deliver, relay or outbound message runs while paused; jobs that
   // were mid-handler finish (the pass simply stops starting new ones). On resume, waiting
-  // deadlines shift by the pause length so nothing fires late-but-eagerly.
-  let paused = false
-  let pausedAt: number | undefined
+  // deadlines shift by the pause length so nothing fires late-but-eagerly. Decision #21: the
+  // pause is stored, so it outlives a restart and the shift still counts from its first moment.
+  const stored = processingOf(store)
+  let paused = stored.paused
+  let pausedAt = stored.pausedAt
   const pauseControl = {
     pause(): void {
+      if (paused) return
+      const at = new Date().toISOString()
       paused = true
-      pausedAt = Date.now()
+      pausedAt = at
+      store.atomic(() => saveProcessing(store, { paused, pausedAt: at }, at))
     },
     resume(): void {
       if (!paused) return
+      const at = new Date()
+      const shift = at.getTime() - Date.parse(pausedAt ?? at.toISOString())
       paused = false
-      const shift = Date.now() - (pausedAt ?? Date.now())
-      if (shift > 0) store.effects.shiftWaiting?.(shift)
+      pausedAt = undefined
+      store.atomic(() => {
+        saveProcessing(store, { paused }, at.toISOString())
+        if (shift > 0) store.effects.shiftWaiting?.(shift)
+      })
     },
     isPaused(): boolean {
       return paused
@@ -118,7 +137,7 @@ export async function startServer(opts: {
     void store.effects.run().catch(() => {})
   }, PASS_INTERVAL_MS)
   queueTimer.unref()
-  void store.effects.run().catch(() => {})
+  if (!paused) void store.effects.run().catch(() => {})
 
   // The §21.2 snapshot writer: `mec status` reads <dataDir>/health.json (B0's main reads
   // ~/.mec/health.json — the dataDir IS that root). Rewritten when the board changes and at
@@ -152,6 +171,7 @@ export async function startServer(opts: {
     effects: store.effects,
     health,
     policyText: opts.policyText ?? DEFAULT_POLICY_TEXT,
+    pauseControl,
     // §6 composed path: the meta-agent executor owns chat turns. MEC_FAKE_ENGINE=1 uses the
     // scripted fake; otherwise the REAL brain (R1.4): the meta agent on a dedicated Claude
     // slot (MEC_META_SLOT) through the platform tools.
@@ -244,7 +264,8 @@ export async function startServer(opts: {
     writeFileSync(healthPath, `${JSON.stringify(final, null, 2)}\n`)
     await tools.stop()
     await app.close()
-    await store.effects.drain().catch(() => {})
+    // Paused, rows stay for the next start: only jobs already in flight finish.
+    await (paused ? store.effects.settle() : store.effects.drain()).catch(() => {})
     db.close()
     lock.release()
   }
@@ -339,11 +360,11 @@ function reconcileRunningAttempts(store: SqliteStore): void {
   })
 }
 
-function registerEffectHandlers(store: SqliteStore, health: HealthBoardImpl): void {
+function registerEffectHandlers(store: SqliteStore, health: HealthBoardImpl, policyHash: string): void {
   for (const kind of EFFECT_KINDS) {
     const claim = health.claim(`effects:${kind}`)
     claim.ready()
-    const run: EffectHandler = kind === 'launch' ? launchHandler(store) : async () => {}
+    const run: EffectHandler = kind === 'launch' ? launchHandler(store, policyHash) : async () => {}
     store.effects.handle(
       kind,
       guard(claim, run),
@@ -353,21 +374,30 @@ function registerEffectHandlers(store: SqliteStore, health: HealthBoardImpl): vo
   }
 }
 
-/** Moves the kind's health entry to error on a failed run and back to ready on the next. */
+/** Moves the kind's health entry to error on a failed run and back to ready on the next. A deferral is no failure. */
 function guard(claim: HealthClaim, run: EffectHandler): EffectHandler {
   return async (payload: Json) => {
     claim.ready()
     try {
       await run(payload)
     } catch (error) {
-      claim.error(error instanceof Error ? error.message : String(error))
+      if (!(error instanceof Later)) claim.error(error instanceof Error ? error.message : String(error))
       throw error
     }
   }
 }
 
-function launchHandler(store: SqliteStore): EffectHandler {
+function launchHandler(store: SqliteStore, policyHash: string): EffectHandler {
   return async (payload) => {
+    // The gate (§13, §20) comes first on every path. `Later` keeps a held launch's row; a drop
+    // returns normally, so the row drains with its refusal on record.
+    const at = new Date().toISOString()
+    const authority = launchAuthority(store, payload, at, policyHash)
+    if (authority.verdict === 'defer') throw new Later(authority.reason)
+    if (authority.verdict === 'drop') {
+      store.atomic(() => refuseLaunch(store, payload, authority.reason, at))
+      return
+    }
     // Without the fake flag a launch is acknowledged (no real runtime is wired at this
     // milestone); with it, the recorded fixture stands in for a Claude attempt.
     if (process.env.MEC_FAKE_ENGINE !== '1') return
@@ -413,6 +443,8 @@ async function runFakeLaunch(store: SqliteStore, payload: Json): Promise<void> {
   const saveAttempt = (): void => {
     store.atomic(() => {
       store.attempts.save({
+        // The queued doc names the task and work a stop and a lift find this attempt by.
+        ...store.attempts.get(attemptId),
         id: attemptId,
         state,
         generation,

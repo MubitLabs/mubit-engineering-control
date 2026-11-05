@@ -182,6 +182,7 @@ export const ATTEMPT_TERMINAL: readonly AttemptState[] = ['succeeded', 'checks_f
 
 export const ATTEMPT_MACHINE: TransitionTable<AttemptState, AttemptEvent> = [
   { from: 'queued', event: 'agent_started', to: 'running' },
+  { from: 'queued', event: 'interrupt_confirmed', to: 'interrupted' },
   { from: 'running', event: 'agent_finished', to: 'work_complete' },
   { from: 'running', event: 'quota_exhausted', to: 'quota_wait' },
   { from: 'running', event: 'auth_expired', to: 'auth_required' },

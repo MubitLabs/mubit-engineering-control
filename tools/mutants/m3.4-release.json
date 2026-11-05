@@ -1,0 +1,30 @@
+[
+  {
+    "name": "lighthouse threshold ignored",
+    "file": "apps/web/scripts/lighthouse.mjs",
+    "find": "if (score < threshold) return",
+    "replace": "if (score < 0) return",
+    "tests": ["apps/web/test/a11y-gate.test.ts"]
+  },
+  {
+    "name": "unreadable report counts as a pass",
+    "file": "apps/web/scripts/lighthouse.mjs",
+    "find": "    return { ok: false, score: null, reason: `unreadable report: ${error.message}` }",
+    "replace": "    return { ok: true, score: null, reason: `unreadable report: ${error.message}` }",
+    "tests": ["apps/web/test/a11y-gate.test.ts"]
+  },
+  {
+    "name": "missing score counts as a pass",
+    "file": "apps/web/scripts/lighthouse.mjs",
+    "find": "    return { ok: false, score: null, reason: 'no accessibility score in the report' }",
+    "replace": "    return { ok: true, score: null, reason: 'no accessibility score in the report' }",
+    "tests": ["apps/web/test/a11y-gate.test.ts"]
+  },
+  {
+    "name": "one passing route hides a failing one",
+    "file": "apps/web/scripts/lighthouse.mjs",
+    "find": "verdicts.every((verdict) => verdict.ok)",
+    "replace": "verdicts.some((verdict) => verdict.ok)",
+    "tests": ["apps/web/test/a11y-gate.test.ts"]
+  }
+]

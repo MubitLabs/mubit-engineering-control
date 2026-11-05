@@ -96,3 +96,15 @@ helper tests never establishes application correctness.
 
 `verify` = `check` (the full gate already includes the suites — no double run).
 Areas: `engines` (engines+contracts conformance), `desktop`, `web` (tests + tsc). Use an area for a lane, the root gate before handing work back.
+
+## Accessibility gates (not in CI, not in `pnpm check`)
+
+Like `pnpm test:screens`, these are run by hand and are never part of the full gate.
+
+| What | Command | Notes |
+| --- | --- | --- |
+| axe | `pnpm test:screens` | `apps/web/test/a11y.screens.playwright.ts` runs with the screens suite. No rule is disabled; a missing surface or a run with no passing rule fails. |
+| Lighthouse | `pnpm --dir apps/web test:lighthouse <baseUrl> <#route>...` | Accessibility category, 95 per route, non-zero on any miss or unreadable report. Uses Playwright's chromium with `--no-proxy-server`; JSON reports go to `$TMPDIR`. `--from-report <file>...` judges reports already on disk. |
+| Gate logic | `pnpm --dir apps/web exec vitest run test/a11y-gate.test.ts` | Runs in the normal suite with stubbed reports; no browser. |
+
+`pnpm test:screens` binds port 4173: take `/tmp/mec-screens.lock` first (`until mkdir /tmp/mec-screens.lock 2>/dev/null; do sleep 5; done`, then `rmdir` it). Lighthouse needs the page served: start the dev server (`pnpm --dir apps/web exec vite --host 127.0.0.1 --port <free port> --strictPort`) and pass the harness URL, for example `http://127.0.0.1:<port>/test/fixtures/next-harness.html?state=working` with routes `#chat #work`. `apps/web/test/fixtures/a11y-broken.html` is deliberately inaccessible and proves both gates can fail.

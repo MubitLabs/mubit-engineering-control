@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MEC accessibility gate: deliberately broken page</title>
+    <style>
+      /* Deliberately bad: this page proves the accessibility gates can fail. Never fix it. */
+      body { background: #ffffff; color: #cfcfcf; font-family: sans-serif; }
+      .surface { padding: 16px; }
+    </style>
+  </head>
+  <body>
+    <div class="surface" id="broken-surface">
+      <div>Low contrast text on a white background, and no landmarks anywhere.</div>
+      <input type="text" />
+      <select><option>one</option><option>two</option></select>
+      <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" />
+      <button></button>
+      <a href="#x"></a>
+    </div>
+  </body>
+</html>

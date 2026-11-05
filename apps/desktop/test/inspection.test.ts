@@ -1177,6 +1177,115 @@ describe('inspection routes: needs cursor and byte cap (second fix round)', () =
     expect(ids).toHaveLength(20)
   })
 
+  const later = (seconds: number): string => new Date(Date.parse(AT) + seconds * 1000).toISOString()
+
+  it('a just-answered old question leads recently settled, ahead of newer rows that settled earlier', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    store.atomic(() => {
+      store.engines.save({ ...question('old', 'answered'), answeredAt: later(100) } as any)
+      for (let i = 0; i < 25; i++) {
+        store.engines.save({ ...question(`done${i}`, 'answered'), answeredAt: later(i) } as any)
+      }
+    })
+    const { ids } = await walk('recent=1')
+    expect(ids).toHaveLength(20)
+    expect(ids[0]).toBe('old')
+    expect(ids[1]).toBe('done24')
+  })
+
+  it('a question answered long after 2,100 newer rows were written is still found', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    store.atomic(() => {
+      store.engines.save({ ...question('old', 'answered'), answeredAt: later(100) } as any)
+      for (let i = 0; i < 2_100; i++) store.engines.save(question(`done${i}`, 'answered') as any)
+    })
+    const { ids } = await walk('recent=1')
+    expect(ids[0]).toBe('old')
+  })
+
+  it('questions and cards share one settle-time order, with a lapsed card at its expiry', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    store.atomic(() => {
+      store.confirmations.save(card('conf_denied', 'denied', { resolvedAt: later(30) }) as any)
+      store.engines.save({ ...question('q_late', 'answered'), answeredAt: later(40) } as any)
+      store.confirmations.save(card('conf_lapsed', 'pending', { expiresAt: later(-20) }) as any)
+      store.engines.save({ ...question('q_early', 'answered'), answeredAt: later(-30) } as any)
+    })
+    const { ids } = await walk('recent=1&limit=1')
+    expect(ids).toEqual(['q_late', 'conf_denied', 'conf_lapsed', 'q_early'])
+  })
+
+  it('a walk still reaches its twenty when newer rows settle mid-walk, and never more', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    store.atomic(() => {
+      for (let i = 0; i < 30; i++) {
+        store.engines.save({ ...question(`done${i}`, 'answered'), answeredAt: later(i) } as any)
+      }
+    })
+    const { ids } = await walk('recent=1&limit=3', (page) => {
+      if (page === 1) {
+        store.atomic(() => {
+          for (let i = 0; i < 5; i++) {
+            store.engines.save({ ...question(`late${i}`, 'answered'), answeredAt: later(100 + i) } as any)
+          }
+        })
+      }
+    })
+    expect(ids).toEqual(Array.from({ length: 20 }, (_, i) => `done${29 - i}`))
+  })
+
+  it('a row served as open and answered mid-walk is not served twice and skips no other', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    store.atomic(() => {
+      store.engines.save(question('old', 'open') as any)
+      for (let i = 0; i < 6; i++) {
+        store.engines.save({ ...question(`done${i}`, 'answered'), answeredAt: later(i) } as any)
+      }
+    })
+    const seen = await walk('recent=1&limit=3', (page) => {
+      if (page === 1) {
+        store.atomic(() => {
+          store.engines.save({ ...question('old', 'answered'), answeredAt: later(100) } as any)
+        })
+      }
+    })
+    expect(seen.ids).toEqual(['old', 'done5', 'done4', 'done3', 'done2', 'done1', 'done0'])
+  })
+
+  it('the recent cursor carries the settle time and rowid, and a bad one is a 400', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    store.atomic(() => {
+      store.engines.save({ ...question('a', 'answered'), answeredAt: later(1) } as any)
+      store.engines.save({ ...question('b', 'answered'), answeredAt: later(2) } as any)
+    })
+    const first = (await get('/api/inspect/needs?recent=1&limit=1')).json()
+    const rowid = (db.prepare('SELECT rowid AS r FROM docs WHERE id = ?').get('question/b') as { r: number })
+      .r
+    expect(JSON.parse(Buffer.from(first.nextCursor, 'base64url').toString('utf8'))).toEqual({
+      v: 1,
+      r: rowid,
+      p: 'recent',
+      t: later(2),
+      n: 1,
+    })
+    const bad = Buffer.from(JSON.stringify({ v: 1, r: 1, p: 'recent', t: 7, n: 1 })).toString('base64url')
+    expect((await get(`/api/inspect/needs?recent=1&cursor=${bad}`)).status).toBe(400)
+    const spent = Buffer.from(JSON.stringify({ v: 1, r: rowid, p: 'recent', t: later(2), n: 25 }))
+    const past = (await get(`/api/inspect/needs?recent=1&cursor=${spent.toString('base64url')}`)).json()
+    expect(past.items).toEqual([])
+    expect(past.nextCursor).toBeNull()
+  })
+
+  it('a key-shaped settle time cannot leave through the recent cursor', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    store.atomic(() => {
+      store.engines.save({ ...question('a', 'answered'), answeredAt: KEY } as any)
+      store.engines.save({ ...question('b', 'answered'), answeredAt: AT } as any)
+    })
+    const first = (await get('/api/inspect/needs?recent=1&limit=1')).json()
+    expect(Buffer.from(first.nextCursor, 'base64url').toString('utf8')).not.toContain(KEY)
+  })
+
   it('100 cards with long wide cls end the page at the byte cap and all still arrive', async () => {
     seedWork('wi_1', { repoId: 'repo_a' })
     const all = Array.from({ length: 100 }, (_, i) => `conf_${i}`)
@@ -1211,5 +1320,54 @@ describe('inspection routes: needs cursor and byte cap (second fix round)', () =
     expect(item.id).toBe('conf_big')
     expect(item.cls.length).toBeLessThan(big.length)
     expect(item.repoLabel.length).toBeLessThanOrEqual(80)
+  })
+})
+
+describe('inspection routes: the hard ceiling and the repository cap (final fix round)', () => {
+  const MIB = 1_048_576
+  const seedRepo = (id: string): void => {
+    store.atomic(() => {
+      store.engines.save({ id, url: '/Users/me/code/x', bootstrap: [], checks: [], trust: true })
+    })
+  }
+
+  it('an answer over 1 MiB in bytes is refused whole, however few characters it has', async () => {
+    seedRepo(`repo_${'語'.repeat(400_000)}`)
+    const res = await app.inject({ method: 'GET', url: '/api/inspect/snapshot' })
+    expect(res.statusCode).toBe(500)
+    expect(res.headers['content-type']).toMatch(/^application\/json/)
+    expect(Buffer.byteLength(res.body)).toBeLessThan(200)
+    expect(res.json().error).toBe('response_too_large')
+  })
+
+  it('an answer of exactly 1 MiB is served as JSON and one byte more is not', async () => {
+    const base = Buffer.byteLength((await get('/api/inspect/snapshot')).body)
+    const emptyEntry = Buffer.byteLength(',{"id":"repo_","label":"x","needsCount":0}')
+    seedRepo(`repo_${'x'.repeat(MIB - base - emptyEntry)}`)
+    const exact = await app.inject({ method: 'GET', url: '/api/inspect/snapshot' })
+    expect(exact.statusCode).toBe(200)
+    expect(exact.headers['content-type']).toMatch(/^application\/json/)
+    expect(Buffer.byteLength(exact.body)).toBe(MIB)
+    expect(exact.json().repositories).toHaveLength(3)
+    seedRepo('repo_y')
+    expect((await get('/api/inspect/snapshot')).status).toBe(500)
+  })
+
+  it('snapshot counts the repositories past its cap of 100', async () => {
+    expect((await get('/api/inspect/snapshot')).json().repositoriesTruncated).toBe(0)
+    store.atomic(() => {
+      for (let i = 0; i < 130; i++) {
+        store.engines.save({
+          id: `repo_many${i}`,
+          url: '/Users/me/code/x',
+          bootstrap: [],
+          checks: [],
+          trust: true,
+        })
+      }
+    })
+    const snapshot = (await get('/api/inspect/snapshot')).json()
+    expect(snapshot.repositories).toHaveLength(100)
+    expect(snapshot.repositoriesTruncated).toBe(32)
   })
 })

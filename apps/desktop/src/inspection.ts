@@ -11,8 +11,9 @@
  *   repository is never inferred from a path, a title or a branch name.
  * - A card joins to work only through a stored `workItemId` or `mandateId`. Never by branch.
  * - Every string leaves through `redactText`, after any cut, so a cut cannot leave half a secret.
- * - A page is at most 100 rows and 1 MiB of JSON, and ends early with a valid cursor. A detail answer
- *   is held to 1 MiB too, by a count and a byte budget per list, and says how much each list cut.
+ * - A page is at most 100 rows and ends early with a valid cursor at 1 MiB of JSON. Each detail list
+ *   has a count and a byte budget and says how much it cut. Those are the normal bounds; `serve` is
+ *   the hard one: an answer still over 1 MiB is never sent, whatever a record holds.
  */
 
 import type { Json, Store, StoreDoc } from '@mec/contracts'
@@ -247,8 +248,6 @@ class BadRequest extends Error {}
 const QUESTION_PREFIX = 'question/'
 const REPO_PREFIX = 'repo_'
 const RECENT_CAP = 20
-/** Most rows read per kind looking for recent items in one scope; recent items never count toward anything. */
-const RECENT_SCAN_CAP = 2000
 /** A task answer is cut to these before it is built; what was cut is counted in the response. */
 const ATTEMPT_CAP = 50
 const CHECK_CAP = 200
@@ -259,8 +258,8 @@ const CURSOR_CAP = 200
 const CLS_CAP = 4000
 const LABEL_CAP = 80
 /**
- * Count caps alone do not hold a byte bound: JSON spends up to 6 bytes on one character. These budgets,
- * with the objective (at most 120 KiB) or the goal, sum to under 1 MiB for any one detail answer.
+ * Count caps alone do not hold a byte bound: JSON spends up to 6 bytes on one character. These budgets
+ * keep a heavy but ordinary answer servable; the hard ceiling is in `serve`.
  */
 const ATTEMPT_BYTES = 150 * 1024
 const CHECK_BYTES = 250 * 1024
@@ -276,7 +275,11 @@ const ENVELOPE_BYTES = 1024
 type InspectDeps = { store: Store; reads: InspectionReads; now: () => Date }
 
 /** A need with the rowid that keys its page: stable, unlike its position in the list. */
-type NeedRow = { rowid: number; item: NeedItem }
+type NeedRow = { rowid: number; item: NeedItem; settledAt: string }
+
+/** Latest settled first, rowid breaking a tie: a total order a cursor can resume from. */
+const bySettledDesc = (a: NeedRow, b: NeedRow): number =>
+  a.settledAt === b.settledAt ? b.rowid - a.rowid : a.settledAt < b.settledAt ? 1 : -1
 
 class Inspector {
   readonly #store: Store
@@ -313,9 +316,13 @@ class Inspector {
     return this.#labels.get(repoId) ?? null
   }
 
-  repositories(): { id: string; label: string | null }[] {
-    const page = this.#reads.pageDocs('engine', { idPrefix: REPO_PREFIX, limit: MAX_PAGE_LIMIT })
-    return page.rows.map((row) => ({ id: String(row.doc.id), label: this.repoLabel(String(row.doc.id)) }))
+  repositories(): { items: { id: string; label: string | null }[]; truncated: number } {
+    const all = this.#collect('engine', { idPrefix: REPO_PREFIX })
+    const rows = all.slice(0, MAX_PAGE_LIMIT)
+    return {
+      items: rows.map((row) => ({ id: String(row.doc.id), label: this.repoLabel(String(row.doc.id)) })),
+      truncated: all.length - rows.length,
+    }
   }
 
   // ── needs: open questions and pending cards ──
@@ -358,7 +365,7 @@ class Inspector {
       askedAt: shortOrNull(str(doc.askedAt)),
       answer: str(doc.answer) === null ? null : cutText(String(doc.answer), 2000),
     }
-    return { rowid, item }
+    return { rowid, item, settledAt: shortText(str(doc.answeredAt) ?? str(doc.askedAt) ?? '') }
   }
 
   /** Cards join to work only through a stored workItemId or a mandateId some work item carries. */
@@ -405,7 +412,9 @@ class Inspector {
         expiresAt: shortText(expiresAt),
         detailPath: `/api/inbox/${id}/detail`,
       }
-      return { rowid, item }
+      const lapsed = stored === 'pending' && status === 'expired'
+      const settledAt = shortText((lapsed ? expiresAt : str(doc.resolvedAt)) ?? str(doc.createdAt) ?? '')
+      return { rowid, item, settledAt }
     })
   }
 
@@ -422,42 +431,52 @@ class Inspector {
     return this.#openRows().map((row) => row.item)
   }
 
-  /** Newest first, filtered to the scope before the cap, so another repository's items cannot push these out. */
-  #recentOf(kind: string, toRows: (rows: DocRow[]) => NeedRow[], repoId: string | undefined): NeedRow[] {
-    const found: NeedRow[] = []
+  /**
+   * Settled rows past the cursor, latest settled first. The whole kind is walked: an old row can settle
+   * today, so no rowid range can hold the newest. Scope and cursor both apply before the cap.
+   */
+  #recentOf(
+    kind: string,
+    toRows: (rows: DocRow[]) => NeedRow[],
+    keep: (row: NeedRow) => boolean,
+    room: number,
+  ): NeedRow[] {
+    let found: NeedRow[] = []
     let cursor: string | null = null
-    let scanned = 0
     do {
       const page: ReturnType<InspectionReads['pageDocs']> = this.#reads.pageDocs(kind, {
         ...(kind === 'engine' && { idPrefix: QUESTION_PREFIX }),
-        order: 'desc',
         limit: MAX_PAGE_LIMIT,
         cursor,
       })
-      scanned += page.rows.length
-      for (const row of toRows(page.rows)) {
-        if (row.item.status === 'open' || row.item.status === 'pending') continue
-        if (repoId === undefined || row.item.repoId === repoId) found.push(row)
-      }
+      const rows = toRows(page.rows).filter(
+        (row) => row.item.status !== 'open' && row.item.status !== 'pending' && keep(row),
+      )
+      found = [...found, ...rows].sort(bySettledDesc).slice(0, room)
       cursor = page.nextCursor
-    } while (cursor !== null && found.length < RECENT_CAP && scanned < RECENT_SCAN_CAP)
-    return found.slice(0, RECENT_CAP)
+    } while (cursor !== null)
+    return found
   }
 
-  /** Recently settled and expired items, newest first. Never counted as needing anyone. */
-  #recentRows(repoId: string | undefined): NeedRow[] {
+  /** Recently settled and expired items, latest settled first. Never counted as needing anyone. */
+  #recentRows(repoId: string | undefined, after: { at: string; r: number } | null, room: number): NeedRow[] {
+    const keep = ({ item, rowid, settledAt }: NeedRow): boolean =>
+      (repoId === undefined || item.repoId === repoId) &&
+      (after === null || settledAt < after.at || (settledAt === after.at && rowid < after.r))
     return [
-      ...this.#recentOf('engine', (rows) => rows.map((row) => this.#questionRow(row)), repoId),
-      ...this.#recentOf('confirmation', (rows) => this.#cardRows(rows), repoId),
+      ...this.#recentOf('engine', (rows) => rows.map((row) => this.#questionRow(row)), keep, room),
+      ...this.#recentOf('confirmation', (rows) => this.#cardRows(rows), keep, room),
     ]
-      .sort((a, b) => b.rowid - a.rowid)
-      .slice(0, RECENT_CAP)
+      .sort(bySettledDesc)
+      .slice(0, room)
   }
 
   /**
-   * One page of needs by rowid, so a row that settles between pages cannot shift another past the
-   * cursor: open rows oldest first, then with `recent` the recent rows newest first. Docs share one
-   * rowid space, so questions and cards share one order. Ends early at the row limit or 1 MiB.
+   * One page of needs by a stable key, so a row that settles between pages cannot shift another past
+   * the cursor: open rows oldest first by rowid, then with `recent` the recent rows by settle time and
+   * rowid, latest first. The recent cursor also counts what the walk has served, because its cap of
+   * 20 is on the walk, not the page. Docs share one rowid space, so questions and cards share one
+   * order. Ends early at the row limit or 1 MiB.
    */
   needsPage(
     repoId: string | undefined,
@@ -471,7 +490,14 @@ class Inspector {
       : this.#openRows()
           .filter(({ item }) => repoId === undefined || item.repoId === repoId)
           .filter((row) => row.rowid > at.r)
-    const settled = recent ? this.#recentRows(repoId).filter((row) => !at.recent || row.rowid < at.r) : []
+    const servedBefore = at.served ?? 0
+    const settled = recent
+      ? this.#recentRows(
+          repoId,
+          at.recent ? { at: at.at ?? '', r: at.r } : null,
+          Math.max(0, RECENT_CAP - servedBefore),
+        )
+      : []
     const rows = [...open, ...settled]
     const served: NeedRow[] = []
     let bytes = ENVELOPE_BYTES
@@ -486,7 +512,12 @@ class Inspector {
       items: served.map((row) => row.item),
       nextCursor:
         last !== undefined && served.length < rows.length
-          ? encodeCursor(last.rowid, served.length > open.length)
+          ? served.length > open.length
+            ? encodeCursor(last.rowid, true, {
+                at: last.settledAt,
+                served: servedBefore + served.length - open.length,
+              })
+            : encodeCursor(last.rowid)
           : null,
       observedAt: this.observedAt(),
     }
@@ -953,6 +984,8 @@ class Inspector {
   snapshot(repoId: string | undefined): {
     observedAt: string
     repositories: { id: string; label: string | null; needsCount: number }[]
+    /** Repositories left out of `repositories` (the oldest 100 are kept). */
+    repositoriesTruncated: number
     needsCount: number
     cursors: Record<string, number>
   } {
@@ -963,12 +996,14 @@ class Inspector {
       ...(repoId !== undefined && { equals: { repoId } }),
     })
     const streams = ['repositories', ...works.rows.map((row) => `work:${String(row.doc.id)}`)]
+    const repositories = this.repositories()
     return {
       observedAt: this.observedAt(),
-      repositories: this.repositories().map((repo) => ({
+      repositories: repositories.items.map((repo) => ({
         ...repo,
         needsCount: open.filter((item) => item.repoId === repo.id).length,
       })),
+      repositoriesTruncated: repositories.truncated,
       needsCount: open.filter((item) => repoId === undefined || item.repoId === repoId).length,
       cursors: this.#reads.cursors(streams),
     }
@@ -1013,7 +1048,10 @@ export function registerInspectionRoutes(app: FastifyInstance, deps: InspectDeps
     return repoId
   }
 
-  /** One consistent read, one redacted answer; a refused request answers 400 before any query. */
+  /**
+   * One consistent read, one redacted answer; a refused request answers 400 before any query. The hard
+   * byte ceiling lives here, once: the bytes measured are the bytes sent, or none of them are.
+   */
   const serve =
     <T>(read: (request: FastifyRequest, reply: FastifyReply) => T | undefined) =>
     async (request: FastifyRequest, reply: FastifyReply): Promise<unknown> => {
@@ -1023,7 +1061,13 @@ export function registerInspectionRoutes(app: FastifyInstance, deps: InspectDeps
           reply.code(404)
           return { error: 'not found' }
         }
-        return scrub(result)
+        const json = JSON.stringify(scrub(result))
+        if (Buffer.byteLength(json) > MAX_PAGE_BYTES) {
+          reply.code(500)
+          return { error: 'response_too_large', detail: 'this record is too large to serve' }
+        }
+        reply.type('application/json; charset=utf-8')
+        return json
       } catch (error) {
         if (error instanceof BadRequest) {
           reply.code(400)

@@ -17,17 +17,25 @@ export const MAX_PAGE_LIMIT = 100
 /** One response is at most this many bytes of JSON; a page ends early rather than exceed it. */
 export const MAX_PAGE_BYTES = 1024 * 1024
 
-/** A cursor that is not the opaque base64url of `{v:1,r:<non-negative integer>[,p:'recent']}`. */
+/** A cursor that is not the opaque base64url of `{v:1,r:<non-negative integer>[,p:'recent'][,t,n]}`. */
 export class CursorError extends Error {}
 
+/** Where a needs walk stands in the recent rows: the last settle time, and how many it has served. */
+export type SettledCursor = { at: string; served: number }
+
 /** `recent` marks a needs cursor past the open rows, where the keyset runs newest first. */
-export function encodeCursor(position: number, recent = false): string {
-  const cursor = recent ? { v: 1, r: position, p: 'recent' } : { v: 1, r: position }
+export function encodeCursor(position: number, recent = false, settled?: SettledCursor): string {
+  const cursor = {
+    v: 1,
+    r: position,
+    ...(recent && { p: 'recent' }),
+    ...(settled !== undefined && { t: settled.at, n: settled.served }),
+  }
   return Buffer.from(JSON.stringify(cursor)).toString('base64url')
 }
 
 /** Validates before any query runs; throws `CursorError` for anything but a well-formed v1 cursor. */
-export function decodeCursorAt(cursor: string): { r: number; recent: boolean } {
+export function decodeCursorAt(cursor: string): { r: number; recent: boolean } & Partial<SettledCursor> {
   if (!/^[A-Za-z0-9_-]+$/.test(cursor)) throw new CursorError('cursor is not base64url')
   let parsed: unknown
   try {
@@ -36,12 +44,15 @@ export function decodeCursorAt(cursor: string): { r: number; recent: boolean } {
     throw new CursorError('cursor is not valid')
   }
   if (typeof parsed !== 'object' || parsed === null) throw new CursorError('cursor is not valid')
-  const { v, r, p } = parsed as { v?: unknown; r?: unknown; p?: unknown }
+  const { v, r, p, t, n } = parsed as { v?: unknown; r?: unknown; p?: unknown; t?: unknown; n?: unknown }
   if (v !== 1) throw new CursorError('cursor version is not supported')
   if (typeof r !== 'number' || !Number.isSafeInteger(r) || r < 0)
     throw new CursorError('cursor position is not valid')
   if (p !== undefined && p !== 'recent') throw new CursorError('cursor phase is not valid')
-  return { r, recent: p === 'recent' }
+  if (t === undefined && n === undefined) return { r, recent: p === 'recent' }
+  if (typeof t !== 'string' || typeof n !== 'number' || !Number.isSafeInteger(n) || n < 0)
+    throw new CursorError('cursor position is not valid')
+  return { r, recent: p === 'recent', at: t, served: n }
 }
 
 export function decodeCursor(cursor: string): number {

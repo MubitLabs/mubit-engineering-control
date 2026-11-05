@@ -117,6 +117,25 @@ describe('InspectionReads.pageDocs', () => {
     expect(() => decodeCursor(wrong)).toThrow(CursorError)
   })
 
+  it('a recent cursor carries a settle time and a served count, each validated', () => {
+    const cursor = encodeCursor(7, true, { at: '2026-11-05T12:00:00.000Z', served: 3 })
+    expect(decodeCursorAt(cursor)).toEqual({
+      r: 7,
+      recent: true,
+      at: '2026-11-05T12:00:00.000Z',
+      served: 3,
+    })
+    for (const wrong of [
+      { v: 1, r: 7, p: 'recent', t: 7, n: 3 },
+      { v: 1, r: 7, p: 'recent', t: 'x', n: -1 },
+      { v: 1, r: 7, p: 'recent', t: 'x', n: 1.5 },
+      { v: 1, r: 7, p: 'recent', t: 'x' },
+      { v: 1, r: 7, p: 'recent', n: 1 },
+    ]) {
+      expect(() => decodeCursor(encodeBad(wrong)), JSON.stringify(wrong)).toThrow(CursorError)
+    }
+  })
+
   it('malformed cursor is refused', () => {
     seedTasks(3)
     const bad = [

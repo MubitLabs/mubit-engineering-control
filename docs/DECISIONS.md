@@ -60,3 +60,4 @@ The owner authorized execution of the overhaul. These rows bind the overhaul in 
 | 34 | Repositories with no required checks | A PR may be ready on local combined checks with that limit stated. The merge card stays held until the owner decides for that repo. |
 | 35 | UI default and releases (spec §18, §21) | Flip to the new UI in 0.3.0 once one engine path is proven end to end, with unproven engines shown as unavailable. `?ui=classic` stays for one verified install, then 0.3.1 removes classic. |
 | 36 | Remaining open questions | The owner accepted every other recommendation in the "Open questions" sections of the files in `docs/changes/2026-11-05-meta-agent-journeys/handoffs/`, as written on 5 November 2026. |
+| 37 | Claude budget (supersedes the Claude part of #18) | The owner raised the Claude cap to 20 runs on 5 November and asked for side lanes to run in the coordinator session. Codex and OpenCode stay at 10 runs, with #24 defining a run. |

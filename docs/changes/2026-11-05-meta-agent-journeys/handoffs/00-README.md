@@ -63,7 +63,7 @@ The coordinator session has these in flight. Never rebuild them or edit their br
 
 ## Real engines
 
-Budget is **10 bounded runs per engine in total, across all agents** (decision #18). Only handoffs that say so may spend it. Before each run, append a line to `/Users/shankhadutta/code/mubit-engineering-control/docs/changes/2026-11-05-meta-agent-journeys/handoffs/engine-runs.md`, creating it if missing: date, engine, handoff, purpose, outcome. Use that path, not a copy in your worktree; it is the one file you may edit in the main checkout. One bounded request is one line per engine involved, until the owner rules otherwise (`20-m2.1-real-specialist-slice.md` open question 3). If the file already shows 10 for an engine, stop and report. Real runs only touch scratch repositories or `mec-sandbox`.
+Budget is **20 bounded runs for Claude and 10 each for Codex and OpenCode, in total across all agents** (decisions #18, #24 and #37). Only handoffs that say so may spend it. Before each run, append a line to `/Users/shankhadutta/code/mubit-engineering-control/docs/changes/2026-11-05-meta-agent-journeys/handoffs/engine-runs.md`, creating it if missing: date, engine, handoff, purpose, outcome. Use that path, not a copy in your worktree; it is the one file you may edit in the main checkout. One bounded request is one line per engine involved, until the owner rules otherwise (`20-m2.1-real-specialist-slice.md` open question 3). If the file already shows 10 for an engine, stop and report. Real runs only touch scratch repositories or `mec-sandbox`.
 
 ## Scratch server
 

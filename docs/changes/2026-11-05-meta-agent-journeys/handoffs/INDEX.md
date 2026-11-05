@@ -26,7 +26,7 @@ Give an agent one row. Every row assumes `00-README.md`. Base gates: **R** `fix/
 | `33-...` C | `chore/remove-classic-shell` | 33 B released and verified installed | Nothing | M | No | None |
 | `33-...` D | `chore/version-<version>` | Coordinator asks, before each tag | Nothing | S | No | None |
 
-**Budget (#18, cap 10 per engine):** Claude 1+3+1+1+1+3 = **10, none spare**. Codex 5. OpenCode 5. This counts one bounded request as one run per engine involved. If the owner counts processes, Claude doesn't fit (`20`, open question 3).
+**Budget (#18, #24, #37; caps Claude 20, Codex 10, OpenCode 10):** Claude 1+3+1+1+1+3 = **10 planned, 10 spare**. Codex 5. OpenCode 5. This counts one bounded request as one run per engine involved. If the owner counts processes, Claude doesn't fit (`20`, open question 3).
 
 ## What can start now
 

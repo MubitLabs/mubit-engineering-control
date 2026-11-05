@@ -250,5 +250,75 @@
     "find": "\"the shared clone behind the worktree, which holds other attempts' branches, so leave its refs alone.\",\n",
     "replace": "\"the shared clone behind the worktree is read-only.\",\n",
     "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "shared clone left writable",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "      sharedClone: realpathSync(gitDir),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "deny list drops the clone",
+    "file": "packages/runtime/src/isolation.ts",
+    "find": "const denyWrite = opts.sharedClone === undefined ? [] : [opts.sharedClone]",
+    "replace": "const denyWrite: string[] = []",
+    "tests": ["packages/runtime/test/isolation.test.ts"]
+  },
+  {
+    "name": "only refs denied",
+    "file": "packages/runtime/src/isolation.ts",
+    "find": "const denyWrite = opts.sharedClone === undefined ? [] : [opts.sharedClone]",
+    "replace": "const denyWrite = opts.sharedClone === undefined ? [] : [`${opts.sharedClone}/refs`]",
+    "tests": ["packages/runtime/test/isolation.test.ts", "apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "settings omit denyWrite",
+    "file": "packages/runtime/src/isolation.ts",
+    "find": "filesystem: { allowWrite, denyWrite, denyRead },",
+    "replace": "filesystem: { allowWrite, denyWrite: [], denyRead },",
+    "tests": ["packages/runtime/test/isolation.test.ts"]
+  },
+  {
+    "name": "brief invites a commit",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "      'Do not run git add or git commit: reading with git status, diff and log works.',\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "linked planner points at its home",
+    "file": "packages/meta/src/brain.ts",
+    "find": "slot.linked === true ? {} : { CLAUDE_CONFIG_DIR: slot.slotDir }",
+    "replace": "{ CLAUDE_CONFIG_DIR: slot.slotDir }",
+    "tests": ["packages/meta/test/real-brain.test.ts"]
+  },
+  {
+    "name": "linked mark lost at the store",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "linked: slot.linkedDefault === true }",
+    "replace": "linked: false }",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "every stored slot reads as linked",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "linked: slot.linkedDefault === true }",
+    "replace": "linked: true }",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "linked mark lost at the planner",
+    "file": "packages/meta/src/real-brain.ts",
+    "find": "      linked: this.#linked,\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "retry sets the variable",
+    "file": "packages/meta/src/real-brain.ts",
+    "find": "          slot: metaSlotEnv({ slotDir: this.#slotDir, linked: this.#linked }),",
+    "replace": "          slot: { CLAUDE_CONFIG_DIR: this.#slotDir },",
+    "tests": ["packages/meta/test/real-brain.test.ts"]
   }
 ]

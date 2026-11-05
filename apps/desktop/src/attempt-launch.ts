@@ -5,7 +5,16 @@
  * the start is a spend at all. The token is minted last and lives only in the brief, the process
  * env and `.mec/mcp.json`, which is sealed before anything repo-controlled runs again.
  */
-import { accessSync, chmodSync, constants, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  accessSync,
+  chmodSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { delimiter, isAbsolute, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type {
@@ -288,6 +297,7 @@ export class AttemptLauncher {
       allowedDomains: [],
       homeDir: home,
       dataDir,
+      sharedClone: realpathSync(gitDir),
     })
     const settingsPath = join(worktree, '.mec', 'claude-settings.json')
     writeFileSync(settingsPath, serialiseAttemptSettings(settings))
@@ -326,10 +336,11 @@ export class AttemptLauncher {
       `Pinned base: ${baseSha}`,
       `Temp dir: ${tempDir}`,
       `Attempt: ${attemptId}`,
-      'Your shell is sandboxed: write only to the worktree and temp dir. The sandbox lets git itself write to',
-      "the shared clone behind the worktree, which holds other attempts' branches, so leave its refs alone.",
+      'Your shell is sandboxed: write only to the worktree and temp dir. The shared clone behind the worktree',
+      'is read-only to your shell, so anything that writes to git fails there, and that is expected.',
+      'Do not run git add or git commit: reading with git status, diff and log works.',
       'Leave your work in the worktree; MEC commits it when you finish and then runs the repository checks',
-      'on that commit.',
+      'on that commit. A run that is stopped or runs out of turns gets no commit.',
     ].join('\n')
     const bundle = new PromptStore(join(dataDir, 'prompts')).assemble(roleName, engine, {
       generated: [

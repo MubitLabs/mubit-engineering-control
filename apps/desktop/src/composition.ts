@@ -72,15 +72,23 @@ export interface RunningServer {
   isPaused: () => boolean
 }
 
+/** Where the planner's slot is: its home, and whether that home is the linked default. */
+type MetaSlot = { dir: string; linked: boolean }
+
 /** The wizard's persisted meta-slot choice → that slot's home dir. Best-effort: an absent
  *  or dangling choice means "not chosen yet" (undefined), never a crash on startup. */
-function metaSlotFromStore(store: Store): string | undefined {
+function metaSlotFromStore(store: Store): MetaSlot | undefined {
   const setting = store.engines.get('settings/meta-slot')
   const slotId = setting !== undefined && typeof setting.slotId === 'string' ? setting.slotId : undefined
   if (slotId === undefined) return undefined
   const slot = store.slots.get(slotId)
-  return slot !== undefined && typeof slot.home === 'string' && slot.home !== '' ? slot.home : undefined
+  if (slot === undefined || typeof slot.home !== 'string' || slot.home === '') return undefined
+  return { dir: slot.home, linked: slot.linkedDefault === true }
 }
+
+/** A path given directly is a dedicated home; only a linked slot doc runs with the variable unset. */
+const metaSlotAt = (dir: string | undefined): MetaSlot | undefined =>
+  dir === undefined ? undefined : { dir, linked: false }
 
 export async function startServer(opts: {
   dataDir: string
@@ -100,7 +108,8 @@ export async function startServer(opts: {
   const db = new Database(join(opts.dataDir, 'mec.db'))
   migrate(db, MIGRATIONS_v1)
   const store = new SqliteStore(db)
-  const metaSlotDir = opts.metaSlotDir ?? metaSlotFromStore(store) ?? process.env.MEC_META_SLOT
+  const metaSlot =
+    metaSlotAt(opts.metaSlotDir) ?? metaSlotFromStore(store) ?? metaSlotAt(process.env.MEC_META_SLOT)
   const health = new HealthBoardImpl()
   health.claim('runtime').ready('composition root up')
   // Fail fast: a policy that cannot load never starts a server that would enforce it.
@@ -165,7 +174,7 @@ export async function startServer(opts: {
     },
   }
 
-  const planner = composePlanner(store, opts, metaSlotDir)
+  const planner = composePlanner(store, opts, metaSlot)
   metaAgent = planner?.service
   // §20 App crash: a turn the crash cut short resumes through the queue, never inline. While
   // paused, resume does this instead, and it comes after the deadline shift.
@@ -314,7 +323,7 @@ const NO_ENGINE: PlannerLifetime = { quiesce: () => {}, abort: async () => {}, c
 function composePlanner(
   store: SqliteStore,
   opts: { dataDir: string; brain?: MetaBrain },
-  metaSlotDir: string | undefined,
+  metaSlot: MetaSlot | undefined,
 ): ({ service: MetaAgentService } & PlannerLifetime) | undefined {
   const placement = plannerPlacement(store, opts.dataDir)
   if (opts.brain !== undefined) {
@@ -351,10 +360,11 @@ function composePlanner(
       ...NO_ENGINE,
     }
   }
-  if (metaSlotDir === undefined) return undefined
+  if (metaSlot === undefined) return undefined
   // Held so `close` can reach it; its close waits for a turn in flight, so `close` bounds that.
   const brain = new RealClaudeBrain({
-    slotDir: metaSlotDir,
+    slotDir: metaSlot.dir,
+    linked: metaSlot.linked,
     toolsSecret: randomBytes(24).toString('hex'),
     // §5.4: the data dir is the root, so a scratch server never reads the real prompts.
     promptsRoot: join(opts.dataDir, 'prompts'),

@@ -40,14 +40,16 @@ Two defects from the independent verifier, on the same branch. The verifier's re
 
 **The shared clone text and `update-ref`.** Red: `pnpm exec vitest run --project b specialist-tools.test attempt-launch.test -t "a ref delete is a branch delete|launch"`: 2 failed, 26 passed. `git update-ref -d refs/heads/mec/other/task/a1: expected 'allow' to be 'deny'`, and the prompt still held the read-only claim. Green: 50 of 50 in both files.
 
+**The shared clone denial and the linked planner.** No real engine ran. Red: `pnpm exec vitest run --project b isolation.test`: 2 failed, `expected undefined to deeply equal [ '/data/repos/abc.git' ]`. `pnpm exec vitest run --project b attempt-launch.test -t "planner slot|refused git writes|runs the engine to a verdict"`: 3 failed, `expected '/home/someone/.claude' to be null`, `expected '65' to be '0'` and the old brief. `pnpm exec vitest run --project a real-brain.test`: 1 failed, `expected { … } to not have property "CLAUDE_CONFIG_DIR"`. Green: all of them. The brief's assertion changed on purpose: it pinned the old text, which said the clone was not read-only. The Seatbelt test runs the list the launch wrote through `sandbox-exec` around a fake worker's `git add`, `git commit`, `update-ref` and a ref overwrite, with `git status` first as the control, and skips where `sandbox-exec` is absent.
+
 No real engine ran for these fixes. Whether a subscription accepts each alias, and the shipped path with a real planner, are for the verifier: `Not verified` below still stands for the composed chat path.
 
 ## Not verified
 
-- The composed chat path with a real planner. Second verifier, run 1 on 7e0f67c, planned and launched with no placement rig, but with a wrapper that unsets `CLAUDE_CONFIG_DIR`, because `RealClaudeBrain` always sets it. A planner on a linked slot with no wrapper, and the wizard's `settings/meta-slot` path, are still not seen.
+- A planner on a linked slot with no wrapper. The verifiers' runs used a wrapper that unsets `CLAUDE_CONFIG_DIR`. The shipped code now does that itself, proved over the fake CLI. It needs `settings/meta-slot` naming a slot doc with `linkedDefault: true`: `MEC_META_SLOT` still sets the variable.
+- `sandbox.filesystem.denyWrite` on a real engine. Read from the binary and proved with Seatbelt directly, not through Claude. A real `rm`, overwrite and `objects` write should now fail, and a real worker told not to commit should finish with MEC's commit.
 - A real denial of `git push` on the final tree. The earlier real denials were on 6697516. On 7e0f67c the model declined all three pushes from its own prompt, so that run proves nothing about the boundary. The confirm rule over the fake CLI denied all 8 spellings tried. This needs one more real run.
 - A real run of the corrected brief, and of `git update-ref` through `confirm`. Tests only.
-- Whether a real worker can delete a sibling's `mec/*` ref, or write `hooks`, `config` or `objects` in the shared clone. The probe was declined. The protection of `hooks` and `config` is read from the binary's text, not run.
 - A real Read-tool denial on a text file on the deny list. Confirm's rule covers it, and the test covers the rule, but no real engine has exercised it.
 - `sandbox: required` on Linux.
 - The real `--restricted` launch of a read-only role: the argv combines `--permission-prompt-tool` with `--permission-prompts none`, and no real run has tried that.

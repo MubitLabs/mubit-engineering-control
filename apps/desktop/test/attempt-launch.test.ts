@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -280,6 +281,38 @@ describe('a chat request', { timeout: 60_000 }, () => {
     expect(peek(dataDir, (store) => store.attempts.get(id)?.slotId)).toBe('slot_linked')
   })
 
+  describe('the planner slot', () => {
+    const plansOn = async (slot: Record<string, unknown>) => {
+      const { dataDir, repo, bin, seen } = scratch({ steps: [{ init: true }, { result: 'completed' }] })
+      seedSlots(dataDir, repo, [slot])
+      peek(dataDir, (store) => store.engines.save({ id: 'settings/meta-slot', slotId: String(slot.id) }))
+      process.env.CLAUDE_CONFIG_DIR = '/must/not/arrive'
+      try {
+        const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 4000 })
+        closers.push(server.close)
+        await fetch(`${server.url}/api/chat/messages`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: 'please add the thing', repoId: 'repo_a' }),
+        })
+        await until(() => existsSync(join(bin, 'seen.json')))
+      } finally {
+        delete process.env.CLAUDE_CONFIG_DIR
+      }
+      return seen()
+    }
+
+    it('a linked slot plans with CLAUDE_CONFIG_DIR unset, as an interactive claude runs', async () => {
+      const seen = await plansOn({ ...LINKED, home: '/home/someone/.claude', linkedDefault: true })
+      expect(seen.config_dir).toBeNull()
+    })
+
+    it('a slot with its own home plans under that home', async () => {
+      const seen = await plansOn({ ...LINKED, id: 'slot_max', home: '/slots/claude/max' })
+      expect(seen.config_dir).toBe('/slots/claude/max')
+    })
+  })
+
   it('a tier only an unlaunchable slot serves is refused at the plan, not at the launch', async () => {
     const { root, dataDir, repo } = scratch({ steps: SUCCESS })
     const home = join(root, 'glm')
@@ -394,12 +427,19 @@ describe('the launch path', { timeout: 60_000 }, () => {
     expect(argv).toContain('Bash(git push:*)')
     expect(argv).toContain('Bash(gh:*)')
 
-    // The brief is true about the shared clone: the sandbox lets git write there, and that clone
-    // holds other attempts' branches, so the rule is stated rather than promised as read-only.
+    // The brief is true about the shared clone: its writes are denied, so a worker's own commit
+    // fails, and the worker is told to leave that to MEC instead of finding out and retrying.
     const prompt = argv.join('\n')
     expect(prompt).toContain('Your shell is sandboxed')
-    expect(prompt).not.toMatch(/shared clone[^.]*read-only/)
-    expect(prompt).toMatch(/shared clone[^.]*other attempts' branches/)
+    expect(prompt).toMatch(/shared clone[^.]*read-only/)
+    expect(prompt).toContain('Do not run git add or git commit')
+    expect(prompt).toContain('MEC commits it when you finish')
+    expect(prompt).not.toMatch(/leave its refs alone/)
+
+    // §26: the whole clone is out of the shell's reach, not the slice the brief describes.
+    const common = realpathSync(gitIn(worktree, 'rev-parse', '--path-format=absolute', '--git-common-dir'))
+    const settings = JSON.parse(readFileSync(join(worktree, '.mec', 'claude-settings.json'), 'utf8'))
+    expect(settings.sandbox.filesystem.denyWrite).toEqual([common])
 
     // Its branch, its pinned base, a real commit under the repository's identity.
     const base = gitIn(repo, 'rev-parse', 'HEAD')
@@ -544,6 +584,47 @@ describe('the launch path', { timeout: 60_000 }, () => {
     expect(() => process.kill(-Number(seen().pid), 0)).toThrow()
     expect(attemptState(dataDir)).toBe('interrupted')
   })
+
+  // Seatbelt itself, with the list the launch wrote: the engine's sandbox applies the same rule.
+  it.runIf(existsSync('/usr/bin/sandbox-exec'))(
+    "a worker's refused git writes hurt nothing, and MEC still commits its work",
+    async () => {
+      const refused = [
+        "D=$(node -p \"JSON.parse(require('fs').readFileSync('.mec/claude-settings.json')).sandbox.filesystem.denyWrite[0]\")",
+        'P="(version 1)(allow default)(deny file-write* (subpath \\"$D\\"))"',
+        // The first command must pass, or a broken profile would read as four refusals.
+        'for c in "git status" "git add --all" "git commit -am mine" "git update-ref refs/heads/evil HEAD"; do',
+        '  sandbox-exec -p "$P" sh -c "$c" >/dev/null 2>&1; echo $? >> "$TMPDIR/refused.txt"',
+        'done',
+        'sandbox-exec -p "$P" sh -c \'echo x > "\'"$D"\'/refs/heads/evil"\' 2>/dev/null; echo $? >> "$TMPDIR/refused.txt"',
+      ].join('\n')
+      const { dataDir, repo } = scratch({
+        steps: [
+          { init: true },
+          { write: { path: 'made.txt', text: 'made\n' } },
+          { sh: refused },
+          { result: 'completed' },
+        ],
+      })
+      process.env.MEC_REAL_RUNNER = '1'
+      seedStore(dataDir, repo, { checks: [{ name: 'made', cmd: 'test -f made.txt' }] })
+      await serve(dataDir)
+      await reaches(dataDir, 'succeeded')
+
+      const codes = readFileSync(join(dataDir, 'tmp', 'att_1', 'refused.txt'), 'utf8')
+        .trim()
+        .split('\n')
+      expect(codes).toHaveLength(5)
+      expect(codes[0]).toBe('0')
+      expect(codes.slice(1)).not.toContain('0')
+      const worktree = join(dataDir, 'work', 'att_1')
+      const attempt = peek(dataDir, (store) => store.attempts.get('att_1')) as Record<string, string>
+      expect(attempt.head_sha).toBe(gitIn(worktree, 'rev-parse', 'HEAD'))
+      expect(gitIn(worktree, 'log', '-1', '--format=%s')).toBe('mec: task_1 attempt att_1')
+      expect(gitIn(worktree, 'ls-files', 'made.txt')).toBe('made.txt')
+      expect(gitIn(worktree, 'for-each-ref', '--format=%(refname)', 'refs/heads/evil')).toBe('')
+    },
+  )
 
   it('a second attempt keeps the first branch and the pinned base', async () => {
     const { dataDir, repo } = scratch({ steps: SUCCESS })

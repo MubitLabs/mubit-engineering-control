@@ -37,6 +37,17 @@ describe('defaultDenyRead', () => {
   })
 })
 
+describe('the shared clone', () => {
+  it('is write-denied for a specialist, whole, so siblings and later attempts are covered', () => {
+    const s = buildAttemptSettings(profile(), { ...opts, sharedClone: '/data/repos/abc.git' })
+    expect(s.sandbox.filesystem.denyWrite).toEqual(['/data/repos/abc.git'])
+  })
+
+  it('leaves the list empty when a run has no shared clone', () => {
+    expect(buildAttemptSettings(profile(), opts).sandbox.filesystem.denyWrite).toEqual([])
+  })
+})
+
 describe('defaultDenyRead under a data dir of its own', () => {
   const dataDir = '/private/tmp/scratch/state'
 

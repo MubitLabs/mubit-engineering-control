@@ -44,6 +44,12 @@ export type AttemptSettingsOptions = {
   homeDir: string
   /** MEC's data dir, when it is not `~/.mec`: a scratch server's state is denied where it is. */
   dataDir?: string
+  /**
+   * The bare clone behind the worktree, which the engine's sandbox grants by itself (§26). Denied
+   * whole: its `worktrees/` holds every attempt's admin directory, later ones included, and its
+   * `HEAD` picks the next launch's base. MEC commits from outside the sandbox.
+   */
+  sharedClone?: string
 }
 
 export type AttemptSettings = {
@@ -52,7 +58,7 @@ export type AttemptSettings = {
     allowUnsandboxedCommands: false
     autoAllowBashIfSandboxed: false
     failIfUnavailable: boolean
-    filesystem: { allowWrite: string[]; denyRead: string[] }
+    filesystem: { allowWrite: string[]; denyWrite: string[]; denyRead: string[] }
     network: { allowedDomains: string[]; strictAllowlist: true }
   }
   disableAllHooks: true
@@ -64,6 +70,7 @@ export function buildAttemptSettings(
 ): AttemptSettings {
   const denyRead = [...new Set([...defaultDenyRead(opts.homeDir, opts.dataDir), ...profile.deny_read])]
   const allowWrite = [...new Set([opts.worktree, opts.tempDir, ...profile.allow_write])]
+  const denyWrite = opts.sharedClone === undefined ? [] : [opts.sharedClone]
   const allowedDomains = [...new Set([...opts.allowedDomains, ...profile.allowed_domains])]
   return {
     sandbox: {
@@ -73,7 +80,7 @@ export function buildAttemptSettings(
       // bridge is where `git push` is refused.
       autoAllowBashIfSandboxed: false,
       failIfUnavailable: profile.sandbox === 'required',
-      filesystem: { allowWrite, denyRead },
+      filesystem: { allowWrite, denyWrite, denyRead },
       network: { allowedDomains, strictAllowlist: true },
     },
     disableAllHooks: true,

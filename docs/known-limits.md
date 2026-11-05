@@ -46,9 +46,15 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
     rules, and the sandbox stays the boundary.
   - One data dir holds every attempt's worktree, so a sibling attempt's shell can read
     `.mec/mcp.json` while that attempt runs. The sandbox does not separate attempts from each other.
-  - The sandbox lets git write to the shared clone. `git branch` from a real attempt wrote a ref into
-    `<dataDir>/repos/*.git`, which `allowWrite` does not list. Claude's own sandbox adds a linked
-    worktree's common git dir to the write list. A worker could still change a sibling's `mec/*` ref
-    with a plain file write. `confirm` refuses `git branch -d` and `git update-ref` by name only, and
-    shell text is a heuristic. The worker's brief says to leave those refs alone. MEC still commits
-    the leftover tree after the engine exits.
+  - A specialist's shell cannot write to the shared clone. Claude's own sandbox adds a linked
+    worktree's common git dir to the write list, and a real worker overwrote a sibling's ref there,
+    which stopped the next launch on that repository at `git fetch`. MEC now puts the whole
+    `<dataDir>/repos/*.git` in `sandbox.filesystem.denyWrite`. The cost is deliberate: a worker's
+    `git add`, `git commit`, `git restore`, `git stash` and branch commands all fail, while
+    `git status`, `diff` and `log` work. The brief tells it so. MEC commits the leftover tree from
+    outside the sandbox.
+  - That commit happens only on a completed exit. A run that is stopped, crashes or runs out of
+    turns gets no commit: its files stay uncommitted in `<dataDir>/work/<attempt>`, and no head
+    records them.
+  - The denial covers Claude's Bash on macOS. A real run has not yet proved it, and on Linux it is
+    untested. Repo checks and MEC's own git run outside the sandbox.

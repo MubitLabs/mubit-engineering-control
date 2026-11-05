@@ -36,6 +36,35 @@ function bodyOf(call: RecordedCall | undefined): Record<string, unknown> {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
+describe('operator commands', () => {
+  it('lift posts to the work item and returns the launch count', async () => {
+    const calls = stubFetch(() => ({ body: { id: 'wi 1', status: 'lifted', launches: 2 } }))
+
+    await expect(api.liftWorkItem('wi 1')).resolves.toMatchObject({ status: 'lifted', launches: 2 })
+
+    expect(calls[0]?.url).toBe('/api/work/wi%201/lift')
+    expect(calls[0]?.init?.method).toBe('POST')
+  })
+
+  it('a refused lift surfaces the 409, not a served answer', async () => {
+    stubFetch(() => ({ status: 409, body: { error: 'mandate_withdrawn' } }))
+    await expect(api.liftWorkItem('wi_1')).rejects.toThrow('mandate_withdrawn')
+  })
+
+  it('resume posts and processing reads the stored state', async () => {
+    const calls = stubFetch(({ url }) => ({
+      body: url.endsWith('/resume') ? { status: 'running' } : { paused: true, pausedAt: 'then' },
+    }))
+
+    await expect(api.resumeProcessing()).resolves.toEqual({ status: 'running' })
+    await expect(api.processing()).resolves.toEqual({ paused: true, pausedAt: 'then' })
+
+    expect(calls[0]?.url).toBe('/api/processing/resume')
+    expect(calls[0]?.init?.method).toBe('POST')
+    expect(calls[1]?.url).toBe('/api/processing')
+  })
+})
+
 describe('api.sendChat', () => {
   it('attaches the given idempotency key header, the text and the reference, and parses the response', async () => {
     const calls = stubFetch(() => ({ body: { messageId: 'm_1', workItemId: 'w_9' } }))

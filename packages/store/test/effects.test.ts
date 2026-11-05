@@ -451,6 +451,49 @@ describe('overlapping passes', () => {
   })
 })
 
+describe('settle', () => {
+  it('settle waits for in-flight jobs and starts none', async () => {
+    const ran: string[] = []
+    let finish: () => void = () => {}
+    queue.handle(
+      'launch',
+      async (payload) => {
+        ran.push(String(payload))
+        await new Promise<void>((resolve) => {
+          finish = resolve
+        })
+      },
+      { concurrency: 1 },
+    )
+    queue.enqueue('launch', 'first', 'first')
+    queue.enqueue('launch', 'second', 'second')
+    void queue.run()
+
+    let settled = false
+    const settling = queue.settle().then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    finish()
+    await settling
+
+    expect(ran).toEqual(['first'])
+    expect(queue.snapshot('launch', 'first')).toBeUndefined()
+    expect(queue.snapshot('launch', 'second')?.state).toBe('pending')
+  })
+
+  it('settle with nothing in flight returns and leaves due rows alone', async () => {
+    queue.handle('launch', async () => {})
+    queue.enqueue('launch', 'due', {})
+
+    await queue.settle()
+
+    expect(queue.snapshot('launch', 'due')?.state).toBe('pending')
+  })
+})
+
 describe('restart', () => {
   /** What a crash leaves behind: a row marked running that no live handler owns. */
   const crashed = (kind: string, key: string): void => {

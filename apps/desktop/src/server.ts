@@ -23,11 +23,18 @@ import type { LiveWork } from '@mec/meta'
 // read side plus a safe slot subset, every write a user-applied draft.
 import {
   assertRepoAdmission,
+  type HoldOutcome,
+  holdWorkItem,
+  isHeld,
+  type LiftOutcome,
+  processingOf,
   RepoAdmissionError,
   repoFields,
   routeMessage,
   SetupAgent,
   type SetupSettingsApi,
+  type StopOutcome,
+  stopWorkItem,
 } from '@mec/meta'
 import type { ConfirmationRecord } from '@mec/policy'
 import { ALWAYS_CONFIRM, loadPolicy, resolveConfirmation } from '@mec/policy'
@@ -124,7 +131,13 @@ export type ServerDeps = {
       questionId: string,
       answer: string,
     ): Promise<{ status: 'answered' | 'not_open' | 'missing'; outcome?: unknown }>
+    /** §12.5 owner commands. Without them, hold and stop write directly (see the routes). */
+    holdWork?(id: string, reason: string, sourceMessageId?: string): HoldOutcome
+    liftHold?(id: string): LiftOutcome
+    stopWork?(id: string): StopOutcome
   }
+  /** §20 pause: the composition root owns the queue timer; absent, the routes answer 404. */
+  pauseControl?: { pause(): void; resume(): void; isPaused(): boolean }
   /** T7: the setup agent for Chat's Setup mode; a store-backed default is built when absent. */
   setupAgent?: SetupAgentSurface
   /** T7: the Settings API the default setup agent drafts against (the integrator wires T1/T4 here). */
@@ -356,7 +369,7 @@ function slotDocOf(store: Store, id: string): ApiSlotDoc | undefined {
  */
 export function buildHealthSnapshot(store: Store, health: HealthBoard): HealthSnapshot {
   return {
-    runtime: { state: 'ready', instances: 1, answering: true },
+    runtime: { state: processingOf(store).paused ? 'paused' : 'ready', instances: 1, answering: true },
     parts: partsOf(health),
     setup: {
       has_slot: store.slots.list().length > 0,
@@ -414,6 +427,14 @@ function liveWorkOf(store: Store, repoId: string | undefined): LiveWork[] {
       openQuestions: [],
       stopped: false,
     }))
+}
+
+/** With no planner to dispatch saved tasks, a lift would strand them: the hold stays instead. */
+function liftWork(store: Store, metaAgent: ServerDeps['metaAgent'], id: string): LiftOutcome {
+  if (metaAgent?.liftHold !== undefined) return metaAgent.liftHold(id)
+  const doc = store.workItems.get(id)
+  if (doc === undefined) return { status: 'missing' }
+  return isHeld(doc) ? { status: 'refused', error: 'no_meta_agent' } : { status: 'free' }
 }
 
 /** Appends `type` as the stream's next gap-free event; callers stay inside their transaction. */
@@ -774,11 +795,68 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         // The §10 first-match stage projection lands with the scheduler milestone; until
         // then the work item's own lifecycle state is the honest stage.
         stage: state,
+        held: isHeld(doc),
         taskCounts: { total: tasks.length, byStatus },
         updatedAt: String(doc.updatedAt ?? ''),
       }
     }),
   )
+
+  // Owner commands (§12.5, §20, decisions #20 and #21). Hold and stop write directly with no
+  // meta agent, because the owner must be able to stop work with no meta slot configured. A
+  // lift needs the planner's dispatch, so with none it refuses and the hold stays.
+  app.post('/api/work/:id/hold', async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const { reason } = (request.body ?? {}) as { reason?: unknown }
+    const text =
+      typeof reason === 'string' && reason.trim() !== '' ? redact(reason, [], []) : 'held by the owner'
+    const outcome =
+      deps.metaAgent?.holdWork !== undefined
+        ? deps.metaAgent.holdWork(id, text)
+        : store.atomic(() => holdWorkItem(store, id, { reason: text, at: now().toISOString() }))
+    if (outcome === 'held') return { id, status: 'held' }
+    if (outcome === 'missing') reply.code(404).send({ error: 'unknown work item' })
+    else reply.code(409).send({ error: outcome })
+    return
+  })
+
+  app.post('/api/work/:id/lift', async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const outcome = liftWork(store, deps.metaAgent, id)
+    if (outcome.status === 'lifted') return { id, status: 'lifted', launches: outcome.launches.length }
+    if (outcome.status === 'free') return { id, status: 'free', launches: 0 }
+    if (outcome.status === 'missing') reply.code(404).send({ error: 'unknown work item' })
+    else reply.code(409).send({ error: outcome.error })
+    return
+  })
+
+  app.post('/api/work/:id/stop', async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const outcome =
+      deps.metaAgent?.stopWork !== undefined
+        ? deps.metaAgent.stopWork(id)
+        : store.atomic(() =>
+            stopWorkItem(store, id, { reason: 'stopped by the owner', at: now().toISOString() }),
+          )
+    if (outcome === 'stopped') return { id, status: 'stopped' }
+    if (outcome === 'missing') reply.code(404).send({ error: 'unknown work item' })
+    else reply.code(409).send({ error: outcome })
+    return
+  })
+
+  app.post('/api/processing/pause', async (_request, reply) => {
+    if (deps.pauseControl === undefined) return reply.code(404).send({ error: 'pause is not available' })
+    deps.pauseControl.pause()
+    return { status: 'paused' }
+  })
+
+  app.post('/api/processing/resume', async (_request, reply) => {
+    if (deps.pauseControl === undefined) return reply.code(404).send({ error: 'pause is not available' })
+    deps.pauseControl.resume()
+    return { status: 'running' }
+  })
+
+  app.get('/api/processing', async () => processingOf(store))
 
   app.post('/api/slots/login', async (request, reply) => {
     const body = (request.body ?? {}) as { engine?: unknown; slotHome?: unknown; label?: unknown }

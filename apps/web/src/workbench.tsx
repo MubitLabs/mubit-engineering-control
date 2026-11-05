@@ -97,6 +97,7 @@ export type WorkbenchValue = {
   toast: (text: string) => void
   composerPrefillSet: (text: string) => void
   pauseProcessing: () => Promise<void>
+  resumeProcessing: () => Promise<void>
   backupNow: () => Promise<void>
 }
 
@@ -475,6 +476,9 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
 
   // ── Operator commands (honest about what is not served) ────────────────────
 
+  /** The runtime line shows a pause or resume at once, not on the next 10 s tick. */
+  const readStatus = useCallback(() => api.status().then(setStatus, () => {}), [])
+
   const pauseProcessing = useCallback(async () => {
     try {
       await api.pauseProcessing()
@@ -482,7 +486,18 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       toast(isNotServed(error) ? 'Pause is not served by the server yet.' : 'Pause failed — try again.')
     }
-  }, [toast])
+    await readStatus()
+  }, [readStatus, toast])
+
+  const resumeProcessing = useCallback(async () => {
+    try {
+      await api.resumeProcessing()
+      toast('Processing resumed.')
+    } catch (error) {
+      toast(isNotServed(error) ? 'Resume is not served by the server yet.' : 'Resume failed — try again.')
+    }
+    await readStatus()
+  }, [readStatus, toast])
 
   const backupNow = useCallback(async () => {
     try {
@@ -541,6 +556,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       toast,
       composerPrefillSet,
       pauseProcessing,
+      resumeProcessing,
       backupNow,
     }),
     [
@@ -582,6 +598,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       toast,
       composerPrefillSet,
       pauseProcessing,
+      resumeProcessing,
       backupNow,
     ],
   )

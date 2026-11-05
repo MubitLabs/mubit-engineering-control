@@ -137,18 +137,18 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
       required: ['task', 'role'],
     },
   },
-  // T5 (review 2026-11-04 §5.2): the full §12 routing vocabulary — attach/hold/release carry
-  // their target in `target`; only these decisions exist.
+  // T5 (review 2026-11-04 §5.2): the §12 routing vocabulary — attach/stop/hold carry their
+  // target in `target`; only these decisions exist, and only the owner lifts a hold (#20).
   route: {
     description:
-      'Attach a message to live work, new work, a stop, hold or release, or the conversation, with an optional bounded note',
+      'Attach a message to live work, new work, a stop, a hold, or the conversation, with an optional bounded note',
     inputSchema: {
       type: 'object',
       properties: {
         message_id: { type: 'string' },
         decision: {
           type: 'string',
-          enum: ['new_work', 'attach', 'stop', 'hold', 'release', 'conversation'],
+          enum: ['new_work', 'attach', 'stop', 'hold', 'conversation'],
         },
         target: { type: 'string' },
         note: { type: 'string' },

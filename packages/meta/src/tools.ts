@@ -245,8 +245,7 @@ export class PlannerTools {
     if (messageId === '') issues.push('route requires a message_id')
     if (note !== undefined && countWords(note) > MAX_NOTE_WORDS)
       issues.push(`route note is bounded at ${MAX_NOTE_WORDS} words (§6)`)
-    const needsTarget =
-      decision === 'attach' || decision === 'stop' || decision === 'hold' || decision === 'release'
+    const needsTarget = decision === 'attach' || decision === 'stop' || decision === 'hold'
     if (needsTarget && target === undefined)
       issues.push(`route decision '${decision}' requires a target work item`)
 
@@ -278,14 +277,9 @@ export class PlannerTools {
             issues.push(`${target ?? '(no target)'} is not open work — ${decision} needs a live work item`)
           break
         }
-        case 'release': {
-          const held = this.#config.snapshot.work.some((item) => item.id === target && item.holds.length > 0)
-          if (!held) issues.push(`${target ?? '(no target)'} is not held — release lifts a hold (§12.5)`)
-          break
-        }
         default:
           issues.push(
-            `route decision must be new_work, attach, stop, hold, release or conversation (got '${decision}')`,
+            `route decision must be new_work, attach, stop, hold or conversation (got '${decision}'): only the owner lifts a hold (§12.5)`,
           )
       }
     }

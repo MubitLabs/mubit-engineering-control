@@ -116,6 +116,7 @@ describe('attempt machine', () => {
       'interrupted --resume--> running',
       'provider_down --resume--> running',
       'queued --agent_started--> running',
+      'queued --interrupt_confirmed--> interrupted',
       'quota_wait --resume--> running',
       'running --agent_finished--> work_complete',
       'running --auth_expired--> auth_required',

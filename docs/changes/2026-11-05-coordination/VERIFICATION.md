@@ -33,6 +33,20 @@ New mutants, all killed: `no-checks attempt keeps its follow-ups`, `checks still
 
 Full runs on these commits, with other worktrees running mutants on the same machine: 2463 passed in `vitest run` once, with only the `login-cards` baseline failing, and twice `coordination.test.ts` "two-task contract chain" also failed on its 40 s wait, once alongside the `shims.test.ts` timeout already noted above. Alone, both suites pass. That chain takes 33.2 s here and 32.9 s on `eb46fd8`, so it has about 7 s of margin in a full run, and it passed both base runs. Neither fix is on its path, which has registered checks and no budget. Its wait was not changed.
 
+## The third round of fixes
+
+Each test was run failing first, on its own reason, then passing. No engine ran.
+
+- **Wall clock in a check.** The composed run timed out on `first` reaching `blocked` after 30 s. The unit tests: `expected undefined to be 'wall_clock'` from the runner, and the task stayed `awaiting_review`.
+- **Hard links.** `.git: expected 'allow' to be 'deny'`, in three tests.
+- **Planner mode.** `expected [ …(21) ] to include '--permission-mode default'`, on the argv the fake CLI saw.
+- **Retired meta slot.** `seen.json` existed, so the fake CLI had run. `a degraded meta slot still plans` passed before and after, and `degraded meta slot refused` proves it sees the difference.
+- **The `.git` pointer.** `commit_failed: git log failed`, not `git_pointer_moved`: with a swapped `.git`, git status, add and commit all ran in the worker's repository before anything failed.
+
+Gate on these commits, with other worktrees running on the machine: `pnpm typecheck` and `biome` clean of errors, and `vitest run` 2480 passed, 15 skipped, 1 failed, the `login-cards.test.ts` baseline. `test:screens` was not rerun: nothing in `apps/web` changed.
+
+Mutants, each of the 75 in `m2.2.json`, killed: the two runs of `run.py` that hold them come to 73, and `no pass after effects` and `follow-up names no ids` ran past the runner's 300 s bound and read `INVALID`, so they now run only the tests written for them, and both are killed. `plan wall clock ignored` ran alone, because the baseline of its two suites also passed that bound under load. `m2.1.json`: 51 of 53 killed, and `durable-commands.json`: 51 of 54. The two and the three not run have a `find` that was already gone at 03c44e4, so `run.py` refuses those specs whole; `--only` ran the rest.
+
 ## Assertions changed on purpose
 
 - `service.test.ts` "attach": a follow-up with no attempt now queues one `relay`.
@@ -43,6 +57,7 @@ Full runs on these commits, with other worktrees running mutants on the same mac
 - `server.test.ts`, `release-cards.test.ts`: approved cards now carry evidence, because an empty one answers 422.
 - `apps/web/test/release-cards.test.ts`, `screens.playwright.ts`: the agent wording needs `continues: true`.
 - `coordination.test.ts` "owned follow-up": `content` is now blocks, and the first is the text, unchanged.
+- `attempt-runner.test.ts`: `checksSkipped` now takes the stop reason, and the fake records it.
 
 ## Real engine
 

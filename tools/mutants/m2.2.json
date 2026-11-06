@@ -277,14 +277,14 @@
     "file": "apps/desktop/src/composition.ts",
     "find": "    void store.effects.run().catch(() => {})\n    schedulerPass()\n  }, PASS_INTERVAL_MS)\n",
     "replace": "    void store.effects.run().catch(() => {})\n  }, PASS_INTERVAL_MS)\n",
-    "tests": ["apps/desktop/test/coordination.test.ts"]
+    "tests": ["apps/desktop/test/coordination.test.ts", "-t", "pass places work"]
   },
   {
     "name": "follow-up names no ids",
     "file": "packages/engines/src/claude/adapter.ts",
     "find": "  if (input.message_id === undefined) return input.text\n",
     "replace": "  if (input.message_id !== 'x') return input.text\n",
-    "tests": ["packages/engines/test/claude-input.test.ts", "apps/desktop/test/coordination.test.ts"]
+    "tests": ["packages/engines/test/claude-input.test.ts", "apps/desktop/test/coordination.test.ts", "-t", "names its ids|handed back by the id"]
   },
   {
     "name": "ids replace the text",

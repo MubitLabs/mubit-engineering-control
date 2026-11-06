@@ -281,7 +281,12 @@ export async function startServer(opts: {
   const delivery =
     launcher === undefined
       ? undefined
-      : new Delivery({ store, effects: store.effects, dataDir: opts.dataDir })
+      : new Delivery({
+          store,
+          effects: store.effects,
+          dataDir: opts.dataDir,
+          policyText: opts.policyText ?? DEFAULT_POLICY_TEXT,
+        })
 
   // The first pass waits for the tools server: a launch needs its URL. Rows a previous process
   // left running went back to pending above, before this.

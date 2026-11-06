@@ -257,5 +257,12 @@
     "find": "    if (!waits || task.basePolicy === 'contract') return pinned\n",
     "replace": "    if (waits || !waits) return pinned\n",
     "tests": ["apps/desktop/test/delivery-flow.test.ts"]
+  },
+  {
+    "name": "delivery ignores the pinned profile",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (pinned !== undefined && pinned !== current.profileHash) {\n",
+    "replace": "    if (false as boolean) {\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
   }
 ]

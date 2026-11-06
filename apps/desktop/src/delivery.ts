@@ -44,6 +44,7 @@ import {
   openRepairTask,
   processingOf,
   repairEvidence,
+  repoFields,
   workResultOf,
 } from '@mec/meta'
 import { buildAgentEnv, runCheck } from '@mec/runtime'
@@ -103,6 +104,7 @@ export type DeliveryDeps = {
   store: Store
   effects: Effects
   dataDir: string
+  policyText: string
   caps?: Caps
   run?: GhRun
   git?: GitExec
@@ -115,6 +117,7 @@ export class Delivery {
   readonly #store: Store
   readonly #effects: Effects
   readonly #dataDir: string
+  readonly #policyText: string
   readonly #caps: Caps
   readonly #pollMs: number
   readonly #closing = new AbortController()
@@ -125,6 +128,7 @@ export class Delivery {
     this.#store = deps.store
     this.#effects = deps.effects
     this.#dataDir = deps.dataDir
+    this.#policyText = deps.policyText
     this.#caps = deps.caps ?? DEFAULT_CAPS
     this.#pollMs = deps.pollMs ?? POLL_MS
     this.release = {
@@ -195,6 +199,16 @@ export class Delivery {
     const id = String(work.id)
     const tasks = this.#store.tasks.list({ workItemId: id })
     if (!tasks.some((task) => task.status === 'accepted' || task.status === 'integrated')) return
+    // §14: the checks are the ones pinned at admission, as the launch gate holds them to be.
+    const pinned = (work.pin as { profileHash?: string } | undefined)?.profileHash
+    const current = repoFields(this.#store, String(work.repoId), this.#policyText).pin as {
+      profileHash?: string
+    }
+    if (pinned !== undefined && pinned !== current.profileHash) {
+      const reason = 'repo_profile_changed: this work was admitted under other commands'
+      this.#store.atomic(() => blockWork(this.#store, id, reason, this.#now))
+      return
+    }
     await this.#integrate(work, tasks)
     const integration = this.#store.engines.get(integrationDocId(id))
     if (integration === undefined) return

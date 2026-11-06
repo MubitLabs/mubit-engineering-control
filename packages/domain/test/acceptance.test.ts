@@ -55,7 +55,7 @@ describe('acceptance (§10, §15, decision #32)', () => {
         verdicts: [{ name: 'unit', status: 'failed', sha: HEAD, logTail: 'one test red' }],
       }),
     )
-    expect(errored.verdict).toBe('blocked')
+    expect(errored).toEqual({ verdict: 'blocked', reason: `could not run unit on ${HEAD}` })
     expect(failed).toEqual({
       verdict: 'repair',
       reason: 'checks_failed',

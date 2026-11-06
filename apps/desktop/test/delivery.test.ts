@@ -144,6 +144,7 @@ function rig(over: { checks?: { name: string; cmd: string }[]; world?: Partial<W
     store,
     effects: store.effects,
     dataDir,
+    policyText: POLICY,
     caps: DEFAULT_CAPS,
     run,
     pollMs: 0,
@@ -347,6 +348,21 @@ describe('integration (§14)', () => {
     expect(r.store.tasks.list().filter((task) => task.repairOf === 'task_a')).toEqual([])
     expect(r.store.tasks.get('task_a')?.status).toBe('blocked')
     expect(String(r.store.tasks.get('task_a')?.blockedReason)).toContain('2 of 2')
+  })
+
+  it('work whose repository profile changed since admission runs no other commands', async () => {
+    const r = rig()
+    r.accepted('task_a', 'b.txt', 'two\n')
+    r.store.atomic(() => {
+      const repo = r.store.engines.get(REPO) as StoreDoc
+      r.store.engines.save({ ...repo, checks: [{ name: 'unit', cmd: 'true' }] })
+    })
+    await r.passes(2)
+    expect(r.store.engines.get(integrationDocId(WORK))).toBeUndefined()
+    expect(r.store.workItems.get(WORK)).toMatchObject({
+      state: 'blocked',
+      blockedReason: expect.stringContaining('repo_profile_changed'),
+    })
   })
 
   it('an accepted subset opens nothing', async () => {

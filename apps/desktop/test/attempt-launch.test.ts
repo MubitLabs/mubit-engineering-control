@@ -619,6 +619,20 @@ describe('the launch path', { timeout: 60_000 }, () => {
     expect(attemptState(dataDir)).toBe('running')
   })
 
+  // §11: the plan stores `wallClockMs` (packages/meta/src/tools.ts); rows seeded in the brief's
+  // spelling keep working. The default is 30 minutes, so an unread budget cannot end this run.
+  it.each([
+    ['a stored plan budget', { turns: 5, wallClockMs: 400 }],
+    ['a seeded brief-shaped budget', { turns: 5, wall_clock_ms: 400 }],
+  ])('%s ends the attempt on its own wall clock', async (_name, budget) => {
+    const { dataDir, repo } = scratch({ steps: [{ init: true }, { forever: true }] })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedStore(dataDir, repo, { task: { budget } })
+    await serve(dataDir)
+    await until(() => attemptState(dataDir) === 'interrupted', 15_000)
+    expect(peek(dataDir, (store) => store.attempts.get('att_1')?.terminal_reason)).toBe('wall_clock')
+  })
+
   it('a stop request reaches the process group, and close stops what is left', async () => {
     const { dataDir, repo, seen } = scratch({
       steps: [{ init: true }, { ignoreTerm: true }, { child: { ignoreTerm: true } }, { forever: true }],

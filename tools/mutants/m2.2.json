@@ -397,5 +397,19 @@
     "find": "  return attempt.state === 'work_complete' && typeof attempt.checks_note === 'string'\n",
     "replace": "  return attempt.state === 'work_complete'\n",
     "tests": ["packages/meta/test/followups.test.ts"]
+  },
+  {
+    "name": "plan wall clock ignored",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "        wall_clock_ms: budget.wallClockMs ?? budget.wall_clock_ms ?? DEFAULT_WALL_CLOCK_MS,\n",
+    "replace": "        wall_clock_ms: budget.wall_clock_ms ?? DEFAULT_WALL_CLOCK_MS,\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts", "apps/desktop/test/coordination.test.ts"]
+  },
+  {
+    "name": "seeded wall clock ignored",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "        wall_clock_ms: budget.wallClockMs ?? budget.wall_clock_ms ?? DEFAULT_WALL_CLOCK_MS,\n",
+    "replace": "        wall_clock_ms: budget.wallClockMs ?? DEFAULT_WALL_CLOCK_MS,\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
   }
 ]

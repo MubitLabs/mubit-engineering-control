@@ -373,6 +373,15 @@ describe('continuing coordination (§11, §12)', () => {
     expect(refused).toEqual([])
   }, 60_000)
 
+  it('a planner-set wall-clock budget stops the attempt', async () => {
+    const budgeted = { ...task('first'), budget: { turns: 5, wallClockMs: 1000 } }
+    const r = await serve(scratch({ steps: [{ init: true }, { forever: true }] }), planOf(budgeted))
+    await r.post('/api/chat/messages', { text: 'go', repoId: REPO })
+
+    await until(() => attemptIn(r)?.state === 'interrupted', 15_000)
+    expect(attemptIn(r)?.terminal_reason).toBe('wall_clock')
+  }, 60_000)
+
   it('reserved wake delivers before a queued launch', async () => {
     const steps = [{ init: true }, { sleep: 3000 }, ...WORK.slice(1)]
     let turns = 0

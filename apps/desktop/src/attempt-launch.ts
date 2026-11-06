@@ -409,7 +409,13 @@ export class AttemptLauncher {
         GIT_TERMINAL_PROMPT: '0',
       },
     })
-    const budget = (task.budget ?? {}) as { turns?: number; wall_clock_ms?: number; usd?: number }
+    // A plan stores `wallClockMs`; a row seeded in the brief's spelling still reads.
+    const budget = (task.budget ?? {}) as {
+      turns?: number
+      wallClockMs?: number
+      wall_clock_ms?: number
+      usd?: number
+    }
     const brief = AttemptBriefSchema.parse({
       attempt_id: attemptId,
       generation,
@@ -427,7 +433,7 @@ export class AttemptLauncher {
       acceptance_checks: Array.isArray(task.acceptanceChecks) ? task.acceptanceChecks : [],
       budget: {
         turns: budget.turns ?? role.budgetTurns,
-        wall_clock_ms: budget.wall_clock_ms ?? DEFAULT_WALL_CLOCK_MS,
+        wall_clock_ms: budget.wallClockMs ?? budget.wall_clock_ms ?? DEFAULT_WALL_CLOCK_MS,
         ...(budget.usd !== undefined && { usd: budget.usd }),
       },
       bundle_revision: bundle.revision,

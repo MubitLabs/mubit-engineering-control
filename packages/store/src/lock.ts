@@ -67,21 +67,31 @@ function tryCreate(path: string): number | undefined {
   }
 }
 
-/** True when the lockfile is gone (released meanwhile) or its pid is provably dead. */
-function isStale(path: string): boolean {
+/** Who a directory's lockfile names: undefined with no lockfile, `unreadable` if it proves nothing. */
+export function lockOwner(dir: string): number | 'unreadable' | undefined {
+  return ownerIn(join(dir, LOCK_FILENAME))
+}
+
+function ownerIn(path: string): number | 'unreadable' | undefined {
   let text: string
   try {
     text = readFileSync(path, 'utf8')
   } catch (error) {
-    if (isENOENT(error)) return true // The owner released between the failed create and this read.
+    if (isENOENT(error)) return undefined
     throw error
   }
   const pid = Number.parseInt(text.trim(), 10)
-  if (!Number.isInteger(pid) || pid <= 0 || !/^\d+$/.test(text.trim())) return false
-  return !isProcessAlive(pid)
+  return Number.isInteger(pid) && pid > 0 && /^\d+$/.test(text.trim()) ? pid : 'unreadable'
 }
 
-function isProcessAlive(pid: number): boolean {
+/** True when the lockfile is gone (released meanwhile) or its pid is provably dead. */
+function isStale(path: string): boolean {
+  const owner = ownerIn(path) // Undefined: the owner released between the failed create and this read.
+  if (owner === undefined) return true
+  return owner !== 'unreadable' && !isProcessAlive(owner)
+}
+
+export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0) // Signal 0 probes existence without touching the process.
     return true

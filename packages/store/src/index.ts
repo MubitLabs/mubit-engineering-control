@@ -34,7 +34,7 @@ export {
   MAX_PAGE_BYTES,
   MAX_PAGE_LIMIT,
 } from './inspection'
-export { DirLock } from './lock'
+export { DirLock, isProcessAlive, lockOwner } from './lock'
 export type { Migration } from './migrations'
 export { checksumOf, MIGRATIONS_v1, migrate } from './migrations'
 export type { SqliteStoreOptions } from './store'

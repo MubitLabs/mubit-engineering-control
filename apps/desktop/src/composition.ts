@@ -310,6 +310,8 @@ export async function startServer(opts: {
   const healthPath = join(opts.dataDir, 'health.json')
   const healthDraft = `${healthPath}.${process.pid}.tmp`
   const instanceId = randomUUID()
+  const started = processStart(process.pid)
+  let listening: number | undefined
   let portMoved: PortMove | undefined
   const writeHealth = (): void => {
     const now = new Date()
@@ -318,6 +320,8 @@ export async function startServer(opts: {
       ...snapshot,
       instanceId,
       pid: process.pid,
+      ...(started !== undefined && { started }),
+      ...(listening !== undefined && { port: listening }),
       heartbeatAt: now.toISOString(),
       ...(portMoved !== undefined && { portMoved }),
     }
@@ -462,10 +466,9 @@ export async function startServer(opts: {
   })
   const { port, moved } =
     opts.reuseLastPort === true ? await listenOnLastPort(app, store, iso()) : await listenEphemeral(app)
-  if (moved !== undefined) {
-    portMoved = moved
-    writeHealth()
-  }
+  listening = port
+  portMoved = moved
+  writeHealth()
 
   let closed = false
   const close = async (): Promise<void> => {

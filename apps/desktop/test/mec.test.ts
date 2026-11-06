@@ -31,8 +31,9 @@ function makeIo(overrides: { readSnapshotText?: () => string; initialized?: bool
     stdout: (line: string) => {
       lines.push(line)
     },
-    startServer: async () => {
+    restartServer: async () => {
       starts += 1
+      return { started: true, lines: [] }
     },
   }
   return { io, lines, markerDir, dataDir, starts: () => starts }

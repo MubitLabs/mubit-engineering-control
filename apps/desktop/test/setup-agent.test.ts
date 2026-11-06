@@ -208,7 +208,7 @@ describe('`mec setup` (the CLI stays thin, T7)', () => {
       markerDir: '/tmp/mec-marker',
       dataDir: '/tmp/mec-data',
       stdout: (line) => lines.push(line),
-      startServer: async () => {},
+      restartServer: async () => ({ started: true, lines: [] }),
     }
     const code = await runCli(['setup'], io)
     expect(code).toBe(0)

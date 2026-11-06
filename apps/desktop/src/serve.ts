@@ -2,10 +2,7 @@
  * The guarded server entry (plan §21): start the composition, announce the URL, stay alive
  * until SIGINT/SIGTERM, then close in order. Stop-marker aware on both ends: it refuses to
  * start while an intentional stop stands, and its shutdown leaves no marker behind (a stop
- * is written by `mec stop`, never by a signal).
- *
- * TODO(B0 wiring): `mec.ts`'s `main` still calls a no-op `startServer`; pointing its
- * `CliIo.startServer` at `serveMain(home)` is the wiring step this module exists for.
+ * is written by `mec stop`, never by a signal). `mec restart` starts this entry detached.
  */
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'

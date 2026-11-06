@@ -14,6 +14,7 @@ import { runBackupCli, runRestoreCli } from './backup-cli'
 import { buildDoctorJson, buildDoctorReport, defaultVersionRunner } from './doctor'
 import type { HealthSnapshot } from './health'
 import { parseHealthSnapshot } from './health'
+import { type RestartOutcome, restartServer } from './restart'
 import { runSlotCli } from './slot-cli'
 import { formatStatus, statusFromSnapshot } from './status'
 import { clearStopMarker, readStopMarker, writeStopMarker } from './stop-marker'
@@ -32,8 +33,8 @@ export type CliIo = {
    */
   dataDir: string
   stdout: (line: string) => void
-  /** called on 'restart' when allowed; `not_started` says no server came of it */
-  startServer: () => Promise<'not_started' | undefined | void>
+  /** called on 'restart' when allowed: says what it did, and whether a server came of it */
+  restartServer: () => Promise<RestartOutcome>
   /** `mec update` seams; defaults read the nearest package.json, git and process.env. */
   readVersion?: () => string
   gitRemote?: () => string | null
@@ -74,12 +75,9 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       return 0
     }
     clearStopMarker(io.markerDir)
-    if ((await io.startServer()) === 'not_started') {
-      io.stdout('stop marker cleared; no server was started: run `mec` to start one')
-      return 1
-    }
-    io.stdout('server starting')
-    return 0
+    const outcome = await io.restartServer()
+    for (const line of outcome.lines) io.stdout(line)
+    return outcome.started ? 0 : 1
   }
 
   if (command === 'doctor') {
@@ -200,8 +198,9 @@ export async function cliMain(): Promise<void> {
     markerDir: home,
     dataDir: home,
     stdout: (line) => console.log(line),
-    // The server runs in the foreground of `mec`; this command does not own one.
-    startServer: async () => 'not_started',
+    // `src/` and `dist/` both sit beside `bin/`, so this is the install that is running.
+    restartServer: () =>
+      restartServer({ dataDir: home, binPath: fileURLToPath(new URL('../bin/mec.js', import.meta.url)) }),
   })
 }
 

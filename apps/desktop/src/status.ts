@@ -15,8 +15,12 @@ export type StatusResult = { code: StatusCode; lines: string[] }
 /** §21.2 sets no figure: five of the writer's two-second ticks. */
 export const HEARTBEAT_STALE_MS = 10_000
 
+/** The line for a start that could not have its last port. */
+export const movedLine = ({ from, to }: { from: number; to: number }): string =>
+  `port ${from} is taken, so mec moved to ${to}: reopen http://127.0.0.1:${to}`
+
 /** A heartbeat that is missing, unreadable or from the future proves nothing is alive. */
-function heartbeatIsFresh(heartbeatAt: string | undefined, now: Date): boolean {
+export function heartbeatIsFresh(heartbeatAt: string | undefined, now: Date): boolean {
   const at = heartbeatAt === undefined ? Number.NaN : Date.parse(heartbeatAt)
   return Math.abs(now.getTime() - at) <= HEARTBEAT_STALE_MS
 }
@@ -52,10 +56,7 @@ export function statusFromSnapshot(
 
   // Past the checks above a live server answers, so where it listens is worth saying in every code.
   const moved = snapshot.portMoved
-  const port =
-    moved === undefined
-      ? []
-      : [`port ${moved.from} is taken, so mec moved to ${moved.to}: reopen http://127.0.0.1:${moved.to}`]
+  const port = moved === undefined ? [] : [movedLine(moved)]
 
   const errored = Object.entries(parts).filter(([, part]) => part.state === 'error')
   if (errored.length > 0) {

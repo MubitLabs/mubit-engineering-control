@@ -102,7 +102,7 @@ describe('mec status reads the clock', () => {
       markerDir: scratch(),
       dataDir: scratch(),
       stdout: (line) => lines.push(line),
-      startServer: async () => {},
+      restartServer: async () => ({ started: true, lines: [] }),
     })
     return { code, lines }
   }

@@ -12,7 +12,18 @@
  * marked private so an accidental `npm publish` from the staging dir is refused.
  */
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -20,7 +31,9 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 const appDir = join(root, 'apps', 'desktop')
 const outDir = join(root, 'dist-internal')
 const version = JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8')).version
-const staging = join(outDir, 'staging')
+// Outside the checkout: from dist-internal/, the bundle's source-tree fallback would find
+// packages/prompts/defaults and hide a package that lacks its own copy.
+const staging = mkdtempSync(join(tmpdir(), 'mec-staging-'))
 const tgz = join(outDir, `mec-${version}.tgz`)
 
 // 1. Build the bundle first — the artifact ships the exact bytes `mec` runs.
@@ -37,8 +50,7 @@ if (bundled.status !== 0) {
 //    The workbench UI ships INSIDE the artifact (review 2026-11-04 §2.1): build apps/web
 //    fresh so the tarball never carries a stale UI, then place it at dist/web where the
 //    bundled server resolves it.
-rmSync(staging, { recursive: true, force: true })
-mkdirSync(staging, { recursive: true })
+mkdirSync(outDir, { recursive: true })
 const webBuild = spawnSync('pnpm', ['--dir', join(root, 'apps/web'), 'build'], { stdio: 'inherit' })
 if (webBuild.status !== 0) {
   console.error('pack-tarball: apps/web build failed — the artifact must carry the workbench')
@@ -161,7 +173,19 @@ Third-party packages this artifact depends on or bundles:
   )
 }
 
-// 3. Tar the staged tree (entries at the archive root, no wrapper dir).
+// 3. Boot what was staged, on this checkout's native modules, and tar nothing that fails: an
+//    empty catalogue answers 200, so nothing else would notice before a user does.
+symlinkSync(join(appDir, 'node_modules'), join(staging, 'node_modules'))
+const smoked = spawnSync(process.execPath, [join(root, 'scripts', 'smoke-package.mjs'), staging], {
+  stdio: 'inherit',
+})
+rmSync(join(staging, 'node_modules'))
+if (smoked.status !== 0) {
+  console.error(`pack-tarball: package smoke failed — no artifact written, staging kept at ${staging}`)
+  process.exit(smoked.status ?? 1)
+}
+
+// 4. Tar the staged tree (entries at the archive root, no wrapper dir).
 const entries = ['LICENSE', 'NOTICE.md', 'README.md', 'bin', 'dist', 'package.json']
 const tarred = spawnSync('tar', ['-czf', tgz, '-C', staging, ...entries], { stdio: 'inherit' })
 if (tarred.status !== 0) {

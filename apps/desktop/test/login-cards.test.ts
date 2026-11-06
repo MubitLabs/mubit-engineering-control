@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
-import { mkdtempSync, readdirSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { HealthBoard, Store } from '@mec/contracts'
 import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -302,6 +302,37 @@ describe('login card routes (§5.6)', () => {
     expect(manager.active()).toBe(null)
     const after = await app.inject({ method: 'GET', url: '/api/slots/login/current' })
     expect(after.statusCode).toBe(404)
+  })
+})
+
+describe('the pty helper (npm and pnpm unpack the macOS prebuild without its execute bit)', () => {
+  const helperIn = (mode: number): { dir: string; helper: string } => {
+    const dir = mkdtempSync(join(tmpdir(), 'mec-pty-helper-'))
+    const helper = join(dir, 'prebuilds', 'darwin-arm64', 'spawn-helper')
+    mkdirSync(dirname(helper), { recursive: true })
+    writeFileSync(helper, '')
+    chmodSync(helper, mode)
+    return { dir, helper }
+  }
+
+  it('restores the bit and keeps the rest of the mode', async () => {
+    const { makeSpawnHelperExecutable } = await import('../src/login-cards')
+    const { dir, helper } = helperIn(0o644)
+    makeSpawnHelperExecutable(dir, 'darwin-arm64')
+    expect(statSync(helper).mode & 0o777).toBe(0o755)
+  })
+
+  it('leaves a helper it can already run alone', async () => {
+    const { makeSpawnHelperExecutable } = await import('../src/login-cards')
+    const { dir, helper } = helperIn(0o700)
+    makeSpawnHelperExecutable(dir, 'darwin-arm64')
+    expect(statSync(helper).mode & 0o777).toBe(0o700)
+  })
+
+  it('does nothing where the platform has no prebuilt helper', async () => {
+    const { makeSpawnHelperExecutable } = await import('../src/login-cards')
+    const { dir } = helperIn(0o644)
+    expect(() => makeSpawnHelperExecutable(dir, 'linux-x64')).not.toThrow()
   })
 })
 

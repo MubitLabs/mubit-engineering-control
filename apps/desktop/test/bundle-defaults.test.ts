@@ -6,7 +6,19 @@
  * short built-in text. Native modules resolve through a link to this repository's own install.
  */
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -73,6 +85,8 @@ beforeAll(async () => {
   tarball = join(scratch, 'tarball', 'mec')
   await placeBundle(tarball)
   cpSync(shippedDefaults, join(tarball, 'dist', 'prompts-defaults'), { recursive: true })
+  mkdirSync(join(tarball, 'dist', 'web'))
+  writeFileSync(join(tarball, 'dist', 'web', 'index.html'), '<!doctype html><title>workbench</title>\n')
   // Folders that happen to sit at the source tree's relative paths must never beat the shipped copy.
   plantStranger(join(tarball, 'defaults'))
   plantStranger(join(scratch, 'tarball', 'prompts', 'defaults'))
@@ -186,10 +200,189 @@ describe('a build with no shipped defaults', () => {
 })
 
 describe('the tarball script', () => {
+  const script = readFileSync(join(repoRoot, 'scripts', 'pack-tarball.mjs'), 'utf8')
+
   it('ships the tree where the bundle looks for it', () => {
-    const script = readFileSync(join(repoRoot, 'scripts', 'pack-tarball.mjs'), 'utf8')
     expect(script).toContain(
       "cpSync(join(root, 'packages/prompts/defaults'), join(staging, 'dist', 'prompts-defaults')",
     )
   })
+
+  it('smokes the staged package outside the checkout and refuses to tar a failure', () => {
+    // Inside the checkout the bundle's source-tree fallback would answer for a missing tree.
+    expect(script).toContain("const staging = mkdtempSync(join(tmpdir(), 'mec-staging-'))")
+    expect(script).toContain("[join(root, 'scripts', 'smoke-package.mjs'), staging]")
+    expect(script).toContain('if (smoked.status !== 0) {')
+  })
+})
+
+/** Runs scripts/smoke-package.mjs on `root`. */
+function smoke(root: string): Promise<{ code: number | null; output: string }> {
+  const child = spawn(process.execPath, [join(repoRoot, 'scripts', 'smoke-package.mjs'), root], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  children.push(child)
+  let output = ''
+  child.stdout.on('data', (chunk: Buffer) => {
+    output += chunk
+  })
+  child.stderr.on('data', (chunk: Buffer) => {
+    output += chunk
+  })
+  return new Promise((resolve) => child.once('close', (code) => resolve({ code, output })))
+}
+
+/** A copy of the tarball layout, two levels down so `../../../packages` stays inside the variant. */
+function variant(name: string, damage: (root: string) => void): string {
+  const root = join(scratch, 'variants', name, 'inner', 'mec')
+  cpSync(tarball, root, { recursive: true, verbatimSymlinks: true })
+  damage(root)
+  return root
+}
+
+/** Gives `root` its own node-pty, so damage to it never reaches this repository's install. */
+function ownPty(root: string): string {
+  const linked = join(root, 'node_modules')
+  rmSync(linked)
+  mkdirSync(linked)
+  symlinkSync(join(appDir, 'node_modules', 'better-sqlite3'), join(linked, 'better-sqlite3'))
+  const pty = join(linked, 'node-pty')
+  cpSync(realpathSync(join(appDir, 'node_modules', 'node-pty')), pty, { recursive: true })
+  return pty
+}
+
+describe('the package smoke', () => {
+  it(
+    'passes a complete package',
+    async () => {
+      const { code, output } = await smoke(tarball)
+      expect(output).toContain('package smoke passed')
+      expect(code, output).toBe(0)
+    },
+    SPAWN_TEST_MS,
+  )
+
+  it(
+    'fails an empty catalogue: no shipped tree at all',
+    async () => {
+      const { code, output } = await smoke(bare)
+      expect(code, output).toBe(1)
+      expect(output).toContain('did not start')
+    },
+    SPAWN_TEST_MS,
+  )
+
+  it(
+    'fails a catalogue that holds only the protocol the boot check looks for',
+    async () => {
+      const root = variant('thin', (dir) => {
+        const tree = join(dir, 'dist', 'prompts-defaults')
+        for (const entry of readdirSync(tree)) {
+          if (entry !== 'roles' && entry !== 'models.yaml') rmSync(join(tree, entry), { recursive: true })
+        }
+        for (const entry of readdirSync(join(tree, 'roles'))) {
+          if (entry !== 'meta_agent') rmSync(join(tree, 'roles', entry), { recursive: true })
+        }
+      })
+      const { code, output } = await smoke(root)
+      expect(code, output).toBe(1)
+      expect(output).toMatch(/serves \d+ of 21 parts/)
+    },
+    SPAWN_TEST_MS,
+  )
+
+  it(
+    'fails a package with no models table',
+    async () => {
+      const root = variant('no-models', (dir) => rmSync(join(dir, 'dist', 'prompts-defaults', 'models.yaml')))
+      const { code, output } = await smoke(root)
+      expect(code, output).toBe(1)
+      expect(output).toContain('answered 500')
+    },
+    SPAWN_TEST_MS,
+  )
+
+  it(
+    'fails a models table found outside the package, even with the right bytes',
+    async () => {
+      const root = variant('fallback', (dir) => {
+        rmSync(join(dir, 'dist', 'prompts-defaults', 'models.yaml'))
+        const outside = join(dir, '..', '..', 'packages', 'prompts', 'defaults')
+        cpSync(shippedDefaults, outside, { recursive: true })
+      })
+      const { code, output } = await smoke(root)
+      expect(code, output).toBe(1)
+      expect(output).toContain('not from inside the package')
+    },
+    SPAWN_TEST_MS,
+  )
+
+  it(
+    'fails a models table that is not the shipped one',
+    async () => {
+      const root = variant('other-models', (dir) => {
+        const file = join(dir, 'dist', 'prompts-defaults', 'models.yaml')
+        writeFileSync(file, `${readFileSync(file, 'utf8')}\n# changed\n`)
+      })
+      const { code, output } = await smoke(root)
+      expect(code, output).toBe(1)
+      expect(output).toContain('differs from the shipped one')
+    },
+    SPAWN_TEST_MS,
+  )
+
+  it(
+    'passes a package whose pty helper arrived without its execute bit, as an install leaves it',
+    async () => {
+      const root = variant('helper-mode', (dir) => {
+        const pty = ownPty(dir)
+        const helper = join(pty, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper')
+        if (existsSync(helper)) chmodSync(helper, 0o644)
+      })
+      const { code, output } = await smoke(root)
+      expect(output).toContain('package smoke passed')
+      expect(code, output).toBe(0)
+    },
+    SPAWN_TEST_MS,
+  )
+
+  it(
+    'fails a package whose pty cannot load',
+    async () => {
+      const root = variant('broken-pty', (dir) => {
+        writeFileSync(join(ownPty(dir), 'lib', 'index.js'), "throw new Error('no pty here')\n")
+      })
+      const { code, output } = await smoke(root)
+      expect(code, output).toBe(1)
+      expect(output).toContain('a login card did not start (500)')
+    },
+    SPAWN_TEST_MS,
+  )
+
+  it(
+    'fails a login card that reports a start and runs nothing',
+    async () => {
+      const root = variant('idle-pty', (dir) => {
+        writeFileSync(
+          join(ownPty(dir), 'lib', 'index.js'),
+          'exports.spawn = () => ({ onData() {}, onExit() {}, write() {}, kill() {} })\n',
+        )
+      })
+      const { code, output } = await smoke(root)
+      expect(code, output).toBe(1)
+      expect(output).toContain('its process never ran')
+    },
+    SPAWN_TEST_MS,
+  )
+
+  it(
+    'fails a package with no workbench',
+    async () => {
+      const root = variant('no-web', (dir) => rmSync(join(dir, 'dist', 'web'), { recursive: true }))
+      const { code, output } = await smoke(root)
+      expect(code, output).toBe(1)
+      expect(output).toContain('the workbench page answered')
+    },
+    SPAWN_TEST_MS,
+  )
 })

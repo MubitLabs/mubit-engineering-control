@@ -34,6 +34,23 @@ export type ClaudeArgvInput = {
   maxBudgetUsd?: number
 }
 
+/**
+ * §6: a run that asks nothing reads and calls its platform tools, and has no shell. These are deny
+ * rules because a deny beats an allow, and `--setting-sources user` keeps a linked slot's own
+ * `permissions.allow` in force. `--tools` would be an allow list, and no real run has tried it.
+ */
+const UNASKED_DENIED = [
+  'Bash',
+  'Edit',
+  'MultiEdit',
+  'NotebookEdit',
+  'Write',
+  'WebFetch',
+  'WebSearch',
+  'Task',
+  'Agent',
+] as const
+
 export function buildClaudeArgv(input: ClaudeArgvInput): string[] {
   // With --input-format stream-json `-p` waits on stdin and stays up until it closes, so only a
   // caller that owns that pipe asks for it. `--replay-user-messages` makes the engine say which
@@ -62,6 +79,10 @@ export function buildClaudeArgv(input: ClaudeArgvInput): string[] {
     // Explicit: a linked slot's own settings may name another mode, and the prompt tool hears
     // nothing in a mode that does not ask.
     argv.push('--permission-prompt-tool', 'mcp__mec__confirm', '--permission-mode', 'default')
+  } else {
+    // Explicit for the same reason: a linked slot's `defaultMode` must not choose for this run.
+    argv.push('--permission-mode', 'default')
+    for (const tool of UNASKED_DENIED) argv.push('--disallowedTools', tool)
   }
   if (input.readOnly) {
     argv.push('--restricted', '--permission-prompts', 'none')

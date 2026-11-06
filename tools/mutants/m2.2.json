@@ -460,5 +460,19 @@
     "find": "  addTree(join(worktree, '.mec'), inodes)\n",
     "replace": "",
     "tests": ["apps/desktop/test/specialist-tools.test.ts"]
+  },
+  {
+    "name": "planner keeps the user's mode",
+    "file": "packages/engines/src/claude/argv.ts",
+    "find": "    argv.push('--permission-mode', 'default')\n    for (const tool",
+    "replace": "    for (const tool",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "planner keeps the shell",
+    "file": "packages/engines/src/claude/argv.ts",
+    "find": "    for (const tool of UNASKED_DENIED) argv.push('--disallowedTools', tool)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
   }
 ]

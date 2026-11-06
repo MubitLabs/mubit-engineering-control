@@ -309,6 +309,17 @@ describe('a chat request', { timeout: 60_000 }, () => {
       expect(seen.config_dir).toBeNull()
     })
 
+    it("a linked slot's own settings cannot widen the planner: explicit mode, no shell", async () => {
+      const seen = await plansOn({ ...LINKED, home: '/home/someone/.claude', linkedDefault: true })
+      const pairs = (seen.argv as string[]).map((arg, index, argv) => `${arg} ${argv[index + 1]}`)
+      expect(pairs).toContain('--permission-mode default')
+      for (const tool of ['Bash', 'Write', 'Edit', 'NotebookEdit']) {
+        expect(pairs).toContain(`--disallowedTools ${tool}`)
+      }
+      expect(pairs).toContain('--allowedTools mcp__mec__*')
+      expect(seen.argv).toContain('--restricted')
+    })
+
     it('a slot with its own home plans under that home', async () => {
       const seen = await plansOn({ ...LINKED, id: 'slot_max', home: '/slots/claude/max' })
       expect(seen.config_dir).toBe('/slots/claude/max')

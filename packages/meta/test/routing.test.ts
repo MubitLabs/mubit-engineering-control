@@ -32,6 +32,7 @@ describe('routeMessage (plan §12.1)', () => {
     'what is it doing',
     'The build looks odd. Is that expected',
     'how far along\nis it?',
+    'Done yet?',
   ])('a question beside live work gets a turn (§12.1, owner ruling): %s', (text) => {
     expect(routeMessage({ liveWork: [work('wi-1')], text })).toEqual({ action: 'question' })
   })

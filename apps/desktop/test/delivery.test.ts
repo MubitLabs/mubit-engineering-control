@@ -7,12 +7,22 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { StoreDoc } from '@mec/contracts'
 import { DEFAULT_CAPS } from '@mec/domain'
-import { integrationDocId, repoFields, workResultOf } from '@mec/meta'
+import { holdWorkItem, integrationDocId, repoFields, stopWorkItem, workResultOf } from '@mec/meta'
 import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, describe, expect, it } from 'vitest'
 import { commitWork } from '../src/attempt-launch'
 import { Delivery, deliveryDocId } from '../src/delivery'
-import { type GhResult, type GhRun, resolvePush, resolveReleaseCard } from '../src/release'
+import {
+  createPrBehindCard,
+  type GhResult,
+  type GhRun,
+  mergeBehindCard,
+  openMergeCard,
+  openPushCard,
+  type ReleaseDeps,
+  resolvePush,
+  resolveReleaseCard,
+} from '../src/release'
 
 const REPO = 'repo_a'
 const SLUG = 'owner/repo'
@@ -560,5 +570,152 @@ describe('the result path (§14, #11, #12)', () => {
     await r.passes()
     expect(r.store.engines.get(integrationDocId(WORK))).toBeUndefined()
     expect(existsSync(join(r.dataDir, 'work'))).toBe(false)
+  })
+})
+
+const stop = (r: Rig): void => {
+  r.store.atomic(() => stopWorkItem(r.store, WORK, { reason: 'wrong change', at: AT }))
+}
+const hold = (r: Rig): void => {
+  r.store.atomic(() => holdWorkItem(r.store, WORK, { reason: 'wait', at: AT }))
+}
+const lift = (r: Rig): void => {
+  r.store.atomic(() => {
+    const work = r.store.workItems.get(WORK) as StoreDoc
+    r.store.workItems.save({ ...work, hold: { ...(work.hold as object), liftedAt: AT } })
+  })
+}
+const settled = (r: Rig, id: string): StoreDoc => r.store.confirmations.get(id) as StoreDoc
+
+/** A merge of PR `number`, which GitHub then reports merged; any PR the fake is asked about agrees. */
+async function mergeOn(r: Rig, number: number): Promise<{ merged: boolean; reason?: string }> {
+  const headRefOid = String(r.integration().head)
+  const deps: ReleaseDeps = {
+    ...r.delivery.release,
+    run: async (args, opts) => {
+      if (args[1] === 'merge') r.world.pr = { state: 'MERGED', headRefOid }
+      return r.delivery.release.run(args, opts)
+    },
+  }
+  const { confirmationId } = await openMergeCard(deps, { repo: SLUG, prNumber: number })
+  return mergeBehindCard(deps, { confirmationId, repo: SLUG, prNumber: number, answer: 'approve' })
+}
+
+describe('a stop or hold reaches an open card (§10, §12, §13)', () => {
+  it('a stop leaves a push card nothing to push, settled by policy', async () => {
+    const r = await localComplete()
+    const id = String(r.cards('push')[0]?.id)
+    stop(r)
+    const out = await resolveReleaseCard(r.delivery.release, id, 'approve')
+    expect(out).toMatchObject({ status: 'stale', reason: 'mandate_withdrawn' })
+    expect(settled(r, id)).toMatchObject({ status: 'stale', resolvedBy: 'policy' })
+    expect(r.remote(`refs/heads/${BRANCH}`)).toBeUndefined()
+    expect(r.types(`release:${SLUG}:${BRANCH}`)).toContain('card_withdrawn')
+    expect(r.types(`release:${SLUG}:${BRANCH}`)).not.toContain('pushed')
+  })
+
+  it('a stop leaves a PR card nothing to open', async () => {
+    const r = await approvedPush()
+    const id = String(r.cards('pr_create')[0]?.id)
+    stop(r)
+    const out = await resolveReleaseCard(r.delivery.release, id, 'approve')
+    expect(out).toMatchObject({ status: 'stale', reason: 'mandate_withdrawn' })
+    expect(settled(r, id)).toMatchObject({ status: 'stale', resolvedBy: 'policy' })
+    expect(creates(r.calls)).toEqual([])
+  })
+
+  it('a stop that lands while the approve reads the remote still runs nothing', async () => {
+    const r = await approvedPush()
+    const id = String(r.cards('pr_create')[0]?.id)
+    const deps: ReleaseDeps = {
+      ...r.delivery.release,
+      run: async (args, opts) => {
+        if (args[0] === 'api') stop(r)
+        return r.delivery.release.run(args, opts)
+      },
+    }
+    const out = await resolveReleaseCard(deps, id, 'approve')
+    expect(out).toMatchObject({ status: 'stale', reason: 'mandate_withdrawn' })
+    expect(creates(r.calls)).toEqual([])
+  })
+
+  it('a hold keeps a push card pending with the reason, and the lift lets it run', async () => {
+    const r = await localComplete()
+    const id = String(r.cards('push')[0]?.id)
+    hold(r)
+    const out = await resolveReleaseCard(r.delivery.release, id, 'approve')
+    expect(out).toMatchObject({ status: 'pending', reason: 'held' })
+    expect(settled(r, id).status).toBe('pending')
+    expect(r.remote(`refs/heads/${BRANCH}`)).toBeUndefined()
+    lift(r)
+    await resolveReleaseCard(r.delivery.release, id, 'approve')
+    expect(r.remote(`refs/heads/${BRANCH}`)).toBe(r.integration().head)
+  })
+
+  it('a hold keeps a PR card pending with the reason', async () => {
+    const r = await approvedPush()
+    const id = String(r.cards('pr_create')[0]?.id)
+    hold(r)
+    const out = await resolveReleaseCard(r.delivery.release, id, 'approve')
+    expect(out).toMatchObject({ status: 'pending', reason: 'held' })
+    expect(settled(r, id).status).toBe('pending')
+    expect(creates(r.calls)).toEqual([])
+  })
+
+  it('a stop or a hold reaches a merge card for the delivery PR', async () => {
+    const r = await openPr()
+    hold(r)
+    expect(await mergeOn(r, PR)).toEqual({ merged: false, reason: 'held' })
+    lift(r)
+    stop(r)
+    expect(await mergeOn(r, PR)).toEqual({ merged: false, reason: 'mandate_withdrawn' })
+    expect(merges(r.calls)).toEqual([])
+  })
+
+  it('a deny still settles as the answer on stopped and held work', async () => {
+    const r = await localComplete()
+    const id = String(r.cards('push')[0]?.id)
+    hold(r)
+    await resolveReleaseCard(r.delivery.release, id, 'deny')
+    expect(settled(r, id)).toMatchObject({ status: 'denied', resolvedBy: 'user' })
+  })
+})
+
+describe('a card speaks only for its own delivery (§14)', () => {
+  it('a merge of another PR with the same head name ends nothing', async () => {
+    const r = await openPr()
+    expect(await mergeOn(r, 11)).toEqual({ merged: true })
+    expect(r.doc()).toMatchObject({ stage: 'pr_open', prNumber: PR })
+    expect(r.store.workItems.get(WORK)?.state).toBe('integrating')
+  })
+
+  it('a merge of the delivery PR ends the work', async () => {
+    const r = await openPr()
+    expect(await mergeOn(r, PR)).toEqual({ merged: true })
+    expect(r.doc().stage).toBe('merged')
+    expect(r.store.workItems.get(WORK)?.state).toBe('done')
+  })
+
+  it('a manually opened push card cannot decline the delivery', async () => {
+    const r = await localComplete()
+    const own = r.doc().pushCardId
+    const other = await openPushCard(r.delivery.release, { repoId: REPO, branch: BRANCH })
+    await resolveReleaseCard(r.delivery.release, other.confirmationId, 'deny')
+    await r.delivery.idle()
+    expect(r.doc()).toMatchObject({ stage: 'push_card', pushCardId: own })
+  })
+
+  it('a manually opened PR card cannot decline the delivery', async () => {
+    const r = await approvedPush()
+    const own = r.doc().prCardId
+    const other = await createPrBehindCard(r.delivery.release, {
+      repo: SLUG,
+      branch: BRANCH,
+      title: 'By hand',
+      body: 'By hand',
+    })
+    await resolveReleaseCard(r.delivery.release, other.confirmationId, 'deny')
+    await r.delivery.idle()
+    expect(r.doc()).toMatchObject({ stage: 'pr_card', prCardId: own })
   })
 })

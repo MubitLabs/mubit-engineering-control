@@ -237,7 +237,12 @@ export type ReleaseDeps = {
   pushSource?: (repoId: string, branch: string) => { gitDir: string } | undefined
   /** Called once a card has settled, by whichever door answered it. Never settles anything. */
   onCardSettled?: (card: StoreDoc, outcome: CardOutcome) => void
+  /** Whether the work behind a card lets an approve run now. Read with no await before the settle. */
+  cardBlocked?: (card: StoreDoc) => CardBlock | undefined
 }
+
+/** A stop withdraws the card; a hold leaves it pending until the user lifts the hold (§10, §12). */
+export type CardBlock = { reason: string; withdraw: boolean }
 
 /** The delivery's prflow projection (packages/integration prflow.ts), kept in the engines repo beside the settings docs. */
 type PrFlowDoc = {
@@ -418,6 +423,41 @@ function settleCard(
 const needsPreflight = (answer: 'approve' | 'deny', card: ConfirmationRecord, at: string): boolean =>
   answer === 'approve' && at <= card.expiresAt
 
+/**
+ * §13: an approve speaks for the mandate it was asked under. What the answer does when the work
+ * behind the card was stopped or held; undefined when the answer may settle as given. A withdrawn
+ * card settles stale by policy, because the operation no longer exists to be approved.
+ */
+function blockedCard(
+  deps: ReleaseDeps,
+  card: ConfirmationRecord,
+  cls: ReleaseClass,
+  answer: 'approve' | 'deny',
+  at: string,
+  stream: string,
+): { status: string; reason: string } | undefined {
+  if (!needsPreflight(answer, card, at)) return undefined
+  const block = deps.cardBlocked?.(card as unknown as StoreDoc)
+  if (block === undefined) return undefined
+  if (!block.withdraw) return { status: 'pending', reason: block.reason }
+  const { outcome } = resolveConfirmation(cardFor(deps.store, card.id, cls), {
+    now: at,
+    answer,
+    expectedOperationHash: block.reason,
+  })
+  deps.store.atomic(() => {
+    deps.store.confirmations.save(outcome as unknown as StoreDoc)
+    appendEvent(
+      deps.store,
+      stream,
+      'card_withdrawn',
+      { confirmationId: card.id, reason: block.reason, at },
+      at,
+    )
+  })
+  return { status: outcome.status, reason: block.reason }
+}
+
 /** A branch's head on GitHub; undefined when it cannot be read, which never counts as a match. */
 export async function remoteHead(run: GhRun, repo: string, branch: string): Promise<string | undefined> {
   const read = await run(['api', `repos/${repo}/git/ref/heads/${branch}`, '--jq', '.object.sha'])
@@ -510,6 +550,9 @@ async function answerPrCreate(
     head = await remoteHead(deps.run, payload.repo, payload.branch)
     if (head === undefined) return { status: 'pending', reason: 'head_unreadable' }
   }
+  const stream = `release:${payload.repo}:${payload.branch}`
+  const blocked = blockedCard(deps, pending, 'pr_create', input.answer, at, stream)
+  if (blocked !== undefined) return blocked
   const outcome = settleCard(deps, input.confirmationId, 'pr_create', input.answer, at, head)
 
   if (outcome.status !== 'approved') {
@@ -769,6 +812,9 @@ async function answerMerge(
   if (!MERGE_STATE_READY.has(pr.mergeStateStatus))
     return { merged: false, reason: MERGE_STATE_HOLD[pr.mergeStateStatus] ?? 'merge_state_unknown' }
 
+  const blocked = blockedCard(deps, pending, 'pr_merge', input.answer, at, stream)
+  if (blocked !== undefined) return { merged: false, reason: blocked.reason }
+
   settleCard(deps, input.confirmationId, 'pr_merge', input.answer, at, pr.headRefOid)
   deps.store.atomic(() => {
     const flow = findFlowByPr(deps.store, input.repo, input.prNumber)
@@ -968,6 +1014,8 @@ async function answerPush(
     head = await localHead(deps, target.gitDir, payload.branch)
     if (head === undefined) return { status: 'pending', reason: 'head_unreadable' }
   }
+  const blocked = blockedCard(deps, pending, 'push', input.answer, at, stream)
+  if (blocked !== undefined) return blocked
   const outcome = settleCard(deps, input.confirmationId, 'push', input.answer, at, head)
 
   if (outcome.status !== 'approved' || target === undefined || head === undefined) {

@@ -110,7 +110,7 @@ export type ServerDeps = {
    */
   ghRun?: GhRun
   /** The result path's seam on the release routes (`delivery.ts`). */
-  delivery?: Pick<ReleaseDeps, 'pushSource' | 'onCardSettled'>
+  delivery?: Pick<ReleaseDeps, 'pushSource' | 'onCardSettled' | 'cardBlocked'>
   /** The push card's git; tests may inject it, production uses the argv-only default. */
   gitExec?: GitExec
   /**

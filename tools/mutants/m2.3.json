@@ -271,5 +271,75 @@
     "find": "'worktrees', basename(worktree)),\n",
     "replace": "'worktrees', attemptId),\n",
     "tests": ["apps/desktop/test/delivery-flow.test.ts", "-t", "a repair attempt fixes failed checks"]
+  },
+  {
+    "name": "a stopped card still runs",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "if (works.some((work) => mandateOf(work).status === 'withdrawn')) {",
+    "replace": "if (false as boolean) {",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a held card still runs",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "return works.some(isHeld) ? { reason: 'held', withdraw: false } : undefined",
+    "replace": "return undefined",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a stop only waits",
+    "file": "apps/desktop/src/release.ts",
+    "find": "if (!block.withdraw) return { status: 'pending', reason: block.reason }",
+    "replace": "return { status: 'pending', reason: block.reason }",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a push card skips the stop",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  const blocked = blockedCard(deps, pending, 'push', input.answer, at, stream)\n  if (blocked !== undefined) return blocked\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a PR card skips the stop",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  const blocked = blockedCard(deps, pending, 'pr_create', input.answer, at, stream)\n  if (blocked !== undefined) return blocked\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a merge card skips the stop",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  const blocked = blockedCard(deps, pending, 'pr_merge', input.answer, at, stream)\n  if (blocked !== undefined) return { merged: false, reason: blocked.reason }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a deny on held work waits",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (!needsPreflight(answer, card, at)) return undefined\n  const block = deps.cardBlocked",
+    "replace": "  const block = deps.cardBlocked",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a merge ends the work by branch",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (card.cls === 'pr_merge' && payload.prNumber !== doc.prNumber) return\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a foreign push card moves the stage",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (card.cls === 'push' && card.id !== doc.pushCardId) return\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a foreign PR card moves the stage",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (card.cls === 'pr_create' && card.id !== doc.prCardId) return\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
   }
 ]

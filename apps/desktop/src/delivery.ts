@@ -11,6 +11,7 @@
  * - **Observed, not assumed.** `ready` needs an open PR on the integration head, combined checks on
  *   that SHA and required checks as GitHub reports them. `merged` needs GitHub to say so.
  * - **A head that moved starts over.** Pending cards go stale, and a new card asks about the new head.
+ * - **A stop or hold reaches an open card.** Passes skip stopped and held work, so the answer asks.
  */
 import { randomBytes } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
@@ -52,6 +53,7 @@ import { redact } from '@mec/slots'
 import { argvOf, commitIdentity } from './attempt-launch'
 import {
   buildPrBody,
+  type CardBlock,
   type CardOutcome,
   createPrBehindCard,
   defaultGhRun,
@@ -142,9 +144,10 @@ export class Delivery {
   }
 
   /** What the release routes need from here. */
-  readonly hooks: Required<Pick<ReleaseDeps, 'pushSource' | 'onCardSettled'>> = {
+  readonly hooks: Required<Pick<ReleaseDeps, 'pushSource' | 'onCardSettled' | 'cardBlocked'>> = {
     pushSource: (repoId, branch) => this.#pushSource(repoId, branch),
     onCardSettled: (card, outcome) => this.#onCardSettled(card, outcome),
+    cardBlocked: (card) => this.#cardBlocked(card),
   }
 
   /** Runs a pass after any in flight, and at most one more. For the timer and for a settled card. */
@@ -682,8 +685,44 @@ export class Delivery {
     return typeof work?.git_dir === 'string' ? { gitDir: work.git_dir } : undefined
   }
 
+  /** §10, §12: a stop withdraws the work's cards and a hold keeps them waiting. */
+  #cardBlocked(card: StoreDoc): CardBlock | undefined {
+    const works = this.#worksOfCard(card)
+    if (works.some((work) => mandateOf(work).status === 'withdrawn')) {
+      return { reason: 'mandate_withdrawn', withdraw: true }
+    }
+    return works.some(isHeld) ? { reason: 'held', withdraw: false } : undefined
+  }
+
+  /**
+   * The work a card would act for. A merge names its PR, since a head name carries no owner. A PR
+   * card names no repository id, so a same-named branch elsewhere errs on the side of waiting.
+   */
+  #worksOfCard(card: StoreDoc): StoreDoc[] {
+    const payload = card.payload as { repoId?: string; repo?: string; branch?: string; prNumber?: number }
+    if (card.cls === 'pr_merge') {
+      const doc = this.#store.engines
+        .list()
+        .find(
+          (row) =>
+            String(row.id).startsWith('delivery/') &&
+            row.repo === payload.repo &&
+            row.prNumber === payload.prNumber,
+        )
+      const work = doc === undefined ? undefined : this.#store.workItems.get(String(doc.workItemId))
+      return work === undefined ? [] : [work]
+    }
+    return this.#store.workItems
+      .list()
+      .filter(
+        (work) =>
+          integrationBranch(String(work.id)) === payload.branch &&
+          (payload.repoId === undefined || work.repoId === payload.repoId),
+      )
+  }
+
   #onCardSettled(card: StoreDoc, outcome: CardOutcome): void {
-    const payload = card.payload as { repo?: string; branch?: string }
+    const payload = card.payload as { repo?: string; branch?: string; prNumber?: number }
     const doc = this.#store.engines
       .list()
       .find(
@@ -693,6 +732,10 @@ export class Delivery {
           (row.repo === undefined || row.repo === payload.repo),
       )
     if (doc === undefined) return
+    // A branch name alone proves nothing: another PR or a card opened by hand can share it.
+    if (card.cls === 'push' && card.id !== doc.pushCardId) return
+    if (card.cls === 'pr_create' && card.id !== doc.prCardId) return
+    if (card.cls === 'pr_merge' && payload.prNumber !== doc.prNumber) return
     const id = String(doc.workItemId)
     if (card.cls === 'push') this.#afterPush(id, doc, outcome)
     if (card.cls === 'pr_create') this.#afterPrCreate(id, outcome)

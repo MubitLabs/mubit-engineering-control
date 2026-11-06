@@ -37,6 +37,7 @@ window.fetch = async (input, init) => {
   return response
 }
 window.EventSource = class {
+  addEventListener() {}
   onmessage = null
   close() {}
 } as unknown as typeof EventSource

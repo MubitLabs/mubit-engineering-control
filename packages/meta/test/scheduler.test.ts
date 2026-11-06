@@ -802,4 +802,88 @@ describe('the scheduler pass (§11)', () => {
       generation: 1,
     })
   })
+
+  describe('which slot an unpinned task lands on', () => {
+    const claude = slot('z_claude')
+    const codex = slot('a_codex', { engine: 'codex' })
+    const tierOnly = (tier: string) => ({ modelRequest: { tier, reason: 'r' } })
+    const onlyPlacement = (store: MemoryRepositories) => attemptsOf(store, 'task_a')[0]?.placement
+    /** Both engines serve `balanced`, so only the preference can choose between them. */
+    const BOTH = {
+      engines: {
+        ...(TABLE as unknown as { engines: Record<string, unknown> }).engines,
+        codex: { select: { flag: '-m' }, models: { 'gpt-mid': { tier: 'balanced', vendor_says: 'x' } } },
+      },
+    } as unknown as PlacementTable
+
+    it('takes the meta slot engine where the tier fits, and says so', () => {
+      const { store, pass } = rig([codex, claude], { metaEngine: () => 'claude', table: () => BOTH })
+      work(store)
+      task(store, 'task_a', tierOnly('balanced'))
+      expect(pass()).toMatchObject([{ slotId: 'z_claude' }])
+      expect(onlyPlacement(store)).toBe("z_claude: on the meta agent's engine, claude")
+    })
+
+    it('a tier the meta engine would degrade goes where the order puts it, and says why', () => {
+      // The table's Claude tops out at balanced, so `strong` degrades there; only id decides here.
+      const { store, pass } = rig([claude, codex], { metaEngine: () => 'claude' })
+      work(store)
+      task(store, 'task_a', tierOnly('strong'))
+      expect(pass()).toMatchObject([{ slotId: 'a_codex' }])
+      expect(onlyPlacement(store)).toBe('a_codex: no claude slot fits; first by id of 2 tied candidates')
+    })
+
+    it('a pin beats the meta engine and keeps its reason', () => {
+      const { store, pass } = rig([codex, claude], { metaEngine: () => 'claude', table: () => BOTH })
+      work(store)
+      task(store, 'task_a', { ...tierOnly('balanced'), slotHint: { slotId: 'a_codex' } })
+      expect(pass()).toMatchObject([{ slotId: 'a_codex' }])
+      expect(onlyPlacement(store)).toBe('pinned to a_codex by the plan')
+    })
+
+    it('a slot class hint is a preference: it wins where it matches, and a miss is recorded', () => {
+      const matched = rig([claude, slot('a_review', { engine: 'codex', slotClass: 'review' })], {
+        metaEngine: () => 'claude',
+      })
+      work(matched.store)
+      task(matched.store, 'task_a', { slotHint: { slotClass: 'review' } })
+      expect(matched.pass()).toMatchObject([{ slotId: 'a_review' }])
+      expect(onlyPlacement(matched.store)).toBe('a_review: in slot class review')
+
+      const missed = rig([claude], { metaEngine: () => 'claude' })
+      work(missed.store)
+      task(missed.store, 'task_a', { slotHint: { slotClass: 'review' } })
+      expect(missed.pass()).toMatchObject([{ slotId: 'z_claude' }])
+      expect(onlyPlacement(missed.store)).toBe(
+        'z_claude: no candidate in slot class review; the only candidate',
+      )
+    })
+
+    it('reports the tiebreak that decided, not a utilisation nobody read', () => {
+      const tied = rig([slot('slot_a'), slot('slot_b')])
+      work(tied.store)
+      task(tied.store, 'task_a')
+      tied.pass()
+      expect(onlyPlacement(tied.store)).toBe('slot_a: first by id of 2 tied candidates')
+
+      const measured = rig([slot('slot_a', { utilisation: 0.4 }), slot('slot_b', { utilisation: 0.1 })])
+      work(measured.store)
+      task(measured.store, 'task_a')
+      measured.pass()
+      expect(onlyPlacement(measured.store)).toBe('slot_b: lowest utilisation of 2 candidates')
+
+      const busy = rig([slot('slot_a'), slot('slot_b')])
+      work(busy.store)
+      task(busy.store, 'task_b')
+      task(busy.store, 'task_c')
+      busy.pass()
+      expect(attemptsOf(busy.store, 'task_c')[0]?.placement).toBe('slot_b: fewest attempts of 2 candidates')
+
+      const lone = rig([slot('slot_a')])
+      work(lone.store)
+      task(lone.store, 'task_a')
+      lone.pass()
+      expect(onlyPlacement(lone.store)).toBe('slot_a: the only candidate')
+    })
+  })
 })

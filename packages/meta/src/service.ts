@@ -253,6 +253,7 @@ export class MetaAgentService {
   readonly #marks?: () => Record<string, Record<string, import('@mec/domain').ModelAvailability>>
   readonly #modelsTable?: () => ModelsTableSource | undefined
   readonly #launchableSlots?: () => ReadonlySet<string>
+  readonly #metaEngine?: SchedulerDeps['metaEngine']
   readonly #launchRowState?: SchedulerDeps['launchRowState']
   readonly #followups: FollowUps
   readonly #acks = new Acknowledger()
@@ -274,6 +275,8 @@ export class MetaAgentService {
     modelsTable?: () => ModelsTableSource | undefined
     /** The slots a launch can start on; absent means every slot. Plans and dispatch both obey it. */
     launchableSlots?: () => ReadonlySet<string>
+    /** The meta slot's engine, which unpinned work prefers; absent, no engine is preferred. */
+    metaEngine?: SchedulerDeps['metaEngine']
     /** A launch row's state, so a row that gave up stops holding capacity (§11). */
     launchRowState?: SchedulerDeps['launchRowState']
     /** Follow-ups, with what can deliver them; absent, nothing can. */
@@ -288,6 +291,7 @@ export class MetaAgentService {
     this.#marks = deps.marks
     this.#modelsTable = deps.modelsTable
     this.#launchableSlots = deps.launchableSlots
+    this.#metaEngine = deps.metaEngine
     this.#launchRowState = deps.launchRowState
     this.#followups =
       deps.followups ?? new FollowUps({ store: deps.store, effects: deps.effects, now: this.#now })
@@ -304,6 +308,7 @@ export class MetaAgentService {
       effects: this.#effects,
       caps: this.#caps,
       slots: () => this.#placementSlots(),
+      ...(this.#metaEngine !== undefined && { metaEngine: this.#metaEngine }),
       table: () => this.#modelsTable?.()?.table as PlacementTable | undefined,
       followups: this.#followups,
       ...(this.#launchRowState !== undefined && { launchRowState: this.#launchRowState }),

@@ -20,7 +20,14 @@ export type { Receipt, ReceiptStage } from './receipts'
 export { ReceiptLadder } from './receipts'
 export type { BuiltinRole, ContextPolicy, RoleDef, RoleIssue, SlotClassPreference } from './registry'
 export { BUILTIN_ROLE_NAMES, BUILTIN_ROSTER, compileAdHocRole, RESERVED_NAME_PREFIXES } from './registry'
-export type { ActiveAttempt, DeferReason, DispatchPlan, SchedulableTask, SlotView } from './scheduling'
+export type {
+  ActiveAttempt,
+  DeferReason,
+  DispatchPlan,
+  Placement,
+  SchedulableTask,
+  SlotView,
+} from './scheduling'
 export { planDispatches } from './scheduling'
 export type { Stage, StageRow, WorkItemView } from './stages'
 export { STAGE_TABLE, stageOf, workViewOf } from './stages'

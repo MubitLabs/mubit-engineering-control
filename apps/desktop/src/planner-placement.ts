@@ -1,13 +1,15 @@
 /**
  * What a planner turn validates tiers against and what dispatch places on (§3 rule 2, §11).
  *
- * With `MEC_REAL_RUNNER=1` both see only the slots this build can launch, so a tier that passes
- * validation cannot land on a slot that refuses the launch. Claude publishes no model catalogue
- * (`@mec/slots`' probe answers `unlisted`), so a launchable slot's marks are the capability table's
- * own entries for its engine: declared, as an OpenCode slot's marks are declared by its config,
- * not probed. A model the account refuses fails that attempt with the engine's reason.
+ * Both see only the slots this build can launch, flag or no flag, so a tier that passes validation
+ * cannot land on a slot that refuses the launch: `opencode-gemini` has no row, so it takes no work.
+ * `MEC_FAKE_ENGINE=1` places on its one fake slot and leaves the list alone.
  *
- * With the flag off this is the opencode config probe alone, as it has been since issue #14.
+ * With `MEC_REAL_RUNNER=1`: Claude publishes no model catalogue (`@mec/slots`' probe answers
+ * `unlisted`), so a launchable slot's marks are the capability table's own entries for its engine:
+ * declared, as an OpenCode slot's marks are declared by its config, not probed. A model the account
+ * refuses fails that attempt with the engine's reason. With the flag off the marks are the opencode
+ * config probe alone, as they have been since issue #14.
  */
 
 import { join } from 'node:path'
@@ -24,6 +26,7 @@ export type PlannerPlacement = {
   modelsTable: () => ModelsTableSource | undefined
   marks: () => Marks
   launchableSlots?: () => ReadonlySet<string>
+  metaEngine: () => string | undefined
 }
 
 export function plannerPlacement(store: SqliteStore, dataDir: string): PlannerPlacement {
@@ -66,7 +69,13 @@ export function plannerPlacement(store: SqliteStore, dataDir: string): PlannerPl
     }
     return out
   }
-  if (!realRunner) return { modelsTable, marks }
+  /** The engine of the slot chosen for the meta agent. A retired slot runs no meta agent. */
+  const metaEngine = (): string | undefined => {
+    const slotId = store.engines.get('settings/meta-slot')?.slotId
+    const slot = typeof slotId === 'string' ? store.slots.get(slotId) : undefined
+    return typeof slot?.engine === 'string' && slot.state !== 'retired' ? slot.engine : undefined
+  }
+  if (process.env.MEC_FAKE_ENGINE === '1') return { modelsTable, marks, metaEngine }
   const launchableSlots = (): ReadonlySet<string> =>
     new Set(
       store.slots
@@ -74,5 +83,5 @@ export function plannerPlacement(store: SqliteStore, dataDir: string): PlannerPl
         .filter(isLaunchableSlot)
         .map((slot) => String(slot.id)),
     )
-  return { modelsTable, marks, launchableSlots }
+  return { modelsTable, marks, launchableSlots, metaEngine }
 }

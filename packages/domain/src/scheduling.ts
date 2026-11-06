@@ -21,11 +21,15 @@ export type SchedulableTask = {
   slotId?: string
   /** The slots that can serve the task's model request; absent means it made none (§11, O7). */
   modelSlots?: readonly string[]
+  /** Those that would serve it only by degrading its tier (§3 rule 1): the tier does not fit them. */
+  degradedSlots?: readonly string[]
   role: string
 }
 
 export type SlotView = {
   id: string
+  /** The engine it runs; absent says nothing, and no engine preference matches it. */
+  engine?: string
   state: 'healthy' | 'degraded'
   /** Last reported window utilisation (0-1); absent means no reading yet (§5.9: never 0%). */
   usageUtilization?: number
@@ -50,9 +54,25 @@ export type ActiveAttempt = {
  */
 export type DeferReason = 'capacity' | 'slot_unhealthy' | 'model_unavailable' | 'confirmation' | 'policy'
 
+/** Why a launch landed where it did, so the attempt's placement can say what really decided. */
+export type Placement = {
+  taskId: string
+  pinned: boolean
+  /** What cut the field, strongest first. */
+  narrowedBy: ('slot_class' | 'engine')[]
+  /** What was asked for and could not be honoured (§7: "records when it could not"). */
+  missed: ('slot_class' | 'engine')[]
+  /** What chose inside the field; absent when narrowing left one slot. */
+  tiebreak?: 'only_candidate' | 'utilisation' | 'load' | 'id'
+  /** The size of the field the choice was made in. */
+  candidates: number
+}
+
 export type DispatchPlan = {
   launches: { taskId: string; slotId: string }[]
   deferred: { taskId: string; reason: DeferReason }[]
+  /** One per launch, in the same order. */
+  placements: Placement[]
 }
 
 const utilisation = (slot: SlotView): number => slot.usageUtilization ?? 0
@@ -95,9 +115,12 @@ export function planDispatches(input: {
   utilisationCeiling: number
   /** Keep one slot-equivalent of capacity free for a user's follow-up delivery (§11). */
   reservedWakeSlot: boolean
+  /** The meta slot's engine: unpinned work prefers it where the tier fits. Absent, nothing does. */
+  preferredEngine?: string
 }): DispatchPlan {
   const launches: DispatchPlan['launches'] = []
   const deferred: DispatchPlan['deferred'] = []
+  const placements: DispatchPlan['placements'] = []
 
   const activeTaskIds = new Set(input.active.map((attempt) => attempt.taskId))
   const activePerWorkItem = new Map<string, number>()
@@ -168,14 +191,22 @@ export function planDispatches(input: {
       continue
     }
 
-    // Rule 4 preference: lowest utilisation, then fewest in use, then id for stability. A slot
-    // without a reading ranks as least utilised (unknown is not high).
+    // Rule 4 preference: the planner's slot class for this task, then the meta slot's engine where
+    // the tier fits, then lowest utilisation, fewest in use and id for stability. A slot without a
+    // reading ranks as least utilised (unknown is not high).
     const preferred = usable.filter(
       (slot) => task.slotClass !== undefined && slot.slotClass === task.slotClass,
     )
-    const chosen = [...(preferred.length > 0 ? preferred : usable)].sort(
+    const pool = [...(preferred.length > 0 ? preferred : usable)]
+    const fitsEngine = (slot: SlotView): boolean =>
+      slot.engine !== undefined &&
+      slot.engine === input.preferredEngine &&
+      !task.degradedSlots?.includes(slot.id)
+    const onEngine = pool.filter(fitsEngine)
+    const field = (onEngine.length > 0 ? onEngine : pool).sort(
       (a, b) => utilisation(a) - utilisation(b) || load(a) - load(b) || a.id.localeCompare(b.id),
-    )[0]!
+    )
+    const chosen = field[0]!
 
     // Rule 6: per-slot cap asserted on its own, though freeUnits already folds it in.
     if (load(chosen) >= input.caps.perSlot) {
@@ -184,10 +215,50 @@ export function planDispatches(input: {
     }
 
     launches.push({ taskId: task.taskId, slotId: chosen.id })
+    placements.push(placementOf({ task, usable, preferred, pool, field, load, fitsEngine, input }))
     launchedTaskIds.add(task.taskId)
     launchPerSlot.set(chosen.id, load(chosen) + 1)
     launchPerWorkItem.set(task.workItemId, workItemLaunches + 1)
   }
 
-  return { launches, deferred }
+  return { launches, deferred, placements }
+}
+
+/** Which step decided: a step that left the field as it was decided nothing, and is not claimed. */
+function placementOf(step: {
+  task: SchedulableTask
+  usable: readonly SlotView[]
+  preferred: readonly SlotView[]
+  pool: readonly SlotView[]
+  field: readonly SlotView[]
+  load: (slot: SlotView) => number
+  fitsEngine: (slot: SlotView) => boolean
+  input: { preferredEngine?: string }
+}): Placement {
+  const { task, usable, preferred, pool, field, load, fitsEngine, input } = step
+  if (task.slotId !== undefined) {
+    return { taskId: task.taskId, pinned: true, narrowedBy: [], missed: [], candidates: field.length }
+  }
+  const narrowedBy: Placement['narrowedBy'] = []
+  if (preferred.length > 0 && preferred.length < usable.length) narrowedBy.push('slot_class')
+  if (field.length < pool.length) narrowedBy.push('engine')
+  const missed: Placement['missed'] = []
+  if (task.slotClass !== undefined && preferred.length === 0) missed.push('slot_class')
+  if (input.preferredEngine !== undefined && !usable.some(fitsEngine)) missed.push('engine')
+  const [first, second] = field
+  const tiebreak = ((): Placement['tiebreak'] => {
+    if (first === undefined || second === undefined) {
+      return usable.length === 1 ? 'only_candidate' : undefined
+    }
+    if (utilisation(first) !== utilisation(second)) return 'utilisation'
+    return load(first) !== load(second) ? 'load' : 'id'
+  })()
+  return {
+    taskId: task.taskId,
+    pinned: false,
+    narrowedBy,
+    missed,
+    ...(tiebreak !== undefined && { tiebreak }),
+    candidates: field.length,
+  }
 }

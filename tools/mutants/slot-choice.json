@@ -1,0 +1,100 @@
+[
+  {
+    "name": "meta engine preference ignored",
+    "file": "packages/domain/src/scheduling.ts",
+    "find": "    const onEngine = pool.filter(fitsEngine)\n",
+    "replace": "    const onEngine = pool.filter(() => false)\n",
+    "tests": ["packages/domain/test/scheduling.test.ts"]
+  },
+  {
+    "name": "meta engine outranks the class hint",
+    "file": "packages/domain/src/scheduling.ts",
+    "find": "    const onEngine = pool.filter(fitsEngine)\n",
+    "replace": "    const onEngine = usable.filter(fitsEngine)\n",
+    "tests": ["packages/domain/test/scheduling.test.ts"]
+  },
+  {
+    "name": "a degraded tier counts as a fit",
+    "file": "packages/domain/src/scheduling.ts",
+    "find": "      !task.degradedSlots?.includes(slot.id)\n",
+    "replace": "      true\n",
+    "tests": ["packages/domain/test/scheduling.test.ts"]
+  },
+  {
+    "name": "utilisation claimed on a tie",
+    "file": "packages/domain/src/scheduling.ts",
+    "find": "    if (utilisation(first) !== utilisation(second)) return 'utilisation'\n",
+    "replace": "    return 'utilisation'\n",
+    "tests": ["packages/domain/test/scheduling.test.ts"]
+  },
+  {
+    "name": "engine claimed when it narrowed nothing",
+    "file": "packages/domain/src/scheduling.ts",
+    "find": "  if (field.length < pool.length) narrowedBy.push('engine')\n",
+    "replace": "  if (field.length > 0) narrowedBy.push('engine')\n",
+    "tests": ["packages/domain/test/scheduling.test.ts"]
+  },
+  {
+    "name": "a missed engine goes unrecorded",
+    "file": "packages/domain/src/scheduling.ts",
+    "find": "  if (input.preferredEngine !== undefined && !usable.some(fitsEngine)) missed.push('engine')\n",
+    "replace": "",
+    "tests": ["packages/domain/test/scheduling.test.ts"]
+  },
+  {
+    "name": "a missed class goes unrecorded",
+    "file": "packages/domain/src/scheduling.ts",
+    "find": "  if (task.slotClass !== undefined && preferred.length === 0) missed.push('slot_class')\n",
+    "replace": "",
+    "tests": ["packages/domain/test/scheduling.test.ts"]
+  },
+  {
+    "name": "the pass drops the meta engine",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    ...(metaEngine !== undefined && { preferredEngine: metaEngine }),\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "degraded tiers not reported",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    model.tier_degraded === undefined ? [] : [slotId],\n",
+    "replace": "    [],\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "a slot view loses its engine",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "          engine: view.engine,\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "pin reason lost",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (placement.pinned) return `pinned to ${slotId} by the plan`\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "the service does not pass the meta engine",
+    "file": "packages/meta/src/service.ts",
+    "find": "      ...(this.#metaEngine !== undefined && { metaEngine: this.#metaEngine }),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "the filter back behind the runner flag",
+    "file": "apps/desktop/src/planner-placement.ts",
+    "find": "  if (process.env.MEC_FAKE_ENGINE === '1') return { modelsTable, marks, metaEngine }\n",
+    "replace": "  if (!realRunner) return { modelsTable, marks, metaEngine }\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "a retired meta slot still steers",
+    "file": "apps/desktop/src/planner-placement.ts",
+    "find": "    return typeof slot?.engine === 'string' && slot.state !== 'retired' ? slot.engine : undefined\n",
+    "replace": "    return typeof slot?.engine === 'string' ? slot.engine : undefined\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  }
+]

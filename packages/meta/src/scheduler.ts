@@ -19,6 +19,7 @@ import type {
   BasePolicy,
   BoundFinding,
   Caps,
+  Placement,
   SchedulableTask,
   SlotModelsView,
   SlotView,
@@ -53,6 +54,8 @@ export type SchedulerDeps = {
   caps: Caps
   /** The slots a launch can start on, marks included. */
   slots: () => readonly SlotModelsView[]
+  /** The meta slot's engine, which unpinned work prefers where the tier fits; absent, nothing does. */
+  metaEngine?: () => string | undefined
   table: () => PlacementTable | undefined
   followups: FollowUps
   /** A launch row's state, when the queue can say. `failed` means it gave up. */
@@ -514,7 +517,7 @@ function modelFit(
   deps: SchedulerDeps,
   task: StoreDoc,
   views: readonly SlotModelsView[],
-): { modelSlots?: string[]; resolved: Map<string, ResolvedModel> } {
+): { modelSlots?: string[]; degradedSlots?: string[]; resolved: Map<string, ResolvedModel> } {
   const resolved = new Map<string, ResolvedModel>()
   if (task.modelRequest === undefined || process.env.MEC_FAKE_ENGINE === '1') return { resolved }
   const request = ModelRequest.safeParse(task.modelRequest)
@@ -530,7 +533,10 @@ function modelFit(
       // Refused for this slot: another may serve it, and if none does the task defers.
     }
   }
-  return { modelSlots: [...resolved.keys()], resolved }
+  const degradedSlots = [...resolved].flatMap(([slotId, model]) =>
+    model.tier_degraded === undefined ? [] : [slotId],
+  )
+  return { modelSlots: [...resolved.keys()], degradedSlots, resolved }
 }
 
 function nextAttemptId(store: Store): string {
@@ -539,11 +545,26 @@ function nextAttemptId(store: Store): string {
   return `att_${max + 1}`
 }
 
-function rationale(task: SchedulableTask, slotId: string, candidates: number): string {
-  if (task.slotId !== undefined) return `pinned to ${slotId} by the plan`
-  return candidates > 1
-    ? `${slotId} had the lowest utilisation of ${candidates} candidates`
-    : `${slotId} is the only candidate`
+/** What really decided this launch: a step that changed nothing is not claimed (§7, §11). */
+function rationale(
+  task: SchedulableTask,
+  slotId: string,
+  placement: Placement,
+  metaEngine: string | undefined,
+): string {
+  if (placement.pinned) return `pinned to ${slotId} by the plan`
+  const { candidates } = placement
+  const said = [
+    ...(placement.missed.includes('slot_class') ? [`no candidate in slot class ${task.slotClass}`] : []),
+    ...(placement.narrowedBy.includes('slot_class') ? [`in slot class ${task.slotClass}`] : []),
+    ...(placement.narrowedBy.includes('engine') ? [`on the meta agent's engine, ${metaEngine}`] : []),
+    ...(placement.missed.includes('engine') ? [`no ${metaEngine} slot fits`] : []),
+    ...(placement.tiebreak === 'only_candidate' ? ['the only candidate'] : []),
+    ...(placement.tiebreak === 'utilisation' ? [`lowest utilisation of ${candidates} candidates`] : []),
+    ...(placement.tiebreak === 'load' ? [`fewest attempts of ${candidates} candidates`] : []),
+    ...(placement.tiebreak === 'id' ? [`first by id of ${candidates} tied candidates`] : []),
+  ]
+  return `${slotId}: ${said.join('; ')}`
 }
 
 /**
@@ -600,7 +621,7 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
       }
       const taskId = String(task.id)
       const next = task.next as Continuation | undefined
-      const { modelSlots, resolved } = modelFit(deps, task, views)
+      const { modelSlots, degradedSlots, resolved } = modelFit(deps, task, views)
       const hint = task.slotHint as { slotClass?: string; slotId?: string } | undefined
       candidates.set(taskId, { doc: task, resolved })
       ready.push({
@@ -613,6 +634,7 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
         ...(hint?.slotClass !== undefined && { slotClass: hint.slotClass }),
         ...(hint?.slotId !== undefined && { slotId: hint.slotId }),
         ...(modelSlots !== undefined && { modelSlots }),
+        ...(degradedSlots !== undefined && { degradedSlots }),
       })
     }
   }
@@ -631,6 +653,7 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
       ? [{ ...FAKE_SLOT, inUse: inUse(FAKE_SLOT.id) }]
       : views.map((view) => ({
           id: view.slotId,
+          engine: view.engine,
           state: view.healthy ? 'healthy' : 'degraded',
           pinnedRoles: [],
           inUse: inUse(view.slotId),
@@ -639,6 +662,7 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
           ...(view.slotClass !== undefined && { slotClass: view.slotClass }),
         }))
 
+  const metaEngine = deps.metaEngine?.()
   const dispatch = planDispatches({
     ready,
     slots,
@@ -647,6 +671,7 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
     utilisationCeiling: UTILISATION_CEILING,
     // §11: a person continuing existing work goes before any launch.
     reservedWakeSlot: followups.deliveryWaiting(),
+    ...(metaEngine !== undefined && { preferredEngine: metaEngine }),
   })
 
   for (const { taskId, reason } of dispatch.deferred) {
@@ -655,7 +680,7 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
   }
 
   const records: LaunchRecord[] = []
-  for (const launch of dispatch.launches) {
+  for (const [index, launch] of dispatch.launches.entries()) {
     const candidate = candidates.get(launch.taskId) as { doc: StoreDoc; resolved: Map<string, ResolvedModel> }
     const task = ready.find((row) => row.taskId === launch.taskId) as SchedulableTask
     const { deferred: _deferred, next, ...doc } = candidate.doc
@@ -663,9 +688,6 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
       store.tasks.save({ ...doc, updatedAt: at })
     }
     const model = candidate.resolved.get(launch.slotId)
-    const placeable = slots.filter(
-      (slot) => slot.state === 'healthy' && (task.modelSlots?.includes(slot.id) ?? true),
-    ).length
     const attemptId = nextAttemptId(store)
     const { workItemId } = task
     store.attempts.save({
@@ -675,7 +697,7 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
       slotId: launch.slotId,
       state: 'queued',
       generation: 1,
-      placement: rationale(task, launch.slotId, placeable),
+      placement: rationale(task, launch.slotId, dispatch.placements[index] as Placement, metaEngine),
       ...(next !== undefined && { role: task.role, continuation: next }),
       ...(model !== undefined && {
         resolved_model: model.model,

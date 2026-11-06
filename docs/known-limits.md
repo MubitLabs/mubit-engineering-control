@@ -125,7 +125,8 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
     parent had gone, and for a command started in a new group between that listing and the signal.
   - OpenCode refuses a launch on a tracked link leading out of the worktree. An untracked one is
     not checked: bootstrap commands are the only other writer, and they run on the host anyway.
-  - `opencode-gemini` slots can be added and do not launch, until a real run proves that login.
+  - `opencode-gemini` slots can be added and take no work, until a real run proves that login:
+    plans and placement leave them out, and a plan pinning one is refused as an unknown slot.
   - The Claude profile does not deny `<data>/work` or `<data>/tmp`, so a sibling's `.mec/mcp.json`
     is readable there. Codex's profile denies both.
 - **Unproven on the way to 0.3.0 (6 November 2026, DECISIONS #41-42).**

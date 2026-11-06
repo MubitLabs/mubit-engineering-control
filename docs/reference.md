@@ -172,8 +172,21 @@ From `packages/policy/src/policy.ts` — v0 is JSON (the plan's YAML is a later 
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `MEC_REAL_RUNNER=1` | off | A launch effect starts a real specialist through the attempt runner, on any engine `apps/desktop/src/engine-registry.ts` lists: Claude, Codex and OpenCode. Off, the launch fails with `no_runner`, the work blocks with that reason and no process starts. The flag grants no authority: mandate, hold and repo checks run on every launch. Decision #25: only on scratch repositories and `mec-sandbox`, because repo checks run unsandboxed. On, a planner turn sees only launchable slots, and their marks are the capability table's entries. |
+| `MEC_REAL_RUNNER=1` | off | A launch effect starts a real specialist through the attempt runner, on any engine `apps/desktop/src/engine-registry.ts` lists: Claude, Codex and OpenCode. Off, the launch fails with `no_runner`, the work blocks with that reason and no process starts. The flag grants no authority: mandate, hold and repo checks run on every launch. Decision #25: only on scratch repositories and `mec-sandbox`, because repo checks run unsandboxed. On, a launchable slot's marks are the capability table's entries. Flag or no flag, plans and placement see only launchable slots. |
 | `MEC_FAKE_ENGINE=1` | off | The fixture replay stands in for an engine. It wins over `MEC_REAL_RUNNER`. |
+
+## How a task gets its slot
+
+The planner asks and deterministic code grants (spec §11). The rule, in order; each attempt's `placement` says which steps decided:
+
+1. **Launchable only.** A slot takes work only if this build has proved its kind: a row in `apps/desktop/src/engine-registry.ts`, and a home. Today that is `claude-sub`, `codex-sub` and `opencode-glm`. Anything else, `opencode-gemini` and `claude-api` included, is left out of plan validation and placement alike, with or without `MEC_REAL_RUNNER`, so a plan pinning one is refused. `MEC_FAKE_ENGINE=1` places on its one fake slot instead.
+2. **What can take it.** Healthy (§5.5), serving the task's model or tier (§3), under the utilisation ceiling and with a free unit (§11).
+3. **A pin wins.** A task pinned to a slot waits for that slot and goes nowhere else.
+4. **A `slot_class` hint is a preference** (DECISIONS #43). Slots in the class go first; if none can take the task, any other may, and the placement says the class was missed.
+5. **The meta slot's engine** (`settings/meta-slot`, chosen in the wizard) goes next, on slots where the tier fits without degrading. If none does, another engine takes the task and the placement says so. With no meta slot chosen, or a retired one, this step does nothing.
+6. **A stable order:** lowest utilisation, then fewest attempts, then id. No reading ranks as least utilised.
+
+Step 5 outranks utilisation, so work stays on the meta engine until its slots are full, over the ceiling or short of the tier.
 
 ## Fixture library layout
 

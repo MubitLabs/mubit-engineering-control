@@ -400,6 +400,74 @@ describe('a chat request', { timeout: 60_000 }, () => {
     })
   })
 
+  /** A key slot's home whose opencode config lists `model` under `provider`. */
+  const keyHome = (root: string, name: string, provider: string, model: string): string => {
+    const home = join(root, name)
+    mkdirSync(join(home, 'config', 'opencode'), { recursive: true })
+    writeFileSync(
+      join(home, 'config', 'opencode', 'opencode.json'),
+      JSON.stringify({ provider: { [provider]: { models: { [model]: {} } } } }),
+    )
+    return home
+  }
+  const gemini = (home: string) => ({
+    id: 'gem-1',
+    engine: 'opencode',
+    kind: 'opencode-gemini',
+    provider: 'google-gemini',
+    home,
+    state: 'healthy',
+    env: {},
+  })
+  const glm = (home: string) => ({
+    id: 'slot_a_glm',
+    engine: 'opencode',
+    kind: 'opencode-glm',
+    provider: 'zai-coding-plan',
+    home,
+    state: 'healthy',
+    env: {},
+  })
+
+  it('an opencode-gemini slot takes no work with the runner on, though it sorts first', async () => {
+    const { root, dataDir, repo } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedSlots(dataDir, repo, [LINKED, gemini(keyHome(root, 'gem', 'google', 'gemini-3.5-flash-lite'))])
+    expect((await request(dataDir)).launchesEnqueued).toBe(1)
+    expect(peek(dataDir, (store) => store.attempts.list()[0]?.slotId)).toBe('slot_linked')
+  })
+
+  it('an opencode-gemini slot takes no work with the runner off either (known-limits)', async () => {
+    const { root, dataDir, repo } = scratch({ steps: SUCCESS })
+    seedSlots(dataDir, repo, [gemini(keyHome(root, 'gem', 'google', 'gemini-3.5-flash-lite'))])
+    expect((await request(dataDir)).launchesEnqueued).toBe(0)
+    expect(peek(dataDir, (store) => store.attempts.list())).toEqual([])
+  })
+
+  it("a tier-only task takes the meta slot's engine over a launchable slot that sorts first", async () => {
+    const { root, dataDir, repo } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedSlots(dataDir, repo, [LINKED, glm(keyHome(root, 'glm', 'zai-coding-plan', 'glm-5.3-flash'))])
+    peek(dataDir, (store) => store.engines.save({ id: 'settings/meta-slot', slotId: LINKED.id }))
+    expect((await request(dataDir)).launchesEnqueued).toBe(1)
+    const attempt = peek(dataDir, (store) => store.attempts.list()[0])
+    expect(attempt?.slotId).toBe('slot_linked')
+    expect(attempt?.placement).toBe("slot_linked: on the meta agent's engine, claude")
+  })
+
+  it('a retired meta slot sets no engine preference', async () => {
+    const { root, dataDir, repo } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedSlots(dataDir, repo, [
+      LINKED,
+      { ...LINKED, id: 'slot_old', state: 'retired' },
+      glm(keyHome(root, 'glm', 'zai-coding-plan', 'glm-5.3-flash')),
+    ])
+    peek(dataDir, (store) => store.engines.save({ id: 'settings/meta-slot', slotId: 'slot_old' }))
+    expect((await request(dataDir)).launchesEnqueued).toBe(1)
+    expect(peek(dataDir, (store) => store.attempts.list()[0]?.slotId)).toBe('slot_a_glm')
+  })
+
   it('a tier only an unlaunchable slot serves is refused at the plan, not at the launch', async () => {
     const { root, dataDir, repo } = scratch({ steps: SUCCESS })
     const home = join(root, 'glm')

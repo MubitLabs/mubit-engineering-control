@@ -141,12 +141,13 @@ function metaSlotFromStore(store: Store, health: HealthBoard): MetaSlot | undefi
   const slotId = setting !== undefined && typeof setting.slotId === 'string' ? setting.slotId : undefined
   if (slotId === undefined) return undefined
   const slot = store.slots.get(slotId)
-  if (slot === undefined || typeof slot.home !== 'string' || slot.home === '') return undefined
+  if (slot === undefined) return undefined
   if (slot.state === 'retired') {
     const why = `slot ${slotId} is retired, so it cannot run the meta agent: choose another slot`
     health.claim(`slot:${slotId}`).error(why)
     return undefined
   }
+  if (typeof slot.home !== 'string' || slot.home === '') return undefined
   return { dir: slot.home, linked: slot.linkedDefault === true }
 }
 
@@ -376,7 +377,7 @@ export async function startServer(opts: {
           store,
           effects: store.effects,
           dataDir: opts.dataDir,
-          policyText: opts.policyText ?? DEFAULT_POLICY_TEXT,
+          policyText,
         })
 
   // What a boot learned of a card reaches delivery the way an answer would.

@@ -420,7 +420,7 @@ export const DEFAULT_MODELS_YAML_PATH = fileURLToPath(
  * `MEC_DATA_DIR` keeps its keystore, models table and prompts there and never reaches `~/.mec`.
  * Read on every call, because the environment is the caller's to set.
  */
-export const mecRoot = (): string => process.env.MEC_DATA_DIR ?? join(homedir(), '.mec')
+export const mecRoot = (): string => process.env.MEC_DATA_DIR || join(homedir(), '.mec')
 
 /** Where the user's table lives; `<keystore root>/models.yaml` by default (§5.4). */
 export const userModelsPath = (root = mecRoot()) => join(root, 'models.yaml')

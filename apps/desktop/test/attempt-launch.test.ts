@@ -376,6 +376,19 @@ describe('a chat request', { timeout: 60_000 }, () => {
       })
     })
 
+    it('a retired meta slot with no home is refused by name too', async () => {
+      const { dataDir, repo } = scratch({ steps: [{ init: true }, { result: 'completed' }] })
+      const { home: _home, ...homeless } = LINKED
+      seedSlots(dataDir, repo, [{ ...homeless, state: 'retired' }])
+      peek(dataDir, (store) => store.engines.save({ id: 'settings/meta-slot', slotId: LINKED.id }))
+      const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 4000 })
+      closers.push(server.close)
+      const status = (await (await fetch(`${server.url}/api/status`)).json()) as {
+        parts: Record<string, { state: string; detail?: string }>
+      }
+      expect(status.parts[`slot:${LINKED.id}`]?.state).toBe('error')
+    })
+
     it('a degraded meta slot still plans: a probe can bring it back', async () => {
       const seen = await plansOn({ ...LINKED, state: 'degraded' })
       expect(seen.argv).toContain('-p')

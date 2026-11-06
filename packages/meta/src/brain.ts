@@ -569,7 +569,7 @@ function shippedDefaultsRoot(): string {
 }
 
 /** The user's prompt store — §16.1's `~/.mec/prompts/`, under `MEC_DATA_DIR` when that is set. */
-const userPromptsRoot = (): string => join(process.env.MEC_DATA_DIR ?? join(homedir(), '.mec'), 'prompts')
+const userPromptsRoot = (): string => join(process.env.MEC_DATA_DIR || join(homedir(), '.mec'), 'prompts')
 
 function readPart(root: string, part: string): string | undefined {
   const file = join(root, part)

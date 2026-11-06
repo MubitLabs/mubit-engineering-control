@@ -70,7 +70,8 @@ docs: https://github.com/MubitLabs/mubit-engineering-control — README → guid
     await cliMain()
   } else {
     const { serveMain } = await import(entry)
-    await serveMain(process.env.MEC_DATA_DIR ?? join(homedir(), '.mec'))
+    // cliHome's rule: an empty value is unset, or the server and the commands read different roots.
+    await serveMain(process.env.MEC_DATA_DIR || join(homedir(), '.mec'))
     // §20: close is bounded, and an engine child that outlived it must not hold the process up.
     process.exit()
   }

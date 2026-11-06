@@ -4,6 +4,7 @@
  * that the owner moved on, stored apart from the facts, and it never counts as done.
  */
 import type { Store, StoreDoc } from '@mec/contracts'
+import { lacksHome } from './engine-registry'
 
 export const SETUP_STEPS = ['engines', 'connection', 'repository', 'meta_slot', 'first_request'] as const
 export type SetupStep = (typeof SETUP_STEPS)[number]
@@ -52,7 +53,7 @@ const text = (value: unknown): string => (typeof value === 'string' ? value : ''
  * §5.3: a linked slot runs on the default login and any other under its home. Without either,
  * as with `slot_claude_probe`, the launcher refuses it, so it is no connection.
  */
-const hasLogin = (slot: StoreDoc): boolean => slot.linkedDefault === true || text(slot.home) !== ''
+const hasLogin = (slot: StoreDoc): boolean => !lacksHome(slot)
 
 /**
  * Why this slot cannot run the meta agent, or null when it can. The one predicate: the route

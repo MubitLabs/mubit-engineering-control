@@ -594,7 +594,7 @@ const CI_READINGS: Readonly<Record<string, NonNullable<DeliveryView['ci']>>> = {
   ci_unreadable: 'unreadable',
 }
 /** What the integration step writes into a blocked item's reason (`Delivery.#work`, `#integrationDoc`). */
-const INTEGRATION_BLOCK = /^(integration: |bootstrap_failed|repo_profile_changed)/
+const INTEGRATION_BLOCK = /^(integration: |bootstrap_failed|repo_profile_changed|checks failed on |could not run )/
 /** A commit id, the only thing a stored ref may be before it reaches `git`. */
 const SHA = /^[0-9a-f]{7,64}$/
 const FAILURE_CAP = 500
@@ -837,7 +837,7 @@ class Inspector {
     })
   }
 
-  /** Everything that needs a person now, all repositories, oldest first. The single source of every count. */
+  /** Everything that needs a person now, all repositories, oldest first. */
   #openRows(): NeedRow[] {
     const decisions = this.#decisionRows()
     return [...decisions, ...this.#workNeedRows(decisions.map((row) => row.item))].sort(
@@ -852,6 +852,11 @@ class Inspector {
 
   openNeeds(): NeedItem[] {
     return this.#openRows().map((row) => row.item)
+  }
+
+  /** The single source of every count. Work with no repository is shown, and cannot be cleared here. */
+  countedNeeds(): NeedItem[] {
+    return this.openNeeds().filter((item) => item.kind !== 'work' || !item.readOnly)
   }
 
   /**
@@ -1080,11 +1085,6 @@ class Inspector {
           reason: 'The pull request is ready for your review',
           nextAction: 'Review it, then merge it from Work',
         }
-      case 'idle':
-        return {
-          reason: 'No work was planned, and nothing is running.',
-          nextAction: 'Reply in Conversation to start work',
-        }
       case 'waiting/quota':
         return { reason: 'Every runnable attempt is waiting for quota', nextAction: null }
       case 'working':
@@ -1269,7 +1269,7 @@ class Inspector {
       ...row,
       originMessageId: shortOrNull(originId),
       goal: goalText === null ? null : cutText(goalText, 2000),
-      answer: row.turnOutcome === 'answered' ? this.#answerOf(originId) : null,
+      answer: row.turnOutcome === 'answered' ? this.#answerOf(doc) : null,
       hold:
         hold !== null && str(hold.liftedAt) === null
           ? {
@@ -1291,8 +1291,16 @@ class Inspector {
 
   // ── tasks ──
 
-  #answerOf(messageId: string | null): string | null {
-    const origin = this.#store.messages.get(messageId ?? '')
+  /** A turn that ended the work reported last. An older item still has only its turn's report. */
+  #answerOf(doc: StoreDoc): string | null {
+    if (str(doc.state) === 'done') {
+      const reports = this.#store.events
+        .read(`work:${String(doc.id)}`)
+        .filter((event) => event.type === 'result_reported')
+      const summary = str(obj(reports.at(-1)?.body ?? undefined)?.summary)
+      return summary === null ? null : cutText(summary, ANSWER_CAP)
+    }
+    const origin = this.#store.messages.get(str(doc.originMessageId) ?? '')
     return origin === undefined ? null : replyOf(this.#store, origin)
   }
 
@@ -1409,7 +1417,7 @@ class Inspector {
       running: false,
       at: row?.lastActivityAt ?? lastEvent,
     })
-    const titled = (row: WorkRow | undefined): string => row?.title ?? 'this request'
+    const titled = (row: WorkRow | undefined): string => cutText(row?.title ?? 'this request', LABEL_CAP)
 
     const turn = turns.find((candidate) => candidate.repoId === repoId)
     if (turn !== undefined) {
@@ -1479,11 +1487,11 @@ class Inspector {
     const [row] = task === undefined ? [] : this.taskRows([task])
     const label = str(this.#store.slots.get(str(attempt.slotId) ?? '')?.label)
     const who = `${row?.role ?? 'a specialist'}${label === null ? '' : ` on ${label}`}`
-    return `Waiting for ${who}${row === undefined ? '' : `: ${row.title}`}`
+    return `Waiting for ${who}${row === undefined ? '' : `: ${cutText(row.title, LABEL_CAP)}`}`
   }
 
   metaActivity(): MetaAnswer {
-    const needs = this.openNeeds()
+    const needs = this.openDecisions()
     const docs = this.#collect('work_item', {}).map((row) => row.doc)
     const rows = this.workRows(docs, needs)
     const turns = this.#metaTurns()
@@ -1902,7 +1910,7 @@ class Inspector {
     needsCount: number
     cursors: Record<string, number>
   } {
-    const open = this.openNeeds()
+    const open = this.countedNeeds()
     const works = this.#reads.pageDocs('work_item', {
       order: 'desc',
       limit: SNAPSHOT_STREAM_CAP,
@@ -1951,10 +1959,11 @@ function turnLine(turn: MetaTurn, title: string): string {
 }
 
 /**
- * What a turn that planned nothing said back. The turn writes its report and its receipt in one
- * transaction with one time, which is the only join there is: a report has no message id.
+ * What a turn that planned nothing said back, for work that turn left open. The turn writes its
+ * report and its receipt in one transaction with one time, which is the only join there is: a
+ * report has no message id. The chat line is the receipt itself (§12.2), so this feeds Work only.
  */
-export function replyOf(store: Store, message: StoreDoc): string | null {
+function replyOf(store: Store, message: StoreDoc): string | null {
   const workItemId = str(message.workItemId)
   if (workItemId === null || message.tasksCreated !== 0) return null
   const report = store.events

@@ -32,15 +32,13 @@ export interface ConversationViewProps {
   onInspect: () => void
   /** M1.3's intent setter, and nothing else. */
   onDiscuss: () => void
-  /** Opens a delivery in Work. */
-  onOpenWork?: (id: string) => void
   /** The delivery the plan shows. */
   planWorkId?: string | null
   /** What the meta agent is doing now. */
   meta?: MetaStatusView | null
   onAnswer: (id: string, answer: string) => void
   onRetry: () => void
-  /** Opens a delivery in Work, for work this thread says is blocked. */
+  /** Opens a delivery in Work. */
   onOpenWork: (workItemId: string) => void
   /** The text on its way to the server, shown until the thread has it. */
   sending?: string | null
@@ -128,14 +126,14 @@ export function ConversationView(props: ConversationViewProps) {
                   openInspector()
                 },
               },
-              ...(onOpenWork && planWorkId
+              ...(planWorkId
                 ? [{ label: 'Open in Work', onClick: () => onOpenWork(planWorkId) }]
                 : []),
             ]}
           />
         </>
       )}
-      {view.open.length > 0 && onOpenWork && <OpenWork rows={view.open} onOpen={onOpenWork} />}
+      {view.open.length > 0 && <OpenWork rows={view.open} onOpen={onOpenWork} />}
       {props.meta && <MetaLine view={props.meta} />}
       <div ref={end} />
     </div>

@@ -201,27 +201,17 @@ describe('the conversation', () => {
     expect(view.title).toBe('mec-sandbox')
   })
 
-  it('shows the answer a turn reported, after its acknowledgement', () => {
+  it('the answer is the message’s one line from the meta agent', () => {
+    const answered = row({ id: 'wi_q', turnOutcome: 'answered' })
     const view = conversationView({
       row: null,
       detail: null,
-      messages: [{ ...line, replyText: 'Because the merge failed.' }],
+      messages: [{ ...line, ackText: 'Because the merge failed.' }],
+      work: [answered],
     })
     expect(view.entries.map((entry) => [entry.kind, entry.text])).toEqual([
       ['user', 'why?'],
-      ['agent', 'I will check.'],
       ['agent', 'Because the merge failed.'],
-    ])
-  })
-
-  it('an acknowledgement that is the answer’s first sentence is not said twice', () => {
-    const view = conversationView({
-      row: null,
-      detail: null,
-      messages: [{ ...line, ackText: 'Because it failed.', replyText: 'Because it failed. Retry it.' }],
-    })
-    expect(view.entries.filter((entry) => entry.kind === 'agent').map((entry) => entry.text)).toEqual([
-      'Because it failed. Retry it.',
     ])
   })
 

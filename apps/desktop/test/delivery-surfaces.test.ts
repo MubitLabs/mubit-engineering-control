@@ -116,6 +116,27 @@ describe('Needs you lists work a person must act on (§18.2)', () => {
     expect(snapshot.repositories[0].needsCount).toBe(1)
   })
 
+  it('unassigned blocked work is listed and left out of every count: it cannot be cleared here', async () => {
+    seedWork('wi_blocked', { state: 'blocked', blockedReason: 'the build broke' })
+    store.atomic(() => {
+      store.workItems.save({
+        id: 'wi_legacy',
+        state: 'blocked',
+        blockedReason: 'an old block',
+        createdAt: AT,
+        updatedAt: AT,
+      })
+    })
+    const items = (await get('/api/inspect/needs')).items
+    expect(items.map((item: any) => [item.id, item.readOnly])).toEqual([
+      ['wi_blocked', false],
+      ['wi_legacy', true],
+    ])
+    const snapshot = await get('/api/inspect/snapshot')
+    expect(snapshot.needsCount).toBe(1)
+    expect(snapshot.repositories[0].needsCount).toBe(1)
+  })
+
   it('a pull request ready for review is a person stage, so it is listed too', async () => {
     seedWork('wi_ready', { state: 'integrating' })
     store.atomic(() => {
@@ -195,9 +216,10 @@ describe('a planner turn that ended with no plan (§10)', () => {
     const id = await say('What does the audit view do?')
     const row = (await get('/api/inspect/work')).items.find((entry: any) => entry.id === id)
     expect(row.state).toBe('planning')
-    expect(row.stage).toEqual({ key: 'idle', label: 'Waiting for a trigger', waitingOn: 'none' })
-    expect(row.reason).toBe('No work was planned, and nothing is running.')
-    expect(row.nextAction).toBe('Reply in Conversation to start work')
+    // An acknowledgement with no report: the planner stopped, and no trigger is on its way.
+    expect(row.stage).toEqual({ key: 'ended/no-answer', label: 'No answer', waitingOn: 'none' })
+    expect(row.reason).toBe('The meta agent stopped without answering')
+    expect(row.nextAction).toBe('Ask again')
   })
 
   it('a turn still running stays Working', async () => {

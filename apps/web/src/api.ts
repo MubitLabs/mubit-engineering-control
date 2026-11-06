@@ -55,8 +55,6 @@ export type ChatMessage = {
   ackText?: string
   /** The server redacted this message: it looked like a key. */
   secretGuard?: boolean
-  /** The meta agent's answer to a quick question (§12.2). */
-  replyText?: string
   /** Said while processing was paused. It is not a receipt: the turn has not run. */
   pausedAck?: string
   kind?: ChatMessageKind

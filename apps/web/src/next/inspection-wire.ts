@@ -272,14 +272,10 @@ export type ChatLine = {
   kind: string | null
   /** The meta agent's acknowledgement, stored on the message it answers. */
   ackText?: string
-  /** What a turn that planned nothing reported: for a question, the answer. */
-  replyText?: string
   /** The key a send carried, so the page can tell its own message from an echo. */
   idempotencyKey?: string
   /** The server redacted this message: it looked like a key. */
   secretGuard?: true
-  /** The meta agent's answer to a quick question (§12.2). */
-  replyText?: string
   /** Said while processing was paused. It is not a receipt: the turn has not run. */
   pausedAck?: string
 }

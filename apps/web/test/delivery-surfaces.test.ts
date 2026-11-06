@@ -70,7 +70,7 @@ const needsPageOf = (items: NeedItem[]) => ({ items, nextCursor: null, observedA
 
 describe('merge is offered on a ready pull request, through its card (§14)', () => {
   const merge = (work: WorkDetail) =>
-    workActions(work, ALL, work.hold, work.delivery).find((action) => action.kind === 'merge')
+    workActions(work, ALL, work.hold, null, work.delivery).find((action) => action.kind === 'merge')
 
   it('offers merge with the pull request it would act on', () => {
     expect(merge(detail({}))).toMatchObject({
@@ -102,7 +102,7 @@ describe('merge is offered on a ready pull request, through its card (§14)', ()
 
   it('leaves Hold and Stop where they were, with merge first', () => {
     const work = detail({})
-    expect(workActions(work, ALL, work.hold, work.delivery).map((action) => action.kind)).toEqual([
+    expect(workActions(work, ALL, work.hold, null, work.delivery).map((action) => action.kind)).toEqual([
       'merge',
       'hold',
       'stop',
@@ -204,6 +204,13 @@ describe('Needs you lists blocked work and the count agrees (§18)', () => {
     })
   })
 
+  it('unassigned blocked work is on the page and not in the count: it cannot be cleared here', () => {
+    const legacy = { ...blockedNeed, id: 'wi_old', repoId: null, repoLabel: null, readOnly: true }
+    const shown = list([blockedNeed, legacy])
+    expect(shown.waiting.map((item) => item.id)).toEqual([blockedNeed.id, 'wi_old'])
+    expect(shown.count).toBe(1)
+  })
+
   it('read-only work is shown and offers no way in', () => {
     const card = needCard(
       { ...blockedNeed, repoId: null, repoLabel: null, readOnly: true },
@@ -271,24 +278,10 @@ describe('an answer and a paused message show in the thread (§12.2, #27)', () =
     ackText: 'I will answer that here.',
   }
 
-  it('decodes the reply and the held acknowledgement', () => {
-    expect(decodeChatLines([{ ...line, replyText: 'It lists.', pausedAck: 'Recorded.' }])[0]).toMatchObject({
-      replyText: 'It lists.',
+  it('decodes the held acknowledgement', () => {
+    expect(decodeChatLines([{ ...line, pausedAck: 'Recorded.' }])[0]).toMatchObject({
       pausedAck: 'Recorded.',
     })
-  })
-
-  it('puts the answer after the acknowledgement, as the meta agent', () => {
-    const { entries } = conversationView({
-      row: null,
-      detail: null,
-      messages: [{ ...line, replyText: 'It lists the audit log.' }],
-    })
-    expect(entries.map((entry) => [entry.kind, entry.text])).toEqual([
-      ['user', 'What does it do?'],
-      ['agent', 'I will answer that here.'],
-      ['agent', 'It lists the audit log.'],
-    ])
   })
 
   it('a paused message shows its acknowledgement while paused', () => {

@@ -927,7 +927,9 @@ export function needsList(
     .sort((a, b) => downstream(b) - downstream(a) || needAge(a).localeCompare(needAge(b)))
   const settled = items.filter((item) => !isOpen(item))
   const partial = readData(read)?.nextCursor != null
-  return { count: read.status === 'ready' && !partial ? waiting.length : null, waiting, settled, partial }
+  // Work with no repository is listed, and cannot be cleared here, so it asks nothing of the count.
+  const counted = waiting.filter((item) => item.kind !== 'work' || !item.readOnly).length
+  return { count: read.status === 'ready' && !partial ? counted : null, waiting, settled, partial }
 }
 
 export const needsCount = (list: NeedsList): number | null => list.count

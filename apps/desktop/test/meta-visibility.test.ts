@@ -208,13 +208,41 @@ describe('delegation is read from the attempts', () => {
 })
 
 describe('a turn that ended with no plan is not work in progress', () => {
-  it('an answered question is ended, and its answer is in the chat', async () => {
+  it('an item from before answers ended the work reads as answered, with its answer on the work', async () => {
     seedQuestion('wi_q', 'It exports wave(name).')
     const row = await get('/api/inspect/work/wi_q')
     expect(row.stage).toEqual({ key: 'ended/answered', label: 'Answered', waitingOn: 'none' })
     expect(row.turnOutcome).toBe('answered')
+    expect(row.answer).toBe('It exports wave(name).')
+  })
+
+  it('a question the turn answered: the row says Answered, and the chat has it once', async () => {
+    await app.close()
+    app = serverWith(
+      service(async (input: { workItemId: string }) => ({
+        ack: 'I will check.',
+        reports: [{ workItemId: input.workItemId, summary: 'It exports wave(name).', artifacts: [] }],
+      })),
+    )
+    const posted = await app.inject({
+      method: 'POST',
+      url: '/api/chat/messages',
+      payload: { text: 'what does this do?', repoId: 'repo_a' },
+    })
+    const { workItemId } = posted.json() as { workItemId: string }
+    const row = await get(`/api/inspect/work/${workItemId}`)
+    expect(row.state).toBe('done')
+    expect(row.stage).toEqual({ key: 'ended/answered', label: 'Answered', waitingOn: 'none' })
+    expect(row.answer).toBe('It exports wave(name).')
     const [line] = await get('/api/chat/messages?repoId=repo_a')
-    expect(line.replyText).toBe('It exports wave(name).')
+    expect(line.ackText).toBe('It exports wave(name).')
+    expect(JSON.stringify(line).split('It exports wave(name).')).toHaveLength(2)
+  })
+
+  it('work that ended with tasks is delivery work, not an answer', async () => {
+    seedTask('accepted')
+    store.atomic(() => store.workItems.save({ ...store.workItems.get(WI)!, state: 'done' }))
+    expect((await get(`/api/inspect/work/${WI}`)).turnOutcome).toBeNull()
   })
 
   it('a turn that stopped at its acknowledgement says no answer came, never Working', async () => {
@@ -223,8 +251,7 @@ describe('a turn that ended with no plan is not work in progress', () => {
     expect(row.stage).toEqual({ key: 'ended/no-answer', label: 'No answer', waitingOn: 'none' })
     expect(row.turnOutcome).toBe('no-answer')
     expect(row.reason).toBe('The meta agent stopped without answering')
-    const [line] = await get('/api/chat/messages?repoId=repo_a')
-    expect(line.replyText).toBeUndefined()
+    expect(row.answer).toBeNull()
   })
 
   it('a planning item with a question open stays waiting for the person', async () => {
@@ -246,17 +273,44 @@ describe('a turn that ended with no plan is not work in progress', () => {
   it('a report from another turn is not this message’s answer', async () => {
     seedQuestion('wi_other')
     event('work:wi_other', 1, 'result_reported', { summary: 'older', at: LATER }, LATER)
-    expect((await get('/api/chat/messages?repoId=repo_a'))[0].replyText).toBeUndefined()
+    expect((await get('/api/inspect/work/wi_other')).answer).toBeNull()
   })
 
   it('a reply carrying a key leaves redacted', async () => {
     seedQuestion('wi_key', 'use sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
-    const [line] = await get('/api/chat/messages?repoId=repo_a')
-    expect(line.replyText).not.toContain('sk-ant-api03')
+    expect((await get('/api/inspect/work/wi_key')).answer).not.toContain('sk-ant-api03')
   })
 })
 
 describe('GET /api/inspect/meta', () => {
+  it('blocked work reads as blocked: it is not a card waiting on an approval', async () => {
+    store.atomic(() =>
+      store.workItems.save({
+        id: 'wi_b',
+        repoId: 'repo_a',
+        state: 'blocked',
+        blockedReason: 'the build broke',
+        createdAt: AT,
+        updatedAt: AT,
+      }),
+    )
+    expect(await metaOf()).toMatchObject({ state: 'blocked', workItemId: 'wi_b' })
+  })
+
+  it('a long title stays out of the live line', async () => {
+    store.atomic(() =>
+      store.workItems.save({
+        id: 'wi_i',
+        repoId: 'repo_a',
+        state: 'integrating',
+        title: 'x'.repeat(400),
+        createdAt: AT,
+        updatedAt: AT,
+      }),
+    )
+    expect((await metaOf()).line.length).toBeLessThan(120)
+  })
+
   it('says the meta connection, and an unknown model stays unknown', async () => {
     expect((await get('/api/inspect/meta')).connection).toEqual({
       slotLabel: 'preflight-a',

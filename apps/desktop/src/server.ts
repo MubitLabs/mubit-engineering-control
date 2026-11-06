@@ -69,7 +69,7 @@ import { type BackupControl, liveSlot, registerConfigRoutes, repositoryRevision 
 import type { RetryOutcome } from './delivery'
 import { buildDoctorReport } from './doctor'
 import type { HealthSnapshot, PartEntry } from './health'
-import { hostIsLoopback, registerInspectionRoutes, replyOf, scrub } from './inspection'
+import { hostIsLoopback, registerInspectionRoutes, scrub } from './inspection'
 import { type CardEvent, LoginCardManager } from './login-cards'
 import { metaSlotRefusal } from './readiness'
 import {
@@ -845,15 +845,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   app.get('/api/chat/messages', async (request) => {
     // §12.7: a wake with nothing new keeps its receipt, for replay, and stays off the chat.
     const messages = rowsInScope(store.messages, store, request).filter((doc) => doc.quiet !== true)
-    return messages
-      .sort(
-        (a, b) =>
-          String(a.createdAt).localeCompare(String(b.createdAt)) || String(a.id).localeCompare(String(b.id)),
-      )
-      .map((doc) => {
-        const replyText = replyOf(store, doc)
-        return replyText === null ? doc : { ...doc, replyText }
-      })
+    return messages.sort(
+      (a, b) =>
+        String(a.createdAt).localeCompare(String(b.createdAt)) || String(a.id).localeCompare(String(b.id)),
+    )
   })
 
   app.get('/api/inbox', async () =>

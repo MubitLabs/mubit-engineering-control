@@ -557,10 +557,8 @@ export function decodeChatLines(raw: unknown): ChatLine[] {
       workItemId: typeof line.workItemId === 'string' ? line.workItemId : null,
       kind: typeof line.kind === 'string' ? line.kind : null,
       ...(typeof line.ackText === 'string' && { ackText: line.ackText }),
-      ...(typeof line.replyText === 'string' && { replyText: line.replyText }),
       ...(typeof line.idempotencyKey === 'string' && { idempotencyKey: line.idempotencyKey }),
       ...(line.secretGuard === true && { secretGuard: true as const }),
-      ...(typeof line.replyText === 'string' && { replyText: line.replyText }),
       ...(typeof line.pausedAck === 'string' && { pausedAck: line.pausedAck }),
     }
   })

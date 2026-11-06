@@ -436,18 +436,20 @@ describe('an answer reaches chat (§12.2: quick questions are answered directly)
 
   it('stores the reported answer on the message it answers', async () => {
     const line = await answered({ ack: 'I will answer that here.' }, 'It lists the audit log.')
-    expect(line).toMatchObject({ ackText: 'I will answer that here.', replyText: 'It lists the audit log.' })
+    expect(line).toMatchObject({ ackText: 'It lists the audit log.' })
+    expect(line?.replyText).toBeUndefined()
   })
 
   it('redacts it before the write', async () => {
     const key = `sk-ant-${'a1B2c3D4'.repeat(6)}`
     const line = await answered({ ack: 'Here.' }, `The key is ${key}`)
     expect(JSON.stringify(line)).not.toContain(key)
-    expect(line?.replyText).toContain('[redacted:')
+    expect(line?.ackText).toContain('[redacted:')
   })
 
   it('a report that only repeats the acknowledgement says nothing new', async () => {
     const line = await answered({ ack: 'Same words.' }, 'Same words.')
+    expect(line?.ackText).toBe('Same words.')
     expect(line?.replyText).toBeUndefined()
   })
 
@@ -456,15 +458,17 @@ describe('an answer reaches chat (§12.2: quick questions are answered directly)
       { ack: 'One thing first.', questions: [{ id: 'q1', question: 'Which?', options: [], at: NOW() }] },
       'I asked which one.',
     )
+    expect(line?.ackText).toBe('One thing first.')
     expect(line?.replyText).toBeUndefined()
   })
 
   it('a plan is not narrated (§12.7)', async () => {
     const line = await answered(twoTaskPlan, 'Planned two tasks.')
+    expect(line?.ackText).not.toContain('Planned two tasks.')
     expect(line?.replyText).toBeUndefined()
   })
 
-  it('a wake is not narrated: only a person asked (§12.7)', async () => {
+  it('a wake speaks its report, because it had something new (§12.7)', async () => {
     const store = new MemoryRepositories()
     store.atomic(() => {
       store.engines.save({
@@ -490,12 +494,13 @@ describe('an answer reaches chat (§12.2: quick questions are answered directly)
     })
     await service.onWake({ reason: 'report', workItemId: 'wi_wake', causationId: 'cause_1' })
     const line = store.messages.list({ workItemId: 'wi_wake' })[0]
-    expect(line?.ackText).toBe('Noted.')
+    expect(line?.ackText).toBe('A specialist finished.')
     expect(line?.replyText).toBeUndefined()
   })
 
   it('a turn with no report stores nothing', async () => {
     const line = await answered({ ack: 'Noted.' }, '')
+    expect(line?.ackText).toBe('Noted.')
     expect(line?.replyText).toBeUndefined()
   })
 })

@@ -21,38 +21,10 @@
     "tests": ["apps/desktop/test/meta-visibility.test.ts"]
   },
   {
-    "name": "a question with no reply reads as answered",
-    "file": "apps/desktop/src/inspection.ts",
-    "find": "return replyOf(this.#store, origin) === null ? 'no-answer' : 'answered'",
-    "replace": "return 'answered'",
-    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
-  },
-  {
     "name": "an open question stops holding the item open",
     "file": "apps/desktop/src/inspection.ts",
     "find": "    if (tasks > 0 || waitingOnPerson || isHeld(doc)) return null\n",
     "replace": "    if (tasks > 0 || isHeld(doc)) return null\n",
-    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
-  },
-  {
-    "name": "a message still in its turn counts as finished",
-    "file": "apps/desktop/src/inspection.ts",
-    "find": "if (typeof origin?.ackText !== 'string') return null\n",
-    "replace": "if (origin === undefined) return null\n",
-    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
-  },
-  {
-    "name": "any report on the stream passes as this message's answer",
-    "file": "apps/desktop/src/inspection.ts",
-    "find": ".find((event) => event.type === 'result_reported' && event.at === str(message.updatedAt))",
-    "replace": ".find((event) => event.type === 'result_reported')",
-    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
-  },
-  {
-    "name": "a reply leaves unredacted",
-    "file": "apps/desktop/src/inspection.ts",
-    "find": "\n  return summary === null ? null : cutText(summary, ANSWER_CAP)",
-    "replace": "\n  return summary",
     "tests": ["apps/desktop/test/meta-visibility.test.ts"]
   },
   {

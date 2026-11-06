@@ -30,12 +30,17 @@ describe('a real launch is the default', () => {
     expect(realRunnerOn()).toBe(true)
   })
 
-  it.each(CASES)('a planner turn sees launchable slots alone under $env: $on', ({ env, on }) => {
+  // Plans see launchable slots alone, on or off (slot choice). The fake engine has its one slot. What
+  // the runner changes is whether a launchable slot's marks are the capability table's.
+  it.each(CASES)('a planner turn under $env: declared marks $on', ({ env, on }) => {
     vi.stubEnv('MEC_REAL_RUNNER', undefined)
     vi.stubEnv('MEC_FAKE_ENGINE', undefined)
     for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value)
-    const placement = plannerPlacement({} as never, '/nowhere')
-    expect(placement.launchableSlots !== undefined).toBe(on)
+    const slot = { id: 'slot_a', engine: 'claude', kind: 'claude-sub', home: '/nowhere/slot' }
+    const store = { slots: { list: () => [slot] } }
+    const placement = plannerPlacement(store as never, '/nowhere')
+    expect(placement.launchableSlots !== undefined).toBe(env.MEC_FAKE_ENGINE !== '1')
+    expect(placement.marks().slot_a !== undefined).toBe(on)
   })
 })
 

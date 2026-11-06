@@ -388,6 +388,7 @@ describe('the merge command (§13)', () => {
     const client = {
       work: async () => ({ items: [], nextCursor: null, observedAt: READ_AT }),
       needs: async () => ({ items: [], nextCursor: null, observedAt: READ_AT }),
+      meta: async () => ({ observedAt: READ_AT, connection: null, repositories: [] }),
       merge,
     } as unknown as InspectionClient
     return createInspection(client)

@@ -44,8 +44,8 @@
   {
     "name": "the answer on done work is lost",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "      const summary = str(obj(reports.at(-1)?.body ?? undefined)?.summary)\n      return summary === null ? null : cutText(summary, ANSWER_CAP)\n",
-    "replace": "      return null\n",
+    "find": "    const said = str(this.#store.messages.get(messageId ?? '')?.ackText)\n",
+    "replace": "    const said = null as string | null\n",
     "tests": ["apps/desktop/test/meta-visibility.test.ts"]
   },
   {
@@ -110,5 +110,12 @@
     "find": "        delivery === 'merged' ? null : this.#turnOutcome(doc, total, mine.length > 0, turnEnded)\n",
     "replace": "        this.#turnOutcome(doc, total, mine.length > 0, turnEnded)\n",
     "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "the service does not read an unfinished protocol",
+    "file": "packages/meta/src/service.ts",
+    "find": "      else if (decision.protocolIncomplete === true && !asked) {\n",
+    "replace": "      else if ((false as boolean) && !asked) {\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
   }
 ]

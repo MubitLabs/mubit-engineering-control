@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -646,8 +647,10 @@ describe('the launch path', { timeout: 60_000 }, () => {
     expect(gitIn(worktree, 'log', '-1', '--format=%ae')).toBe('owner@example.com')
     expect(gitIn(worktree, 'log', '--name-only', '--format=', `${base}..HEAD`, '--', '.mec')).toBe('')
 
-    // The bootstrap ran first, the check ran on that head, and the token left the worktree.
-    expect(gitIn(worktree, 'ls-files', 'boot-ran.txt')).toBe('boot-ran.txt')
+    // The bootstrap ran first, its file stayed out of the commit, the check ran on that head, and
+    // the token left the worktree.
+    expect(readdirSync(worktree)).toContain('boot-ran.txt')
+    expect(gitIn(worktree, 'ls-files', 'boot-ran.txt')).toBe('')
     const check = peek(dataDir, (store) => store.engines.get('check/att_1/made'))
     expect(check).toMatchObject({ status: 'passed', exit_code: 0, sha: attempt.head_sha })
     expect(existsSync(join(worktree, '.mec', 'mcp.json'))).toBe(false)

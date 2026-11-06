@@ -1116,10 +1116,8 @@ class Inspector {
     // The service ends a turn that answered, so only a request that had no delivery ends with no task.
     if (str(doc.state) === 'done') return 'answered'
     if (str(doc.state) !== 'planning' || !turnEnded) return null
-    const origin = this.#store.messages.get(str(doc.originMessageId) ?? '')
-    if (typeof origin?.ackText !== 'string') return null
     if (this.#metaTurns().some((turn) => turn.workItemId === String(doc.id))) return null
-    return replyOf(this.#store, origin) === null ? 'no-answer' : 'answered'
+    return 'no-answer'
   }
 
   /** The row for each doc. Every batch read below is one query for the whole page, not one per row. */
@@ -1300,17 +1298,14 @@ class Inspector {
 
   // ── tasks ──
 
-  /** A turn that ended the work reported last. An older item still has only its turn's report. */
+  /** The message the answering turn names: its receipt is the one thing the chat shows (§12.2). */
   #answerOf(doc: StoreDoc): string | null {
-    if (str(doc.state) === 'done') {
-      const reports = this.#store.events
-        .read(`work:${String(doc.id)}`)
-        .filter((event) => event.type === 'result_reported')
-      const summary = str(obj(reports.at(-1)?.body ?? undefined)?.summary)
-      return summary === null ? null : cutText(summary, ANSWER_CAP)
-    }
-    const origin = this.#store.messages.get(str(doc.originMessageId) ?? '')
-    return origin === undefined ? null : replyOf(this.#store, origin)
+    const ended = this.#store.events
+      .read(`work:${String(doc.id)}`)
+      .findLast((event) => event.type === 'work_answered')
+    const messageId = str(obj(ended?.body ?? undefined)?.messageId)
+    const said = str(this.#store.messages.get(messageId ?? '')?.ackText)
+    return said === null ? null : cutText(said, ANSWER_CAP)
   }
 
   /** Who holds each task. Only what the attempts record: nothing is copied from the request. */
@@ -1965,21 +1960,6 @@ function turnLine(turn: MetaTurn, title: string): string {
     default:
       return 'Opening a card for you'
   }
-}
-
-/**
- * What a turn that planned nothing said back, for work that turn left open. The turn writes its
- * report and its receipt in one transaction with one time, which is the only join there is: a
- * report has no message id. The chat line is the receipt itself (§12.2), so this feeds Work only.
- */
-function replyOf(store: Store, message: StoreDoc): string | null {
-  const workItemId = str(message.workItemId)
-  if (workItemId === null || message.tasksCreated !== 0) return null
-  const report = store.events
-    .read(`work:${workItemId}`)
-    .find((event) => event.type === 'result_reported' && event.at === str(message.updatedAt))
-  const summary = str(obj(report?.body ?? undefined)?.summary)
-  return summary === null ? null : cutText(summary, ANSWER_CAP)
 }
 
 // ── Activity lines ───────────────────────────────────────────────────────────────────────────

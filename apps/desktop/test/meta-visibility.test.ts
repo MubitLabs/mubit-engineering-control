@@ -208,12 +208,30 @@ describe('delegation is read from the attempts', () => {
 })
 
 describe('a turn that ended with no plan is not work in progress', () => {
-  it('an item from before answers ended the work reads as answered, with its answer on the work', async () => {
+  it('an older report with no message to join to reads as no answer, with nothing guessed', async () => {
     seedQuestion('wi_q', 'It exports wave(name).')
     const row = await get('/api/inspect/work/wi_q')
-    expect(row.stage).toEqual({ key: 'ended/answered', label: 'Answered', waitingOn: 'none' })
-    expect(row.turnOutcome).toBe('answered')
-    expect(row.answer).toBe('It exports wave(name).')
+    expect(row.stage).toEqual({ key: 'ended/no-answer', label: 'No answer', waitingOn: 'none' })
+    expect(row.answer).toBeNull()
+  })
+
+  it('a turn that never finished the protocol: No answer, its record says why, and it ends no work', async () => {
+    await app.close()
+    app = serverWith(service(async () => ({ ack: 'I will check.', protocolIncomplete: true })))
+    const posted = await app.inject({
+      method: 'POST',
+      url: '/api/chat/messages',
+      payload: { text: 'what does this do?', repoId: 'repo_a' },
+    })
+    const { workItemId } = posted.json() as { workItemId: string }
+    const row = await get(`/api/inspect/work/${workItemId}`)
+    expect(row.state).toBe('planning')
+    expect(row.stage).toEqual({ key: 'ended/no-answer', label: 'No answer', waitingOn: 'none' })
+    expect(row.reason).toBe('The meta agent stopped without answering')
+    const types = store.events.read(`work:${workItemId}`).map((event) => event.type)
+    expect(types).toContain('turn_incomplete')
+    const [line] = await get('/api/chat/messages?repoId=repo_a')
+    expect(line.ackText).toBe('I will check.')
   })
 
   it('a question the turn answered: the row says Answered, and the chat has it once', async () => {
@@ -284,11 +302,6 @@ describe('a turn that ended with no plan is not work in progress', () => {
     seedQuestion('wi_other')
     event('work:wi_other', 1, 'result_reported', { summary: 'older', at: LATER }, LATER)
     expect((await get('/api/inspect/work/wi_other')).answer).toBeNull()
-  })
-
-  it('a reply carrying a key leaves redacted', async () => {
-    seedQuestion('wi_key', 'use sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
-    expect((await get('/api/inspect/work/wi_key')).answer).not.toContain('sk-ant-api03')
   })
 })
 

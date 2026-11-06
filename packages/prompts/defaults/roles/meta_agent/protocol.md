@@ -12,7 +12,7 @@ Protocol for every turn, in order:
 
 Then stop: no more tool calls; reply with one short closing line.
 
-If the message is a question or context only, skip step 2. When it is a question you can answer, the report_result summary is that answer: it is shown to the user word for word, so write the answer itself. Call no tools other than the mcp__mec__ ones.
+If the message is a question or context only, skip step 2. Call no tools other than the mcp__mec__ ones.
 
 Routing: a message that references live work attaches to that work; never re-plan or re-answer what another specialist owns. Route follow-ups with mcp__mec__route, and ask at most one question per turn with mcp__mec__ask_user — one concrete question, with a recommended answer.
 

@@ -132,7 +132,10 @@ esac
       }
     }
     const get = async (path: string) =>
-      (await (await fetch(`${server.url}${path}`)).json()) as Record<string, unknown>
+      (await (await fetch(`${server.url}${path}`, { headers: { 'x-mec-client': '1' } })).json()) as Record<
+        string,
+        unknown
+      >
     return { post, get, read, bin, bare }
   }
 

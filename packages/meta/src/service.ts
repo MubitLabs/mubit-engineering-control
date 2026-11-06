@@ -137,6 +137,8 @@ export type MetaDecision = {
   escalated?: boolean
   /** The compiled prompt revision the turn ran under, recorded on the plan snapshot. */
   bundleRevision?: string
+  /** The planner ended without finishing the protocol, even after its corrective retry. */
+  protocolIncomplete?: boolean
 }
 
 /** The wake descriptor: why a turn runs (user message, specialist report, answered question). */
@@ -935,6 +937,11 @@ export class MetaAgentService {
       const quiet = input.wake === true && !asked && this.#hasNoNews(workItemId, input.text)
       if (input.wake === true && !quiet) this.#recordTold(workItemId)
       if (spoken !== undefined) this.#endIfAnswered(workItemId, input.messageId, at)
+      else if (decision.protocolIncomplete === true && !asked) {
+        // Nothing more runs on this turn, and Work says No answer from it. The record says why.
+        const facts = { workItemId, messageId: input.messageId, at }
+        this.#appendEvent(`work:${workItemId}`, 'turn_incomplete', facts, at)
+      }
       this.#saveMessage(input, {
         routing: 'new_work',
         at,

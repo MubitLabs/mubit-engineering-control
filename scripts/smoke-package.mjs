@@ -13,7 +13,17 @@
  */
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -37,7 +47,10 @@ function waitForAnnounce(child) {
     child.stdout.on('data', read)
     child.stderr.on('data', read)
     child.once('exit', (code) => reject(new Error(`the server did not start (exit ${code}): ${output}`)))
-    setTimeout(() => reject(new Error(`the server did not start in ${BOOT_MS}ms: ${output}`)), BOOT_MS).unref()
+    setTimeout(
+      () => reject(new Error(`the server did not start in ${BOOT_MS}ms: ${output}`)),
+      BOOT_MS,
+    ).unref()
   })
 }
 
@@ -54,7 +67,9 @@ async function checkCatalogue(url) {
   const served = (await readJson(`${url}/api/prompts`)).parts.map((part) => part.id).sort()
   const missing = expected.filter((path) => !served.includes(path))
   if (missing.length > 0) {
-    throw new Error(`the prompt catalogue serves ${served.length} of ${expected.length} parts: ${missing.join(', ')} missing`)
+    throw new Error(
+      `the prompt catalogue serves ${served.length} of ${expected.length} parts: ${missing.join(', ')} missing`,
+    )
   }
 }
 
@@ -64,7 +79,9 @@ async function checkModels(url, packageDir) {
   if (provenance.path !== inside) {
     throw new Error(`the models table came from ${provenance.path}, not from inside the package`)
   }
-  const shipped = createHash('sha256').update(readFileSync(join(shippedDefaults, 'models.yaml'))).digest('hex')
+  const shipped = createHash('sha256')
+    .update(readFileSync(join(shippedDefaults, 'models.yaml')))
+    .digest('hex')
   if (provenance.sha256 !== shipped) throw new Error('the models table differs from the shipped one')
 }
 

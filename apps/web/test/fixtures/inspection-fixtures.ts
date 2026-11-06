@@ -180,6 +180,7 @@ const quietDetail = {
   planRevision: 1,
   delegation: [],
   delivery: NO_DELIVERY,
+  retry: null,
   coverage: UNCOVERED,
   cursors: {},
   cursorsTruncated: 0,

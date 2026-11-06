@@ -223,7 +223,7 @@ export function workGroups(rows: readonly WorkRow[], filter: RepoFilter): readon
 }
 
 export interface WorkAction {
-  kind: 'hold' | 'lift' | 'stop'
+  kind: 'retry' | 'hold' | 'lift' | 'stop'
   label: string
   workItemId: string
   repoId: string
@@ -233,16 +233,34 @@ export interface WorkAction {
 const whereLabel = (row: WorkRow, filter: RepoFilter | null): string =>
   filter?.kind === 'all' ? ` in ${row.repoLabel ?? row.repoId}` : ''
 
+/** A delivery's retry asks you again; it never says the thing itself will happen. */
+const RETRY_LABELS: Record<NonNullable<WorkDetail['retry']>['kind'], string> = {
+  integration: 'Retry integration',
+  push: 'Ask to push again',
+  pr: 'Ask to open the pull request again',
+}
+
 export function workActions(
   row: WorkRow,
   filter: RepoFilter,
   hold: WorkDetail['hold'],
+  retry: WorkDetail['retry'] = null,
 ): readonly WorkAction[] {
   const { repoId } = row
   if (repoId === null || row.readOnly || ended(row)) return []
   const where = whereLabel(row, filter)
   const held = hold !== null || stageGroup(row) === 'held'
   return [
+    ...(retry === null || held
+      ? []
+      : [
+          {
+            kind: 'retry' as const,
+            label: `${RETRY_LABELS[retry.kind]}${where}`,
+            workItemId: row.id,
+            repoId,
+          },
+        ]),
     {
       kind: held ? 'lift' : 'hold',
       label: `${held ? 'Lift hold' : 'Hold'}${where}`,
@@ -281,7 +299,11 @@ function deliveryLabel(detail: WorkDetail): string {
   if (!detail.coverage.delivery) return 'Delivery is not recorded yet'
   const { stage, prNumber } = detail.delivery
   const label = DELIVERY_LABELS[stage]
-  return prNumber !== null ? `${label}, pull request #${prNumber}` : label
+  const line = prNumber !== null ? `${label}, pull request #${prNumber}` : label
+  // A blocked item already shows its reason; a declined card leaves the work in its working group.
+  return detail.retry === null || detail.retry.kind === 'integration'
+    ? line
+    : `${line}. ${detail.retry.reason}`
 }
 
 /** Sets M1.3's intent on the item's own repository, never on the selected one. */
@@ -353,7 +375,7 @@ export function deliveryDetail(detail: WorkDetail, filter: RepoFilter | null): D
       parent: link.parentAttemptId,
       child: link.childAttemptId,
     })),
-    actions: workActions(detail, filter ?? { kind: 'all' }, detail.hold),
+    actions: workActions(detail, filter ?? { kind: 'all' }, detail.hold, detail.retry),
     discuss: discussAction(detail, filter),
   }
 }

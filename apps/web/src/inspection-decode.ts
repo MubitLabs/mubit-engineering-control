@@ -271,6 +271,7 @@ export function decodeWorkDetail(raw: unknown): WorkDetail {
   const path = '/api/inspect/work/:id'
   const body = obj(path, raw, 'the body')
   const hold = body.hold === null ? null : obj(path, body.hold, 'hold')
+  const retry = body.retry === null ? null : obj(path, body.retry, 'retry')
   return {
     ...workRow(path, body, 'the body'),
     originMessageId: strOrNull(path, body.originMessageId, 'originMessageId'),
@@ -290,6 +291,13 @@ export function decodeWorkDetail(raw: unknown): WorkDetail {
       }
     }),
     delivery: delivery(path, body.delivery, 'delivery'),
+    retry:
+      retry === null
+        ? null
+        : {
+            kind: oneOf(path, retry.kind, 'retry.kind', ['integration', 'push', 'pr']),
+            reason: str(path, retry.reason, 'retry.reason'),
+          },
     coverage: coverage(path, body.coverage, 'coverage'),
     cursors: numberRecord(path, body.cursors, 'cursors'),
     cursorsTruncated: num(path, body.cursorsTruncated, 'cursorsTruncated'),

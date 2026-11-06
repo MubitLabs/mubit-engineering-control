@@ -87,6 +87,7 @@ const wireDetail = (row: MockRow) => ({
   tasksTruncated: 0,
   delegation: [],
   delivery: { stage: 'none', branch: null, headSha: null, prNumber: null, prUrl: null },
+  retry: null,
   coverage: { reports: false, checks: false, diff: false, activity: false, usage: false, delivery: false },
   cursors: {},
   cursorsTruncated: 0,

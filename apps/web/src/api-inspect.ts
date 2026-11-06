@@ -112,4 +112,5 @@ export const inspectApi = {
   hold: (id: string) => command(`/api/work/${encoded(id)}/hold`),
   lift: (id: string) => command(`/api/work/${encoded(id)}/lift`),
   stop: (id: string) => command(`/api/work/${encoded(id)}/stop`),
+  retry: (id: string) => command(`/api/work/${encoded(id)}/retry`),
 }

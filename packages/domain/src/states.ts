@@ -119,6 +119,7 @@ export const TASK_EVENTS = [
   'integration_conflict',
   'block',
   'unblock',
+  'integration_retry',
   'cancel',
 ] as const
 export type TaskEvent = (typeof TASK_EVENTS)[number]
@@ -142,6 +143,8 @@ export const TASK_MACHINE: TransitionTable<TaskState, TaskEvent> = [
   { from: 'accepted', event: 'block', to: 'blocked' },
   { from: 'accepted', event: 'cancel', to: 'cancelled' },
   { from: 'blocked', event: 'unblock', to: 'ready' },
+  // A person's retry of a refused integration: its accepted head still stands, so nothing reruns.
+  { from: 'blocked', event: 'integration_retry', to: 'accepted' },
   { from: 'blocked', event: 'cancel', to: 'cancelled' },
 ]
 

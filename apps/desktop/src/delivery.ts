@@ -25,7 +25,16 @@ import {
   transition,
   WORK_ITEM_MACHINE,
 } from '@mec/domain'
-import { git, gitLines, headSha, mergeIntoIntegration, prepareMidMergeRepair, Worktrees } from '@mec/git'
+import {
+  clearMergePath,
+  git,
+  gitLines,
+  headSha,
+  mergeIntoIntegration,
+  prepareMidMergeRepair,
+  recordBootstrapOutput,
+  Worktrees,
+} from '@mec/git'
 import {
   type ControllerDeps,
   type ControllerTask,
@@ -46,8 +55,10 @@ import {
   processingOf,
   repairEvidence,
   repoFields,
+  revalidateWork,
   workResultOf,
 } from '@mec/meta'
+import { loadPolicy } from '@mec/policy'
 import { buildAgentEnv, runCheck } from '@mec/runtime'
 import { redact } from '@mec/slots'
 import { argvOf, commitIdentity } from './attempt-launch'
@@ -86,6 +97,56 @@ const RETRY_MS = 30_000
 const TITLE_CHARS = 72
 
 const OPEN_STATES: readonly string[] = ['executing', 'reviewing', 'integrating']
+
+/** What the integration path blocks with. Any other block needs more than the same step again. */
+const INTEGRATION_BLOCK = /^(integration: |bootstrap_failed: |checks failed on |could not run )/
+
+const OFFER_CHARS = 300
+/** How many cleared paths an event names; the count says the rest. */
+const CLEARED_PATHS = 50
+
+export type RetryKind = 'integration' | 'push' | 'pr'
+export type RetryOffer = { kind: RetryKind; reason: string }
+export type RetryOutcome =
+  | { status: 'retrying'; kind: RetryKind }
+  | { status: 'missing' }
+  | { status: 'refused'; error: string }
+
+/** An accepted task integration refused. Its head stands, so a retry merges it and starts nothing. */
+const refusedTask = (task: StoreDoc): boolean =>
+  task.status === 'blocked' && typeof task.acceptedHead === 'string'
+
+/**
+ * What a person may ask for again (§11: blocked work and failed deliveries, never as a loop). A
+ * delivery's retry is a new card (§13). Held and stopped work offers nothing, and neither does an
+ * open repair, whose worktree is not a retry's to run in.
+ */
+export function retryOffer(store: Store, work: StoreDoc): RetryOffer | undefined {
+  if (isTerminal(work) || isHeld(work) || mandateOf(work).status === 'withdrawn') return undefined
+  const id = String(work.id)
+  const clean = (text: string): string => redact(text, [], []).slice(0, OFFER_CHARS)
+  if (work.state === 'blocked') {
+    const reason = String(work.blockedReason ?? '')
+    if (!INTEGRATION_BLOCK.test(reason)) return undefined
+    const failed = store.engines.get(integrationDocId(id))?.failed as { repairing?: boolean } | undefined
+    if (failed?.repairing === true) return undefined
+    const tasks = store.tasks.list({ workItemId: id })
+    const ready = tasks.some(
+      (task) => task.status === 'accepted' || task.status === 'integrated' || refusedTask(task),
+    )
+    return ready ? { kind: 'integration', reason: clean(reason) } : undefined
+  }
+  if (!OPEN_STATES.includes(String(work.state))) return undefined
+  const doc = store.engines.get(deliveryDocId(id))
+  if (doc?.stage !== 'declined' && doc?.stage !== 'failed') return undefined
+  const kind = typeof doc.prCardId === 'string' ? 'pr' : 'push'
+  const step = kind === 'pr' ? 'pull request' : 'push'
+  const reason =
+    doc.stage === 'failed'
+      ? `The ${step} failed: ${String(doc.error ?? 'no detail')}`
+      : `The ${step} card was ${String(doc.answer ?? 'declined')}`
+  return { kind, reason: clean(reason) }
+}
 
 export type DeliveryStage =
   | 'local_complete'
@@ -157,6 +218,55 @@ export class Delivery {
     this.#running = this.#running.then(async () => {
       this.#queued = false
       await this.#pass().catch((error) => console.error(`[delivery] pass failed: ${String(error)}`))
+    })
+  }
+
+  /**
+   * The owner's retry. The check and the move share one transaction, so a second press finds
+   * nothing to retry; a pass does the work, and it skips held work as it always does. The mandate
+   * revalidates first (§10 "before every resume"). Nothing leaves the machine here: a delivery
+   * only goes back to the step that opens a card.
+   */
+  retry(workItemId: string): RetryOutcome {
+    const at = this.#now
+    const outcome = this.#store.atomic((): RetryOutcome => {
+      const work = this.#store.workItems.get(workItemId)
+      if (work === undefined) return { status: 'missing' }
+      if (mandateOf(work).status === 'withdrawn') return { status: 'refused', error: 'mandate_withdrawn' }
+      if (isHeld(work)) return { status: 'refused', error: 'held' }
+      const authority = revalidateWork(work, at, loadPolicy(this.#policyText).versionHash)
+      if (!authority.ok) return { status: 'refused', error: `mandate_${authority.reason}` }
+      const offer = retryOffer(this.#store, work)
+      if (offer === undefined) return { status: 'refused', error: 'nothing_to_retry' }
+      if (offer.kind === 'integration') this.#resumeIntegration(work, at)
+      else this.#askAgain(workItemId, offer.kind)
+      this.#workEvent(workItemId, 'retry_requested', { kind: offer.kind })
+      return { status: 'retrying', kind: offer.kind }
+    })
+    if (outcome.status === 'retrying') this.kick()
+    return outcome
+  }
+
+  #resumeIntegration(work: StoreDoc, at: string): void {
+    for (const task of this.#store.tasks.list({ workItemId: String(work.id) }).filter(refusedTask)) {
+      const { blockedReason: _reason, ...rest } = task
+      const status = transition(TASK_MACHINE, String(task.status), 'integration_retry')
+      this.#store.tasks.save({ ...rest, status, updatedAt: at })
+    }
+    const { blockedReason: _reason, ...rest } = work
+    const state = transition(WORK_ITEM_MACHINE, String(work.state), 'resume_integrating')
+    this.#store.workItems.save({ ...rest, state, updatedAt: at })
+  }
+
+  /** Back to the step before the card that was answered. The old card stays as it was settled. */
+  #askAgain(workItemId: string, kind: 'push' | 'pr'): void {
+    this.#write(workItemId, {
+      stage: kind === 'pr' ? 'pushed' : 'local_complete',
+      ...(kind === 'pr' ? { prCardId: undefined } : { pushCardId: undefined }),
+      answer: undefined,
+      prTarget: undefined,
+      error: undefined,
+      retryAt: undefined,
     })
   }
 
@@ -289,6 +399,8 @@ export class Delivery {
         return undefined
       }
     }
+    // No agent has been here, so all that is dirty is the machine's, an interrupted run's included.
+    if (bootstrap.length > 0) await recordBootstrapOutput(worktree, {})
     const doc: StoreDoc = {
       id: integrationDocId(id),
       workItemId: id,
@@ -335,14 +447,20 @@ export class Delivery {
           })
           return read.code === 0 ? read.stdout.trim() : undefined
         },
-        merge: async (branch, message) =>
-          mergeIntoIntegration({
+        merge: async (branch, message) => {
+          const paths = await clearMergePath({ worktree, taskBranch: branch })
+          if (paths.length > 0) {
+            const body = { branch, count: paths.length, paths: paths.slice(0, CLEARED_PATHS) }
+            this.#store.atomic(() => this.#workEvent(id, 'integration_output_cleared', body))
+          }
+          return mergeIntoIntegration({
             gitDir,
             worktree,
             taskBranch: branch,
             message,
             identity: await commitIdentity(registered, gitDir),
-          }),
+          })
+        },
         prepareRepair: (paths) => prepareMidMergeRepair({ sourceWorktree: worktree, conflictPaths: paths }),
       },
       checks: () => this.#combinedChecks(id, repo, worktree),
@@ -445,16 +563,19 @@ export class Delivery {
 
   /** Sets these fields on the stored doc as it is now. `undefined` removes one. */
   #patch(workItemId: string, fields: Record<string, Json | undefined>): void {
-    this.#store.atomic(() => {
-      const doc = this.#doc(workItemId)
-      if (doc === undefined) return
-      const next: StoreDoc = { ...doc, updatedAt: this.#now }
-      for (const [name, value] of Object.entries(fields)) {
-        if (value === undefined) delete next[name]
-        else next[name] = value
-      }
-      this.#store.engines.save(next)
-    })
+    this.#store.atomic(() => this.#write(workItemId, fields))
+  }
+
+  /** `#patch` for a caller already in a transaction. */
+  #write(workItemId: string, fields: Record<string, Json | undefined>): void {
+    const doc = this.#doc(workItemId)
+    if (doc === undefined) return
+    const next: StoreDoc = { ...doc, updatedAt: this.#now }
+    for (const [name, value] of Object.entries(fields)) {
+      if (value === undefined) delete next[name]
+      else next[name] = value
+    }
+    this.#store.engines.save(next)
   }
 
   /** §13, §15: the integration head moved past what the delivery speaks for. */
@@ -761,7 +882,7 @@ export class Delivery {
     else if (outcome.status !== 'stale') this.#declined(id, outcome)
   }
 
-  /** §13: the local result stands, the PR target stays pending, and nothing retries by itself. */
+  /** §13: the local result stands, the PR target stays pending, and only the owner's `retry` asks again. */
   #declined(id: string, outcome: CardOutcome): void {
     this.#patch(id, { stage: 'declined', answer: outcome.status, prTarget: 'pending' })
   }

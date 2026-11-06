@@ -8,6 +8,7 @@
  */
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { type BootstrapOutput, unstageBootstrapOutput } from './bootstrap-output'
 import { git, gitLines } from './exec'
 import { isMidMerge } from './merge'
 import { headSha } from './worktrees'
@@ -42,6 +43,8 @@ export type CompleteMidMergeOptions = {
   name: string
   email: string
   message: string
+  /** What the bootstrap left here: a merge commit carries it no more than a task commit does. */
+  keepOut?: BootstrapOutput
 }
 
 export type CompleteMidMergeResult = { mergeSha: string; parentCount: number }
@@ -51,6 +54,17 @@ export async function completeMidMerge(opts: CompleteMidMergeOptions): Promise<C
     throw new Error(`worktree is not mid-merge: ${JSON.stringify(opts.worktree)}`)
   }
   await git(['add', '--all'], { cwd: opts.worktree })
+  if (opts.keepOut !== undefined) {
+    // What the merge itself brings is the task's, whatever bytes the bootstrap left on that path.
+    const brought = new Set(
+      await gitLines(['diff', '--name-only', '--no-renames', 'HEAD...MERGE_HEAD'], { cwd: opts.worktree }),
+    )
+    const paths = opts.keepOut.paths.filter((path) => !brought.has(path))
+    if (paths.length > 0) {
+      const head = await headSha(opts.worktree)
+      await unstageBootstrapOutput(opts.worktree, { head, paths })
+    }
+  }
   await git(
     [
       '-c',

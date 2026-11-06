@@ -458,7 +458,10 @@ export async function startServer(opts: {
     // §20: an on-demand backup of the live store.
     backups: { take: () => backupStore(db, opts.dataDir, join(opts.dataDir, 'backups')) },
     ...(process.env.MEC_FAKE_ENGINE === '1' && { setupDecide: scriptedSetupDecide }),
-    ...(delivery !== undefined && { delivery: delivery.hooks }),
+    ...(delivery !== undefined && {
+      delivery: delivery.hooks,
+      retryWork: (workItemId: string) => delivery.retry(workItemId),
+    }),
     parked: {
       switchSlot: (input) => requestSwitch(switchDeps, input),
       resumeNow: (workItemId) => resumeParked(parkDeps, { workItemId, explicit: true }),

@@ -33,9 +33,11 @@ import type {
 import { AttemptBrief as AttemptBriefSchema, Later, ModelRequest } from '@mec/contracts'
 import { BUILTIN_ROSTER, type BuiltinRole } from '@mec/domain'
 import {
+  bootstrapOutput,
   cachedDefaultTip,
   commitAll,
   completeMidMerge,
+  dirtyFiles,
   excludeFromWorktree,
   git,
   gitLines,
@@ -43,6 +45,7 @@ import {
   historyTouches,
   isMidMerge,
   RepoCache,
+  recordBootstrapOutput,
   Worktrees,
   worktreeAdminDir,
 } from '@mec/git'
@@ -162,21 +165,27 @@ const CONFLICT_MARKER = /^(<{7}|>{7}) /m
  * What an attempt's tree becomes when it ends. A repair in a mid-merge worktree ends the merge
  * (§14), and `completeMidMerge` proves two parents, so it can never pass as an ordinary commit.
  * A file still carrying markers was not resolved, and a commit would hide that. Anything else is
- * `commitAll`, with its `.mec/` exclusion.
+ * `commitAll`, with its `.mec/` exclusion. Neither carries what the bootstrap left untouched (§14).
  */
 export async function commitWork(
   path: string,
   message: string,
   identity: { name: string; email: string },
 ): Promise<string | null> {
-  if (!(await isMidMerge(path))) return commitAll(path, message, identity)
+  const keepOut = await bootstrapOutput(path)
+  if (!(await isMidMerge(path))) return commitAll(path, message, identity, keepOut)
   const unmerged = await gitLines(['diff', '--name-only', '--diff-filter=U'], { cwd: path })
   const marked = unmerged.filter((file) => {
     const full = join(path, file)
     return existsSync(full) && CONFLICT_MARKER.test(readFileSync(full, 'utf8'))
   })
   if (marked.length > 0) throw new Error(`conflict markers remain in ${marked.join(', ')}`)
-  const { mergeSha } = await completeMidMerge({ worktree: path, message, ...identity })
+  const { mergeSha } = await completeMidMerge({
+    worktree: path,
+    message,
+    ...identity,
+    ...(keepOut !== undefined && { keepOut }),
+  })
   return mergeSha
 }
 
@@ -436,12 +445,14 @@ export class AttemptLauncher {
       return { name, cmd, args, cwd: worktree, env: hostEnv }
     }
     const bootstrap = Array.isArray(repo.bootstrap) ? repo.bootstrap.map(String) : []
+    const beforeBootstrap = await dirtyFiles(worktree)
     for (const [index, command] of bootstrap.entries()) {
       const outcome = await runCheck(repoCommand(`bootstrap_${index + 1}`, command))
       if (outcome.status !== 'passed') {
         throw refuse(`bootstrap_failed: ${command}: ${outcome.logTail.slice(-400)}`)
       }
     }
+    if (bootstrap.length > 0) await recordBootstrapOutput(worktree, beforeBootstrap)
 
     const resolvedModel = this.#model(task, slot, engine)
     if (resolvedModel === undefined && row.modelRequired) {

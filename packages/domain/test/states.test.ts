@@ -82,6 +82,7 @@ describe('task machine', () => {
       'awaiting_review --review_accepted--> accepted',
       'awaiting_review --review_sent_back--> ready',
       'blocked --cancel--> cancelled',
+      'blocked --integration_retry--> accepted',
       'blocked --unblock--> ready',
       'ready --attempt_started--> active',
       'ready --block--> blocked',

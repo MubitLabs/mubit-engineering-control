@@ -66,6 +66,7 @@ import {
 import type { InspectionReads } from '@mec/store'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 import { type BackupControl, liveSlot, registerConfigRoutes, repositoryRevision } from './config-routes'
+import type { RetryOutcome } from './delivery'
 import { buildDoctorReport } from './doctor'
 import type { HealthSnapshot, PartEntry } from './health'
 import { hostIsLoopback, registerInspectionRoutes, scrub } from './inspection'
@@ -121,6 +122,8 @@ export type ServerDeps = {
   ghRun?: GhRun
   /** The result path's seam on the release routes (`delivery.ts`). */
   delivery?: Pick<ReleaseDeps, 'pushSource' | 'onCardSettled' | 'cardBlocked'>
+  /** §11: the owner's retry of a blocked integration or a declined or failed delivery. */
+  retryWork?: (workItemId: string) => RetryOutcome
   /** The push card's git; tests may inject it, production uses the argv-only default. */
   gitExec?: GitExec
   /**
@@ -998,6 +1001,16 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     if (outcome.status === 'missing') reply.code(404).send({ error: 'unknown work item' })
     else reply.code(409).send({ error: outcome.error })
     return
+  })
+
+  // §11: the owner asks once. A delivery's answer is a new card, so nothing leaves the machine here.
+  app.post('/api/work/:id/retry', async (request, reply) => {
+    if (deps.retryWork === undefined) return reply.code(404).send({ error: 'retry is not available' })
+    const { id } = request.params as { id: string }
+    const outcome = deps.retryWork(id)
+    if (outcome.status === 'retrying') return { id, status: 'retrying', kind: outcome.kind }
+    if (outcome.status === 'missing') return reply.code(404).send({ error: 'unknown work item' })
+    return reply.code(409).send({ error: outcome.error })
   })
 
   app.post('/api/work/:id/stop', async (request, reply) => {

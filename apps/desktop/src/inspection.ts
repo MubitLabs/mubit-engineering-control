@@ -41,7 +41,7 @@ import {
   MAX_PAGE_LIMIT,
 } from '@mec/store'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { deliveryDocId } from './delivery'
+import { deliveryDocId, type RetryOffer, retryOffer } from './delivery'
 
 // ── The wire shape (handoff 30, "The wire shape") ────────────────────────────────────────────
 
@@ -103,6 +103,8 @@ export type WorkDetail = WorkRow & {
   tasksTruncated: number
   delegation: { parentAttemptId: string; childAttemptId: string }[]
   delivery: DeliveryView
+  /** What the owner may ask for again, and why it stopped. Null when a retry would answer nothing. */
+  retry: RetryOffer | null
   coverage: Coverage
   cursors: Record<string, number>
   /** Attempt streams left out of `cursors` (the work stream and the newest attempts are kept). */
@@ -964,6 +966,7 @@ class Inspector {
       // Parent and child attempts: empty until M2 records them, never inferred from dependencies.
       delegation: [],
       delivery: this.#deliveryOf(doc),
+      retry: retryOffer(this.#store, doc) ?? null,
       coverage: this.#coverage(attempts, doc),
       cursors: this.#reads.cursors([`work:${id}`, ...attemptStreams]),
       cursorsTruncated: attempts.length - attemptStreams.length,

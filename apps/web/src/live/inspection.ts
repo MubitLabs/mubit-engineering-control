@@ -52,6 +52,7 @@ export interface InspectionClient {
   hold(id: string): Promise<CommandResult>
   lift(id: string): Promise<CommandResult>
   stop(id: string): Promise<CommandResult>
+  retry(id: string): Promise<CommandResult>
   resolve(id: string, answer: ResolveAnswer): Promise<ResolveResult>
   answer(id: string, answer: string): Promise<void>
   activity(id: string, cursor: string | null, signal?: AbortSignal): Promise<Page<ActivityItem>>
@@ -133,6 +134,7 @@ const COMMAND_WORDS: Record<string, string> = {
   lifted: 'Hold lifted.',
   free: 'This work was not held.',
   stopped: 'Stopped.',
+  retrying: 'Asked once more. Anything that would leave this machine still comes to you as a card.',
 }
 
 function commandFailure(error: unknown): string {
@@ -528,7 +530,7 @@ export function createInspection(client: InspectionClient) {
         })
     },
 
-    /** Hold, lift and stop act on the item's own id, whatever is selected or filtered. */
+    /** Retry, hold, lift and stop act on the item's own id, whatever is selected or filtered. */
     act(action: WorkAction): void {
       const key = `${action.kind}:${action.workItemId}`
       if (settling.has(key)) return

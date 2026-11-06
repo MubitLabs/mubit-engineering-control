@@ -59,6 +59,7 @@ esac
     tasks: MetaPlanTask[],
     checks: { name: string; cmd: string }[],
     steps: unknown[] = [{ init: true }, { sh: 'echo made > "$MEC_ATTEMPT_ID.txt"' }, { result: 'completed' }],
+    bootstrap: string[] = [],
   ) {
     const root = mkdtempSync(join(tmpdir(), 'mec-delivery-e2e-'))
     roots.push(root)
@@ -94,7 +95,7 @@ esac
     migrate(db, MIGRATIONS_v1)
     const store = new SqliteStore(db)
     store.atomic(() => {
-      store.engines.save({ id: REPO, url: repo, bootstrap: [], checks, trust: false })
+      store.engines.save({ id: REPO, url: repo, bootstrap, checks, trust: false })
       store.slots.save({
         id: 'slot_linked',
         engine: 'claude',
@@ -130,7 +131,9 @@ esac
         open.close()
       }
     }
-    return { post, read, bin, bare }
+    const get = async (path: string) =>
+      (await (await fetch(`${server.url}${path}`)).json()) as Record<string, unknown>
+    return { post, get, read, bin, bare }
   }
 
   // A fresh script's first exec has taken 25 s on this machine late in a run (M2.2's record).
@@ -245,5 +248,90 @@ esac
       worktree: attempts[0]?.worktree,
       branch: attempts[0]?.branch,
     })
+  }, 200_000)
+
+  /** `npm install` in a repository with no lockfile: it writes a file nothing ignores. */
+  const LOCKFILE_BOOTSTRAP = ['cp a.txt package-lock.json']
+  const LOCK = 'package-lock.json'
+
+  it('a file the bootstrap wrote reaches no task commit, and integration gets to the push card', async () => {
+    const checks = [{ name: 'unit', cmd: `test -f ${LOCK}` }]
+    const r = await serve([task('first'), task('second', ['first'])], checks, undefined, LOCKFILE_BOOTSTRAP)
+    await r.post('/api/chat/messages', { text: 'Add the audit log', repoId: REPO })
+    const cards = () => r.read((store) => store.confirmations.list().filter((doc) => doc.cls === 'push'))
+    const state = () => r.read((store) => store.workItems.list()[0]?.state)
+    await until(() => cards().length === 1 || state() === 'blocked')
+    const facts = r.read((store) => ({
+      work: store.workItems.list()[0] as StoreDoc,
+      tasks: store.tasks.list(),
+      integration: store.engines.list().find((doc) => String(doc.id).startsWith('integration/')) as StoreDoc,
+    }))
+    expect(facts.work.blockedReason).toBeUndefined()
+    expect(facts.tasks.map((doc) => doc.status)).toEqual(['integrated', 'integrated'])
+    const worktree = String(facts.integration.worktree)
+    for (const doc of facts.tasks) {
+      const head = String(doc.acceptedHead)
+      expect(gitIn(worktree, 'ls-tree', '-r', '--name-only', head)).not.toContain(LOCK)
+    }
+    expect(gitIn(worktree, 'ls-tree', '-r', '--name-only', 'HEAD')).not.toContain(LOCK)
+    // The bootstrap's file is still what the checks ran beside.
+    expect(readFileSync(join(worktree, LOCK), 'utf8')).toBe('one\n')
+    expect(facts.integration.combined).toMatchObject({ passed: true })
+  }, 200_000)
+
+  it("a bootstrap file the specialist changed is the specialist's, and it merges over the bootstrap's", async () => {
+    const steps = [{ init: true }, { sh: `echo chosen > ${LOCK}` }, { result: 'completed' }]
+    const checks = [{ name: 'unit', cmd: 'test -f a.txt' }]
+    const r = await serve([task('only')], checks, steps, LOCKFILE_BOOTSTRAP)
+    await r.post('/api/chat/messages', { text: 'Pin the lockfile', repoId: REPO })
+    const cards = () => r.read((store) => store.confirmations.list().filter((doc) => doc.cls === 'push'))
+    const state = () => r.read((store) => store.workItems.list()[0]?.state)
+    await until(() => cards().length === 1 || state() === 'blocked')
+    const facts = r.read((store) => ({
+      work: store.workItems.list()[0] as StoreDoc,
+      integration: store.engines.list().find((doc) => String(doc.id).startsWith('integration/')) as StoreDoc,
+    }))
+    expect(facts.work.blockedReason).toBeUndefined()
+    const worktree = String(facts.integration.worktree)
+    expect(gitIn(worktree, 'show', `HEAD:${LOCK}`)).toBe('chosen')
+    const events = r.read((store) => store.events.read(`work:${String(facts.work.id)}`))
+    expect(events.find((event) => event.type === 'integration_output_cleared')?.body).toMatchObject({
+      paths: [LOCK],
+    })
+  }, 200_000)
+
+  it('the retry route opens one new card for a declined push, whoever presses it twice', async () => {
+    const r = await serve([task('only')], [{ name: 'unit', cmd: 'test -f a.txt' }])
+    await r.post('/api/chat/messages', { text: 'Add the audit log', repoId: REPO })
+    const cards = () => r.read((store) => store.confirmations.list().filter((doc) => doc.cls === 'push'))
+    await until(() => cards().length === 1)
+    const id = String(r.read((store) => store.workItems.list()[0]?.id))
+    await r.post(`/api/inbox/${String(cards()[0]?.id)}/resolve`, { answer: 'deny' })
+    const stage = () => r.read((store) => store.engines.get(`delivery/${id}`)?.stage)
+    await until(() => stage() === 'declined')
+    const offered = await r.get(`/api/inspect/work/${id}`)
+    expect(offered.retry).toEqual({ kind: 'push', reason: 'The push card was denied' })
+
+    await r.post(`/api/work/${id}/hold`, {})
+    expect((await r.get(`/api/inspect/work/${id}`)).retry).toBeNull()
+    const held = await r.post(`/api/work/${id}/retry`, {})
+    expect(held).toMatchObject({ status: 409, body: { error: 'held' } })
+    expect(stage()).toBe('declined')
+    await r.post(`/api/work/${id}/lift`, {})
+
+    const first = await r.post(`/api/work/${id}/retry`, {})
+    const second = await r.post(`/api/work/${id}/retry`, {})
+    expect(first).toMatchObject({ status: 200, body: { id, status: 'retrying', kind: 'push' } })
+    expect(second).toMatchObject({ status: 409, body: { error: 'nothing_to_retry' } })
+    await until(() => cards().length === 2)
+    expect(cards().map((card) => card.status)).toEqual(['denied', 'pending'])
+    await new Promise((resolve) => setTimeout(resolve, 4500))
+    expect(cards()).toHaveLength(2)
+
+    const unknown = await r.post('/api/work/wi_nothing/retry', {})
+    expect(unknown.status).toBe(404)
+    await r.post(`/api/work/${id}/stop`, {})
+    const stopped = await r.post(`/api/work/${id}/retry`, {})
+    expect(stopped).toMatchObject({ status: 409, body: { error: 'mandate_withdrawn' } })
   }, 200_000)
 })

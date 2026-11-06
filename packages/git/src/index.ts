@@ -1,3 +1,10 @@
+export type { BootstrapOutput, DirtyFiles } from './bootstrap-output'
+export {
+  bootstrapOutput,
+  clearMergePath,
+  dirtyFiles,
+  recordBootstrapOutput,
+} from './bootstrap-output'
 export type {
   CompleteMidMergeOptions,
   CompleteMidMergeResult,

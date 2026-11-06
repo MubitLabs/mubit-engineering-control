@@ -41,6 +41,8 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  /* Room for the focus ring when Tab lands on a control at the edge. */
+  scroll-padding-block: 8px;
 }
 
 .scroller:focus-visible {
@@ -547,6 +549,11 @@ kbd {
   text-align: left;
 }
 
+/* .delivery clips its rounded corners, and with them an outside ring. */
+.task-row:focus-visible {
+  outline-offset: -2px;
+}
+
 .task-row:hover {
   background: var(--hover);
 }
@@ -670,6 +677,7 @@ kbd {
 }
 
 .send {
+  flex-shrink: 0;
   width: var(--target-primary);
   padding: 0;
 }
@@ -902,6 +910,7 @@ kbd {
 }
 
 .tab {
+  min-width: var(--target);
   min-height: var(--target);
   padding: 8px 0;
   border-bottom: 2px solid transparent;
@@ -922,6 +931,7 @@ kbd {
 .inspector-body {
   padding: 24px 22px;
   overflow-y: auto;
+  scroll-padding-block: 8px;
 }
 
 .inspector-body:focus-visible {
@@ -1062,7 +1072,7 @@ button.choice:hover,
   min-height: 48px;
   padding: 12px 16px;
   border: 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--control-line);
   border-radius: 16px 16px 0 0;
   background: none;
 }
@@ -1274,6 +1284,7 @@ button.choice:hover,
   flex-shrink: 0;
   max-width: 45%;
   text-align: right;
+  white-space: normal;
 }
 
 .work-detail {
@@ -1330,9 +1341,18 @@ button.choice:hover,
   overflow-y: auto;
 }
 
+/* The list scrolls, so it clips an outside ring. */
+.search-results .choice:focus-visible {
+  outline-offset: -2px;
+}
+
 .glossary {
   max-height: 60dvh;
   overflow-y: auto;
+}
+
+.glossary:focus-visible {
+  outline-offset: -2px;
 }
 
 /* M3.3: Setup, Connections and Settings. */

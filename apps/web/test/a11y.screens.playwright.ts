@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import AxeBuilder from '@axe-core/playwright'
 import { expect, type Page, test } from '@playwright/test'
+import { cellsAt, openCell, THEMES, VIEWPORTS } from './matrix-cells'
 
 /**
  * The accessibility gate (axe) of the screens suite. Like the rest of it, deliberately NOT in CI
@@ -68,86 +69,17 @@ test('the lighthouse script exits non-zero on the broken page', async ({ baseURL
   expect(result.status).not.toBe(0)
 })
 
-// ── The six surfaces, three widths, two themes (M3.4 Stage B) ─────────────────────────────────
-
-const VIEWPORTS = [
-  { name: '1440', width: 1440, height: 900 },
-  { name: '1024', width: 1024, height: 768 },
-  { name: '390', width: 390, height: 844 },
-] as const
-const THEMES = ['light', 'dark'] as const
-
-const NEXT = '/test/fixtures/next-harness.html'
-const WORK = '/test/fixtures/work-harness.html'
-const CONFIG = '/test/fixtures/config-harness.html'
-
-/** `ready` is what must be on screen before axe reads it, so a half-drawn page cannot pass. */
-const SURFACES = [
-  { name: 'Conversation', url: `${NEXT}#chat`, ready: '.composer' },
-  { name: 'Work', url: `${WORK}#work`, ready: '.page h1' },
-  { name: 'Needs you', url: `${WORK}#needs`, ready: '.page h1' },
-  { name: 'Connections', url: `${CONFIG}#slots`, ready: '.connection' },
-  { name: 'Setup', url: `${CONFIG}#setup`, ready: '.page h1' },
-  { name: 'Settings', url: `${CONFIG}#settings`, ready: '.page h1' },
-] as const
-
-const STATES = [
-  { name: 'inspector', url: `${NEXT}?task=task_build&inspector=open#chat`, ready: '[role="tab"]' },
-  { name: 'empty', url: `${NEXT}?state=empty#chat`, ready: '.empty' },
-  { name: 'blocked', url: `${NEXT}?state=blocked&task=task_build#chat`, ready: '.conversation' },
-  { name: 'error', url: `${NEXT}?state=error#chat`, ready: '.conversation' },
-  { name: 'completed', url: `${NEXT}?state=completed#chat`, ready: '.conversation' },
-  { name: 'state notices', url: `${NEXT}?state=states#chat`, ready: '.shell' },
-  { name: 'work empty', url: `${WORK}?state=empty#work`, ready: '.page h1' },
-  { name: 'work failed', url: `${WORK}?state=failed#work`, ready: '.page h1' },
-  { name: 'needs empty', url: `${WORK}?state=empty#needs`, ready: '.page h1' },
-] as const
-
-async function openAt(page: Page, theme: string, url: string, ready: string): Promise<void> {
-  await page.addInitScript((value) => {
-    try {
-      localStorage.setItem('mec-next-theme', value)
-    } catch {}
-  }, theme)
-  await page.goto(url)
-  await expect(page.locator('.shell')).toBeVisible()
-  await expect(page.locator(ready).first()).toBeVisible()
-  // Contrast is read from the settled page, not from the middle of a colour transition.
-  await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)))
-}
+// ── The matrix of matrix-cells.ts: surfaces, states and sheets, three widths, two themes ──────
 
 for (const viewport of VIEWPORTS) {
   for (const theme of THEMES) {
     test.describe(`${viewport.name} ${theme}`, () => {
       test.use({ viewport: { width: viewport.width, height: viewport.height } })
 
-      for (const surface of SURFACES) {
-        test(`${surface.name} ${viewport.name} ${theme} has no violations`, async ({ page }) => {
-          await openAt(page, theme, surface.url, surface.ready)
-          await expectNoViolations(page, '.shell')
-        })
-      }
-
-      for (const state of STATES) {
-        test(`${state.name} ${viewport.name} ${theme} has no violations`, async ({ page }) => {
-          await openAt(page, theme, state.url, state.ready)
-          await expectNoViolations(page, '.shell')
-        })
-      }
-
-      test(`palette ${viewport.name} ${theme} has no violations`, async ({ page }) => {
-        await openAt(page, theme, `${NEXT}#chat`, '.composer')
-        await page.keyboard.press('Control+k')
-        await expect(page.getByRole('dialog')).toBeVisible()
-        await expectNoViolations(page, '[role="dialog"]')
-      })
-
-      if (viewport.width <= 760) {
-        test(`drawer ${viewport.name} ${theme} has no violations`, async ({ page }) => {
-          await openAt(page, theme, `${NEXT}#chat`, '.composer')
-          await page.getByRole('button', { name: 'Open navigation' }).click()
-          await expect(page.getByRole('dialog')).toBeVisible()
-          await expectNoViolations(page, '[role="dialog"]')
+      for (const cell of cellsAt(viewport.width)) {
+        test(`${cell.name} ${viewport.name} ${theme} has no violations`, async ({ page }) => {
+          await openCell(page, theme, cell)
+          await expectNoViolations(page, cell.surface ?? '.shell')
         })
       }
 
@@ -162,7 +94,7 @@ for (const viewport of VIEWPORTS) {
           }
           return route.fulfill({ json: [] })
         })
-        await openAt(page, theme, '/#chat', '.empty')
+        await openCell(page, theme, { name: 'default entry', url: '/#chat', ready: '.empty' })
         await expectNoViolations(page, '.shell')
       })
     })

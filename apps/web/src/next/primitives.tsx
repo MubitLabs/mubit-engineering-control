@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode, Ref } from 'react'
+import { type ButtonHTMLAttributes, type ReactNode, type Ref, useEffect, useRef } from 'react'
 
 export type ButtonVariant = 'default' | 'primary' | 'quiet' | 'text'
 
@@ -9,6 +9,23 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 export function Button({ variant = 'default', className, ...rest }: ButtonProps) {
   return <button type="button" className={`btn btn-${variant} ${className ?? ''}`.trim()} {...rest} />
+}
+
+/**
+ * A button that gives way to the form it opens takes focus with it: into the form on opening, and
+ * back to the button on closing, so neither one drops the keyboard on the page.
+ */
+export function useFormFocus(open: boolean) {
+  const opener = useRef<HTMLButtonElement>(null)
+  const form = useRef<HTMLDivElement>(null)
+  const was = useRef(open)
+  useEffect(() => {
+    if (was.current === open) return
+    was.current = open
+    if (open) form.current?.querySelector<HTMLElement>('input, select, textarea, button')?.focus()
+    else opener.current?.focus()
+  }, [open])
+  return { opener, form }
 }
 
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {

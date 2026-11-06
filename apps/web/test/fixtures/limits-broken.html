@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Limits broken on purpose</title>
+    <style>
+      body { margin: 0; background: #fff; color: #222; font-size: 14px; }
+      #tiny { font-size: 10px; }
+      #short { height: 20px; width: 20px; padding: 0; }
+      #primary { height: 34px; width: 120px; }
+      #faint-field { border: 1px solid #eee; background: #fff; height: 44px; width: 120px; }
+      #no-ring:focus { outline: none; }
+      #thin-ring:focus { outline: 1px solid #000; }
+      #pale-ring:focus { outline: 2px solid #f4f4f4; }
+      #slow { transition: color 400ms ease; height: 44px; width: 120px; }
+      #spin { animation: turn 2s linear infinite; }
+      @keyframes turn { to { transform: rotate(1turn); } }
+      #clip { overflow: hidden; width: 60px; }
+      #clip button { width: 120px; height: 44px; }
+      #cut-ring { overflow: hidden; height: 44px; }
+      #cut-ring button { width: 100%; height: 44px; }
+      #cut-ring button:focus { outline: 2px solid #000; outline-offset: 2px; }
+      #wide { width: 3000px; height: 1px; }
+      #off { position: absolute; left: -60px; top: 200px; width: 60px; height: 44px; }
+      #cut { width: 60px; height: 44px; overflow: hidden; white-space: nowrap; }
+    </style>
+  </head>
+  <body>
+    <p id="tiny">Text below the minimum</p>
+    <button id="short">S</button>
+    <button id="primary" class="btn-primary">Primary</button>
+    <input id="faint-field" aria-label="Faint field" />
+    <button id="no-ring">No ring</button>
+    <button id="thin-ring">Thin ring</button>
+    <button id="pale-ring">Pale ring</button>
+    <button id="slow">Slow</button>
+    <div id="spin">Spinning</div>
+    <div id="clip"><button>Clipped action</button></div>
+    <div id="cut-ring"><button>Ring cut off</button></div>
+    <button id="off">Off page</button>
+    <button id="cut">A label that does not fit</button>
+    <div id="wide"></div>
+  </body>
+</html>

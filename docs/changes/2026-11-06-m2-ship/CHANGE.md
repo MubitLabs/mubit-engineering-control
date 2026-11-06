@@ -28,10 +28,12 @@ One linear branch from `origin/main` (#46), landed as one PR by the owner's appr
 ## Found while merging
 
 - `Supervisor`'s confirmation changed under `reapGroup`. `reapGroup` now is that stop, so a boot reap reaches strays too.
-- Claude's stream input needs a stdin pipe, and 23 B's Claude row asked for none. The row now asks for one.
+- Claude's stream input needs a stdin pipe, and 23 B had made the pipe opt-in with Claude's row off. `ownedSpawn` keeps it open unless told `stdin: false`, and every row uses it.
 - The stage's reset read moved from `inspection.ts` to `stages.ts`, so 32's fix went there.
 - `/api/parked` leaves out an attempt that is resuming, as the switch does.
 - Delivery read the configured policy, not the one saved in Settings.
+- A group that would not go: 23 A left the attempt running with a failed stop on it, and 23 B's §8.1 test needs a failed attempt. The monitor now records both. `reconcileProcesses` does not look at a failed attempt, so that group can outlive the attempt until someone stops it.
+- `mec.test`'s snapshot carries a heartbeat, which 30 S2's `mec status` needs. Its assertions are unchanged.
 - `Monitor` joins the planner's denied tools: Claude 2.1.319 ships it with code execution.
 
 ## Mutants

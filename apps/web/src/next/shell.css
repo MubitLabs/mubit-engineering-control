@@ -703,6 +703,12 @@ kbd {
   padding: 16px 18px;
 }
 
+.notice h2 {
+  font-size: 14px;
+  line-height: inherit;
+  letter-spacing: inherit;
+}
+
 .notice p {
   margin: 6px 0 12px;
   font-size: 13px;

@@ -17,7 +17,7 @@ export function StateNotice({
 }) {
   return (
     <div className={`notice notice-${kind}`} role={kind === 'error' ? 'alert' : undefined}>
-      <h3>{title}</h3>
+      <h2>{title}</h2>
       <p>{body}</p>
       {action && <Button onClick={action.onClick}>{action.label}</Button>}
     </div>
@@ -35,7 +35,7 @@ export function EmptyState({ title, body, children }: { title: string; body: str
   )
 }
 
-/** Plain navigation back: the classic shell owns the live work and needs no state from here. */
+/** Plain navigation back: the classic shell needs no state from here. */
 export function ReturnToClassic() {
   return (
     <a className="btn btn-default" href={`?ui=classic${window.location.hash}`}>

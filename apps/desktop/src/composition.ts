@@ -36,7 +36,7 @@ import type { EffectHandler, HealthClaim, Json } from '@mec/store'
 import { DirLock, HealthBoardImpl, InspectionReads, MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import { FakeEngine } from '@mec/testkit'
 import Database from 'better-sqlite3'
-import { AttemptLauncher } from './attempt-launch'
+import { AttemptLauncher, realRunnerOn } from './attempt-launch'
 import { backupStore } from './backup-cli'
 import { type Cleaner, StoreFacts } from './core-facts'
 import { Delivery } from './delivery'
@@ -341,8 +341,8 @@ export async function startServer(opts: {
   healthTimer.unref()
 
   // mec-tools (A3) on an ephemeral port with a per-process secret; the launcher mints an
-  // attempt-scoped token per launch (plan §6). `MEC_REAL_RUNNER=1` grants no authority: mandate,
-  // hold and repo checks run on every launch, with or without it.
+  // attempt-scoped token per launch (plan §6). A real launch is the default and grants no authority:
+  // mandate, hold and repo checks run on every launch.
   const toolsSecret = randomBytes(32).toString('hex')
   const closing = new AbortController()
   const cards = { followups, policy, clean, signal: closing.signal }
@@ -352,8 +352,7 @@ export async function startServer(opts: {
     onCall: specialistTools({ store, facts, headOf: headSha, cards }),
   })
   const { url: toolsUrl } = await tools.start()
-  const realRunner = process.env.MEC_REAL_RUNNER === '1'
-  if (realRunner && process.env.MEC_FAKE_ENGINE !== '1') {
+  if (realRunnerOn()) {
     launcher = new AttemptLauncher({
       store,
       dataDir: opts.dataDir,
@@ -381,7 +380,7 @@ export async function startServer(opts: {
     })
   }
 
-  // M2.3 follows the runner: with the flag off nothing is accepted, so nothing could deliver.
+  // M2.3 follows the runner: with it off nothing is accepted, so nothing could deliver.
   const delivery =
     launcher === undefined
       ? undefined

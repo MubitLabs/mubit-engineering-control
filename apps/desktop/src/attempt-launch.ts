@@ -1,7 +1,7 @@
 /**
- * The launch effect with `MEC_REAL_RUNNER=1` (spec §8, §14, §5.12, §17): from a queued attempt to
- * a started engine. The order is the spec's: load and agree, cache, pinned base, worktree, `.mec/`
- * files, bootstrap, model, bundle, token, env, start. A refusal spends nothing, and nothing before
+ * The real launch effect (spec §8, §14, §5.12, §17): from a queued attempt to a started engine.
+ * The order is the spec's: load and agree, cache, pinned base, worktree, `.mec/` files, bootstrap,
+ * model, bundle, token, env, start. A refusal spends nothing, and nothing before
  * the start is a spend at all. The token is minted last and lives only in the brief, the process
  * env and `.mec/mcp.json`, which is sealed before anything repo-controlled runs again.
  */
@@ -74,6 +74,10 @@ import { bridgeOf, driftOf, ENGINE_ROWS, type EngineRow, lacksHome, type Prepare
 import { worktreeIsOurs } from './slot-switch'
 
 export { isLaunchableSlot } from './engine-registry'
+
+/** A real launch is the default: `MEC_REAL_RUNNER=0` turns it off, and `MEC_FAKE_ENGINE=1` wins over both. */
+export const realRunnerOn = (env: Record<string, string | undefined> = process.env): boolean =>
+  env.MEC_REAL_RUNNER !== '0' && env.MEC_FAKE_ENGINE !== '1'
 
 /** Decision #36 (§11): until policy carries a value. */
 const DEFAULT_WALL_CLOCK_MS = 30 * 60_000

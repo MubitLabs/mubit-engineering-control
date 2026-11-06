@@ -32,7 +32,7 @@ const closers: (() => Promise<void>)[] = []
 afterEach(async () => {
   for (const close of closers.splice(0)) await close()
   process.env.PATH = REAL_PATH
-  delete process.env.MEC_REAL_RUNNER
+  process.env.MEC_REAL_RUNNER = '0'
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 

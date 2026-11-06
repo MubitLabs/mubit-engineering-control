@@ -39,7 +39,7 @@ describe('through the real server (fake CLI, fake gh, no engine run)', () => {
   afterEach(async () => {
     for (const close of closers.splice(0)) await close()
     process.env.PATH = REAL_PATH
-    delete process.env.MEC_REAL_RUNNER
+    process.env.MEC_REAL_RUNNER = '0'
     delete process.env.GIT_CONFIG_GLOBAL
   })
 

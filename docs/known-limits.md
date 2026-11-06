@@ -33,8 +33,9 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
 - **One oversized record fails its inspection route.** The route answers 500 `response_too_large`
   until that record is removed.
 
-- **The attempt runner is flag-gated and for scratch repositories (DECISIONS #25).** With
-  `MEC_REAL_RUNNER=1`:
+- **The attempt runner is on by default since 0.3.1, on any repository.** DECISIONS #25 kept it to
+  scratch repositories behind a flag because of the first point below, and that point still holds.
+  `MEC_REAL_RUNNER=0` turns it off. With it on:
   - Repo checks run agent-written code on the host, unsandboxed, with a scrubbed environment and
     no tools token.
   - The sandbox's network allowlist is the engine's own domains. Repo docs have no registry-domains

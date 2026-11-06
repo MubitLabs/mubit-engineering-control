@@ -172,14 +172,14 @@ From `packages/policy/src/policy.ts` — v0 is JSON (the plan's YAML is a later 
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `MEC_REAL_RUNNER=1` | off | A launch effect starts a real specialist through the attempt runner, on any engine `apps/desktop/src/engine-registry.ts` lists: Claude, Codex and OpenCode. Off, the launch fails with `no_runner`, the work blocks with that reason and no process starts. The flag grants no authority: mandate, hold and repo checks run on every launch. Decision #25: only on scratch repositories and `mec-sandbox`, because repo checks run unsandboxed. On, a launchable slot's marks are the capability table's entries. Flag or no flag, plans and placement see only launchable slots. |
+| `MEC_REAL_RUNNER=0` | on | Since 0.3.1 a launch effect starts a real specialist by default, through the attempt runner, on any engine `apps/desktop/src/engine-registry.ts` lists: Claude, Codex and OpenCode. Only `0` turns it off: the launch then fails with `no_runner`, the work blocks with that reason and no process starts. The variable grants no authority: mandate, hold and repo checks run on every launch. Repo checks run unsandboxed on the host (`docs/known-limits.md`). On, a launchable slot's marks are the capability table's entries. On or off, plans and placement see only launchable slots. `mec restart` passes on the environment of the shell that runs it, so an off server stays off only if that shell sets it too. |
 | `MEC_FAKE_ENGINE=1` | off | The fixture replay stands in for an engine. It wins over `MEC_REAL_RUNNER`. |
 
 ## How a task gets its slot
 
 The planner asks and deterministic code grants (spec §11). The rule, in order; each attempt's `placement` says which steps decided:
 
-1. **Launchable only.** A slot takes work only if this build has proved its kind: a row in `apps/desktop/src/engine-registry.ts`, and a home. Today that is `claude-sub`, `codex-sub` and `opencode-glm`. Anything else, `opencode-gemini` and `claude-api` included, is left out of plan validation and placement alike, with or without `MEC_REAL_RUNNER`, so a plan pinning one is refused. `MEC_FAKE_ENGINE=1` places on its one fake slot instead.
+1. **Launchable only.** A slot takes work only if this build has proved its kind: a row in `apps/desktop/src/engine-registry.ts`, and a home. Today that is `claude-sub`, `codex-sub` and `opencode-glm`. Anything else, `opencode-gemini` and `claude-api` included, is left out of plan validation and placement alike, with the runner on or off, so a plan pinning one is refused. `MEC_FAKE_ENGINE=1` places on its one fake slot instead.
 2. **What can take it.** Healthy (§5.5), serving the task's model or tier (§3), under the utilisation ceiling and with a free unit (§11).
 3. **A pin wins.** A task pinned to a slot waits for that slot and goes nowhere else.
 4. **A `slot_class` hint is a preference** (DECISIONS #43). Slots in the class go first; if none can take the task, any other may, and the placement says the class was missed.

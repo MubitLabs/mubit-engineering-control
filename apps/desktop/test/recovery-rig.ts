@@ -25,7 +25,7 @@ const pids: number[] = []
 export async function cleanUp(): Promise<void> {
   for (const close of closers.splice(0)) await close()
   process.env.PATH = REAL_PATH
-  delete process.env.MEC_REAL_RUNNER
+  process.env.MEC_REAL_RUNNER = '0'
   delete process.env.MEC_FAKE_ENGINE
   for (const pid of pids.splice(0)) {
     try {
@@ -200,7 +200,7 @@ export async function serve(
   opts: Partial<Parameters<typeof startServer>[0]> & { real?: boolean } = {},
 ): Promise<Served> {
   const { real = true, ...rest } = opts
-  if (real) process.env.MEC_REAL_RUNNER = '1'
+  process.env.MEC_REAL_RUNNER = real ? '1' : '0'
   const server = await startServer({ dataDir: rig.dataDir, policyText: POLICY, closeBoundMs: 6000, ...rest })
   closers.push(server.close)
   return server

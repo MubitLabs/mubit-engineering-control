@@ -28,7 +28,6 @@ import { specialistBridge, specialistTools } from '../src/specialist-tools'
 const FAKE_CLI = fileURLToPath(new URL('../../../packages/testkit/fake-cli/claude', import.meta.url))
 const POLICY = '{"preAuthorised":{}}'
 const REAL_PATH = process.env.PATH
-const FLAGS = ['MEC_REAL_RUNNER', 'MEC_FAKE_ENGINE'] as const
 
 const roots: string[] = []
 const closers: (() => Promise<void>)[] = []
@@ -36,7 +35,8 @@ const closers: (() => Promise<void>)[] = []
 afterEach(async () => {
   for (const close of closers.splice(0)) await close()
   process.env.PATH = REAL_PATH
-  for (const flag of FLAGS) delete process.env[flag]
+  process.env.MEC_REAL_RUNNER = '0'
+  delete process.env.MEC_FAKE_ENGINE
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
@@ -525,8 +525,18 @@ describe('a chat request', { timeout: 60_000 }, () => {
 })
 
 describe('the launch path', { timeout: 60_000 }, () => {
-  it('flag off starts no process and blocks with a reason', async () => {
+  it('with no flag at all a launch is real', async () => {
     const { dataDir, repo, bin } = scratch({ steps: SUCCESS })
+    delete process.env.MEC_REAL_RUNNER
+    seedStore(dataDir, repo, { checks: [{ name: 'made', cmd: 'test -f made.txt' }] })
+    await serve(dataDir)
+    await reaches(dataDir, 'succeeded')
+    expect(existsSync(join(bin, 'seen.json'))).toBe(true)
+  })
+
+  it('MEC_REAL_RUNNER=0 starts no process and blocks with a reason', async () => {
+    const { dataDir, repo, bin } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '0'
     seedStore(dataDir, repo)
     await serve(dataDir)
     await reaches(dataDir, 'failed')
@@ -562,6 +572,16 @@ describe('the launch path', { timeout: 60_000 }, () => {
   it('the fake flag keeps priority', async () => {
     const { dataDir, repo, bin } = scratch({ steps: SUCCESS })
     process.env.MEC_REAL_RUNNER = '1'
+    process.env.MEC_FAKE_ENGINE = '1'
+    seedStore(dataDir, repo)
+    await serve(dataDir)
+    await until(() => attemptState(dataDir) !== 'queued')
+    expect(existsSync(join(bin, 'seen.json'))).toBe(false)
+  })
+
+  it('the fake flag wins over the default too', async () => {
+    const { dataDir, repo, bin } = scratch({ steps: SUCCESS })
+    delete process.env.MEC_REAL_RUNNER
     process.env.MEC_FAKE_ENGINE = '1'
     seedStore(dataDir, repo)
     await serve(dataDir)

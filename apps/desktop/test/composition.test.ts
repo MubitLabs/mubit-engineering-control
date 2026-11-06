@@ -319,6 +319,7 @@ const untilSeen = async (seen: string[], count: number): Promise<void> => {
 
 describe('truthful launch (§17, decision #26)', () => {
   it('unsupported launch never settles as success', async () => {
+    vi.stubEnv('MEC_REAL_RUNNER', '0')
     const dataDir = scratch()
     const { db, store } = openStore(dataDir)
     seedLaunch(store)

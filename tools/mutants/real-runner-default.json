@@ -1,0 +1,44 @@
+[
+  {
+    "name": "the default is off again",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "env.MEC_REAL_RUNNER !== '0' && env.MEC_FAKE_ENGINE !== '1'",
+    "replace": "env.MEC_REAL_RUNNER === '1' && env.MEC_FAKE_ENGINE !== '1'",
+    "tests": ["apps/desktop/test/real-runner.test.ts"]
+  },
+  {
+    "name": "zero no longer turns it off",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "env.MEC_REAL_RUNNER !== '0' && env.MEC_FAKE_ENGINE !== '1'",
+    "replace": "env.MEC_FAKE_ENGINE !== '1'",
+    "tests": ["apps/desktop/test/real-runner.test.ts"]
+  },
+  {
+    "name": "the fake flag no longer wins",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "env.MEC_REAL_RUNNER !== '0' && env.MEC_FAKE_ENGINE !== '1'",
+    "replace": "env.MEC_REAL_RUNNER !== '0'",
+    "tests": ["apps/desktop/test/real-runner.test.ts"]
+  },
+  {
+    "name": "the planner keeps the old default",
+    "file": "apps/desktop/src/planner-placement.ts",
+    "find": "const realRunner = realRunnerOn()",
+    "replace": "const realRunner = process.env.MEC_REAL_RUNNER === '1' && realRunnerOn()",
+    "tests": ["apps/desktop/test/real-runner.test.ts"]
+  },
+  {
+    "name": "the server keeps the old default",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  if (realRunnerOn()) {\n",
+    "replace": "  if (process.env.MEC_REAL_RUNNER === '1' && realRunnerOn()) {\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "the server ignores the fake flag",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  if (realRunnerOn()) {\n",
+    "replace": "  if (process.env.MEC_REAL_RUNNER !== '0') {\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  }
+]

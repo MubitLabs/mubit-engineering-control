@@ -15,18 +15,14 @@
     "file": "packages/runtime/src/attempt-runner.ts",
     "find": "if (!held.has(`${event.generation} ${event.seq}`)) {",
     "replace": "if (held !== undefined) {",
-    "tests": [
-      "packages/runtime/test/live-park.test.ts"
-    ]
+    "tests": ["packages/runtime/test/live-park.test.ts"]
   },
   {
     "name": "ack first",
     "file": "packages/runtime/src/attempt-runner.ts",
     "find": "    const attempt = { attempt_id: attemptId, generation: event.generation }\n",
     "replace": "    const attempt = { attempt_id: attemptId, generation: event.generation }\n    journal.ack(event.seq)\n",
-    "tests": [
-      "packages/runtime/test/live-park.test.ts"
-    ]
+    "tests": ["packages/runtime/test/live-park.test.ts"]
   },
   {
     "name": "signal by pid alone",
@@ -44,256 +40,182 @@
     "file": "apps/desktop/src/recovery.ts",
     "find": "    found === 'ours' ? await (deps.reap ?? ((pid: number) => reapGroup(pid)))(mark.pid) : 'unprovable'",
     "replace": "    await (deps.reap ?? ((pid: number) => reapGroup(pid)))(mark.pid)",
-    "tests": [
-      "apps/desktop/test/recovery.test.ts",
-      "-t",
-      "a group that cannot be proven ours"
-    ]
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "a group that cannot be proven ours"]
   },
   {
     "name": "repeat approved push",
     "file": "apps/desktop/src/recovery.ts",
     "find": "      return { type: 'push_not_sent', fields: {}, outcome: { pushed: false, error: 'push not sent' } }",
     "replace": "      await deps.git(['push', String(remoteUrl), String(branch)])\n      return { type: 'push_not_sent', fields: {}, outcome: { pushed: false, error: 'push not sent' } }",
-    "tests": [
-      "apps/desktop/test/external-reconcile.test.ts"
-    ]
+    "tests": ["apps/desktop/test/external-reconcile.test.ts"]
   },
   {
     "name": "any remote head is this push",
     "file": "apps/desktop/src/recovery.ts",
     "find": "head === undefined || head === '' || head !== card.inputSha",
     "replace": "head === undefined || head === ''",
-    "tests": [
-      "apps/desktop/test/external-reconcile.test.ts"
-    ]
+    "tests": ["apps/desktop/test/external-reconcile.test.ts"]
   },
   {
     "name": "pause blocks all kinds",
     "file": "apps/desktop/src/composition.ts",
     "find": "  const effectsPass = (): void => {\n",
     "replace": "  const effectsPass = (): void => {\n    if (paused) return\n",
-    "tests": [
-      "apps/desktop/test/pause-attempts.test.ts"
-    ]
+    "tests": ["apps/desktop/test/pause-attempts.test.ts"]
   },
   {
     "name": "launch while paused",
     "file": "apps/desktop/src/composition.ts",
     "find": "const PAUSE_DEFERS = ['deliver', 'launch', 'relay', 'reply'] as const",
     "replace": "const PAUSE_DEFERS = ['deliver', 'relay', 'reply'] as const",
-    "tests": [
-      "apps/desktop/test/pause-attempts.test.ts"
-    ]
+    "tests": ["apps/desktop/test/pause-attempts.test.ts"]
   },
   {
     "name": "deferred rows wait out the pause",
     "file": "apps/desktop/src/composition.ts",
     "find": "        store.effects.wakeDeferred(PAUSE_DEFERS)\n",
     "replace": "",
-    "tests": [
-      "apps/desktop/test/pause-attempts.test.ts"
-    ]
+    "tests": ["apps/desktop/test/pause-attempts.test.ts"]
   },
   {
     "name": "resume ignores hold",
     "file": "packages/runtime/src/park.ts",
     "find": "  if (held) return { verdict: 'defer', reason: 'held' }\n",
     "replace": "",
-    "tests": [
-      "packages/runtime/test/live-park.test.ts"
-    ]
+    "tests": ["packages/runtime/test/live-park.test.ts"]
   },
   {
     "name": "resume ignores mandate",
     "file": "packages/runtime/src/park.ts",
     "find": "  if (!mandate.ok && mandate.reason !== 'policy_changed') {\n    return { verdict: 'drop', reason: `mandate_${mandate.reason}` }\n  }\n",
     "replace": "",
-    "tests": [
-      "packages/runtime/test/live-park.test.ts"
-    ]
+    "tests": ["packages/runtime/test/live-park.test.ts"]
   },
   {
     "name": "resume twice",
     "file": "packages/runtime/src/park.ts",
     "find": "  if (resuming || !slotHealthy) return false\n",
     "replace": "  if (!slotHealthy) return false\n",
-    "tests": [
-      "packages/runtime/test/live-park.test.ts"
-    ]
+    "tests": ["packages/runtime/test/live-park.test.ts"]
   },
   {
     "name": "resume with no probe",
     "file": "apps/desktop/src/recovery.ts",
     "find": "slotHealthy: slot?.state === 'healthy' && probed,",
     "replace": "slotHealthy: slot !== undefined,",
-    "tests": [
-      "apps/desktop/test/recovery.test.ts",
-      "-t",
-      "a slot still logged out|a reset that passed"
-    ]
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "a slot still logged out|a reset that passed"]
   },
   {
     "name": "resume gives up its capacity",
     "file": "packages/meta/src/scheduler.ts",
     "find": "  if (attempt.resuming === true) return true\n",
     "replace": "",
-    "tests": [
-      "apps/desktop/test/recovery.test.ts",
-      "-t",
-      "a resuming attempt keeps its capacity"
-    ]
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "a resuming attempt keeps its capacity"]
   },
   {
     "name": "switch keeps session",
     "file": "apps/desktop/src/slot-switch.ts",
     "find": "        placement: `switched from ${String(doc.slotId)}`,\n",
     "replace": "        placement: `switched from ${String(doc.slotId)}`,\n        session_id: doc.session_id ?? null,\n",
-    "tests": [
-      "apps/desktop/test/slot-switch.test.ts"
-    ]
+    "tests": ["apps/desktop/test/slot-switch.test.ts"]
   },
   {
     "name": "switch without card",
     "file": "apps/desktop/src/slot-switch.ts",
     "find": "  if (policyPreAuthorises(policy, 'slot_switch', scope)) {\n",
     "replace": "  if (scope !== undefined) {\n",
-    "tests": [
-      "apps/desktop/test/slot-switch.test.ts"
-    ]
+    "tests": ["apps/desktop/test/slot-switch.test.ts"]
   },
   {
     "name": "auth park switches",
     "file": "apps/desktop/src/slot-switch.ts",
     "find": "  if (parked.some((doc) => doc.state === 'auth_required')) return 'auth_park_never_switches'\n",
     "replace": "",
-    "tests": [
-      "apps/desktop/test/slot-switch.test.ts"
-    ]
+    "tests": ["apps/desktop/test/slot-switch.test.ts"]
   },
   {
     "name": "switch skips the re-probe",
     "file": "apps/desktop/src/slot-switch.ts",
     "find": "  const healthy = await probe(toSlot).catch(() => false)\n",
     "replace": "  const healthy = true\n",
-    "tests": [
-      "apps/desktop/test/slot-switch.test.ts"
-    ]
+    "tests": ["apps/desktop/test/slot-switch.test.ts"]
   },
   {
     "name": "switched attempt applies twice",
     "file": "apps/desktop/src/slot-switch.ts",
     "find": "    .filter((doc) => doc.cls === 'slot_switch' && doc.applied !== true)\n",
     "replace": "    .filter((doc) => doc.cls === 'slot_switch')\n",
-    "tests": [
-      "apps/desktop/test/slot-switch.test.ts"
-    ]
+    "tests": ["apps/desktop/test/slot-switch.test.ts"]
   },
   {
     "name": "interrupted before gone",
     "file": "packages/runtime/src/attempt-runner.ts",
     "find": "    live.checks.abort()\n    try {\n      await this.#stopGroup(live)\n",
     "replace": "    live.checks.abort()\n    this.#deps.facts.atomic(() => this.#deps.facts.attemptInterrupted(live.attempt, reason))\n    try {\n      await this.#stopGroup(live)\n",
-    "tests": [
-      "packages/runtime/test/live-park.test.ts"
-    ]
+    "tests": ["packages/runtime/test/live-park.test.ts"]
   },
   {
     "name": "park waits for exit",
     "file": "packages/runtime/src/attempt-runner.ts",
     "find": "    this.#parkOn(live, event)\n",
     "replace": "",
-    "tests": [
-      "packages/runtime/test/live-park.test.ts"
-    ]
+    "tests": ["packages/runtime/test/live-park.test.ts"]
   },
   {
     "name": "stopped checks run again",
     "file": "apps/desktop/src/recovery.ts",
     "find": "  if (doc.checks_note !== undefined && doc.checks_stopped !== 'server_closing') return\n",
     "replace": "",
-    "tests": [
-      "apps/desktop/test/recovery.test.ts",
-      "-t",
-      "an attempt stopped mid-check"
-    ]
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "an attempt stopped mid-check"]
   },
   {
     "name": "planner engine not killed",
     "file": "apps/desktop/src/composition.ts",
     "find": "          .then(() => planner.kill())\n",
     "replace": "",
-    "tests": [
-      "apps/desktop/test/recovery.test.ts",
-      "-t",
-      "an engine ignoring SIGTERM does not outlive close"
-    ]
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "an engine ignoring SIGTERM does not outlive close"]
   },
   {
     "name": "a stranger dir is removed",
     "file": "apps/desktop/src/recovery.ts",
     "find": "    if (inside && PLANNER_DIR.test(basename(dir))) rmSync(dir, { recursive: true, force: true })\n",
     "replace": "    if (inside) rmSync(dir, { recursive: true, force: true })\n",
-    "tests": [
-      "apps/desktop/test/recovery.test.ts",
-      "-t",
-      "a recorded dir outside the planner pattern"
-    ]
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "a recorded dir outside the planner pattern"]
   },
   {
     "name": "resuming attempt also switches",
     "file": "apps/desktop/src/slot-switch.ts",
     "find": "doc.switched_to === undefined && doc.resuming !== true,",
     "replace": "doc.switched_to === undefined,",
-    "tests": [
-      "apps/desktop/test/slot-switch.test.ts",
-      "-t",
-      "a resuming attempt cannot also switch"
-    ]
+    "tests": ["apps/desktop/test/slot-switch.test.ts", "-t", "a resuming attempt cannot also switch"]
   },
   {
     "name": "switched attempt still resumes",
     "file": "apps/desktop/src/recovery.ts",
     "find": "        attempt.switched_to === undefined &&\n",
     "replace": "",
-    "tests": [
-      "apps/desktop/test/slot-switch.test.ts",
-      "-t",
-      "a late resume row"
-    ]
+    "tests": ["apps/desktop/test/slot-switch.test.ts", "-t", "a late resume row"]
   },
   {
     "name": "atomic block trusts its first read",
     "file": "apps/desktop/src/slot-switch.ts",
     "find": "    const late = refusal(deps, workItemId, toSlot, at)\n    if (late !== undefined) return refuse(late, at)\n    const current = parkedOn(store, workItemId)\n    if (!sameIds(idsOf(current), idsOf(parked))) return refuse('stale', at)\n",
     "replace": "    const current = parked\n",
-    "tests": [
-      "apps/desktop/test/slot-switch.test.ts",
-      "-t",
-      "two switches at once"
-    ]
+    "tests": ["apps/desktop/test/slot-switch.test.ts", "-t", "two switches at once"]
   },
   {
     "name": "no late refusal",
     "file": "apps/desktop/src/slot-switch.ts",
     "find": "    if (late !== undefined) return refuse(late, at)\n",
     "replace": "",
-    "tests": [
-      "apps/desktop/test/slot-switch.test.ts",
-      "-t",
-      "work stopped while the pack is built"
-    ]
+    "tests": ["apps/desktop/test/slot-switch.test.ts", "-t", "work stopped while the pack is built"]
   },
   {
     "name": "a changed set is not seen",
     "file": "apps/desktop/src/slot-switch.ts",
     "find": "    if (!sameIds(idsOf(current), idsOf(parked))) return refuse('stale', at)\n",
     "replace": "",
-    "tests": [
-      "apps/desktop/test/slot-switch.test.ts",
-      "-t",
-      "an attempt that parks while the pack is built"
-    ]
+    "tests": ["apps/desktop/test/slot-switch.test.ts", "-t", "an attempt that parks while the pack is built"]
   },
   {
     "name": "approval ignores the card's set",
@@ -311,22 +233,14 @@
     "file": "apps/desktop/src/slot-switch.ts",
     "find": "workItemId, toSlot, fromSlots, parkedAttempts }), 'utf8')",
     "replace": "workItemId, toSlot, fromSlots }), 'utf8')",
-    "tests": [
-      "apps/desktop/test/slot-switch.test.ts",
-      "-t",
-      "its hash binds them"
-    ]
+    "tests": ["apps/desktop/test/slot-switch.test.ts", "-t", "its hash binds them"]
   },
   {
     "name": "a bare card applies",
     "file": "apps/desktop/src/slot-switch.ts",
     "find": "      parkedAttempts: parkedAttempts ?? [],\n",
     "replace": "      ...(parkedAttempts !== undefined && { parkedAttempts }),\n",
-    "tests": [
-      "apps/desktop/test/slot-switch.test.ts",
-      "-t",
-      "a card that names no attempts"
-    ]
+    "tests": ["apps/desktop/test/slot-switch.test.ts", "-t", "a card that names no attempts"]
   },
   {
     "name": "switch ignores ended work",
@@ -344,109 +258,69 @@
     "file": "apps/desktop/src/slot-switch.ts",
     "find": "  if (!mandate.ok) return 'policy_changed'\n",
     "replace": "",
-    "tests": [
-      "apps/desktop/test/slot-switch.test.ts",
-      "-t",
-      "refuses a switch: its queued attempt"
-    ]
+    "tests": ["apps/desktop/test/slot-switch.test.ts", "-t", "refuses a switch: its queued attempt"]
   },
   {
     "name": "parked resume not reconciled",
     "file": "apps/desktop/src/recovery.ts",
     "find": "(state === 'interrupted' || PARKED.includes(String(state))) && doc.resuming === true",
     "replace": "state === 'interrupted' && doc.resuming === true",
-    "tests": [
-      "apps/desktop/test/recovery.test.ts",
-      "-t",
-      "a resume row waits for proof"
-    ]
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "a resume row waits for proof"]
   },
   {
     "name": "launch gate ignores a refused group",
     "file": "packages/meta/src/authority.ts",
     "find": "return attempt.reconcile_refused === undefined\n",
     "replace": "return attempt.reconcile_refused !== null\n",
-    "tests": [
-      "apps/desktop/test/recovery.test.ts",
-      "-t",
-      "a launch row waits for proof"
-    ]
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "a launch row waits for proof"]
   },
   {
     "name": "resume gate ignores a refused group",
     "file": "apps/desktop/src/recovery.ts",
     "find": "verdict.verdict === 'run' && attempt?.reconcile_refused !== undefined",
     "replace": "verdict.verdict === 'run' && attempt === null",
-    "tests": [
-      "apps/desktop/test/recovery.test.ts",
-      "-t",
-      "a resume row waits for proof"
-    ]
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "a resume row waits for proof"]
   },
   {
     "name": "a refusal never clears",
     "file": "apps/desktop/src/recovery.ts",
     "find": "if (cleared && fresh?.reconcile_refused !== undefined) {",
     "replace": "if (fresh === null) {",
-    "tests": [
-      "apps/desktop/test/recovery.test.ts",
-      "-t",
-      "a launch row waits for proof"
-    ]
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "a launch row waits for proof"]
   },
   {
     "name": "pre-authorised reason written raw",
     "file": "apps/desktop/src/slot-switch.ts",
     "find": "  const reason = cleaned(deps, parked, input.reason)\n  const repoId",
     "replace": "  const { reason } = input\n  const repoId",
-    "tests": [
-      "apps/desktop/test/slot-switch.test.ts",
-      "-t",
-      "cleaned before any write"
-    ]
+    "tests": ["apps/desktop/test/slot-switch.test.ts", "-t", "cleaned before any write"]
   },
   {
     "name": "attempt cleaner not used",
     "file": "apps/desktop/src/slot-switch.ts",
     "find": "  parked.reduce((text, doc) => deps.clean(String(doc.id), text), redact(reason, [], []))\n",
     "replace": "  redact(parked.length > 0 ? reason : '', [], [])\n",
-    "tests": [
-      "apps/desktop/test/slot-switch.test.ts",
-      "-t",
-      "cleaned before any write"
-    ]
+    "tests": ["apps/desktop/test/slot-switch.test.ts", "-t", "cleaned before any write"]
   },
   {
     "name": "planner mark wiped",
     "file": "apps/desktop/src/recovery.ts",
     "find": "  if (refused.length > 0) {\n",
     "replace": "  if (refused.length < 0) {\n",
-    "tests": [
-      "apps/desktop/test/recovery.test.ts",
-      "-t",
-      "keeps its mark and dirs"
-    ]
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "keeps its mark and dirs"]
   },
   {
     "name": "refused mark forgotten",
     "file": "apps/desktop/src/recovery.ts",
     "find": "[...held.map((entry) => markOf(entry.process)), markOf(doc.process)]",
     "replace": "[markOf(doc.process)]",
-    "tests": [
-      "apps/desktop/test/recovery.test.ts",
-      "-t",
-      "survives a new engine"
-    ]
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "survives a new engine"]
   },
   {
     "name": "close wipes the refused mark",
     "file": "apps/desktop/src/composition.ts",
     "find": "store.engines.save({ ...doc, id: PLANNER_DOC, tempDirs: left, updatedAt: iso() })",
     "replace": "store.engines.save({ id: PLANNER_DOC, tempDirs: left, updatedAt: iso() })",
-    "tests": [
-      "apps/desktop/test/recovery.test.ts",
-      "-t",
-      "survives the server closing"
-    ]
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "survives the server closing"]
   }
 ]

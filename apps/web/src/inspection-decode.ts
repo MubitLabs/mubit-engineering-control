@@ -7,6 +7,8 @@
 
 import { DecodeError } from './api-decode'
 import type {
+  ActivityItem,
+  ArtifactPage,
   AttemptView,
   CardEvidence,
   ChatLine,
@@ -326,6 +328,49 @@ export function decodeTaskDetail(raw: unknown): TaskDetail {
     },
     coverage: coverage(path, body.coverage, 'coverage'),
   }
+}
+
+/** GET /api/inspect/attempts/:id/activity */
+export function decodeActivityPage(raw: unknown): Page<ActivityItem> {
+  const path = '/api/inspect/attempts/:id/activity'
+  return page(path, raw, (entry, label) => {
+    const item = obj(path, entry, label)
+    return {
+      seq: num(path, item.seq, `${label}.seq`),
+      type: str(path, item.type, `${label}.type`),
+      at: str(path, item.at, `${label}.at`),
+      summary: str(path, item.summary, `${label}.summary`),
+      detail: strOrNull(path, item.detail, `${label}.detail`),
+    }
+  })
+}
+
+export interface ArtifactResponse {
+  contentType: string
+  body: string
+  /** `x-mec-artifact-size`, which only a text answer carries. */
+  size: string | null
+  /** `x-mec-next-cursor`, set while more of the file remains. */
+  next: string | null
+}
+
+/** The body type decides, never the body: a JSON file served as text stays text. */
+export function decodeArtifact(ref: string, response: ArtifactResponse): ArtifactPage {
+  const path = '/api/inspect/artifacts'
+  const { contentType, body, size, next } = response
+  if (contentType.startsWith('text/plain')) {
+    if (size === null || !/^\d+$/.test(size)) throw new DecodeError(path, 'the size header is missing')
+    return { kind: 'text', ref, text: body, size: Number(size), nextCursor: next }
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(body)
+  } catch {
+    throw new DecodeError(path, 'the answer is neither text nor JSON')
+  }
+  const meta = obj(path, parsed, 'the body')
+  if (meta.binary !== true) throw new DecodeError(path, 'the answer is not binary metadata')
+  return { kind: 'binary', ref, size: num(path, meta.size, 'size') }
 }
 
 /** GET /api/inspect/needs */

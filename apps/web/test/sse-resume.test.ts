@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { subscribeResumable } from '../src/live/events'
+import { createInspection, type InspectionClient } from '../src/live/inspection'
 import { createWorkspace, type WorkspaceClient } from '../src/live/workspace'
+import { taskDetails } from './fixtures/inspection-fixtures'
 
 /**
  * One merged connection that outlives a failure. The class below stands in for the browser's
@@ -90,6 +92,17 @@ describe('subscribeResumable', () => {
     stop()
   })
 
+  it('asks for compact frames, and a compact frame still moves the cursor', () => {
+    const seen: number[] = []
+    subscribeResumable([{ stream: 'attempt:a', after: 1 }], (event) => seen.push(event.seq))
+    expect(new URL(latest().url, 'http://x').searchParams.get('compact')).toBe('1')
+    latest().onmessage?.({
+      data: JSON.stringify({ stream: 'attempt:a', seq: 2, type: 'tool_call', at: 'now' }),
+    })
+    latest().onerror?.()
+    expect(seen).toEqual([2])
+  })
+
   it('only one connection is ever open', async () => {
     const stop = subscribeResumable([{ stream: 'work:a', after: 0 }], () => {})
     for (let i = 0; i < 4; i += 1) {
@@ -136,6 +149,87 @@ describe('subscribeResumable', () => {
     expect(FakeEventSource.made).toHaveLength(3)
     latest().onopen?.()
     expect(reopened).toEqual([1])
+  })
+})
+
+describe('compact frames', () => {
+  const ATTEMPT = 'attempt_active'
+  const frame = (stream: string, seq: number) =>
+    latest().onmessage?.({
+      data: JSON.stringify({ stream, seq, type: 'tool_call', at: '2026-11-05T10:00:00.000Z' }),
+    })
+
+  async function live() {
+    const reads = { chat: 0, work: 0, snapshot: 0, inspectWork: 0, task: 0, activity: 0 }
+    const client: WorkspaceClient = {
+      repositories: async () => [],
+      chat: async () => {
+        reads.chat += 1
+        return []
+      },
+      work: async () => {
+        reads.work += 1
+        return []
+      },
+      snapshot: async () => {
+        reads.snapshot += 1
+        return { cursors: { repositories: 1, 'work:w': 3 }, labels: {} }
+      },
+      subscribe: subscribeResumable,
+    }
+    const reader = {
+      work: async () => {
+        reads.inspectWork += 1
+        return { items: [], nextCursor: null, observedAt: '' }
+      },
+      needs: async () => ({ items: [], nextCursor: null, observedAt: '' }),
+      taskDetail: async () => {
+        reads.task += 1
+        return taskDetails.task_active
+      },
+      activity: async () => {
+        reads.activity += 1
+        return { items: [], nextCursor: null, observedAt: '' }
+      },
+    } as unknown as InspectionClient
+    const workspace = createWorkspace(client)
+    const inspection = createInspection(reader)
+    workspace.onRefresh(inspection.refresh)
+    workspace.onInvalidate(inspection.invalidate)
+    workspace.setScope('repo_a')
+    workspace.start()
+    await vi.advanceTimersByTimeAsync(0)
+    inspection.selectTask('task_active')
+    await vi.advanceTimersByTimeAsync(0)
+    workspace.followAttempt({ stream: `attempt:${ATTEMPT}`, after: 4 })
+    return { reads }
+  }
+
+  it('compact frame invalidates one read', async () => {
+    const { reads } = await live()
+    const before = { ...reads }
+    frame(`attempt:${ATTEMPT}`, 5)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(reads).toEqual({ ...before, activity: before.activity + 1 })
+  })
+
+  it('a burst of frames is one read', async () => {
+    const { reads } = await live()
+    const before = reads.activity
+    frame(`attempt:${ATTEMPT}`, 5)
+    frame(`attempt:${ATTEMPT}`, 6)
+    frame(`attempt:${ATTEMPT}`, 7)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(reads.activity).toBe(before + 1)
+  })
+
+  it('a frame on a work stream still refreshes the lists', async () => {
+    const { reads } = await live()
+    const before = { ...reads }
+    frame('work:w', 4)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(reads.work).toBeGreaterThan(before.work)
+    expect(reads.inspectWork).toBe(before.inspectWork + 1)
   })
 })
 
@@ -190,6 +284,35 @@ describe('the workspace on one connection', () => {
     expect(latest().after()).toBe('40')
     expect(FakeEventSource.open).toHaveLength(1)
     expect(workspace.getState().resetAt).not.toBeNull()
+  })
+
+  it('a selected attempt joins the one connection, at the cursor it was given', async () => {
+    const { workspace, answer } = rig()
+    workspace.start()
+    await answer({ repositories: 9 })
+    workspace.followAttempt({ stream: 'attempt:a', after: 12 })
+    expect(FakeEventSource.open).toHaveLength(1)
+    expect(latest().streams()).toBe('repositories,attempt:a')
+    expect(latest().after()).toBe('9,12')
+    workspace.followAttempt({ stream: 'attempt:a', after: 30 })
+    expect(latest().after()).toBe('9,12')
+    workspace.followAttempt(null)
+    expect(latest().streams()).toBe('repositories')
+    expect(FakeEventSource.open).toHaveLength(1)
+  })
+
+  it('a reset drops the attempt, so its old cursor cannot reset the new connection', async () => {
+    const { workspace, answer } = rig()
+    workspace.start()
+    await answer({ repositories: 9 })
+    workspace.followAttempt({ stream: 'attempt:a', after: 12 })
+    latest().dispatch('reset')
+    workspace.followAttempt({ stream: 'attempt:a', after: 12 })
+    await answer({ repositories: 40 })
+    expect(latest().streams()).toBe('repositories')
+    workspace.followAttempt({ stream: 'attempt:a', after: 20_000 })
+    expect(latest().streams()).toBe('repositories,attempt:a')
+    expect(latest().after()).toBe('40,20000')
   })
 
   it('a reset cursor can move backwards, because the old history is gone', async () => {

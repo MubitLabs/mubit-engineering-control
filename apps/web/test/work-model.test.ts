@@ -1,9 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { decodeNeedsPage, decodeTaskDetail, decodeWorkDetail, decodeWorkPage } from '../src/inspection-decode'
-import type { NeedItem, Page, SearchHit, TaskDetail, TaskRow, WorkRow } from '../src/next/inspection-wire'
+import type {
+  ActivityItem,
+  NeedItem,
+  Page,
+  SearchHit,
+  TaskDetail,
+  TaskRow,
+  WorkRow,
+} from '../src/next/inspection-wire'
 import {
+  type ActivityPages,
+  type ArtifactPages,
   approvalProps,
   approvalScope,
+  attemptSubscription,
   conversationView,
   deliveryDetail,
   needsCount,
@@ -19,6 +30,7 @@ import {
   selectionInScope,
   stageGroup,
   staleScope,
+  type TaskEvidence,
   taskInspector,
   taskScope,
   threadQuestions,
@@ -28,6 +40,8 @@ import {
 } from '../src/next/work-model'
 import { describeApproval } from '../src/release-cards'
 import {
+  activityItems,
+  artifactPages,
   CARD_HEAD,
   cardEvidence,
   chatLines,
@@ -55,6 +69,211 @@ const task = (id: keyof typeof taskDetails, change: Partial<TaskDetail> = {}) =>
 const groupOf = (row: WorkRow) => stageGroup(row)
 const fact = (facts: readonly { label: string; value: string }[], label: string) =>
   facts.find((entry) => entry.label === label)?.value
+
+function evidence(change: Partial<TaskEvidence> = {}): TaskEvidence & { calls: string[] } {
+  const calls: string[] = []
+  return {
+    calls,
+    attemptId: 'attempt_active',
+    activity: ready<ActivityPages>({ items: [], tail: null, nextCursor: null }),
+    artifact: null,
+    onAttempt: (id) => calls.push(`attempt ${id}`),
+    onMore: () => calls.push('more'),
+    onRetry: () => calls.push('retry'),
+    onArtifact: (attemptId, ref) => calls.push(`artifact ${attemptId} ${ref}`),
+    onArtifactMore: () => calls.push('artifact more'),
+    onArtifactRetry: () => calls.push('artifact retry'),
+    ...change,
+  }
+}
+const pagesOf = (items: ActivityItem[], nextCursor: string | null = null) =>
+  ready<ActivityPages>({ items, tail: null, nextCursor })
+const withEvidence = (id: keyof typeof taskDetails, shown: TaskEvidence, change: Partial<TaskDetail> = {}) =>
+  taskScope(decodeTaskDetail({ ...taskDetails[id], ...change }), 'Parent work', shown).activity
+
+describe('activity', () => {
+  it('activity has no running state from a tool call', () => {
+    const scope = withEvidence('task_active', evidence({ activity: pagesOf([activityItems.tool]) }))
+    expect(scope.entries.map((entry) => entry.text)).toEqual(['SAMPLE-ONLY Bash'])
+    expect(JSON.stringify(scope.entries)).not.toMatch(/running|in progress|now/i)
+    expect(scope.note).toContain('does not show what is running now')
+  })
+
+  it('lines keep their own key, so two alike are still two', () => {
+    const twin = { ...activityItems.tool, seq: 3 }
+    const { entries } = withEvidence(
+      'task_active',
+      evidence({ activity: pagesOf([activityItems.tool, twin]) }),
+    )
+    expect(entries.map((entry) => entry.key)).toEqual(['2', '3'])
+  })
+
+  it('coverage false says not recorded and offers no paging', () => {
+    const shown = evidence({ activity: pagesOf([activityItems.tool], 'more') })
+    const scope = withEvidence('task_partial', shown)
+    expect(scope).toEqual({ note: 'Not recorded yet', entries: [] })
+  })
+
+  it('a loading read says so and claims nothing', () => {
+    const scope = withEvidence('task_active', evidence({ activity: { status: 'loading' } }))
+    expect(scope.entries).toEqual([])
+    expect(scope.note).toBe('Reading this attempt’s activity')
+  })
+
+  it('an attempt that wrote nothing yet says that, not a success', () => {
+    expect(withEvidence('task_active', evidence()).note).toContain('Nothing recorded')
+  })
+
+  it('more is offered only while the server says there is more', () => {
+    const shown = evidence({ activity: pagesOf([activityItems.tool], 'more') })
+    withEvidence('task_active', shown).more?.onClick()
+    expect(shown.calls).toEqual(['more'])
+    const done = evidence({ activity: pagesOf([activityItems.tool]) })
+    expect(withEvidence('task_active', done).more).toBeUndefined()
+  })
+
+  it('a failed read keeps what it had, says how old it is and offers retry', () => {
+    const shown = evidence({
+      activity: {
+        status: 'failed',
+        message: 'Down',
+        data: { items: [activityItems.tool], tail: null, nextCursor: null },
+        readAt: READ_AT,
+      },
+    })
+    const scope = withEvidence('task_active', shown)
+    expect(scope.entries).toHaveLength(1)
+    expect(scope.note).toContain('may be out of date')
+    expect(scope.note).toContain('Last read')
+    scope.retry?.onClick()
+    expect(shown.calls).toEqual(['retry'])
+  })
+
+  it('a failed first read shows its message and no lines', () => {
+    const scope = withEvidence(
+      'task_active',
+      evidence({ activity: { status: 'failed', message: 'Down', data: null, readAt: null } }),
+    )
+    expect(scope).toMatchObject({ note: 'Down', entries: [] })
+    expect(scope.retry).toBeDefined()
+  })
+
+  it('one attempt offers no chooser; several name the one on show', () => {
+    expect(withEvidence('task_active', evidence()).attempts).toBeUndefined()
+    const detail = taskDetails.task_active
+    const first = detail.attempts[0] as (typeof detail.attempts)[number]
+    const shown = evidence()
+    const { attempts } = withEvidence('task_active', shown, {
+      attempts: [{ ...first, id: 'attempt_old', generation: 0, state: 'failed' }, first],
+    })
+    expect(attempts?.map((entry) => [entry.label, entry.selected])).toEqual([
+      ['Attempt 0: failed', false],
+      ['Attempt 1: running', true],
+    ])
+    attempts?.[0]?.onSelect()
+    expect(shown.calls).toEqual(['attempt attempt_old'])
+  })
+
+  it('a report’s artifact opens under that attempt', () => {
+    const shown = evidence({ activity: pagesOf([activityItems.report]) })
+    const { entries } = withEvidence('task_active', shown)
+    const link = entries[0]?.artifacts?.[0]
+    expect(link?.label).toBe('log: out/run.log')
+    link?.onToggle()
+    expect(shown.calls).toEqual(['artifact attempt_active out/run.log'])
+  })
+
+  it('a report cut short has a line and no invented artifact', () => {
+    const { entries } = withEvidence(
+      'task_active',
+      evidence({ activity: pagesOf([activityItems.cutReport]) }),
+    )
+    expect(entries[0]?.text).toBe('completion: SAMPLE-ONLY cut')
+    expect(entries[0]?.artifacts).toEqual([])
+  })
+
+  it('a tool call’s text naming an artifact is not one', () => {
+    const fake = { ...activityItems.report, type: 'tool_call' }
+    const { entries } = withEvidence('task_active', evidence({ activity: pagesOf([fake]) }))
+    expect(entries[0]?.artifacts).toEqual([])
+  })
+})
+
+describe('artifacts', () => {
+  const opened = (read: Read<ArtifactPages>, ref = 'out/run.log') =>
+    evidence({
+      activity: pagesOf([activityItems.report]),
+      artifact: { attemptId: 'attempt_active', ref, read },
+    })
+  const panel = (shown: TaskEvidence) => withEvidence('task_active', shown).entries[0]?.artifacts?.[0]
+
+  it('text is shown as text, with its size and when it was read', () => {
+    const link = panel(opened(ready({ ...artifactPages.text })))
+    expect(link?.open).toBe(true)
+    expect(link?.panel?.text).toBe('SAMPLE-ONLY log\n')
+    expect(link?.panel?.note).toContain('1.5 KB')
+    expect(link?.panel?.note).toContain('Read')
+  })
+
+  it('more follows the server’s cursor', () => {
+    const shown = opened(ready({ ...artifactPages.text }))
+    panel(shown)?.panel?.action?.onClick()
+    expect(shown.calls).toEqual(['artifact more'])
+  })
+
+  it('a binary file is metadata only', () => {
+    const link = panel(opened(ready({ ...artifactPages.binary }), 'out/run.log'))
+    expect(link?.panel?.text).toBeNull()
+    expect(link?.panel?.note).toBe('Binary file, 2.0 KB. Its contents are not shown.')
+  })
+
+  it('the panel opens only under the link that asked', () => {
+    const other = opened(ready({ ...artifactPages.text }), 'another.log')
+    expect(panel(other)).toMatchObject({ open: false, panel: null })
+  })
+
+  it('a failed read offers retry', () => {
+    const shown = opened({ status: 'failed', message: 'Gone', data: null, readAt: null })
+    expect(panel(shown)?.panel?.note).toBe('Gone')
+    panel(shown)?.panel?.action?.onClick()
+    expect(shown.calls).toEqual(['artifact retry'])
+  })
+
+  it('a check’s artifact opens under the attempt that made that head', () => {
+    const detail = taskDetails.task_done
+    const shown = evidence({ attemptId: 'attempt_done' })
+    const passed = detail.checks.results[0] as (typeof detail.checks.results)[number]
+    const made = detail.attempts[0] as (typeof detail.attempts)[number]
+    const retry = { ...made, id: 'attempt_retry', generation: 2, headSha: null }
+    const scope = taskScope(
+      decodeTaskDetail({
+        ...detail,
+        attempts: [made, retry],
+        checks: { ...detail.checks, results: [{ ...passed, artifactRef: 'out/check.log' }] },
+      }),
+      'Parent work',
+      shown,
+    )
+    scope.checks.results?.[0]?.artifact?.onToggle()
+    expect(shown.calls).toEqual(['artifact attempt_done out/check.log'])
+  })
+
+  it('a check with no ref has no link', () => {
+    const scope = taskScope(decodeTaskDetail(taskDetails.task_done), 'Parent work', evidence())
+    expect(scope.checks.results?.[0]?.artifact).toBeUndefined()
+  })
+})
+
+describe('attempt subscription', () => {
+  it('names the attempt’s stream at the cursor the delivery served', () => {
+    expect(attemptSubscription('att', { 'attempt:att': 7 })).toEqual({ stream: 'attempt:att', after: 7 })
+  })
+
+  it('has none for a stream the delivery cut, rather than replaying from zero', () => {
+    expect(attemptSubscription('att', { 'work:w': 7 })).toBeNull()
+    expect(attemptSubscription(null, { 'attempt:att': 7 })).toBeNull()
+  })
+})
 
 describe('stage groups', () => {
   it('held is not grouped as working', () => {

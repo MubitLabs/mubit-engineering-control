@@ -4,7 +4,8 @@ import type { ServerEvent } from '../api'
  * One merged SSE connection that survives a failure. Native reconnect replays the `after` in the
  * URL it was opened with, so on `error` this closes the source and opens a new one from the
  * cursors it has applied. `event: reset` means the server no longer has that history; the
- * connection closes and the caller takes a snapshot and subscribes again.
+ * connection closes and the caller takes a snapshot and subscribes again. Frames are compact: they
+ * name what moved, and the reads behind each surface fetch what it now says.
  */
 
 const REOPEN_MIN_MS = 1_000
@@ -37,7 +38,7 @@ export function subscribeResumable(
     const streams = [...cursors.keys()]
     const after = [...cursors.values()]
     const current = new EventSource(
-      `/api/events?stream=${encodeURIComponent(streams.join(','))}&after=${after.join(',')}`,
+      `/api/events?stream=${encodeURIComponent(streams.join(','))}&after=${after.join(',')}&compact=1`,
     )
     source = current
     current.onopen = () => {

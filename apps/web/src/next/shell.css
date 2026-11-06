@@ -1794,3 +1794,46 @@ button.choice:hover,
   margin: 0;
   font-size: 13px;
 }
+
+/* M3.2 Stage C: activity pages and artifacts in the inspector. */
+.timeline .technical {
+  margin: 4px 0 0;
+}
+
+.timeline pre,
+.artifact-panel pre {
+  max-height: 40dvh;
+  margin: 4px 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.attempt-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.attempt-choice [aria-pressed="true"] {
+  font-weight: 600;
+}
+
+.artifact {
+  margin-top: 4px;
+}
+
+.artifact .btn {
+  max-width: 100%;
+  height: auto;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.artifact-panel p {
+  margin: 4px 0;
+  font-size: 13px;
+  color: var(--secondary);
+}

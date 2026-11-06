@@ -255,4 +255,38 @@ describe('switch slot', { timeout: 40_000 }, () => {
     const verdict = peek(rig, (store) => resumeAuthority(store, payload, NOW, 'any-hash'))
     expect(verdict).toEqual({ verdict: 'drop', reason: 'attempt_not_queued' })
   })
+
+  it('two switches at once make one new attempt', async () => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    const answers = await peekAsync(rig, (store) => {
+      const input = { workItemId: WORK, toSlot: 'slot_b', reason: 'quota' }
+      return Promise.all([applySwitch(direct(store), input), applySwitch(direct(store), input)])
+    })
+    expect(attempts(rig)).toHaveLength(2)
+    expect(answers.filter((answer) => answer === undefined)).toHaveLength(1)
+    expect(eventsOf(rig, `work:${WORK}`).filter((type) => type === 'slot_switched')).toHaveLength(1)
+  })
+
+  it('an attempt that parks while the pack is built refuses the switch', async () => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    const answer = await peekAsync(rig, (store) => {
+      let calls = 0
+      // The second clock read is the one after the packs, just before the atomic block.
+      const now = (): string => {
+        calls += 1
+        if (calls === 2) {
+          store.attempts.save({ ...store.attempts.get('att_1'), id: 'att_9', slotId: 'slot_a' })
+        }
+        return NOW
+      }
+      const input = { workItemId: WORK, toSlot: 'slot_b', reason: 'quota' }
+      return applySwitch({ ...direct(store), now }, input)
+    })
+    expect(answer).toBe('stale')
+    expect(attemptOf(rig)?.switched_to).toBeUndefined()
+    expect(eventsOf(rig, `work:${WORK}`)).toContain('slot_switch_refused')
+    expect(eventsOf(rig, `work:${WORK}`)).not.toContain('slot_switched')
+  })
 })

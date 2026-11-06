@@ -49,6 +49,11 @@ function parkedOn(store: Store, workItemId: string): StoreDoc[] {
     )
 }
 
+const idsOf = (docs: readonly StoreDoc[]): string[] => docs.map((doc) => String(doc.id))
+
+const sameAttempts = (a: readonly StoreDoc[], b: readonly StoreDoc[]): boolean =>
+  JSON.stringify(idsOf(a)) === JSON.stringify(idsOf(b))
+
 const shaped = (doc: StoreDoc): ParkedAttempt => ({
   attemptId: String(doc.id),
   taskId: String(doc.taskId),
@@ -188,21 +193,25 @@ export async function applySwitch(
   const { store, effects, now, probe } = deps
   const { workItemId, toSlot, reason, confirmationId } = input
   const stream = `work:${workItemId}`
+  const refuse = (why: string, at: string): string => {
+    appendEvent(store, stream, 'slot_switch_refused', { workItemId, toSlot, reason: why, at }, at)
+    markApplied(store, confirmationId)
+    return why
+  }
   const healthy = await probe(toSlot).catch(() => false)
   const start = now()
   const why = healthy ? refusal(store, workItemId, toSlot, start) : 'target_unhealthy'
-  if (why !== undefined) {
-    store.atomic(() => {
-      appendEvent(store, stream, 'slot_switch_refused', { workItemId, toSlot, reason: why, at: start }, start)
-      markApplied(store, confirmationId)
-    })
-    return why
-  }
+  if (why !== undefined) return store.atomic(() => refuse(why, start))
   const parked = parkedOn(store, workItemId)
   const packs = await Promise.all(parked.map((doc) => packFor(store, doc)))
   const at = now()
-  store.atomic(() => {
-    for (const [index, doc] of parked.entries()) {
+  return store.atomic(() => {
+    // The awaits above let another switch, a resume or a park in: decide again, here.
+    const late = refusal(store, workItemId, toSlot, at)
+    if (late !== undefined) return refuse(late, at)
+    const current = parkedOn(store, workItemId)
+    if (!sameAttempts(current, parked)) return refuse('stale', at)
+    for (const [index, doc] of current.entries()) {
       const pack = packs[index] as Record<string, Json>
       const attemptId = nextAttemptId(store)
       const task = store.tasks.get(String(doc.taskId))
@@ -252,8 +261,8 @@ export async function applySwitch(
       })
     }
     markApplied(store, confirmationId)
+    return undefined
   })
-  return undefined
 }
 
 function markApplied(store: Store, confirmationId: string | undefined): void {

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0 (6 November 2026)
+
+The new workbench shell is the default. Prepared from `feat/next-final` (68c9658); see `docs/changes/2026-11-06-release-0.3.0/` and `docs/changes/2026-11-05-next-default/`.
+
+- **New shell by default.** With no choice made, or an unknown one, or a browser store that throws, the page opens the new shell. `?ui=classic` and a stored `classic` still work, and the palette and the empty states link back. Classic is removed in a later release, after one verified install (decision #35). This is a changed default, not a new flag.
+- **Measured limits.** Axe reported 0 violations over the six surfaces and their states at 1440, 1024 and 390, light and dark; sizes, field edges, clipping, focus rings, motion and reduced motion are checked by `limits.screens.playwright.ts`; a keyboard-only journey runs on every surface. Fixes were presentation, and keyboard focus return on forms and route changes. Screens: 931 of 931 on the last run.
+- **Packaged server.** Axe (`apps/web/scripts/axe-server.mjs`) and Lighthouse (`apps/web/scripts/lighthouse.mjs --theme`) on nine routes of an extracted tarball, fake engine, scratch `HOME` and data dir: 0 violations and 100 in both themes. Neither gate is in `pnpm check` or CI.
+- **Composed journey.** One request in the new shell reached a pushed branch and a pull-request card on real Claude 2.1.319 (66 s), and survived a server kill during `pr create` with one pull request. `gh` and the remote were fakes (`file://`), so no real pull request was opened. The fake-CLI journey suite passed 6 of 7 after the replay; the seventh passed alone once its wait was raised to 15 s, and the whole suite has not been repeated since.
+- **Self-approval.** One real Claude worker's shell could not reach the inbox resolve route, direct or through the proxy. The route still takes no token; the sandbox is the whole of the fence.
+- **Since 0.2.1:** M2 ship (coordination, delivery, recovery, Codex and OpenCode through the runner, inspection and work surfaces, backup and restore); see the M2 sections below and `docs/changes/2026-11-06-m2-ship/`. No migration.
+- **Not claimed.** Codex and OpenCode in the composed journey (their own runner slices only, M2.4 Part B); a real GitHub pull request through the cards (the `mec-sandbox` pass is the coordinator's); assistive technology beyond axe, Lighthouse and keyboard; a green `pnpm check` on a quiet machine (8 load-related failures unresolved).
+- **Versioning.** Root, desktop and web carry the same version, enforced by `apps/desktop/test/version-sync.test.ts`; the release workflow refuses a tag that is not `v` plus the desktop version.
+
 ## 0.1.0 (unreleased)
 
 Internal build, week 1 (3 November 2026). Seeded from [`docs/log/week1.md`](log/week1.md) and [`docs/log/HANDSHAKES.md`](log/HANDSHAKES.md); behaviour of record is the plan.

@@ -49,6 +49,14 @@ Every row of plan §26, what proves it today, and what remains. Written 3 Nov (s
 | Model surface | prompts compile budgets (`packages/prompts/test/bundles.test.ts` · **no fixture**) | per-role size budget tests |
 | Yield to duplicate | integration: strict superset → dropped (`packages/integration/test/yield.test.ts` · inline branch sets, **no fixture**) | `gh` wiring at PR time |
 
+## M3.4 composed-journey evidence (6 Nov 2026, 0.3.0)
+
+Added to the rows above, not replacing them. Real Claude 2.1.319 through the linked login, scratch data dir and repository, a `file://` remote, **fake `gh`**. A real GitHub pull request was not opened; this is not the `mec-sandbox` pass.
+
+- **Restart mid-attempt / effects queue.** The server was SIGKILLed after `pr create` ran and before MEC heard its URL. The next boot read `pr list --head`, recorded `pr_created` with `reconciled: true`, and the bare remote held one pull request and no second card (`apps/web/test/journey.real.playwright.ts`, run 8095c4a). A push or merge card killed mid-effect was not exercised.
+- **Meta-agent authority / self-approval.** One `fast` Claude specialist's shell did not reach `POST /api/inbox/:id/resolve` or `GET /api/inbox`, direct or through the proxy, and the card stayed `pending` (run 5c58079). Claude only. The route takes no token; the sandbox is the whole of the fence. A model hunting for another way out was not exercised.
+- Codex and OpenCode: no composed-journey evidence. Their runner-slice proof is in `docs/log/HANDSHAKES.md` (M2.4 Part B) and follows the release for the composed path.
+
 ## The gap list, as work items
 
 1. Receipt ladder (received/delivered/read/handled/settled) + mandate ops + hold — one domain slice.

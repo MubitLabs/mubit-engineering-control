@@ -80,3 +80,14 @@ The audit above is unchanged as a record. What moved since, against its own thre
 - **Real-process, on the fake CLI:** process-group stop, wall-clock stop, the journal order, redaction, the `.mec/` guard, close stopping owned groups.
 - **Not built here:** `deliver` and `replay` throw `NotWiredError` until M2.2 and M2.4. `ask_user`, `handback` and `request_confirmation` answer a named error. Orphan cleanup, live parking and second-wave dispatch are M2.4 and M2.2. Only `claude-sub` slots launch.
 - **Superseded above:** "no real engine attempt ran" and "no test executes a process under Seatbelt" no longer hold for Claude on macOS.
+
+## Update — 6 November 2026 (0.3.0, `feat/next-final` at 68c9658)
+
+- **The new shell is the default.** `?ui=classic` stays for this release; classic goes in a later one (decision #35).
+- **Proven on the packaged server** (extracted tarball, fake engine, scratch `HOME` and data dir): axe 0 violations and Lighthouse 100 on nine routes, light and dark. The measured-limits and keyboard gates and 931 screens pass on the harness. The a11y and Lighthouse gates are not in `pnpm check` or CI.
+- **Composed journey, real Claude 2.1.319, fake `gh`:** a request in the new shell reached a pushed branch and pull-request cards, and a server kill during `pr create` left one pull request. **No real pull request was opened.** The real `mec-sandbox` pass is the coordinator's.
+- **Self-approval probe (Claude only):** one worker's shell could not resolve an inbox card. The route still takes no token.
+- **Codex and OpenCode:** proven through the runner on their own (M2.4 Part B, `docs/log/HANDSHAKES.md`); not in the composed journey. That proof follows the release.
+- **Still open:** `pnpm check` green on a quiet machine (8 failures under load in `apps/desktop` and `packages/runtime`, unresolved); a launch cannot run from a package, so the packaged Needs you has no card; the Work row reads `pr_ready` on a 10 s refetch (`docs/known-limits.md`).
+- **Superseded above:** "no real engine attempt ran", "no PR was opened by MEC" and the single-shell workbench description no longer hold; see the dated updates above for each.
+

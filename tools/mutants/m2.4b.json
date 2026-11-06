@@ -172,7 +172,7 @@
     "file": "apps/desktop/src/attempt-launch.ts",
     "find": "    const drift = driftOf(row, probe)\n",
     "replace": "    const drift = undefined as string | undefined\n",
-    "tests": ["apps/desktop/test/engine-registry.test.ts"]
+    "tests": ["apps/desktop/test/engine-registry.test.ts", "-t", "a drifted version degrades the slot"]
   },
   {
     "name": "login not checked",

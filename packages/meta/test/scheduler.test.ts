@@ -5,7 +5,7 @@ import { DEFAULT_CAPS, type SlotModelsView } from '@mec/domain'
 import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, describe, expect, it } from 'vitest'
 import { FollowUps, type PlacementTable, repoFields, type SchedulerDeps, schedulePass } from '../src'
-import { holdWorkItem, stopWorkItem } from '../src/authority'
+import { holdWorkItem, refuseLaunch, stopWorkItem } from '../src/authority'
 
 const AT = '2026-11-05T12:00:00.000Z'
 const POLICY = '{"preAuthorised":{}}'
@@ -204,6 +204,21 @@ describe('the scheduler pass (§11)', () => {
 
     expect(pass().map((row) => row.taskId)).toEqual(['task_b'])
     expect(store.tasks.get('task_a')).toMatchObject({ status: 'blocked' })
+  })
+
+  it('a launch dropped on a changed policy gives its slot unit back', () => {
+    const { store, pass } = rig([slot('slot_a', { concurrency: 1 })])
+    work(store)
+    task(store, 'task_a')
+    pass()
+    const [queued] = attemptsOf(store, 'task_a')
+    const payload = { attempt_id: String(queued?.id), task_id: 'task_a', work_item_id: 'wi_1' }
+    store.atomic(() => refuseLaunch(store, payload, 'policy_changed', AT))
+    work(store, 'wi_2')
+    task(store, 'task_b', {}, 'wi_2')
+
+    expect(pass().map((row) => row.taskId)).toEqual(['task_b'])
+    expect(store.workItems.get('wi_1')).toMatchObject({ state: 'blocked', blockedReason: 'policy_changed' })
   })
 
   it('an attempt that gets no verdict stops holding its slot', () => {

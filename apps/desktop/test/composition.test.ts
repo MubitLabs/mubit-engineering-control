@@ -204,8 +204,29 @@ describe('the launch gate (§13, §20)', () => {
     await handle.close()
 
     expect(launchRow(db)).toBeUndefined()
-    expect(store.events.read('attempt:att_1')).toEqual([])
+    expect(store.attempts.get('att_1')).toMatchObject({ state: 'failed', terminal_reason: 'policy_changed' })
+    expect(store.events.read('attempt:att_1').map((event) => event.type)).toEqual(['attempt.failed'])
     expect(store.workItems.get('wi_1')).toMatchObject({ state: 'blocked', blockedReason: 'policy_changed' })
+    db.close()
+  }, 12_000)
+
+  it('a launch dropped on a changed policy leaves a running attempt alone (§13)', async () => {
+    process.env.MEC_FAKE_ENGINE = '1'
+    const dataDir = scratch()
+    const { db, store } = openStore(dataDir)
+    const handle = await startServer({ dataDir })
+
+    const running = { taskId: 'task_1', workItemId: 'wi_1', slotId: 'fake-slot', generation: 1 }
+    seedLaunch(store, {
+      mandate: { originMessageId: 'msg_1', policyHash: 'older', expiresAt: null, status: 'active' },
+    })
+    store.atomic(() => store.attempts.save({ ...running, id: 'att_running', state: 'running' }))
+    await vi.waitFor(() => expect(launchRow(db)).toBeUndefined(), { timeout: 8000, interval: 50 })
+    await handle.close()
+
+    expect(store.attempts.get('att_1')?.state).toBe('failed')
+    expect(store.attempts.get('att_running')?.state).toBe('running')
+    expect(store.events.read('attempt:att_running')).toEqual([])
     db.close()
   }, 12_000)
 

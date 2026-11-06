@@ -694,11 +694,32 @@ describe('authority fence', () => {
       },
     )
 
-    it('a policy change cancels nothing (§13): the work blocks and the attempt stays', async () => {
+    it('a policy change fails the attempt that never started: the work blocks with the reason', async () => {
       const { store, id, payload } = await planned()
       store.atomic(() => refuseLaunch(store, payload, 'policy_changed', NOW))
-      expect(store.attempts.get(payload.attempt_id)?.state).toBe('queued')
+      expect(store.attempts.get(payload.attempt_id)).toMatchObject({
+        state: 'failed',
+        terminal_reason: 'policy_changed',
+      })
       expect(store.workItems.get(id)).toMatchObject({ state: 'blocked', blockedReason: 'policy_changed' })
+    })
+
+    it('a policy change cancels no running work (§13)', async () => {
+      const { store, id, payload } = await planned()
+      const live = { taskId: payload.task_id, workItemId: id, slotId: 'slot_a', generation: 1 }
+      store.atomic(() => {
+        store.attempts.save({ ...live, id: 'att_running', state: 'running' })
+        store.attempts.save({ ...live, id: 'att_checks', state: 'work_complete' })
+      })
+      expect(launchAuthority(store, payload, NOW, 'another-hash')).toEqual({
+        verdict: 'drop',
+        reason: 'policy_changed',
+      })
+      store.atomic(() => refuseLaunch(store, payload, 'policy_changed', NOW))
+      expect(store.attempts.get('att_running')?.state).toBe('running')
+      expect(store.attempts.get('att_checks')?.state).toBe('work_complete')
+      expect(store.events.read('attempt:att_running')).toEqual([])
+      expect(store.events.read('attempt:att_checks')).toEqual([])
     })
 
     it('a stale row for an attempt queued again leaves that attempt alone', async () => {

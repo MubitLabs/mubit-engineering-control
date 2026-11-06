@@ -94,6 +94,8 @@ describe('a turn that plans nothing answers on the message that asked (§6, §12
     expect(store.messages.get('msg_q')?.ackText).toBe('It returns hello-world.md.')
     expect(store.workItems.get(outcome.workItemId as string)?.state).toBe('done')
     expect(eventTypes(store, `work:${String(outcome.workItemId)}`)).toContain('work_answered')
+    // A person's own message is always answered on the chat (§12.2).
+    expect(store.messages.get('msg_q')?.quiet).toBeUndefined()
   })
 
   it('the answer lands on the message when the report names the work it is about', async () => {

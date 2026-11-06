@@ -306,6 +306,30 @@ describe('used-up repairs wake the planner once (§6)', () => {
     expect(store.workItems.get('wi_1')?.state).toBe('blocked')
     expect(wakes(store)).toHaveLength(1)
   })
+
+  it('a repair task and its root are one family, so they share one wake', () => {
+    const { store, deps, pass } = rig([slot('slot_a')], noRepairs)
+    work(store)
+    task(store, 'task_a', { status: 'integrated' })
+    task(store, 'task_r', { status: 'awaiting_review', repairOf: 'task_a' })
+    attempt(store, { taskId: 'task_r', state: 'checks_failed', head_sha: 'abc' })
+    verdict(store, 'failed')
+
+    pass()
+    expect(store.tasks.get('task_r')?.status).toBe('blocked')
+    store.atomic(() => {
+      openRepairTask(store, store.effects, deps.caps, {
+        root: store.tasks.get('task_a') as StoreDoc,
+        evidence: 'combined checks red',
+        worktree: '/w',
+        branch: 'b',
+        id: 'task_s',
+        at: AT,
+      })
+    })
+
+    expect(wakes(store)).toHaveLength(1)
+  })
 })
 
 describe('the scheduler pass (§11)', () => {

@@ -154,7 +154,7 @@
     "tests": ["packages/meta/test/scheduler.test.ts"]
   },
   {
-    "name": "4 the wake is keyed to all of the work's tasks together",
+    "name": "4 a repair task and its root wake separately",
     "file": "packages/meta/src/scheduler.ts",
     "find": "const root = typeof task.repairOf === 'string' ? task.repairOf : String(task.id)\n  enqueueWake",
     "replace": "const root = `${String(task.id)}:${String(task.updatedAt)}`\n  enqueueWake",

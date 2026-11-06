@@ -240,5 +240,115 @@
       "apps/desktop/test/backup.test.ts",
       "apps/desktop/test/restore.test.ts"
     ]
+  },
+  {
+    "name": "JSON escapes not cut",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "const JSON_SEPARATOR = /(\\\\u[0-9a-fA-F]{4}|\\\\[nrtbf]|\\\\|\")/",
+    "replace": "const JSON_SEPARATOR = /(\\\\u[0-9a-fA-F]{4}|\\\\|\")/",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  },
+  {
+    "name": "unicode escapes not cut",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "const JSON_SEPARATOR = /(\\\\u[0-9a-fA-F]{4}|\\\\[nrtbf]|\\\\|\")/",
+    "replace": "const JSON_SEPARATOR = /(\\\\[nrtbf]|\\\\|\")/",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  },
+  {
+    "name": "lone backslash not cut",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "const JSON_SEPARATOR = /(\\\\u[0-9a-fA-F]{4}|\\\\[nrtbf]|\\\\|\")/",
+    "replace": "const JSON_SEPARATOR = /(\\\\u[0-9a-fA-F]{4}|\\\\[nrtbf]|\")/",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  },
+  {
+    "name": "quote not cut",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "const JSON_SEPARATOR = /(\\\\u[0-9a-fA-F]{4}|\\\\[nrtbf]|\\\\|\")/",
+    "replace": "const JSON_SEPARATOR = /(\\\\u[0-9a-fA-F]{4}|\\\\[nrtbf]|\\\\)/",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  },
+  {
+    "name": "shortest secret off by one",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "const SHORTEST_SECRET = 20",
+    "replace": "const SHORTEST_SECRET = 21",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  },
+  {
+    "name": "separators swept instead of pieces",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "index % 2 === 1 || piece.length",
+    "replace": "index % 2 === 0 || piece.length",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  },
+  {
+    "name": "--out skips the whole folder again",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "  return first === '' || first.startsWith(STAGING_PREFIX) || ARCHIVE_NAME.test(first)",
+    "replace": "  return !first.startsWith('..')",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  },
+  {
+    "name": "own staging archived",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "  return first === '' || first.startsWith(STAGING_PREFIX) || ARCHIVE_NAME.test(first)",
+    "replace": "  return first === '' || ARCHIVE_NAME.test(first)",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  },
+  {
+    "name": "earlier archives carried",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "  return first === '' || first.startsWith(STAGING_PREFIX) || ARCHIVE_NAME.test(first)",
+    "replace": "  return first === '' || first.startsWith(STAGING_PREFIX)",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  },
+  {
+    "name": "archive folder itself carried",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "  return first === '' || first.startsWith(STAGING_PREFIX) || ARCHIVE_NAME.test(first)",
+    "replace": "  return first.startsWith(STAGING_PREFIX) || ARCHIVE_NAME.test(first)",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
   }
 ]

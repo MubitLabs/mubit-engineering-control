@@ -29,6 +29,22 @@ Scratch `HOME`, `MEC_FAKE_ENGINE=1`, no real data.
 - `mec restore --target`: exit 0, and `mec.db` present.
 - A restore into an empty scratch `HOME`, then a server started on it: it booted, `mec status` answered, and it exited 0.
 
+## Blocker fixes
+
+Both were reproduced at `dab7803`, on synthetic values.
+
+**A token after a JSON escape reached the archive.** In JSONL a newline is a backslash and an `n`, the `n` is a word character, and every shape starts with `\b`. `redactForBackup` now cuts the text at JSON escapes, backslashes and quotes, and sweeps each piece. The quote cut also fixes the last-four sweep, whose run took in the closing quote and braces. Contracts did not change. Pieces under 20 characters skip the sweep, because no shape is that short: without this a 10 MB transcript took 1386 ms, with it 119 ms, against 102 ms for `redact` on the whole text.
+
+**`--out` could drop the state tree with no warning.** `backup()` skipped everything under `outDir`, so `--out <home>`, `--out <data dir>` and `--out <data dir>/prompts` all exited 0 and lost state. It now skips only its own staging folder, archives named `mec-backup-*.tgz` directly in `outDir`, and the `outDir` folder entry. A folder that held only archives still stays out, as `backups-route.test.ts` requires. A file beside them is kept. This goes beyond the refusal the finding offered as the smallest fix, because a refusal for parents would have left the `--out <data dir>/prompts` case open, and `--out ~` now works.
+
+Failing first: 15 of 44 failed in `backup-cli.test.ts`, each for its blocker (the token in the file or the database copy, or the missing state). The byte-for-byte test passed before and after. After: 44 of 44, and `backup.test.ts`, `backups-route.test.ts` and `restore.test.ts` green, with no existing assertion changed.
+
+The `c3` row added to the store fixture holds a token after an escape, so the database copy is covered too.
+
+Mutants: `python3 tools/mutants/run.py tools/mutants/backup-cli.json`, self-check correct, 32 of 32 killed, ten of them new.
+
+`pnpm check`: typecheck and lint clean. Tests: 2583 passed, 4 failed, 15 skipped. One is the documented `login-cards.test.ts` baseline. `a11y-gate.test.ts`, `attempt-launch.test.ts` and `bundle.test.ts` each failed on a 30-45 s test while other builds ran, and passed when rerun alone, 51 of 51.
+
 ## Not proven
 
 - No real transcript was used, so the token shapes are proven only on synthetic values. Handoff 33 B still has that check.

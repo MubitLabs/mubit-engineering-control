@@ -31,12 +31,14 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { dirname, join, resolve, sep } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import type { KeyFingerprint } from '@mec/contracts'
 import { redact } from '@mec/slots'
 
 export const DB_NAME = 'db.sqlite'
 export const MANIFEST_NAME = 'manifest.json'
+const STAGING_PREFIX = '.mec-backup-staging-'
+const ARCHIVE_NAME = /^mec-backup-.*\.tgz$/
 
 export type ExcludedKind =
   | 'engines-keys'
@@ -81,11 +83,32 @@ const BACKUP_PATTERNS: readonly { pattern: RegExp; label: string }[] = [
   { pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/g, label: 'Bearer [redacted]' },
 ]
 
-/** One pass over any text a backup writes. Fingerprints only: a backup never reads a key. */
-export function redactForBackup(text: string, fingerprints: readonly KeyFingerprint[] = []): string {
+/**
+ * A transcript is JSONL, so a newline in it is a backslash and an `n`. That `n` is a word
+ * character, so no shape's `\b` holds before a token at the start of a line. A quote ends the
+ * run the last-four sweep looks at. A backslash alone is here for JSON nested in JSON, and only
+ * the last backslash of a run counts, so `\\n` still frees what follows the `n`. No shape holds
+ * any of these characters, so a cut never splits a token.
+ */
+const JSON_SEPARATOR = /(\\u[0-9a-fA-F]{4}|\\[nrtbf]|\\|")/
+
+/** Below every shape's length and the sweep's: a transcript cuts into millions of short pieces. */
+const SHORTEST_SECRET = 20
+
+function redactPiece(text: string, fingerprints: readonly KeyFingerprint[]): string {
   let out = redact(text, fingerprints)
   for (const { pattern, label } of BACKUP_PATTERNS) out = out.replace(pattern, label)
   return out
+}
+
+/** One pass over any text a backup writes. Fingerprints only: a backup never reads a key. */
+export function redactForBackup(text: string, fingerprints: readonly KeyFingerprint[] = []): string {
+  return text
+    .split(JSON_SEPARATOR)
+    .map((piece, index) =>
+      index % 2 === 1 || piece.length < SHORTEST_SECRET ? piece : redactPiece(piece, fingerprints),
+    )
+    .join('')
 }
 
 /** The file's text, or null when redaction could not see all of it. */
@@ -179,10 +202,14 @@ export function scanForCredentialFiles(rootDir: string): string[] {
     .map((entry) => entry.rel)
 }
 
-function isAtOrUnder(ancestor: string, path: string): boolean {
-  const a = resolve(ancestor)
-  const p = resolve(path)
-  return a === p || p.startsWith(`${a}${sep}`)
+/**
+ * Only what a backup itself writes, plus the folder they sit in, so `--out` can name any folder:
+ * the data dir, a parent of it, or a state folder. A file beside the archives is state like any
+ * other, and its copy brings the folder back.
+ */
+function isBackupOutput(outDir: string, path: string): boolean {
+  const [first = ''] = relative(resolve(outDir), resolve(path)).split(sep)
+  return first === '' || first.startsWith(STAGING_PREFIX) || ARCHIVE_NAME.test(first)
 }
 
 /** ISO-8601 with `:` replaced: colons are legal filenames but hostile to scp/rsync and friends. */
@@ -210,7 +237,7 @@ export function backup(input: BackupInput): { archivePath: string; excluded: str
   mkdirSync(input.outDir, { recursive: true })
   const stamp = fileStamp(now)
   const archivePath = join(input.outDir, `mec-backup-${stamp}.tgz`)
-  const staging = mkdtempSync(join(input.outDir, `.mec-backup-staging-${stamp}-`))
+  const staging = mkdtempSync(join(input.outDir, `${STAGING_PREFIX}${stamp}-`))
   const excluded: string[] = []
   const redacted: string[] = []
   try {
@@ -221,7 +248,7 @@ export function backup(input: BackupInput): { archivePath: string; excluded: str
     const dbAbs = resolve(input.dbPath)
     const liveDbFiles = new Set([dbAbs, `${dbAbs}-wal`, `${dbAbs}-shm`, `${dbAbs}-journal`])
     for (const entry of collectStateTree(input.stateDir)) {
-      if (isAtOrUnder(input.outDir, entry.abs)) continue // outDir inside stateDir must not archive itself
+      if (isBackupOutput(input.outDir, entry.abs)) continue // outDir inside stateDir must not archive itself
       if (entry.kind !== null) {
         if (!entry.dir) excluded.push(entry.rel)
         continue

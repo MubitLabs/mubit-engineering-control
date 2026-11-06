@@ -17,7 +17,7 @@ What the router recognises today (`runCli` in `apps/desktop/src/mec.ts`; usage l
 | `mec slot list` | Lists slots with their state. |
 | `mec slot probe <label>` | Probes a slot with the vendor's own `--version`/`--help`/auth-status commands (§5.8). |
 | `mec slot retire <label>` | Shreds the slot's keystore and marks the slot retired. |
-| `mec backup [--out <dir>]` | Writes a redacted archive of the store and state dir, by default to `<data dir>/backups`. Reads the store through a read-only connection, so it needs no server and works beside a running one. Prints counts of files redacted and left out. |
+| `mec backup [--out <dir>]` | Writes a redacted archive of the store and state dir, by default to `<data dir>/backups`. `--out` can name any folder, including the data dir or a parent of it: only the backup's own archives and staging folder stay out of the archive. Reads the store through a read-only connection, so it needs no server and works beside a running one. Prints counts of files redacted and left out. |
 | `mec restore <archive> [--target <dir>]` | Restores an archive into the data dir, or `--target`. Refuses a target holding anything at all and deletes nothing: move a damaged data dir aside yourself first. The archive is verified in a staging directory beside the target. Every `healthy` slot comes back `home_ready` and must re-probe before it can be scheduled. |
 | `mec restore --drill <archive>` | Restores into a scratch dir, prints each check and removes the scratch dir. Touches no store. Exit 1 if a check fails. |
 | `mec update` | Reports the installed version and the internal reinstall path (git repo or `MEC_REGISTRY`); no network check and no auto-update by design. |

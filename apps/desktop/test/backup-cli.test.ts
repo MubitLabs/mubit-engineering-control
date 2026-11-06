@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { gzipSync } from 'node:zlib'
 import { issueToken } from '@mec/mec-tools'
 import { MIGRATIONS_v1, migrate } from '@mec/store'
@@ -44,6 +44,17 @@ const TOOLS_TOKEN = issueToken({
 const GITHUB_TOKEN = `ghp_${'a1B2'.repeat(10)}`
 const BEARER = `Bearer ${'opaque9'.repeat(4)}`
 const TOKENS = [TOOLS_TOKEN, GITHUB_TOKEN, BEARER.slice('Bearer '.length)]
+const EVERY_SHAPE = [
+  TOOLS_TOKEN,
+  GITHUB_TOKEN,
+  `github_pat_${'a1B2'.repeat(11)}`,
+  `sk-ant-${'a1B2'.repeat(6)}`,
+  `sk-proj-${'a1B2'.repeat(6)}`,
+  `sk-${'a1B2'.repeat(9)}`,
+  `AIza${'a1B2'.repeat(9)}`.slice(0, 39),
+  `AQ.Ab${'a1B2'.repeat(6)}`,
+  `${'a1'.repeat(16)}.${'aB'.repeat(8)}`,
+]
 
 function cliIo(dataDir: string) {
   const lines: string[] = []
@@ -74,6 +85,8 @@ function makeDataDir(): string {
   doc.run('s1', 'slot', JSON.stringify({ id: 's1', label: 'one', state: 'healthy' }), at)
   doc.run('s2', 'slot', JSON.stringify({ id: 's2', label: 'two', state: 'retired' }), at)
   doc.run('c1', 'card', JSON.stringify({ id: 'c1', evidence: `saw ${TOOLS_TOKEN} and ${GITHUB_TOKEN}` }), at)
+  // Stored JSON writes a newline as backslash and `n`, the `n` touching the token.
+  doc.run('c3', 'card', JSON.stringify({ id: 'c3', evidence: `done\n${TOOLS_TOKEN}\n${GITHUB_TOKEN}\n` }), at)
   // Long enough for overflow pages: the update frees them, and a freed page keeps its old bytes.
   doc.run('c2', 'card', JSON.stringify({ id: 'c2', evidence: `${GITHUB_TOKEN} `.repeat(1000) }), at)
   db.prepare('INSERT INTO events (stream, seq, at, type, body) VALUES (?, ?, ?, ?, ?)').run(
@@ -165,6 +178,71 @@ describe('every backup output goes through redaction or leaves the content out',
     const result = backup({ dbPath, stateDir, outDir: fresh(), now, fingerprints })
 
     expect(readFileSync(join(extract(result.archivePath), transcript), 'utf8')).not.toContain(key)
+  })
+
+  // JSONL stores a newline as backslash and `n`: the `n` is a word character, so `\b` fails before the token.
+  it.each([
+    ['a newline', '\n'],
+    ['a carriage return', '\r'],
+    ['a tab', '\t'],
+    ['a backspace', '\b'],
+    ['a form feed', '\f'],
+    ['a control character', '\v'],
+  ])('a token straight after %s in a JSONL string goes, whatever its shape', (_name, separator) => {
+    const { stateDir, dbPath, transcript } = transcriptState()
+    const content = ['first line', ...EVERY_SHAPE, 'next'].join(separator)
+    writeFileSync(join(stateDir, transcript), `${JSON.stringify({ content })}\n`)
+
+    const result = backup({ dbPath, stateDir, outDir: fresh(), now })
+
+    const text = readFileSync(join(extract(result.archivePath), transcript), 'utf8')
+    for (const shape of EVERY_SHAPE) expect(text.includes(shape), shape.slice(0, 7)).toBe(false)
+    const kept = (JSON.parse(text) as { content: string }).content.split(separator)
+    expect(kept[0]).toBe('first line')
+    expect(kept.at(-1)).toBe('next')
+    expect(kept).toHaveLength(EVERY_SHAPE.length + 2)
+  })
+
+  it('a token in JSON inside a JSON string goes, escaped twice over', () => {
+    const { stateDir, dbPath, transcript } = transcriptState()
+    const inner = JSON.stringify({ out: `first\n${TOOLS_TOKEN}\n` })
+    writeFileSync(join(stateDir, transcript), `${JSON.stringify({ tool_result: inner })}\n`)
+
+    const result = backup({ dbPath, stateDir, outDir: fresh(), now })
+
+    expectNoToken(extract(result.archivePath))
+  })
+
+  it('a text with an escape and no token is written back byte for byte', () => {
+    const { stateDir, dbPath, transcript } = transcriptState()
+    const line = `${JSON.stringify({ path: 'C:\\notes\\table', text: 'one\ntwo\t"three"\u001b[0m' })}\n`
+    writeFileSync(join(stateDir, transcript), line)
+
+    const result = backup({ dbPath, stateDir, outDir: fresh(), now })
+
+    expect(readFileSync(join(extract(result.archivePath), transcript), 'utf8')).toBe(line)
+    expect(result.redacted).toEqual([])
+  })
+
+  it('a fingerprinted key in a JSONL string goes, and only the key: the quotes and braces stay', () => {
+    const { stateDir, dbPath, transcript } = transcriptState()
+    const key = 'unpatterned-key-material-wxyz'
+    const inner = JSON.stringify({ k: key })
+    const shortest = `${'k'.repeat(16)}wxyz` // the sweep's minimum, 20 characters
+    const line = { atEnd: `first\n${key}`, beforeEscape: `${key}\nnext`, inner, shortest }
+    writeFileSync(join(stateDir, transcript), `${JSON.stringify(line)}\n`)
+
+    const fingerprints = [{ provider: 'zai-coding-plan', last4: 'wxyz', sha256: 'f'.repeat(64) }] as never
+    const result = backup({ dbPath, stateDir, outDir: fresh(), now, fingerprints })
+
+    const text = readFileSync(join(extract(result.archivePath), transcript), 'utf8')
+    expect(text).not.toContain(key)
+    expect(JSON.parse(text)).toEqual({
+      atEnd: 'first\n[redacted:exact]',
+      beforeEscape: '[redacted:exact]\nnext',
+      inner: '{"k":"[redacted:exact]"}',
+      shortest: '[redacted:exact]',
+    })
   })
 
   it('a file redaction cannot read is left out by name, compressed or binary', () => {
@@ -290,6 +368,79 @@ describe('mec backup', () => {
       expect(existsSync(join(dataDir, 'backups'))).toBe(false)
     },
   )
+})
+
+describe('--out never costs the backup what it names', () => {
+  const now = new Date('2026-11-06T10:00:00.000Z')
+
+  function homeWithState(): { home: string; dataDir: string } {
+    const home = fresh()
+    const dataDir = join(home, '.mec')
+    mkdirSync(join(dataDir, 'prompts'), { recursive: true })
+    mkdirSync(join(dataDir, 'engines/claude/s1'), { recursive: true })
+    writeFileSync(join(dataDir, 'mec.db'), 'fake sqlite pages')
+    writeFileSync(join(dataDir, 'prompts/edited.md'), 'the owner wrote this')
+    writeFileSync(join(dataDir, 'models.yaml'), 'models: []')
+    writeFileSync(join(dataDir, 'engines/claude/s1/t.jsonl'), '{"text":"a transcript"}')
+    return { home, dataDir }
+  }
+
+  it.each([
+    ['the data dir', (dataDir: string) => dataDir],
+    ['a parent of the data dir', (dataDir: string) => dirname(dataDir)],
+    ['a state folder inside the data dir', (dataDir: string) => join(dataDir, 'prompts')],
+  ])('%s still gets every file, and only the files it held', (_name, target) => {
+    const { dataDir } = homeWithState()
+    const outDir = target(dataDir)
+
+    const result = backup({ dbPath: join(dataDir, 'mec.db'), stateDir: dataDir, outDir, now })
+
+    const tree = extract(result.archivePath)
+    expect(readFileSync(join(tree, 'prompts/edited.md'), 'utf8')).toBe('the owner wrote this')
+    expect(readFileSync(join(tree, 'models.yaml'), 'utf8')).toBe('models: []')
+    expect(existsSync(join(tree, 'engines/claude/s1/t.jsonl'))).toBe(true)
+    expect(result.excluded).toEqual([])
+    expect(readdirSync(tree).filter((name) => name.includes('mec-backup'))).toEqual([])
+  })
+
+  it('a second backup into the same folder carries neither the first nor its own staging', () => {
+    const { dataDir } = homeWithState()
+    const input = { dbPath: join(dataDir, 'mec.db'), stateDir: dataDir, outDir: dataDir }
+
+    backup({ ...input, now })
+    const result = backup({ ...input, now: new Date('2026-11-06T11:00:00.000Z') })
+
+    const tree = extract(result.archivePath)
+    const names = allFiles(tree).map((file) => relative(tree, file))
+    expect(names.filter((name) => name.includes('mec-backup'))).toEqual([])
+    expect(result.excluded).toEqual([])
+  })
+
+  it('a file of the owner beside the archives stays in the backup', () => {
+    const { dataDir } = homeWithState()
+    const outDir = join(dataDir, 'backups')
+    mkdirSync(outDir)
+    writeFileSync(join(outDir, 'notes.md'), 'which backup was the good one')
+
+    const result = backup({ dbPath: join(dataDir, 'mec.db'), stateDir: dataDir, outDir, now })
+
+    expect(readFileSync(join(extract(result.archivePath), 'backups/notes.md'), 'utf8')).toContain('good one')
+  })
+
+  it('mec backup --out <home> gives a restorable archive with the state in it', async () => {
+    const dataDir = makeDataDir()
+    mkdirSync(join(dataDir, 'prompts'))
+    writeFileSync(join(dataDir, 'prompts/edited.md'), 'the owner wrote this')
+    const home = dirname(dataDir)
+    const { io, lines } = cliIo(dataDir)
+
+    expect(await runCli(['backup', '--out', home], io), out(lines)).toBe(0)
+
+    const archive = readdirSync(home).find((name) => name.endsWith('.tgz')) as string
+    const tree = extract(join(home, archive))
+    expect(existsSync(join(tree, 'prompts/edited.md'))).toBe(true)
+    expect(existsSync(join(tree, 'engines/claude/s1/settings.json'))).toBe(true)
+  })
 })
 
 describe('mec restore', () => {

@@ -34,8 +34,8 @@ function slotFingerprints(db: Database.Database): KeyFingerprint[] {
 const quoted = (name: string): string => `"${name.replaceAll('"', '""')}"`
 
 /**
- * Redacts every text value of the private copy. No fingerprints here: their sweep replaces a
- * whole run of non-space text, which would cut a JSON document in two, and every write to the
+ * Redacts every text value of the private copy. No fingerprints here: their sweep takes any long
+ * value with the same last four, such as an id another row points at, and every write to the
  * store already went through it. No column holds a BLOB. The final VACUUM drops the freed pages,
  * which still hold the old values. The live store is never opened for writing.
  */

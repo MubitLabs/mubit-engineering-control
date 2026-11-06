@@ -74,6 +74,8 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
     transcripts are redacted by shape. Whether a real transcript holds `MEC_TOOLS_TOKEN` (spec line
     558, §5.7) has not been checked with a real run; it is a planned check in handoff 33 B.
   - A token encoded inside text, such as base64, does not match a shape and stays.
+  - A token joined to a word character, such as an ANSI colour code ending in `m`, does not match
+    a shape and stays. JSON escapes before a token do match: redaction cuts the text at them.
   - A backup taken with `mec backup` does not update the "last backup" in Settings.
 - **Card resolve gaps on `main` (open, assigned to handoff 21).**
   - A direct `POST /api/inbox/:id/resolve` still settles a no-evidence non-release card.

@@ -31,6 +31,8 @@ Tests came first for both.
 
 New mutants, all killed: `no-checks attempt keeps its follow-ups`, `checks still running count as ended`, `plan wall clock ignored`, `seeded wall clock ignored`. No engine run was spent, and nothing in `apps/web` changed, so `test:screens` was not rerun.
 
+Full runs on these commits, with other worktrees running mutants on the same machine: 2463 passed in `vitest run` once, with only the `login-cards` baseline failing, and twice `coordination.test.ts` "two-task contract chain" also failed on its 40 s wait, once alongside the `shims.test.ts` timeout already noted above. Alone, both suites pass. That chain takes 33.2 s here and 32.9 s on `eb46fd8`, so it has about 7 s of margin in a full run, and it passed both base runs. Neither fix is on its path, which has registered checks and no budget. Its wait was not changed.
+
 ## Assertions changed on purpose
 
 - `service.test.ts` "attach": a follow-up with no attempt now queues one `relay`.

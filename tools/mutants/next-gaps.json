@@ -1,0 +1,100 @@
+[
+  {
+    "name": "setup chat: setup flag dropped",
+    "file": "apps/web/src/api-config.ts",
+    "find": "{ text, setup: true }",
+    "replace": "{ text }",
+    "tests": ["apps/web/test/config-api.test.ts"]
+  },
+  {
+    "name": "setup chat: secret guard answer not read",
+    "file": "apps/web/src/config-decode.ts",
+    "find": "str(path, body.reply ?? body.message, 'reply')",
+    "replace": "str(path, body.reply, 'reply')",
+    "tests": ["apps/web/test/config-api.test.ts"]
+  },
+  {
+    "name": "setup chat: proposals not counted",
+    "file": "apps/web/src/config-decode.ts",
+    "find": "drafts: Array.isArray(body.drafts) ? body.drafts.length : 0,",
+    "replace": "drafts: 0,",
+    "tests": ["apps/web/test/config-api.test.ts"]
+  },
+  {
+    "name": "readiness: meta refusal ignores a missing home",
+    "file": "apps/desktop/src/readiness.ts",
+    "find": "  if (!hasLogin(slot)) return `${label} has no home of its own, so it cannot launch`\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/meta-slot.test.ts"]
+  },
+  {
+    "name": "readiness: a linked slot needs a home",
+    "file": "apps/desktop/src/readiness.ts",
+    "find": "slot.linkedDefault === true || text(slot.home) !== ''",
+    "replace": "text(slot.home) !== ''",
+    "tests": ["apps/desktop/test/meta-slot.test.ts"]
+  },
+  {
+    "name": "readiness: an empty home counts as one",
+    "file": "apps/desktop/src/readiness.ts",
+    "find": "slot.linkedDefault === true || text(slot.home) !== ''",
+    "replace": "slot.linkedDefault === true || typeof slot.home === 'string'",
+    "tests": ["apps/desktop/test/meta-slot.test.ts"]
+  },
+  {
+    "name": "readiness: the connection step counts any healthy slot",
+    "file": "apps/desktop/src/readiness.ts",
+    "find": "const healthy = connections.filter((slot) => slot.state === 'healthy')",
+    "replace": "const healthy = slots.filter((slot) => slot.state === 'healthy')",
+    "tests": ["apps/desktop/test/readiness.test.ts"]
+  },
+  {
+    "name": "readiness: a homeless slot still reads as an unchecked connection",
+    "file": "apps/desktop/src/readiness.ts",
+    "find": "        : connections.length === 0\n",
+    "replace": "        : slots.length === 0\n",
+    "tests": ["apps/desktop/test/readiness.test.ts"]
+  },
+  {
+    "name": "cli: MEC_DATA_DIR ignored",
+    "file": "apps/desktop/src/mec.ts",
+    "find": "const home = process.env.MEC_DATA_DIR ?? join(homedir(), '.mec')",
+    "replace": "const home = join(homedir(), '.mec')",
+    "tests": ["apps/desktop/test/mec.test.ts"]
+  },
+  {
+    "name": "cli: no fallback to ~/.mec",
+    "file": "apps/desktop/src/mec.ts",
+    "find": "const home = process.env.MEC_DATA_DIR ?? join(homedir(), '.mec')",
+    "replace": "const home = process.env.MEC_DATA_DIR ?? join('/nonexistent', '.mec')",
+    "tests": ["apps/desktop/test/mec.test.ts"]
+  },
+  {
+    "name": "connections: a zero concurrency reads as unset",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "...(typeof doc.concurrency === 'number' && { concurrency: doc.concurrency }),",
+    "replace": "...(Boolean(doc.concurrency) && { concurrency: doc.concurrency }),",
+    "tests": ["apps/web/test/config-contract.test.ts"]
+  },
+  {
+    "name": "connections: the server drops the class",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "    ...(text(doc.slotClass) !== undefined && { slotClass: text(doc.slotClass) }),\n",
+    "replace": "",
+    "tests": ["apps/web/test/config-contract.test.ts"]
+  },
+  {
+    "name": "connections: the decoder drops concurrency",
+    "file": "apps/web/src/config-decode.ts",
+    "find": "    ...(typeof row.concurrency === 'number' && { concurrency: row.concurrency }),\n",
+    "replace": "",
+    "tests": ["apps/web/test/config-contract.test.ts"]
+  },
+  {
+    "name": "connections: the decoder invents a default",
+    "file": "apps/web/src/config-decode.ts",
+    "find": "...(typeof row.concurrency === 'number' && { concurrency: row.concurrency }),",
+    "replace": "concurrency: typeof row.concurrency === 'number' ? row.concurrency : 1,",
+    "tests": ["apps/web/test/config-contract.test.ts"]
+  }
+]

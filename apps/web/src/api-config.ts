@@ -198,7 +198,7 @@ export const configApi = {
     )
   },
 
-  /** Setup mode (§6): the setup agent answers, and no repository is named. */
+  /** Setup mode: the setup agent answers, and no repository is named. */
   async setupMessage(text: string): Promise<SetupAnswer> {
     return decodeSetupAnswer(await send<unknown>('/api/chat/messages', 'POST', { text, setup: true }))
   },

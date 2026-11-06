@@ -42,3 +42,13 @@ Not run by hand: `remove focus return` and `disarm timer removed`. Their code is
 - Lighthouse in dark. The script has no theme option and `--force-dark-mode` did not reach the page. Dark is covered by axe, on the harness.
 - Assistive technology beyond axe, Lighthouse and keyboard: not claimed.
 - The Lighthouse and axe gates are not in `pnpm check` or CI.
+
+## `pnpm check`: not green
+
+Typecheck and lint pass. Tests: 2535 passed, 8 failed, 15 skipped, on a machine shared with parallel builders.
+
+- All 8 are in `apps/desktop` and `packages/runtime`: `attempt-launch`, `bundle`, `login-cards`, `attempt-runner`, `shims`. None is in `apps/web`.
+- `login-cards` "drives a real interactive shell" is the known baseline failure.
+- The other 7 are not baseline, and not explained. A rerun of the five files alone also failed 8, but a different mix of tests, with `condition never held` timeouts and a missing pid file.
+- This change touches none of those packages, and none of those test files names `apps/web`.
+- A comparison run on the base did not finish in 500 s and was stopped, so there is no base result. Treat these as unresolved until `pnpm check` runs on a quiet machine.

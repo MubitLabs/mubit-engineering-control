@@ -257,10 +257,11 @@ export class StoreFacts implements AttemptFacts {
     const doc = this.#current(attempt)
     if (doc === undefined) return
     const at = this.#now()
-    const parked = { state, reason, at, ...(resetsAt !== undefined && { resets_at: resetsAt }) }
-    if (!this.#move(doc, PARK_EVENT[state], { terminal_reason: reason, parked })) return
+    const clean = this.#clean(attempt.attempt_id, reason)
+    const parked = { state, reason: clean, at, ...(resetsAt !== undefined && { resets_at: resetsAt }) }
+    if (!this.#move(doc, PARK_EVENT[state], { terminal_reason: clean, parked })) return
     this.#note(attempt, 'attempt.parked', parked)
-    this.#listener.parked?.(doc, state, reason, resetsAt, at)
+    this.#listener.parked?.(doc, state, clean, resetsAt, at)
     this.#changed()
   }
 

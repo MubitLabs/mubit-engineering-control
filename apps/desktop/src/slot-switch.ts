@@ -16,11 +16,12 @@ import { basename, join } from 'node:path'
 import type { Effects, Json, Store, StoreDoc } from '@mec/contracts'
 import { type HandoffPlan, type ParkedAttempt, planFailover } from '@mec/failover'
 import { git, worktreeAdminDir } from '@mec/git'
-import { type Continuation, isHeld, revalidateWork } from '@mec/meta'
+import { type Continuation, isHeld, mandateOf, revalidateWork } from '@mec/meta'
 import { openConfirmation, type PolicyDoc, policyPreAuthorises } from '@mec/policy'
 import { redact } from '@mec/slots'
 import type { Cleaner } from './core-facts'
 import { mayRun } from './recovery'
+import type { CardBlock } from './release'
 
 const CARD_TTL_MS = 24 * 60 * 60 * 1000
 const PARKED = ['quota_wait', 'auth_required', 'provider_down']
@@ -169,20 +170,40 @@ export function worktreeIsOurs(worktree: string, gitDir: unknown): boolean {
   }
 }
 
+/** §10, §12, as for a push or PR card: a stop withdraws a switch card and a hold keeps it waiting. */
+export function switchCardBlocked(store: Store, card: StoreDoc): CardBlock | undefined {
+  const work = store.workItems.get(String(card.workItemId))
+  if (work === undefined) return undefined
+  if (mandateOf(work).status === 'withdrawn') return { reason: 'mandate_withdrawn', withdraw: true }
+  return isHeld(work) ? { reason: 'held', withdraw: false } : undefined
+}
+
+/** The answer to a card `switchCardBlocked` withdrew: nothing is owed, and the record says why. */
+export function withdrawSwitchCard(store: Store, settled: StoreDoc, reason: string, at: string): void {
+  const stream = `work:${String(settled.workItemId)}`
+  store.confirmations.save({ ...settled, applied: true })
+  appendEvent(store, stream, 'card_withdrawn', { confirmationId: String(settled.id), reason, at }, at)
+  const toSlot = String((settled.payload as { toSlot?: unknown } | undefined)?.toSlot)
+  const body = { workItemId: String(settled.workItemId), toSlot, reason, at }
+  appendEvent(store, stream, 'slot_switch_refused', body, at)
+}
+
 /** §5.10's engine-neutral pack: plan, diff so far, what was last said, open questions, holds. */
-async function packFor(store: Store, parked: StoreDoc): Promise<Record<string, Json>> {
+async function packFor(deps: SwitchDeps, parked: StoreDoc): Promise<Record<string, Json>> {
+  const { store } = deps
+  const clean = (text: string): string => deps.clean(String(parked.id), redact(text, [], []))
   const workItemId = String(parked.workItemId)
   const worktree = String(parked.worktree ?? '')
   const work = store.workItems.get(workItemId)
   const plan = store.tasks.list({ workItemId }).map((task) => ({
     task: String(task.id),
     status: String(task.status),
-    objective: redact(String(task.objective ?? ''), [], []),
+    objective: clean(String(task.objective ?? '')),
   }))
   let diffSoFar = 'unavailable'
   if (worktreeIsOurs(worktree, work?.git_dir)) {
     const read = await git(['diff', '--stat', 'HEAD'], { cwd: worktree, allowFailure: true })
-    diffSoFar = redact(read.stdout.trim(), [], [])
+    diffSoFar = clean(read.stdout.trim())
   }
   const reports = Number(parked.reports ?? 0)
   const last = store.engines.get(`report/${String(parked.id)}/${reports}`)
@@ -194,7 +215,7 @@ async function packFor(store: Store, parked: StoreDoc): Promise<Record<string, J
     worktree,
     plan,
     diffSoFar,
-    transcriptSummary: summary ?? 'no report yet',
+    transcriptSummary: clean(summary ?? 'no report yet'),
     openQuestions,
     holds: 0,
   }
@@ -225,7 +246,8 @@ export async function applySwitch(
   const stream = `work:${workItemId}`
   const refuse = (why: string, at: string): string => {
     appendEvent(store, stream, 'slot_switch_refused', { workItemId, toSlot, reason: why, at }, at)
-    markApplied(store, confirmationId)
+    // An approved card outlives a hold: a hold pauses, it does not answer (§12).
+    if (why !== 'held') markApplied(store, confirmationId)
     return why
   }
   const healthy = await probe(toSlot).catch(() => false)
@@ -237,7 +259,7 @@ export async function applySwitch(
     return store.atomic(() => refuse('stale', start))
   }
   const reason = cleaned(deps, parked, input.reason)
-  const packs = await Promise.all(parked.map((doc) => packFor(store, doc)))
+  const packs = await Promise.all(parked.map((doc) => packFor(deps, doc)))
   const at = now()
   return store.atomic(() => {
     // The awaits above let another switch, a resume or a park in: decide again, here.
@@ -312,6 +334,8 @@ export async function applyApprovedSwitches(deps: SwitchDeps): Promise<void> {
     .list({ status: 'approved' })
     .filter((doc) => doc.cls === 'slot_switch' && doc.applied !== true)
   for (const card of cards) {
+    const work = store.workItems.get(String(card.workItemId))
+    if (work !== undefined && isHeld(work)) continue
     const { toSlot, reason, parkedAttempts } = card.payload as {
       toSlot: string
       reason: string

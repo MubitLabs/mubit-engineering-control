@@ -446,8 +446,8 @@ function handback(deps: SpecialistToolsDeps, attempt: StoreDoc, input: Record<st
 
 /**
  * §6, §13: a card for a person, which this tool never settles. An always-confirm class stays out
- * of a worker's reach, a card with no evidence states nothing to approve, and the answer reaches
- * the attempt as an input.
+ * of a worker's reach, and so does a slot switch, which only the owner's route may ask for. A card
+ * with no evidence states nothing to approve, and the answer reaches the attempt as an input.
  */
 function requestConfirmation(
   deps: SpecialistToolsDeps,
@@ -461,7 +461,7 @@ function requestConfirmation(
   const evidence = input.evidence as Record<string, unknown> | undefined
   const cls = typeof operation?.class === 'string' ? operation.class : ''
   if (cls === '') throw new Error('mec-tools: request_confirmation needs operation.class')
-  if ((ALWAYS_CONFIRM as readonly string[]).includes(cls)) {
+  if ((ALWAYS_CONFIRM as readonly string[]).includes(cls) || cls === 'slot_switch') {
     throw new Error(`mec-tools: ${cls} needs the owner's confirmation; a worker cannot request it`)
   }
   if (typeof evidence !== 'object' || evidence === null || Object.keys(evidence).length === 0) {

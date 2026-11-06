@@ -192,7 +192,8 @@ export class Delivery {
       } catch (error) {
         if (this.#closing.signal.aborted) return
         // The worktree is in a state nothing here understands, and a person must say why.
-        const reason = redact(error instanceof Error ? error.message : String(error), [], [])
+        const detail = error instanceof Error ? error.message : String(error)
+        const reason = redact(detail, this.#fingerprints(), [])
         this.#store.atomic(() => blockWork(this.#store, String(work.id), `integration: ${reason}`, this.#now))
       }
     }
@@ -282,7 +283,8 @@ export class Delivery {
       const outcome = await runCheck(spec, this.#closing.signal)
       if (this.#closing.signal.aborted) return undefined
       if (outcome.status !== 'passed') {
-        const reason = `bootstrap_failed: ${command}: ${redact(outcome.logTail, [], []).slice(-400)}`
+        const tail = redact(outcome.logTail, this.#fingerprints(), [])
+        const reason = `bootstrap_failed: ${command}: ${tail.slice(-400)}`
         this.#store.atomic(() => blockWork(this.#store, id, reason, this.#now))
         return undefined
       }

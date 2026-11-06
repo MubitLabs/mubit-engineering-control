@@ -80,6 +80,28 @@ describe('StoreFacts', () => {
     expect(done.state()).toBe('work_complete')
   })
 
+  it('a park reason goes through the attempt cleaner before any write', () => {
+    const db = new Database(':memory:')
+    migrate(db, MIGRATIONS_v1)
+    const store = new SqliteStore(db)
+    store.atomic(() => {
+      store.workItems.save({ id: 'wi_1', state: 'executing' })
+      store.attempts.save({ id: 'att_1', workItemId: 'wi_1', state: 'running', generation: 2 })
+    })
+    const told: string[] = []
+    const clean = <T>(_attemptId: string, value: T): T =>
+      JSON.parse(JSON.stringify(value).replaceAll('hunter2', '[gone]')) as T
+    const facts = new StoreFacts(store, clean, undefined, {
+      parked: (_doc, _state, reason) => {
+        told.push(reason)
+      },
+    })
+    facts.attemptParked(REF, 'quota_wait', 'limit for hunter2')
+    expect(JSON.stringify(store.attempts.get('att_1'))).not.toContain('hunter2')
+    expect(JSON.stringify(store.events.read('attempt:att_1'))).not.toContain('hunter2')
+    expect(told).toEqual(['limit for [gone]'])
+  })
+
   it('interrupts once, and records it once', () => {
     const { store, facts, state } = rig('running')
     facts.attemptInterrupted(REF, 'wall_clock')

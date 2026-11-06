@@ -5,7 +5,7 @@ import { loadPolicy } from '@mec/policy'
 import type { SqliteStore } from '@mec/store'
 import { afterEach, describe, expect, it } from 'vitest'
 import { resumeAuthority } from '../src/recovery'
-import { applySwitch, requestSwitch, type SwitchDeps } from '../src/slot-switch'
+import { applyApprovedSwitches, applySwitch, requestSwitch, type SwitchDeps } from '../src/slot-switch'
 import {
   attemptOf,
   brainThatNeverRuns,
@@ -208,6 +208,85 @@ describe('switch slot', { timeout: 40_000 }, () => {
     })
     const server = await serve(rig, QUIET)
     expect((await ask(server)).status).toBe(409)
+  })
+
+  it('a hold keeps an open card pending at the approve, and the lift lets it land', async () => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    const server = await serve(rig, QUIET)
+    const id = await card(server)
+    patchWork(rig, { hold: { reason: 'wait', at: 'then' } })
+    const held = await answer(server, id, 'approve')
+    expect(await held.json()).toMatchObject({ status: 'pending', reason: 'held' })
+    await settle()
+    expect(peek(rig, (store) => store.confirmations.get(id))?.status).toBe('pending')
+    expect(attempts(rig)).toHaveLength(1)
+
+    patchWork(rig, { hold: { reason: 'wait', at: 'then', liftedAt: 'now' } })
+    await answer(server, id, 'approve')
+    await until(() => attempts(rig).length === 2)
+  })
+
+  it('a stop withdraws an open card at the approve, and nothing moves', async () => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    const server = await serve(rig, QUIET)
+    const id = await card(server)
+    patchWork(rig, { mandate: { status: 'withdrawn' } })
+    const stopped = await answer(server, id, 'approve')
+    expect(await stopped.json()).toMatchObject({ status: 'stale', reason: 'mandate_withdrawn' })
+    await settle()
+    expect(peek(rig, (store) => store.confirmations.get(id))?.status).toBe('stale')
+    expect(eventsOf(rig, `work:${WORK}`)).toContain('card_withdrawn')
+    expect(attempts(rig)).toHaveLength(1)
+  })
+
+  it('a deny still lands on stopped work', async () => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    const server = await serve(rig, QUIET)
+    const id = await card(server)
+    patchWork(rig, { mandate: { status: 'withdrawn' } })
+    await answer(server, id, 'deny')
+    expect(peek(rig, (store) => store.confirmations.get(id))?.status).toBe('denied')
+  })
+
+  it('a card approved before a hold waits out the hold, unused', async () => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    await peekAsync(rig, async (store) => {
+      const deps = direct(store)
+      const opened = await requestSwitch(deps, { workItemId: WORK, toSlot: 'slot_b', reason: 'quota' })
+      const id = String(opened.body.confirmationId)
+      store.confirmations.save({ ...store.confirmations.get(id), id, status: 'approved' })
+      const work = store.workItems.get(WORK) as Record<string, never>
+      store.workItems.save({ ...work, hold: { reason: 'wait', at: 'then' } as never })
+
+      await applyApprovedSwitches(deps)
+      expect(store.confirmations.get(id)?.applied).toBeUndefined()
+      expect(store.events.read(`work:${WORK}`).map((event) => event.type)).not.toContain(
+        'slot_switch_refused',
+      )
+
+      store.workItems.save({ ...work, hold: { reason: 'wait', at: 'then', liftedAt: NOW } as never })
+      await applyApprovedSwitches(deps)
+      expect(store.confirmations.get(id)?.applied).toBe(true)
+      expect(store.attempts.list({ taskId: 'task_1' })).toHaveLength(2)
+    })
+  })
+
+  it('the handoff pack goes through the parked attempt cleaner', async () => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    await peekAsync(rig, async (store) => {
+      const clean: SwitchDeps['clean'] = (_attemptId, value) =>
+        JSON.parse(JSON.stringify(value).replaceAll('add the thing', '[gone]')) as never
+      const deps = { ...direct(store), clean }
+      await applySwitch(deps, { workItemId: WORK, toSlot: 'slot_b', reason: 'quota' })
+      const handoff = store.engines.list({ workItemId: WORK }).find((doc) => doc.fromAttempt === 'att_1')
+      expect(JSON.stringify(handoff?.pack)).toContain('[gone]')
+      expect(JSON.stringify(handoff?.pack)).not.toContain('add the thing')
+    })
   })
 
   it('pre-authorised by policy runs with no card, and says so on the record', async () => {

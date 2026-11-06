@@ -87,7 +87,7 @@ import {
   resolvePush,
   resolveReleaseCard,
 } from './release'
-import type { SwitchAnswer } from './slot-switch'
+import { type SwitchAnswer, switchCardBlocked, withdrawSwitchCard } from './slot-switch'
 
 export type ServerDeps = {
   store: Store
@@ -891,21 +891,37 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       return
     }
     const pending = doc as unknown as ConfirmationRecord
+    const at = now().toISOString()
+    // The rule the release cards follow: a stop withdraws the card, a hold leaves it pending (§12).
+    const blocked =
+      body.answer === 'approve' && cls === 'slot_switch' && at <= pending.expiresAt
+        ? switchCardBlocked(store, doc)
+        : undefined
+    if (blocked !== undefined && !blocked.withdraw) return { id, status: 'pending', reason: blocked.reason }
     try {
       const { outcome } = resolveConfirmation(pending, {
-        now: now().toISOString(),
+        now: at,
         answer: body.answer,
-        // The card's own hash is the expected one: the user answered what they saw.
-        expectedOperationHash: typeof pending.operationHash === 'string' ? pending.operationHash : '',
+        // The card's own hash is the expected one: the user answered what they saw. A reason
+        // never equals a hash, so a withdrawn card settles stale.
+        expectedOperationHash:
+          blocked?.reason ?? (typeof pending.operationHash === 'string' ? pending.operationHash : ''),
         // A repo-bound confirmation binds to the SHA on the card; the record's own value is
         // what the card rendered (audit #5 — absent, every bound resolution went stale).
         expectedInputSha: typeof pending.inputSha === 'string' ? pending.inputSha : undefined,
       })
       const continues = store.atomic(() => {
-        store.confirmations.save(outcome as unknown as StoreDoc)
-        return settleSpecialistCard(store, deps.effects, outcome as unknown as StoreDoc)
+        const settled = outcome as unknown as StoreDoc
+        if (blocked === undefined) store.confirmations.save(settled)
+        else withdrawSwitchCard(store, settled, blocked.reason, at)
+        return settleSpecialistCard(store, deps.effects, settled)
       })
-      return { id: outcome.id, status: outcome.status, ...(continues && { continues }) }
+      return {
+        id: outcome.id,
+        status: outcome.status,
+        ...(blocked !== undefined && { reason: blocked.reason }),
+        ...(continues && { continues }),
+      }
     } catch (error) {
       // The first answer won (§13): a second resolve is a CAS race, not a server error.
       if (error instanceof Error && error.message.startsWith('already_handled')) {

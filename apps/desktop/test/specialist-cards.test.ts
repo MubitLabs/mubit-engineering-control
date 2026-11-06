@@ -349,6 +349,21 @@ describe('the tools (§6)', () => {
     expect(h.store.confirmations.list()).toHaveLength(0)
   })
 
+  it('a worker cannot open a slot_switch card, even where policy pre-authorises the class', async () => {
+    const operation = { class: 'slot_switch', toSlot: 'slot_b' }
+    const open = await tools()
+    const refused = await open.call('request_confirmation', { operation, evidence: { reason: 'r' } })
+    expect(refused.result).toBeUndefined()
+    expect(refused.error?.message).toContain('a worker cannot request it')
+    expect(open.store.confirmations.list()).toHaveLength(0)
+
+    const scope = loadPolicy('{"preAuthorised":{"slot_switch":[{"scope":"repo","repoId":"repo_a"}]}}')
+    const allowed = await tools(scope)
+    const rpc = await allowed.call('request_confirmation', { operation, evidence: { reason: 'r' } })
+    expect(rpc.result).toBeUndefined()
+    expect(rpc.error?.message).toContain('a worker cannot request it')
+  })
+
   it('a card with no evidence is refused', async () => {
     const h = await tools()
     const rpc = await h.call('request_confirmation', { operation: { class: 'install' }, evidence: {} })

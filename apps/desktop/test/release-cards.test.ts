@@ -18,6 +18,7 @@ import {
   createPrBehindCard,
   mergeBehindCard,
   openMergeCard,
+  openPushCard,
   pushIntegrationBranch,
   resolvePrCreate,
 } from '../src/release'
@@ -293,6 +294,7 @@ describe('the UI resolve path acts (§13: a settled approval is never a no-op)',
       status: 'pending',
       createdAt: '2026-11-05T00:00:00.000Z',
       expiresAt: '2999-01-01T00:00:00.000Z',
+      payload: { operation: { command: 'pnpm add x' }, evidence: { reason: 'the task needs it' } },
     })
     const out = await h.post('/api/inbox/conf_install/resolve', { answer: 'approve' })
     expect(out.status).toBe(200)
@@ -895,6 +897,97 @@ describe('the push card (§13: git push always confirms)', () => {
     expect(res.body.error).toBe('repo_not_local')
   })
 
+  it('no caller can supply the push directory', async () => {
+    const { run } = fakeGh(world())
+    const g = gitWorld()
+    const elsewhere = mkdtempSync(join(tmpdir(), 'mec-elsewhere-'))
+    cleanups.push(() => rmSync(elsewhere, { recursive: true, force: true }))
+    execFileSync('git', ['init', '-q', '-b', 'main', elsewhere])
+    const store: Store = new MemoryRepositories()
+    store.atomic(() => store.engines.save({ id: 'repo_a', url: g.work }))
+    const deps: ReleaseDeps = { run, store, effects: store.effects, now: () => new Date() }
+    const head = g.git('rev-parse', 'HEAD')
+    const card = await openPushCard(deps, {
+      repoId: 'repo_a',
+      branch: BRANCH,
+      gitDir: elsewhere,
+      worktree: elsewhere,
+    } as never)
+    expect(card.headSha).toBe(head)
+
+    const h = await harness(run)
+    h.store.atomic(() => h.store.engines.save({ id: 'repo_a', url: g.work }))
+    const res = await h.post('/api/release/push', { repoId: 'repo_a', branch: BRANCH, gitDir: elsewhere })
+    expect(res.body.headSha).toBe(head)
+  })
+
+  it('a branch built in the cache pushes from there, with the slug from the clone', async () => {
+    const { run } = fakeGh(world())
+    const g = gitWorld()
+    const cache = mkdtempSync(join(tmpdir(), 'mec-cache-'))
+    cleanups.push(() => rmSync(cache, { recursive: true, force: true }))
+    execFileSync('git', ['clone', '-q', '--bare', g.work, cache], { stdio: 'ignore' })
+    execFileSync('git', ['-C', cache, 'branch', 'mec/ab/integration', 'refs/heads/main'])
+    const main = execFileSync('git', ['-C', cache, 'rev-parse', 'main'], { encoding: 'utf8' }).trim()
+    const store: Store = new MemoryRepositories()
+    store.atomic(() => store.engines.save({ id: 'repo_a', url: g.work }))
+    const deps: ReleaseDeps = {
+      run,
+      store,
+      effects: store.effects,
+      now: () => new Date(),
+      pushSource: () => ({ gitDir: cache }),
+    }
+    const card = await openPushCard(deps, { repoId: 'repo_a', branch: 'mec/ab/integration' })
+    expect(card.headSha).toBe(main)
+    expect(store.confirmations.get(card.confirmationId)?.payload).toMatchObject({ repo: REPO })
+  })
+
+  it('a URL-registered repository can push from the cache, its slug from the URL', async () => {
+    const { run } = fakeGh(world())
+    const g = gitWorld()
+    const cache = mkdtempSync(join(tmpdir(), 'mec-cache-'))
+    cleanups.push(() => rmSync(cache, { recursive: true, force: true }))
+    execFileSync('git', ['clone', '-q', '--bare', g.work, cache], { stdio: 'ignore' })
+    execFileSync('git', ['-C', cache, 'branch', 'mec/ab/integration', 'refs/heads/main'])
+    const store: Store = new MemoryRepositories()
+    store.atomic(() => store.engines.save({ id: 'repo_a', url: `${REMOTE_URL}.git` }))
+    const deps: ReleaseDeps = {
+      run,
+      store,
+      effects: store.effects,
+      now: () => new Date(),
+      pushSource: () => ({ gitDir: cache }),
+    }
+    const card = await openPushCard(deps, { repoId: 'repo_a', branch: 'mec/ab/integration' })
+    expect(store.confirmations.get(card.confirmationId)?.payload).toMatchObject({ repo: REPO })
+    // Any branch but a cache branch still has no directory to push from.
+    const without = { ...deps, pushSource: () => undefined }
+    await expect(openPushCard(without, { repoId: 'repo_a', branch: 'feat/x' })).rejects.toThrow(
+      'repo_not_local',
+    )
+  })
+
+  it('default branch still refused', async () => {
+    const { run } = fakeGh(world({ defaultBranch: 'mec/ab/integration' }))
+    const g = gitWorld()
+    const cache = mkdtempSync(join(tmpdir(), 'mec-cache-'))
+    cleanups.push(() => rmSync(cache, { recursive: true, force: true }))
+    execFileSync('git', ['clone', '-q', '--bare', g.work, cache], { stdio: 'ignore' })
+    const store: Store = new MemoryRepositories()
+    store.atomic(() => store.engines.save({ id: 'repo_a', url: g.work }))
+    const deps: ReleaseDeps = {
+      run,
+      store,
+      effects: store.effects,
+      now: () => new Date(),
+      pushSource: () => ({ gitDir: cache }),
+    }
+    await expect(openPushCard(deps, { repoId: 'repo_a', branch: 'mec/ab/integration' })).rejects.toThrow(
+      'default_branch',
+    )
+  })
+
   it('refuses the default branch, whatever it is called', async () => {
     const g = gitWorld()
     const { run } = fakeGh(world({ defaultBranch: BRANCH }))
@@ -1194,6 +1287,28 @@ describe('the card shows exactly what is approved (§13 "the exact diff or comma
       const { run } = fakeGh(world())
       const h = await harness(run)
       const id = await openPlannerCard(h, { evidence: { pasted: `key ${SECRET}` } })
+      expect(JSON.stringify((await h.get(`/api/inbox/${id}/detail`)).body)).not.toContain(SECRET)
+    })
+
+    it('field names and the class are redacted too, on a card stored before writes were', async () => {
+      const { run } = fakeGh(world())
+      const h = await harness(run)
+      const id = await openPlannerCard(h, {
+        cls: `frontier ${SECRET}`,
+        operation: { class: 'frontier_model', [`op ${SECRET}`]: 'x' },
+        evidence: { [`why ${SECRET}`]: 'y' },
+      })
+      // The service redacts on the way in, so this is the row an older build left.
+      const stored = h.store.confirmations.get(id)
+      h.store.confirmations.save({
+        ...stored,
+        id,
+        cls: `frontier ${SECRET}`,
+        payload: {
+          operation: { class: 'frontier_model', [`op ${SECRET}`]: 'x' },
+          evidence: { [`why ${SECRET}`]: 'y' },
+        },
+      })
       expect(JSON.stringify((await h.get(`/api/inbox/${id}/detail`)).body)).not.toContain(SECRET)
     })
 

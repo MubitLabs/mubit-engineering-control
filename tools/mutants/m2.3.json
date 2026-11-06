@@ -1,0 +1,345 @@
+[
+  {
+    "name": "exit means accepted",
+    "file": "packages/domain/src/acceptance.ts",
+    "find": "  if (NO_VERDICT_YET.has(attemptState)) return { verdict: 'pending', reason: `attempt is ${attemptState}` }\n",
+    "replace": "  if (head !== undefined) return { verdict: 'accepted', head }\n",
+    "tests": ["packages/domain/test/acceptance.test.ts"]
+  },
+  {
+    "name": "stale SHA reused",
+    "file": "packages/domain/src/acceptance.ts",
+    "find": "input.verdicts.filter((verdict) => verdict.sha === head)",
+    "replace": "input.verdicts.filter(() => true)",
+    "tests": ["packages/domain/test/acceptance.test.ts"]
+  },
+  {
+    "name": "error reads as failed",
+    "file": "packages/domain/src/acceptance.ts",
+    "find": "const errored = required.filter((name) => statusOf(name)?.status === 'error')",
+    "replace": "const errored: string[] = []",
+    "tests": ["packages/domain/test/acceptance.test.ts"]
+  },
+  {
+    "name": "ready needs no head",
+    "file": "packages/domain/src/acceptance.ts",
+    "find": "if (report?.kind === 'ready' && report.headSha !== head) {",
+    "replace": "if (false as boolean) {",
+    "tests": ["packages/domain/test/acceptance.test.ts"]
+  },
+  {
+    "name": "sensitive skips review",
+    "file": "packages/domain/src/acceptance.ts",
+    "find": "if (policy.sensitive && policy.reviewedSha !== head) return { verdict: 'review', head }\n",
+    "replace": "",
+    "tests": ["packages/domain/test/acceptance.test.ts", "packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "subset is success",
+    "file": "packages/domain/src/work-result.ts",
+    "find": "    if (task.status === 'integrated') return []\n    if (task.status === 'cancelled') {",
+    "replace": "    if (task.status === 'integrated' || task.status === 'accepted') return []\n    if (task.status === 'cancelled') {",
+    "tests": ["packages/domain/test/work-result.test.ts"]
+  },
+  {
+    "name": "exclusion needs no reason",
+    "file": "packages/domain/src/work-result.ts",
+    "find": "return task.excludedReason === undefined ? [`${task.id} was cancelled with no reason`] : []",
+    "replace": "return []",
+    "tests": ["packages/domain/test/work-result.test.ts"]
+  },
+  {
+    "name": "nothing integrated is complete",
+    "file": "packages/domain/src/work-result.ts",
+    "find": "  if (integrated.length === 0) remaining.push('no task is integrated')\n",
+    "replace": "",
+    "tests": ["packages/domain/test/work-result.test.ts"]
+  },
+  {
+    "name": "combined checks on any head",
+    "file": "packages/domain/src/work-result.ts",
+    "find": "const onHead = head !== undefined && combined?.sha === head",
+    "replace": "const onHead = head !== undefined && combined !== undefined",
+    "tests": ["packages/domain/test/work-result.test.ts"]
+  },
+  {
+    "name": "skip combined checks",
+    "file": "packages/integration/src/controller.ts",
+    "find": "  const verdict = await checksOn(deps, merged.mergeSha)\n",
+    "replace": "  const verdict = { checks: [] as IntegrationCheck[], passed: true }\n",
+    "tests": ["packages/integration/test/controller.test.ts"]
+  },
+  {
+    "name": "conflict auto-resolved",
+    "file": "packages/integration/src/controller.ts",
+    "find": "    const failed: IntegrationFailure = { taskId, reason: 'conflict', conflictedPaths, repairing: false }\n    return { state: { ...state, failed }, effect: { kind: 'conflict', taskId, conflictedPaths } }\n",
+    "replace": "    return { state, effect: { kind: 'wait', reason: `aborted ${conflictedPaths.length}` } }\n",
+    "tests": ["packages/integration/test/controller.test.ts"]
+  },
+  {
+    "name": "a later task overtakes a failed one",
+    "file": "packages/integration/src/controller.ts",
+    "find": "failed === undefined ? snapshot : snapshot.filter((task) => task.integrated || task.mergeFailed),",
+    "replace": "snapshot,",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a verdict survives a moved head",
+    "file": "packages/integration/src/controller.ts",
+    "find": "  if ((await deps.git.head()) !== sha) return undefined\n",
+    "replace": "",
+    "tests": ["packages/integration/test/controller.test.ts"]
+  },
+  {
+    "name": "moved head not rechecked",
+    "file": "packages/integration/src/controller.ts",
+    "find": "    if (actual !== state.head || state.verifying !== undefined) return verifyHead(deps, state, actual)\n",
+    "replace": "    if (state.verifying !== undefined) return verifyHead(deps, state, actual)\n",
+    "tests": ["packages/integration/test/controller.test.ts"]
+  },
+  {
+    "name": "repair unbounded",
+    "file": "packages/meta/src/repair.ts",
+    "find": "if (ledger.repairs >= caps.repairAttemptsPerTask) {",
+    "replace": "if (false as boolean) {",
+    "tests": ["packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "review rounds unbounded",
+    "file": "packages/meta/src/repair.ts",
+    "find": "if (ledger.rounds >= caps.reviewRoundsPerTask) {",
+    "replace": "if (false as boolean) {",
+    "tests": ["packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "reports do not carry the round",
+    "file": "packages/meta/src/repair.ts",
+    "find": "attempts.filter((attempt) => kindOf(attempt) === 'review').length, ...reported)",
+    "replace": "attempts.filter((attempt) => kindOf(attempt) === 'review').length)",
+    "tests": ["packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "a false head claim passes",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (claimed === undefined || doc?.head_matches === true) return attempt.head_sha as string | undefined\n  return claimed\n",
+    "replace": "  return attempt.head_sha as string | undefined\n",
+    "tests": ["packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "work state never moves",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  advanceWork(store, workItemId, at)\n",
+    "replace": "",
+    "tests": ["packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "unknown check passes",
+    "file": "packages/meta/src/service.ts",
+    "find": "{ knownChecks: known, knownRoles: BUILTIN_ROLE_NAMES },",
+    "replace": "{ knownChecks: [...known, ...tasks.flatMap((task) => task.acceptanceChecks ?? [])], knownRoles: BUILTIN_ROLE_NAMES },",
+    "tests": ["packages/meta/test/check-profiles.test.ts"]
+  },
+  {
+    "name": "report_result is words alone",
+    "file": "packages/meta/src/service.ts",
+    "find": "          result: workResultOf(this.#store, report.workItemId) as unknown as Json,\n",
+    "replace": "",
+    "tests": ["packages/meta/test/check-profiles.test.ts"]
+  },
+  {
+    "name": "caller path",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  const head = await localHead(deps, target.gitDir, input.branch)\n",
+    "replace": "  const head = await localHead(deps, (input as { gitDir?: string }).gitDir ?? target.gitDir, input.branch)\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "default branch pushable from the cache",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (branch === defaultBranch)\n",
+    "replace": "  if (branch === defaultBranch && deps.pushSource === undefined)\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "continuation depends on the door",
+    "file": "apps/desktop/src/release.ts",
+    "find": "return announce(deps, input.confirmationId, await answerPush(deps, input))",
+    "replace": "return answerPush(deps, input)",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "yield hardcodes main",
+    "file": "apps/desktop/src/release.ts",
+    "find": "`repos/${repo}/compare/${defaultBranch}...${branch}`",
+    "replace": "`repos/${repo}/compare/main...${branch}`",
+    "tests": ["apps/desktop/test/release.test.ts"]
+  },
+  {
+    "name": "card pre-approved",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      this.#patch(id, { stage: 'push_card', repo, pushCardId: card.confirmationId, error: undefined })\n",
+    "replace": "      this.#patch(id, { stage: 'push_card', repo, pushCardId: card.confirmationId, error: undefined })\n      await (await import('./release')).resolvePush(this.release, { confirmationId: card.confirmationId, answer: 'approve' })\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "PR before push",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "if (stage === 'local_complete' || stage === 'moved') await this.#openPush(work, doc)",
+    "replace": "if (stage === 'local_complete' || stage === 'moved') await this.#openPr(work, { ...doc, repo: 'owner/repo' })",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "ready on pending",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "if (verdict === 'green' || verdict === 'no_required_checks') {",
+    "replace": "if (verdict === 'green' || verdict === 'no_required_checks' || verdict === 'ci_pending') {",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "auto merge card",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      this.#patch(id, { stage: 'ready', limit: verdict === 'green' ? undefined : verdict })\n",
+    "replace": "      this.#patch(id, { stage: 'ready', limit: verdict === 'green' ? undefined : verdict })\n      await (await import('./release')).openMergeCard(this.release, { repo, prNumber })\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "ready off another head",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (pr.headRefOid !== doc.head) {\n",
+    "replace": "    if (false as boolean) {\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "open cards survive a moved head",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      if (typeof card === 'string') staleCard(this.release, card, head)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "declined card retries itself",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    this.#patch(id, { stage: 'declined', answer: outcome.status, prTarget: 'pending' })\n",
+    "replace": "    this.#patch(id, { stage: 'local_complete', answer: outcome.status, prTarget: 'pending' })\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "no duplicate check",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "        if (yieldTo !== null) {\n",
+    "replace": "        if (yieldTo === 'never') {\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "merged without GitHub",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (pr.state === 'MERGED') return this.#merged(work, repo, branch)\n",
+    "replace": "    if (pr.state === 'CLOSED' || pr.state === 'MERGED') return this.#merged(work, repo, branch)\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "held work integrates",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "if (isTerminal(work) || isHeld(work) || mandateOf(work).status === 'withdrawn') continue",
+    "replace": "if (isTerminal(work) || mandateOf(work).status === 'withdrawn') continue",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "markers committed",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "  if (marked.length > 0) throw new Error(`conflict markers remain in ${marked.join(', ')}`)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "dependent starts from the pin",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "    if (!waits || task.basePolicy === 'contract') return pinned\n",
+    "replace": "    if (waits || !waits) return pinned\n",
+    "tests": ["apps/desktop/test/delivery-flow.test.ts"]
+  },
+  {
+    "name": "delivery ignores the pinned profile",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (pinned !== undefined && pinned !== current.profileHash) {\n",
+    "replace": "    if (false as boolean) {\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a continuation names its own attempt's admin directory",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "'worktrees', basename(worktree)),\n",
+    "replace": "'worktrees', attemptId),\n",
+    "tests": ["apps/desktop/test/delivery-flow.test.ts", "-t", "a repair attempt fixes failed checks"]
+  },
+  {
+    "name": "a stopped card still runs",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "if (works.some((work) => mandateOf(work).status === 'withdrawn')) {",
+    "replace": "if (false as boolean) {",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a held card still runs",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "return works.some(isHeld) ? { reason: 'held', withdraw: false } : undefined",
+    "replace": "return undefined",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a stop only waits",
+    "file": "apps/desktop/src/release.ts",
+    "find": "if (!block.withdraw) return { status: 'pending', reason: block.reason }",
+    "replace": "return { status: 'pending', reason: block.reason }",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a push card skips the stop",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  const blocked = blockedCard(deps, pending, 'push', input.answer, at, stream)\n  if (blocked !== undefined) return blocked\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a PR card skips the stop",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  const blocked = blockedCard(deps, pending, 'pr_create', input.answer, at, stream)\n  if (blocked !== undefined) return blocked\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a merge card skips the stop",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  const blocked = blockedCard(deps, pending, 'pr_merge', input.answer, at, stream)\n  if (blocked !== undefined) return { merged: false, reason: blocked.reason }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a deny on held work waits",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (!needsPreflight(answer, card, at)) return undefined\n  const block = deps.cardBlocked",
+    "replace": "  const block = deps.cardBlocked",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a merge ends the work by branch",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (card.cls === 'pr_merge' && payload.prNumber !== doc.prNumber) return\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a foreign push card moves the stage",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (card.cls === 'push' && card.id !== doc.pushCardId) return\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a foreign PR card moves the stage",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (card.cls === 'pr_create' && card.id !== doc.prCardId) return\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  }
+]

@@ -12,9 +12,22 @@ export type StatusCode = 0 | 1 | 2 | 3
 
 export type StatusResult = { code: StatusCode; lines: string[] }
 
+/** §21.2 sets no figure: five of the writer's two-second ticks. */
+export const HEARTBEAT_STALE_MS = 10_000
+
+/** The line for a start that could not have its last port. */
+export const movedLine = ({ from, to }: { from: number; to: number }): string =>
+  `port ${from} is taken, so mec moved to ${to}: reopen http://127.0.0.1:${to}`
+
+/** A heartbeat that is missing, unreadable or from the future proves nothing is alive. */
+export function heartbeatIsFresh(heartbeatAt: string | undefined, now: Date): boolean {
+  const at = heartbeatAt === undefined ? Number.NaN : Date.parse(heartbeatAt)
+  return Math.abs(now.getTime() - at) <= HEARTBEAT_STALE_MS
+}
+
 export function statusFromSnapshot(
   snapshot: HealthSnapshot | null,
-  opts: { initialized: boolean },
+  opts: { initialized: boolean; now?: Date },
 ): StatusResult {
   if (snapshot === null) {
     return opts.initialized
@@ -29,6 +42,9 @@ export function statusFromSnapshot(
     return { code: 1, lines: [`running twice (${runtime.instances} instances)`] }
   }
   if (!runtime.answering) return { code: 1, lines: ['not answering'] }
+  if (!heartbeatIsFresh(snapshot.heartbeatAt, opts.now ?? new Date())) {
+    return { code: 1, lines: ['not answering'] }
+  }
   if (runtime.state === 'error') {
     const lines = ['runtime error (a restart may fix it)']
     const runtimePart = parts.runtime
@@ -38,20 +54,27 @@ export function statusFromSnapshot(
     return { code: 1, lines }
   }
 
+  // Past the checks above a live server answers, so where it listens is worth saying in every code.
+  const moved = snapshot.portMoved
+  const port = moved === undefined ? [] : [movedLine(moved)]
+
   const errored = Object.entries(parts).filter(([, part]) => part.state === 'error')
   if (errored.length > 0) {
     return {
       code: 2,
-      lines: errored.map(
-        ([name, part]) => `part error: ${name}: ${part.detail ?? 'no detail'} (a restart will not fix it)`,
-      ),
+      lines: [
+        ...errored.map(
+          ([name, part]) => `part error: ${name}: ${part.detail ?? 'no detail'} (a restart will not fix it)`,
+        ),
+        ...port,
+      ],
     }
   }
 
   const waiting: string[] = []
   if (!setup.has_slot) waiting.push('waiting for setup: no slot')
   if (!setup.has_repository) waiting.push('waiting for setup: no repository')
-  if (waiting.length > 0) return { code: 3, lines: waiting }
+  if (waiting.length > 0) return { code: 3, lines: [...waiting, ...port] }
 
   const lines = [runtime.state === 'paused' ? 'paused' : 'running normally']
   for (const [name, part] of Object.entries(parts)) {
@@ -59,7 +82,7 @@ export function statusFromSnapshot(
       lines.push(`part degraded: ${name}: ${part.detail ?? 'no detail'}`)
     }
   }
-  return { code: 0, lines }
+  return { code: 0, lines: [...lines, ...port] }
 }
 
 export function formatStatus(result: StatusResult): string {

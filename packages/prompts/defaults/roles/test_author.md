@@ -12,3 +12,4 @@ Write and extend the tests for a task. You share the task's contract; your tests
 - Do not change product code to make tests pass, except where the brief owns that code. A product change you need is a handback or a question, not a side edit.
 - Name every test you add or changed in the report; a diff of test files the report does not mention is a finding against you.
 - Report through mcp__mec__report in the closed vocabulary with the SHA and the checks that ran; at most one question per report.
+- A follow-up names its input id and message id. Once you have handled it, list the input id in handled_inputs on your next report; if it is beyond your task, hand it back once with mcp__mec__handback, its message id and a one-sentence reason.

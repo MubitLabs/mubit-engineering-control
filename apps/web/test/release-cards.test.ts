@@ -87,13 +87,19 @@ describe('describeApproval: the toast says what happened, never more', () => {
     expect(describeApproval({ status: 'expired' }).toast).toContain('Nothing ran')
   })
 
-  it('a card with no external action keeps the agent wording', () => {
-    expect(describeApproval({ status: 'approved' })).toEqual({
+  it('says an agent carries on only when the server says one was told', () => {
+    expect(describeApproval({ status: 'approved', continues: true })).toEqual({
       closes: true,
       kind: 'approved',
       note: 'Approved',
       toast: 'Approved — the agent was told to continue.',
     })
+  })
+
+  it('a planner card that runs nothing says so', () => {
+    const shown = describeApproval({ status: 'approved' })
+    expect(shown.toast).toBe('Approved. Your approval is on record; nothing runs from this click.')
+    expect(shown.toast).not.toContain('told to continue')
   })
 })
 

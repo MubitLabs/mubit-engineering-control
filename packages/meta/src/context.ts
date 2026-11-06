@@ -18,10 +18,18 @@
  */
 import type { Store, StoreDoc } from '@mec/contracts'
 import type { Caps, ModelAvailability, ModelTier, SlotModelsView, TierTableLike } from '@mec/domain'
-import { availableTiersOnSlot, tableEntries, WORK_ITEM_TERMINAL, type WorkItemState } from '@mec/domain'
+import {
+  availableTiersOnSlot,
+  stageOf,
+  tableEntries,
+  WORK_ITEM_TERMINAL,
+  type WorkItemState,
+  workViewOf,
+} from '@mec/domain'
 import { loadPolicy } from '../../policy/src/policy'
 import type { AttemptOutcome } from '../../scorecards/src/project'
 import { hintsFor, projectTiers } from '../../scorecards/src/tiers'
+import { unreadNotes } from './followups'
 
 /**
  * The capability table as the context reads it — a structural stand-in for the T1
@@ -185,6 +193,8 @@ export type PlannerContextInput = {
     /** Present when no table supplier is wired — the honest not-in-this-build line. */
     note?: string
   }
+  /** §6: what happened since the last turn and did not wake it. */
+  notes?: { at: string; text: string }[]
   /** A provider that may answer "unknown for now" (§5.5: unknown until data exists). */
   scorecards?: () => PlannerScorecardRow[] | undefined
   bundleRevision?: string
@@ -207,6 +217,17 @@ function conversationSection(input: PlannerContextInput): string {
   return [
     `conversation: last ${rows.length} message(s)${omitted > 0 ? ` (${omitted} older omitted)` : ''}`,
     ...(lines.length > 0 ? lines : ['- (none yet — this is the first message)']),
+  ].join('\n')
+}
+
+function notesSection(input: PlannerContextInput): string {
+  const rows = last(input.notes ?? [], CONTEXT_BOUNDS.conversationMessages)
+  const omitted = (input.notes?.length ?? 0) - rows.length
+  return [
+    `notes since the last turn: ${rows.length}${omitted > 0 ? ` (${omitted} older omitted)` : ''}`,
+    ...rows.map(
+      (note) => `- ${truncate(note.text.replace(/\s+/g, ' ').trim(), CONTEXT_BOUNDS.messageChars)}`,
+    ),
   ].join('\n')
 }
 
@@ -392,6 +413,7 @@ export function compilePlannerContext(input: PlannerContextInput): string {
     '<state>',
     `turn: woken by ${truncate(wake.replace(/\s+/g, ' ').trim(), CONTEXT_BOUNDS.messageChars * 2)}`,
     conversationSection(input),
+    notesSection(input),
     workSection(input),
     confirmationsSection(input),
     slotsSection(input),
@@ -416,6 +438,10 @@ export function slotViewsFromStore(
     engine: typeof doc.engine === 'string' ? doc.engine : '',
     healthy: String(doc.state ?? '') === 'healthy',
     marks: marks?.[String(doc.id ?? '')] ?? {},
+    ...(typeof doc.provider === 'string' && { provider: doc.provider }),
+    ...(typeof doc.slotClass === 'string' && { slotClass: doc.slotClass }),
+    ...(typeof doc.usageUtilization === 'number' && { utilisation: doc.usageUtilization }),
+    ...(typeof doc.concurrency === 'number' && { concurrency: doc.concurrency }),
   }))
 }
 
@@ -473,6 +499,28 @@ export function modelRowsFromTable(
  * Budgets read off task docs when they carry one — no budget ledger exists yet, so
  * absence prints unknown, never a made-up number.
  */
+/** The facts of §10's stage, joined as Work joins them: a card only by a stored id or its mandate. */
+function stageFacts(store: Store, doc: StoreDoc, now: string): Parameters<typeof workViewOf>[1] {
+  const id = String(doc.id)
+  const mandateId = (doc.mandate as { id?: unknown } | undefined)?.id
+  return {
+    openQuestions: store.engines
+      .list()
+      .filter((q) => String(q.id).startsWith('question/') && q.status === 'open' && q.workItemId === id)
+      .length,
+    awaitingConfirmation: store.confirmations
+      .list({ status: 'pending' })
+      .filter((card) => String(card.expiresAt ?? '') > now)
+      .some(
+        (card) =>
+          card.workItemId === id ||
+          (card.workItemId === undefined && mandateId !== undefined && card.mandateId === mandateId),
+      ),
+    attempts: store.attempts.list({ workItemId: id }),
+    merged: store.engines.get(`delivery/${id}`)?.stage === 'merged',
+  }
+}
+
 export function plannerContextFromStore(
   store: Store,
   opts: {
@@ -489,9 +537,11 @@ export function plannerContextFromStore(
      * item, so a legacy row is out of the planner's reach. Absent means every repository.
      */
     repoScope?: { repoId?: string; workItemId?: string }
+    now?: () => string
   },
 ): PlannerContextInput {
   const scope = opts.repoScope
+  const now = (opts.now ?? (() => new Date().toISOString()))()
   const inScope = (doc: StoreDoc): boolean => {
     if (scope === undefined) return true
     if (scope.repoId !== undefined) return doc.repoId === scope.repoId
@@ -545,7 +595,7 @@ export function plannerContextFromStore(
     return {
       id,
       state: String(doc.state ?? ''),
-      stage: String(doc.stage ?? doc.state ?? 'unknown'),
+      stage: stageOf(workViewOf(doc, stageFacts(store, doc, now))).label,
       tasks,
       openQuestions: store.engines
         .list()
@@ -555,6 +605,8 @@ export function plannerContextFromStore(
       blockers: typeof doc.blockedReason === 'string' ? [doc.blockedReason] : [],
     }
   })
+
+  const notes = open.flatMap((doc) => unreadNotes(store, doc))
 
   const attempts: PlannerAttemptRow[] = store.attempts
     .list()
@@ -634,6 +686,7 @@ export function plannerContextFromStore(
   return {
     turn: opts.turn,
     conversation,
+    ...(notes.length > 0 && { notes }),
     work,
     attempts,
     confirmations,

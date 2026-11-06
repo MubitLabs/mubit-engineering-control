@@ -143,9 +143,10 @@ function seedStore(dataDir: string, repo: string, seed: Seed = {}): void {
   db.close()
 }
 
-async function serve(dataDir: string): Promise<void> {
+async function serve(dataDir: string): Promise<{ url: string }> {
   const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 4000 })
   closers.push(server.close)
+  return server
 }
 
 /** Reads the store as a second connection would, while the server holds it. */
@@ -235,6 +236,38 @@ const LINKED = {
 const onlyAttempt = (dataDir: string): string =>
   peek(dataDir, (store) => String(store.attempts.list()[0]?.id))
 
+describe('the commit outside the sandbox', { timeout: 60_000 }, () => {
+  const tampered = async (sh: string) => {
+    const { dataDir, repo } = scratch({
+      steps: [
+        { init: true },
+        { write: { path: 'made.txt', text: 'made\n' } },
+        { sh },
+        { result: 'completed' },
+      ],
+    })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedStore(dataDir, repo)
+    await serve(dataDir)
+    await reaches(dataDir, 'failed')
+    const attempt = peek(dataDir, (store) => store.attempts.get('att_1'))
+    return { attempt, work: join(dataDir, 'work', 'att_1') }
+  }
+
+  it('a repointed .git ends the attempt failed, with its reason, and commits nothing', async () => {
+    const { attempt } = await tampered(`printf 'gitdir: /tmp/mec-elsewhere\\n' > .git`)
+    expect(String(attempt?.terminal_reason)).toContain('git_pointer_moved')
+    expect(attempt?.head_sha).toBeUndefined()
+  })
+
+  it('a .git swapped for a repository of the worker commits nothing there', async () => {
+    const swap = '/usr/bin/git init -q "$TMPDIR/swapped" && rm .git && mv "$TMPDIR/swapped/.git" .git'
+    const { attempt, work } = await tampered(swap)
+    expect(String(attempt?.terminal_reason)).toContain('git_pointer_moved')
+    expect(() => gitIn(work, 'rev-parse', 'HEAD')).toThrow()
+  })
+})
+
 describe('a chat request', { timeout: 60_000 }, () => {
   const request = async (dataDir: string, tier = 'fast') => {
     const server = await startServer({
@@ -307,6 +340,58 @@ describe('a chat request', { timeout: 60_000 }, () => {
     it('a linked slot plans with CLAUDE_CONFIG_DIR unset, as an interactive claude runs', async () => {
       const seen = await plansOn({ ...LINKED, home: '/home/someone/.claude', linkedDefault: true })
       expect(seen.config_dir).toBeNull()
+    })
+
+    it("a linked slot's own settings cannot widen the planner: explicit mode, no shell", async () => {
+      const seen = await plansOn({ ...LINKED, home: '/home/someone/.claude', linkedDefault: true })
+      const pairs = (seen.argv as string[]).map((arg, index, argv) => `${arg} ${argv[index + 1]}`)
+      expect(pairs).toContain('--permission-mode default')
+      for (const tool of ['Bash', 'Write', 'Edit', 'NotebookEdit']) {
+        expect(pairs).toContain(`--disallowedTools ${tool}`)
+      }
+      expect(pairs).toContain('--allowedTools mcp__mec__*')
+      expect(seen.argv).toContain('--restricted')
+    })
+
+    it('a retired meta slot never launches, and the status says why', async () => {
+      const { dataDir, repo, bin } = scratch({ steps: [{ init: true }, { result: 'completed' }] })
+      seedSlots(dataDir, repo, [{ ...LINKED, state: 'retired' }])
+      peek(dataDir, (store) => store.engines.save({ id: 'settings/meta-slot', slotId: LINKED.id }))
+      const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 4000 })
+      closers.push(server.close)
+
+      await fetch(`${server.url}/api/chat/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'please add the thing', repoId: 'repo_a' }),
+      })
+
+      expect(existsSync(join(bin, 'seen.json'))).toBe(false)
+      const status = (await (await fetch(`${server.url}/api/status`)).json()) as {
+        parts: Record<string, { state: string; detail?: string }>
+      }
+      expect(status.parts[`slot:${LINKED.id}`]).toEqual({
+        state: 'error',
+        detail: `slot ${LINKED.id} is retired, so it cannot run the meta agent: choose another slot`,
+      })
+    })
+
+    it('a retired meta slot with no home is refused by name too', async () => {
+      const { dataDir, repo } = scratch({ steps: [{ init: true }, { result: 'completed' }] })
+      const { home: _home, ...homeless } = LINKED
+      seedSlots(dataDir, repo, [{ ...homeless, state: 'retired' }])
+      peek(dataDir, (store) => store.engines.save({ id: 'settings/meta-slot', slotId: LINKED.id }))
+      const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 4000 })
+      closers.push(server.close)
+      const status = (await (await fetch(`${server.url}/api/status`)).json()) as {
+        parts: Record<string, { state: string; detail?: string }>
+      }
+      expect(status.parts[`slot:${LINKED.id}`]?.state).toBe('error')
+    })
+
+    it('a degraded meta slot still plans: a probe can bring it back', async () => {
+      const seen = await plansOn({ ...LINKED, state: 'degraded' })
+      expect(seen.argv).toContain('-p')
     })
 
     it('a slot with its own home plans under that home', async () => {
@@ -450,7 +535,9 @@ describe('the launch path', { timeout: 60_000 }, () => {
 
     // The brief is true about the shared clone: its writes are denied, so a worker's own commit
     // fails, and the worker is told to leave that to MEC instead of finding out and retrying.
-    const prompt = argv.join('\n')
+    // §9: the objective goes on stdin, the first of the engine's input lines.
+    const stdin = readFileSync(join(bin, 'stdin.jsonl'), 'utf8')
+    const prompt = String(JSON.parse(stdin.split('\n')[0] ?? '{}').message.content)
     expect(prompt).toContain('Your shell is sandboxed')
     expect(prompt).toMatch(/shared clone[^.]*read-only/)
     expect(prompt).toContain('Do not run git add or git commit')
@@ -604,6 +691,31 @@ describe('the launch path', { timeout: 60_000 }, () => {
     expect(existsSync(join(dataDir, 'work', 'att_1', '.mec', 'mcp.json'))).toBe(false)
   })
 
+  it('a token a worker wrote into its worktree is not served as an artifact', async () => {
+    const { dataDir, repo, bin } = scratch({
+      steps: [
+        { init: true },
+        { saveToken: true },
+        { sh: 'printenv MEC_TOOLS_TOKEN > build.log' },
+        { result: 'completed' },
+      ],
+    })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedStore(dataDir, repo)
+    const server = await serve(dataDir)
+    await reaches(dataDir, 'work_complete')
+
+    const token = readFileSync(join(bin, 'token.txt'), 'utf8')
+    expect(readFileSync(join(dataDir, 'work', 'att_1', 'build.log'), 'utf8')).toContain(token)
+    const res = await fetch(`${server.url}/api/inspect/artifacts?attemptId=att_1&ref=build.log`, {
+      headers: { 'x-mec-client': '1' },
+    })
+    expect(res.status).toBe(200)
+    const body = await res.text()
+    expect(body).not.toContain(token)
+    expect(body).toContain('[redacted:exact]')
+  })
+
   it('launch returns after engine start, not at exit', async () => {
     const { dataDir, repo } = scratch({ steps: [{ init: true }, { forever: true }] })
     process.env.MEC_REAL_RUNNER = '1'
@@ -615,6 +727,20 @@ describe('the launch path', { timeout: 60_000 }, () => {
       (db.prepare("SELECT count(*) AS n FROM effects WHERE kind = 'launch'").get() as { n: number }).n
     await until(() => peek(dataDir, (_store, db) => launchRows(db)) === 0)
     expect(attemptState(dataDir)).toBe('running')
+  })
+
+  // §11: the plan stores `wallClockMs` (packages/meta/src/tools.ts); rows seeded in the brief's
+  // spelling keep working. The default is 30 minutes, so an unread budget cannot end this run.
+  it.each([
+    ['a stored plan budget', { turns: 5, wallClockMs: 400 }],
+    ['a seeded brief-shaped budget', { turns: 5, wall_clock_ms: 400 }],
+  ])('%s ends the attempt on its own wall clock', async (_name, budget) => {
+    const { dataDir, repo } = scratch({ steps: [{ init: true }, { forever: true }] })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedStore(dataDir, repo, { task: { budget } })
+    await serve(dataDir)
+    await until(() => attemptState(dataDir) === 'interrupted', 15_000)
+    expect(peek(dataDir, (store) => store.attempts.get('att_1')?.terminal_reason)).toBe('wall_clock')
   })
 
   it('a stop request reaches the process group, and close stops what is left', async () => {
@@ -830,7 +956,7 @@ describe('what a launch refuses, before any spend', { timeout: 60_000 }, () => {
       { task: { repoId: 'repo_b' } },
       /launch_mismatch/,
     ],
-    ['a non-registry engine', { slot: { engine: 'codex' } }, /engine_not_launchable: codex/],
+    ['a non-registry engine', { slot: { engine: 'gemini' } }, /engine_not_launchable: gemini/],
     ['a key-based slot', { slot: { kind: 'claude-api' } }, /slot_kind_unsupported/],
     [
       'a slot of its own with no home, as the startup probe saves one',

@@ -3,6 +3,7 @@ import { AlreadyHandledError, HttpError } from '../src/api'
 import { DecodeError } from '../src/api-decode'
 import { createInspection, type InspectionClient, readFailure } from '../src/live/inspection'
 import type {
+  ActivityItem,
   CardEvidence,
   NeedItem,
   Page,
@@ -12,6 +13,8 @@ import type {
 } from '../src/next/inspection-wire'
 import { DENIED, needsList } from '../src/next/work-model'
 import {
+  activityItems,
+  artifactPages,
   cardEvidence,
   needs,
   searchPage,
@@ -28,6 +31,11 @@ const needsOf = (items: NeedItem[], nextCursor: string | null = null): Page<Need
   observedAt: OBSERVED,
 })
 const workOf = (items: WorkRow[], nextCursor: string | null = null): Page<WorkRow> => ({
+  items,
+  nextCursor,
+  observedAt: OBSERVED,
+})
+const activityOf = (items: ActivityItem[], nextCursor: string | null = null): Page<ActivityItem> => ({
   items,
   nextCursor,
   observedAt: OBSERVED,
@@ -63,6 +71,14 @@ function rig(over: Partial<InspectionClient> = {}) {
     answer: async (id, text) => {
       calls.push(`answer ${id} ${text}`)
     },
+    activity: async (id, cursor) => {
+      calls.push(`activity ${id} ${cursor}`)
+      return activityOf([])
+    },
+    artifact: async (id, ref, cursor) => {
+      calls.push(`artifact ${id} ${ref} ${cursor}`)
+      return artifactPages.text
+    },
     ...over,
   }
   return { inspection: createInspection(client), calls, settle: () => vi.advanceTimersByTimeAsync(0) }
@@ -75,6 +91,254 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+})
+
+describe('activity', () => {
+  const ACTIVE = 'attempt_active'
+  const STREAM = `attempt:${ACTIVE}`
+  const line = (seq: number): ActivityItem => ({ ...activityItems.tool, seq })
+  const activityCalls = (calls: string[]) => calls.filter((call) => call.startsWith('activity'))
+  const shownSeqs = (inspection: ReturnType<typeof rig>['inspection']) => {
+    const { read } = inspection.getState().activity
+    return read.status === 'loading' ? null : (read.data?.items.map((item) => item.seq) ?? null)
+  }
+
+  it('a task’s latest attempt is read from the start', async () => {
+    const { inspection, calls, settle } = rig()
+    inspection.selectTask('task_active')
+    await settle()
+    expect(activityCalls(calls)).toEqual([`activity ${ACTIVE} null`])
+    expect(inspection.getState().activity.attemptId).toBe(ACTIVE)
+  })
+
+  it('coverage false reads no activity', async () => {
+    const { inspection, calls, settle } = rig({
+      taskDetail: async () => ({ ...taskOfId('task_active'), coverage: taskOfId('task_partial').coverage }),
+    })
+    inspection.selectTask('task_active')
+    await settle()
+    expect(activityCalls(calls)).toEqual([])
+    expect(inspection.getState().activity.attemptId).toBeNull()
+  })
+
+  it('a frame for the attempt on show rereads the last page, and a repeat is applied once', async () => {
+    const asked: (string | null)[] = []
+    const { inspection, settle } = rig({
+      activity: async (_id, cursor) => {
+        asked.push(cursor)
+        return cursor === null ? activityOf([line(1), line(2)]) : activityOf([])
+      },
+    })
+    inspection.selectTask('task_active')
+    await settle()
+    inspection.invalidate(STREAM)
+    await settle()
+    expect(asked).toEqual([null, null])
+    expect(shownSeqs(inspection)).toEqual([1, 2])
+  })
+
+  it('a frame for another stream reads nothing', async () => {
+    const { inspection, calls, settle } = rig()
+    inspection.selectTask('task_active')
+    await settle()
+    inspection.invalidate('attempt:other')
+    inspection.invalidate('work:work_working')
+    await settle()
+    expect(activityCalls(calls)).toHaveLength(1)
+  })
+
+  it('more follows the cursor and keeps what was read', async () => {
+    const asked: (string | null)[] = []
+    const { inspection, settle } = rig({
+      activity: async (_id, cursor) => {
+        asked.push(cursor)
+        return cursor === null ? activityOf([line(1)], 'c1') : activityOf([line(2)], 'c2')
+      },
+    })
+    inspection.selectTask('task_active')
+    await settle()
+    inspection.moreActivity()
+    await settle()
+    expect(asked).toEqual([null, 'c1'])
+    expect(shownSeqs(inspection)).toEqual([1, 2])
+    inspection.invalidate(STREAM)
+    await settle()
+    expect(asked).toEqual([null, 'c1', 'c1'])
+    expect(shownSeqs(inspection)).toEqual([1, 2])
+  })
+
+  it('a frame during more waits for it instead of cancelling it', async () => {
+    const asked: (string | null)[] = []
+    let finish: (page: Page<ActivityItem>) => void = () => {}
+    const { inspection, settle } = rig({
+      activity: async (_id, cursor) => {
+        asked.push(cursor)
+        if (cursor === null) return activityOf([line(1)], 'c1')
+        if (asked.length === 2) return new Promise((resolve) => (finish = resolve))
+        return activityOf([line(3)])
+      },
+    })
+    inspection.selectTask('task_active')
+    await settle()
+    inspection.moreActivity()
+    inspection.invalidate(STREAM)
+    await settle()
+    expect(asked).toEqual([null, 'c1'])
+    finish(activityOf([line(2)]))
+    await settle()
+    expect(asked).toEqual([null, 'c1', 'c1'])
+    expect(shownSeqs(inspection)).toEqual([1, 2, 3])
+  })
+
+  it('a failed reread keeps the lines and when they were read', async () => {
+    let up = true
+    const { inspection, settle } = rig({
+      activity: async () => {
+        if (!up) throw new Error('down')
+        return activityOf([line(1)])
+      },
+    })
+    inspection.selectTask('task_active')
+    await settle()
+    up = false
+    inspection.invalidate(STREAM)
+    await settle()
+    const { read } = inspection.getState().activity
+    expect(read.status).toBe('failed')
+    expect(shownSeqs(inspection)).toEqual([1])
+    expect(read).toMatchObject({ readAt: OBSERVED })
+  })
+
+  it('choosing an attempt reads that attempt, and a refresh stays on it', async () => {
+    const detail = taskOfId('task_active')
+    const first = detail.attempts[0] as TaskDetail['attempts'][number]
+    const { inspection, calls, settle } = rig({
+      taskDetail: async () => ({
+        ...detail,
+        attempts: [{ ...first, id: 'attempt_old', generation: 0 }, first],
+      }),
+    })
+    inspection.selectTask('task_active')
+    await settle()
+    inspection.selectAttempt('attempt_old')
+    await settle()
+    inspection.refresh()
+    await settle()
+    expect(inspection.getState().activity.attemptId).toBe('attempt_old')
+    expect(activityCalls(calls)).toEqual([
+      `activity ${ACTIVE} null`,
+      'activity attempt_old null',
+      'activity attempt_old null',
+    ])
+  })
+
+  it('a newer attempt takes over unless one was chosen', async () => {
+    const detail = taskOfId('task_active')
+    const first = detail.attempts[0] as TaskDetail['attempts'][number]
+    let attempts = [first]
+    const { inspection, settle } = rig({ taskDetail: async () => ({ ...detail, attempts }) })
+    inspection.selectTask('task_active')
+    await settle()
+    attempts = [first, { ...first, id: 'attempt_new', generation: 2 }]
+    inspection.refresh()
+    await settle()
+    expect(inspection.getState().activity.attemptId).toBe('attempt_new')
+  })
+
+  it('another task starts clean: nothing of the last one stays', async () => {
+    const { inspection, settle } = rig({ activity: async () => activityOf([line(1)]) })
+    inspection.selectTask('task_active')
+    await settle()
+    inspection.openArtifact(ACTIVE, 'out/run.log')
+    await settle()
+    inspection.selectTask('task_done')
+    expect(inspection.getState().activity).toEqual({ attemptId: null, read: { status: 'loading' } })
+    expect(inspection.getState().artifact).toBeNull()
+    await settle()
+    expect(inspection.getState().activity.attemptId).toBe('attempt_done')
+  })
+
+  it('a late answer for the last attempt is dropped', async () => {
+    let finish: (page: Page<ActivityItem>) => void = () => {}
+    const { inspection, settle } = rig({
+      activity: (id) =>
+        id === ACTIVE ? new Promise((resolve) => (finish = resolve)) : Promise.resolve(activityOf([line(9)])),
+    })
+    inspection.selectTask('task_active')
+    await settle()
+    inspection.selectTask('task_done')
+    await settle()
+    finish(activityOf([line(1)]))
+    await settle()
+    expect(shownSeqs(inspection)).toEqual([9])
+  })
+})
+
+describe('artifacts', () => {
+  const ATT = 'attempt_active'
+
+  it('opens, follows the cursor and appends', async () => {
+    const asked: (string | null)[] = []
+    const { inspection, settle } = rig({
+      artifact: async (_id, _ref, cursor) => {
+        asked.push(cursor)
+        return cursor === null
+          ? artifactPages.text
+          : { ...artifactPages.text, text: 'second', nextCursor: null }
+      },
+    })
+    inspection.openArtifact(ATT, 'out/run.log')
+    await settle()
+    inspection.moreArtifact()
+    await settle()
+    expect(asked).toEqual([null, 'cursor-artifact'])
+    expect(inspection.getState().artifact?.read).toMatchObject({
+      status: 'ready',
+      data: { kind: 'text', text: 'SAMPLE-ONLY log\nsecond', nextCursor: null },
+    })
+  })
+
+  it('a second open of the same file closes it', async () => {
+    const { inspection, settle } = rig()
+    inspection.openArtifact(ATT, 'out/run.log')
+    await settle()
+    inspection.openArtifact(ATT, 'out/run.log')
+    expect(inspection.getState().artifact).toBeNull()
+  })
+
+  it('a refused or missing file has its own words, and retry reads again', async () => {
+    let status = 403
+    const { inspection, settle } = rig({
+      artifact: async () => {
+        throw new HttpError('/x', status)
+      },
+    })
+    inspection.openArtifact(ATT, '.mec/x')
+    await settle()
+    expect(inspection.getState().artifact?.read).toMatchObject({
+      status: 'failed',
+      message: 'The workbench does not serve this file.',
+    })
+    status = 404
+    inspection.retryArtifact()
+    await settle()
+    expect(inspection.getState().artifact?.read).toMatchObject({
+      status: 'failed',
+      message: 'This file is not there any more.',
+    })
+  })
+
+  it('a late answer for a closed file is dropped', async () => {
+    let finish: (page: typeof artifactPages.text) => void = () => {}
+    const { inspection, settle } = rig({
+      artifact: () => new Promise((resolve) => (finish = resolve)),
+    })
+    inspection.openArtifact(ATT, 'out/run.log')
+    inspection.openArtifact(ATT, 'out/run.log')
+    finish(artifactPages.text)
+    await settle()
+    expect(inspection.getState().artifact).toBeNull()
+  })
 })
 
 describe('reads', () => {

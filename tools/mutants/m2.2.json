@@ -1,0 +1,560 @@
+[
+  {
+    "name": "queued not counted",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "const OCCUPYING: readonly AttemptState[] = ['queued', ...ACTIVE_ATTEMPT_STATES]",
+    "replace": "const OCCUPYING: readonly AttemptState[] = [...ACTIVE_ATTEMPT_STATES]",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "gave-up launch holds capacity",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (state === 'queued') return deps.launchRowState?.(launchKey(attempt)) !== 'failed'\n",
+    "replace": "  if (state === 'queued') return true\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "ignore hold",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    if (isHeld(work)) {\n",
+    "replace": "    if (false as boolean) {\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "ignore stopped",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    if (isTerminal(listed) || mandateOf(listed).status === 'withdrawn') continue\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "pass during a pause",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (processingOf(store).paused) return []\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "pin ignored",
+    "file": "packages/domain/src/scheduling.ts",
+    "find": "    (task.slotId === undefined || slot.id === task.slotId) &&\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "model ignored",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "      const { modelSlots, resolved } = modelFit(deps, task, views)\n",
+    "replace": "      const { resolved } = modelFit(deps, task, views)\n      const modelSlots = undefined as string[] | undefined\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "accept without a verdict",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "(noVerdict(latest) && !stopped)) {\n",
+    "replace": "noVerdict(latest)) {\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "dependent runs after failure",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  blockDependents(store, workItemId, at)\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "integration dependent starts on accepted",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "const basePolicyOf = (task: StoreDoc): BasePolicy =>\n  task.basePolicy === 'contract' ? 'contract' : 'integration'\n",
+    "replace": "const basePolicyOf = (_task: StoreDoc): BasePolicy => 'contract'\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "reserved unit ignored",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    reservedWakeSlot: followups.deliveryWaiting(),\n",
+    "replace": "    reservedWakeSlot: false,\n",
+    "tests": ["apps/desktop/test/coordination.test.ts"]
+  },
+  {
+    "name": "replan resets status",
+    "file": "packages/meta/src/service.ts",
+    "find": "          status: prior?.status ?? 'ready',\n",
+    "replace": "          status: 'ready',\n",
+    "tests": ["packages/meta/test/replan.test.ts"]
+  },
+  {
+    "name": "dropped key forgotten",
+    "file": "packages/meta/src/service.ts",
+    "find": "      if (started || !canTransition(TASK_MACHINE, status, 'cancel')) {\n",
+    "replace": "      if (status !== '') {\n",
+    "tests": ["packages/meta/test/replan.test.ts"]
+  },
+  {
+    "name": "progress wakes",
+    "file": "packages/meta/src/followups.ts",
+    "find": "    if (classifyWake(event) === 'wake') {\n",
+    "replace": "    if (classifyWake(event) !== 'ignore') {\n",
+    "tests": ["packages/meta/test/wakes-composed.test.ts"]
+  },
+  {
+    "name": "fake delivered",
+    "file": "packages/meta/src/followups.ts",
+    "find": "    try {\n      await runtime.deliver(ref, input)\n    } catch (error) {\n",
+    "replace": "    this.#store.atomic(() => this.#delivered(attemptId, input))\n    try {\n      await runtime.deliver(ref, input)\n    } catch (error) {\n",
+    "tests": ["packages/meta/test/followups.test.ts"]
+  },
+  {
+    "name": "read from transport",
+    "file": "packages/meta/src/followups.ts",
+    "find": "    if (moved.turn_ended === input.id) this.#move(moved, 'read', at)\n",
+    "replace": "    this.#move(moved, 'read', at)\n",
+    "tests": ["packages/meta/test/followups.test.ts"]
+  },
+  {
+    "name": "reroute while owned",
+    "file": "packages/meta/src/followups.ts",
+    "find": "    if (refused.length === 0 && !replanned) return decision\n",
+    "replace": "    if (decision.ack !== '') return decision\n",
+    "tests": ["packages/meta/test/followups.test.ts"]
+  },
+  {
+    "name": "handback to the same attempt",
+    "file": "packages/meta/src/followups.ts",
+    "find": "    const owner = this.ownerOf(workItemId, handback.attemptId)\n",
+    "replace": "    const owner = this.ownerOf(workItemId)\n",
+    "tests": ["packages/meta/test/followups.test.ts"]
+  },
+  {
+    "name": "held item gets input",
+    "file": "packages/meta/src/followups.ts",
+    "find": "    if (work !== undefined && isHeld(work)) throw new Later(`${String(work.id)} is held`)\n",
+    "replace": "",
+    "tests": ["packages/meta/test/followups.test.ts"]
+  },
+  {
+    "name": "replayed row delivers twice",
+    "file": "packages/meta/src/followups.ts",
+    "find": "    if (delivered?.includes(input.id) === true) return\n",
+    "replace": "",
+    "tests": ["packages/meta/test/followups.test.ts"]
+  },
+  {
+    "name": "answer wakes the planner",
+    "file": "packages/meta/src/service.ts",
+    "find": "      if (typeof doc.attemptId === 'string') {\n        this.#followups.answerSpecialist(doc, stored, at)\n        return { status: 'answered' as const, answer: stored }\n      }\n",
+    "replace": "",
+    "tests": ["packages/meta/test/followups.test.ts"]
+  },
+  {
+    "name": "extras written raw",
+    "file": "packages/meta/src/service.ts",
+    "find": "    const decision = { ...unredacted, questions, confirmations, routes, reports }\n",
+    "replace": "    const decision = unredacted\n",
+    "tests": ["packages/meta/test/service.test.ts"]
+  },
+  {
+    "name": "always-confirm requestable",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "  if ((ALWAYS_CONFIRM as readonly string[]).includes(cls) || cls === 'slot_switch') {\n",
+    "replace": "  if (cls === 'slot_switch') {\n",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  },
+  {
+    "name": "anything settled allows",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "    if (card?.status === 'approved') return { allow: true, reason: 'the owner approved this' }\n",
+    "replace": "    if (card?.status !== 'pending') return { allow: true, reason: 'the owner approved this' }\n",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  },
+  {
+    "name": "install skips the card",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "      if (pattern.test(command)) return { allow: false, reason: `${what} needs a confirmation`, card: cls }\n",
+    "replace": "      if (pattern.test(command) && what === '') return { allow: false, reason: what, card: cls }\n",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  },
+  {
+    "name": "pre-authorised anywhere",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "  if (policyPreAuthorises(cards.policy, verdict.card, { ...(repoId !== undefined && { repoId }) })) {\n",
+    "replace": "  if (Object.keys(cards.policy.preAuthorised).length > 0) {\n",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  },
+  {
+    "name": "stopped attempt keeps waiting",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "    if (state !== 'running') return { allow: false, reason: `${verdict.reason}: the attempt is ${state}` }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  },
+  {
+    "name": "dead attempt told to continue",
+    "file": "packages/meta/src/followups.ts",
+    "find": "  if (attempt?.state !== 'running') return false\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  },
+  {
+    "name": "no-evidence approve settles",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    if (body.answer === 'approve' && cardDetail(doc) === undefined) {\n",
+    "replace": "    if (body.answer === 'approve' && id === '') {\n",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "field names shown raw",
+    "file": "apps/desktop/src/release.ts",
+    "find": "    label: `${section}: ${shownSafe(key)}`,\n",
+    "replace": "    label: `${section}: ${key}`,\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "class shown raw",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  const cls = shownSafe(String(doc.cls ?? ''))\n",
+    "replace": "  const cls = String(doc.cls ?? '')\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "pause moves what it held",
+    "file": "packages/store/src/effects-queue.ts",
+    "find": " WHERE state IN ('pending', 'waiting') AND next_run_at > ?`,\n      )\n      .run(ms, this.now().toISOString())\n",
+    "replace": " WHERE state IN ('pending', 'waiting')`,\n      )\n      .run(ms)\n",
+    "tests": ["packages/store/test/effects.test.ts"]
+  },
+  {
+    "name": "toast promises an agent",
+    "file": "apps/web/src/release-cards.ts",
+    "find": "  if (result.continues === true) return shown(",
+    "replace": "  if (result.status !== '') return shown(",
+    "tests": ["apps/web/test/release-cards.test.ts"]
+  },
+  {
+    "name": "stdin closes at the first result",
+    "file": "packages/engines/src/claude/adapter.ts",
+    "find": "    if ([...launch.commands.values()].every((entry) => entry.done)) this.#closeInput(launch)\n",
+    "replace": "    this.#closeInput(launch)\n",
+    "tests": ["packages/engines/test/claude-input.test.ts"]
+  },
+  {
+    "name": "send resolves on the write",
+    "file": "packages/engines/src/claude/adapter.ts",
+    "find": "      await Promise.race([command.taken.promise, late])\n",
+    "replace": "",
+    "tests": ["packages/engines/test/claude-input.test.ts"]
+  },
+  {
+    "name": "stdin never closes",
+    "file": "packages/engines/src/claude/adapter.ts",
+    "find": "    launch.inputOpen = false\n    launch.proc.stdin?.end()\n",
+    "replace": "    launch.inputOpen = false\n",
+    "tests": ["packages/engines/test/claude-input-eof.test.ts"]
+  },
+  {
+    "name": "second session started",
+    "file": "packages/engines/src/claude/stream.ts",
+    "find": "      if (str(parsed.subtype) === 'init' && !started) {\n",
+    "replace": "      if (str(parsed.subtype) === 'init') {\n",
+    "tests": ["packages/engines/test/claude-input.test.ts"]
+  },
+  {
+    "name": "unproven engine sends",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "    if (!PROVEN_INPUT.includes(engine)) throw new Error(`runtime: engine ${engine} has no proven input`)\n",
+    "replace": "",
+    "tests": ["packages/runtime/test/attempt-runner.test.ts"]
+  },
+  {
+    "name": "note handler unsupported",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "            : kind === 'note'\n              ? (payload) => followups.runNote(payload)\n              : kind === 'probe'\n                ? probeHandler(probe)\n                : unsupportedHandler(kind)\n",
+    "replace": "            : kind === 'probe'\n              ? probeHandler(probe)\n              : unsupportedHandler(kind)\n",
+    "tests": ["apps/desktop/test/coordination.test.ts"]
+  },
+  {
+    "name": "no pass after effects",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    parkPass()\n    schedulerPass()\n    if (!paused) delivery?.kick()\n",
+    "replace": "    parkPass()\n    if (!paused) delivery?.kick()\n",
+    "tests": ["apps/desktop/test/coordination.test.ts", "-t", "pass places work"]
+  },
+  {
+    "name": "follow-up names no ids",
+    "file": "packages/engines/src/claude/adapter.ts",
+    "find": "  if (input.message_id === undefined) return input.text\n",
+    "replace": "  if (input.message_id !== 'x') return input.text\n",
+    "tests": [
+      "packages/engines/test/claude-input.test.ts",
+      "apps/desktop/test/coordination.test.ts",
+      "-t",
+      "names its ids|handed back by the id"
+    ]
+  },
+  {
+    "name": "ids replace the text",
+    "file": "packages/engines/src/claude/adapter.ts",
+    "find": "    { type: 'text', text: input.text },\n",
+    "replace": "",
+    "tests": ["packages/engines/test/claude-input.test.ts"]
+  },
+  {
+    "name": "wall clock is no failure",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (state === 'interrupted' && attempt.terminal_reason === 'wall_clock') {\n",
+    "replace": "  if (false as boolean) {\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "a stop counts as a failure",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (state === 'interrupted' && attempt.terminal_reason === 'wall_clock') {\n",
+    "replace": "  if (state === 'interrupted') {\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "reports ignored at acceptance",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    if (settleOnReport(store, task, latest, at)) continue\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "blocked report accepted",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (report?.kind === 'failed' || report?.kind === 'blocked') {\n",
+    "replace": "  if (report?.kind === 'failed') {\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "failed report accepted",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (report?.kind === 'failed' || report?.kind === 'blocked') {\n",
+    "replace": "  if (report?.kind === 'blocked') {\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "dropped report accepted",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (report?.kind !== 'dropped') return false\n",
+    "replace": "  if (report !== undefined || report === undefined) return false\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "first report wins",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  const doc = store.engines.get(`report/${String(attempt.id)}/${Number(attempt.reports ?? 0)}`)\n",
+    "replace": "  const doc = store.engines.get(`report/${String(attempt.id)}/1`)\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "a late report takes back acceptance",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (task.status !== 'active' && task.status !== 'awaiting_review') return false\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "no-checks attempt unheard",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (attempt.state !== 'succeeded' && !noVerdict(attempt)) return false\n",
+    "replace": "  if (attempt.state !== 'succeeded') return false\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "dependent loses the drop reason",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "        prerequisite?.cancelledReason ??\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "early report lost",
+    "file": "packages/meta/src/followups.ts",
+    "find": "    if (moved.handled_early === input.id) {\n",
+    "replace": "    if (false as boolean) {\n",
+    "tests": ["packages/meta/test/followups.test.ts"]
+  },
+  {
+    "name": "specialist card names the planner",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    if (typeof doc.attemptId === 'string') {\n      return [`asked by the specialist",
+    "replace": "    if (false as boolean) {\n      return [`asked by the specialist",
+    "tests": ["apps/desktop/test/planner.test.ts"]
+  },
+  {
+    "name": "question evidence dropped",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    ...(typeof doc.evidenceRef === 'string' && { evidenceRef: doc.evidenceRef }),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/planner.test.ts"]
+  },
+  {
+    "name": "no-checks attempt keeps its follow-ups",
+    "file": "packages/meta/src/followups.ts",
+    "find": "  attempt.switched_to !== undefined ||\n  noVerdict(attempt)\n",
+    "replace": "  attempt.switched_to !== undefined\n",
+    "tests": ["packages/meta/test/followups.test.ts", "apps/desktop/test/coordination.test.ts"]
+  },
+  {
+    "name": "checks still running count as ended",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  return attempt.state === 'work_complete' && typeof attempt.checks_note === 'string'\n",
+    "replace": "  return attempt.state === 'work_complete'\n",
+    "tests": ["packages/meta/test/followups.test.ts"]
+  },
+  {
+    "name": "plan wall clock ignored",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "        wall_clock_ms: budget.wallClockMs ?? budget.wall_clock_ms ?? DEFAULT_WALL_CLOCK_MS,\n",
+    "replace": "        wall_clock_ms: budget.wall_clock_ms ?? DEFAULT_WALL_CLOCK_MS,\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts", "apps/desktop/test/coordination.test.ts"]
+  },
+  {
+    "name": "seeded wall clock ignored",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "        wall_clock_ms: budget.wallClockMs ?? budget.wall_clock_ms ?? DEFAULT_WALL_CLOCK_MS,\n",
+    "replace": "        wall_clock_ms: budget.wallClockMs ?? DEFAULT_WALL_CLOCK_MS,\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "wall clock in a check is no failure",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "if (noVerdict(attempt) && attempt.checks_stopped === 'wall_clock') {",
+    "replace": "if (noVerdict(attempt) && attempt.checks_stopped === 'never') {",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "a stop during the checks counts as a failure",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "if (noVerdict(attempt) && attempt.checks_stopped === 'wall_clock') {",
+    "replace": "if (noVerdict(attempt) && attempt.checks_stopped !== undefined) {",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "stop reason not recorded",
+    "file": "apps/desktop/src/core-facts.ts",
+    "find": "...(stopped !== undefined && { checks_stopped: stopped }),",
+    "replace": "",
+    "tests": ["apps/desktop/test/coordination.test.ts"]
+  },
+  {
+    "name": "runner drops the stop reason",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "facts.checksSkipped(attempt, head, `stopped ${where}: ${String(reason)}`, reason)",
+    "replace": "facts.checksSkipped(attempt, head, `stopped ${where}: ${String(reason)}`)",
+    "tests": ["packages/runtime/test/attempt-runner.test.ts"]
+  },
+  {
+    "name": "hard link to a control file allowed",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "if (controlInodes(worktree).has(inodeOf(leaf))) {",
+    "replace": "if (leaf.ino < 0n) {",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
+  },
+  {
+    "name": "hard-linked leaf allowed",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "if (leaf.nlink > 1n) return",
+    "replace": "if (leaf.nlink > 1000000n) return",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
+  },
+  {
+    "name": "mec files not counted as control",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "  addTree(join(worktree, '.mec'), inodes)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
+  },
+  {
+    "name": "planner keeps the user's mode",
+    "file": "packages/engines/src/claude/argv.ts",
+    "find": "    argv.push('--permission-mode', 'default')\n    for (const tool",
+    "replace": "    for (const tool",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "planner keeps the shell",
+    "file": "packages/engines/src/claude/argv.ts",
+    "find": "    for (const tool of UNASKED_DENIED) argv.push('--disallowedTools', tool)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "retired meta slot launches",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  if (slot.state === 'retired') {\n",
+    "replace": "  if (slot.state === 'never') {\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "retired meta slot refused in silence",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    health.claim(`slot:${slotId}`).error(why)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "degraded meta slot refused",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  if (slot.state === 'retired') {\n",
+    "replace": "  if (slot.state === 'retired' || slot.state === 'degraded') {\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "commit without looking at .git",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "if (plan.gitAdmin !== undefined && git.adminDirOf(brief.worktree) !== plan.gitAdmin) {",
+    "replace": "if (plan.gitAdmin === 'never' && git.adminDirOf(brief.worktree) !== plan.gitAdmin) {",
+    "tests": ["packages/runtime/test/attempt-runner.test.ts"]
+  },
+  {
+    "name": "launch names no admin directory",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "      gitAdmin: join(realpathSync(gitDir), 'worktrees', basename(worktree)),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "a .git that is no file counts as a pointer",
+    "file": "packages/git/src/worktrees.ts",
+    "find": "if (lstatSync(pointer, { throwIfNoEntry: false })?.isFile() !== true) return undefined",
+    "replace": "if (lstatSync(pointer, { throwIfNoEntry: false }) === undefined) return undefined",
+    "tests": ["packages/git/test/repos-worktrees.test.ts"]
+  },
+  {
+    "name": "pointer target not resolved",
+    "file": "packages/git/src/worktrees.ts",
+    "find": "return realpathSync(resolve(path, target))",
+    "replace": "return target",
+    "tests": ["packages/git/test/repos-worktrees.test.ts"]
+  },
+  {
+    "name": "handback reason not cleaned",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "const clean = cards.clean(String(attempt.id), reason)",
+    "replace": "const clean = reason",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  },
+  {
+    "name": "card class not cleaned",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "cls: cards.clean(attemptId, cls),",
+    "replace": "cls,",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  },
+  {
+    "name": "card field names not cleaned",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "[cards.clean(attemptId, name), scrub(entry)]",
+    "replace": "[name, scrub(entry)]",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  },
+  {
+    "name": "card field values not cleaned",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "typeof value !== 'object' || value === null) return cards.clean(attemptId, value)",
+    "replace": "typeof value !== 'object' || value === null) return value",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  }
+]

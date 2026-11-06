@@ -109,10 +109,11 @@ modules will not build (the launcher then exits 3 with a pointer to the fix).
 ## Commands
 
     node bin/mec.js        # the workbench server (prints its URL; MEC_DATA_DIR overrides ~/.mec)
-    mec status | stop | restart | doctor | slot add|list|probe|retire | update
-                          # the \`mec\` command dispatcher runs from a repository checkout:
-                          #   node apps/desktop/src/mec.ts <command>
-                          # (bin dispatch lands with the §21.1 launcher wiring)
+    node bin/mec.js <command>
+                          # runs from this directory, no checkout needed; \`mec <command>\`
+                          # once bin/mec.js is on your PATH. Commands: status, stop, restart,
+                          # doctor, setup, slot add|list|probe|retire, update, backup, restore
+    node bin/mec.js help   # every command and flag
 
 See docs/known-limits.md in the repository for the native-module rule and v0 limits.
 `,

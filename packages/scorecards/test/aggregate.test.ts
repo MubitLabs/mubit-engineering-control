@@ -28,6 +28,9 @@ function outcome(
     quotaParks: 0,
     errors: 0,
     coverage: { lifecycle: true, usage: true, rateLimit: false },
+    spendCoverage: 'unknown',
+    validation: 'unknown',
+    delivery: 'unknown',
     ...overrides,
   }
 }
@@ -44,8 +47,9 @@ describe('summariseByRole', () => {
       {
         role: 'implementer',
         attempts: 3,
-        completed: 2,
-        failed: 1, // not known to have completed counts as failed
+        processCompleted: 2,
+        processFailed: 1, // not known to have completed counts as failed
+        validated: 0,
         quotaParks: 3,
         avgCostUsd: 0.5, // (0.25 + 0.75) / 2 — the unknown cost left the divisor
         messagesSent: 6, // Σ turns: one assistant message per finished turn
@@ -53,8 +57,9 @@ describe('summariseByRole', () => {
       {
         role: 'reviewer',
         attempts: 1,
-        completed: 1,
-        failed: 0,
+        processCompleted: 1,
+        processFailed: 0,
+        validated: 0,
         quotaParks: 0,
         avgCostUsd: 'unknown',
         messagesSent: 4,
@@ -71,8 +76,9 @@ describe('summariseByRole', () => {
       {
         role: 'unknown',
         attempts: 2,
-        completed: 1,
-        failed: 1,
+        processCompleted: 1,
+        processFailed: 1,
+        validated: 0,
         quotaParks: 0,
         avgCostUsd: 1,
         messagesSent: 2,

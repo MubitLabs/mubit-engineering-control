@@ -16,9 +16,25 @@
  *   {child: {ignoreTerm}}     start a child that stays in this process group
  *   {sh: 'command'}           run a shell command, inheriting the environment
  *   {write: {path, text}}     write a file relative to the working directory
- *   {call: {tool, args}}      call a mec-tools tool; the answer lands in tool-answers.jsonl
+ *   {call: {tool, args}}      call a mec-tools tool; the answer lands in tool-answers.jsonl.
+ *                             `$INPUT_ID` and `$MESSAGE_ID` in args are read from the stdin line
+ *                             of this turn, which is all an engine has; if the line names no id
+ *                             they stay as they are and the tool refuses them.
  *   {saveToken: true}         copy the bearer token to token.txt beside this file
  *   {exit: n}                 exit with this code
+ *   {waitEof: true}           wait until stdin closes
+ *   {hold: ms}                run nothing for ms, stdin still read
+ *   {waitInput: n}            wait until n stdin lines have arrived
+ *   {deaf: true}              later input is acknowledged only when the turn ends
+ *   {silent: true}            later input is never acknowledged
+ *
+ * With `--input-format stream-json` it behaves as `claude` 2.1.318 did against a stub of the API:
+ * nothing happens before the first stdin line, each line is answered with `command_lifecycle`
+ * lines keyed by its uuid and the input is echoed at its own turn, a message that arrives mid-turn
+ * waits for the next turn, and the process stays up until stdin closes. Lines land in
+ * `stdin.jsonl`, and `stdin-closed` says whether stdin closed. `scenario.followUp` lists the steps
+ * of a later turn; by default a later turn only emits its result. `scenario.noLifecycle` drops the
+ * lifecycle lines, leaving only the replay.
  *
  * It writes `seen.json` beside itself: argv, cwd, pid and the attempt variables it was given.
  */
@@ -31,11 +47,18 @@ const scenario = JSON.parse(readFileSync(join(here, 'scenario.json'), 'utf8'))
 const steps = scenario.steps ?? []
 
 const argv = process.argv.slice(2)
+const streamInput = argv.includes('--input-format')
 const flag = (name) => {
   const index = argv.indexOf(name)
   return index === -1 ? undefined : argv[index + 1]
 }
-const sessionId = flag('--session-id') ?? '00000000-0000-4000-8000-000000000000'
+const sessionId = flag('--resume') ?? flag('--session-id') ?? '00000000-0000-4000-8000-000000000000'
+
+// `claude auth status`, the §5.8 probe: logged in, and nothing else of a run happens.
+if (argv[0] === 'auth') {
+  process.stdout.write('{"loggedIn":true}\n')
+  process.exit(0)
+}
 
 writeFileSync(
   join(here, 'seen.json'),
@@ -89,10 +112,76 @@ const result = (terminal_reason) => ({
   usage: { input_tokens: 3, output_tokens: 5 },
 })
 
-for (const step of steps) {
+const inbox = []
+let stdinClosed = false
+let answering = 'always'
+const lifecycle = (uuid, state) => {
+  if (scenario.noLifecycle !== true) emit({ type: 'command_lifecycle', command_uuid: uuid, state })
+}
+const ackLater = []
+
+if (streamInput) {
+  let buffer = ''
+  writeFileSync(join(here, 'stdin-closed'), 'no')
+  process.stdin.setEncoding('utf8')
+  process.stdin.on('data', (chunk) => {
+    buffer += chunk
+    for (;;) {
+      const end = buffer.indexOf('\n')
+      if (end === -1) break
+      const line = buffer.slice(0, end)
+      buffer = buffer.slice(end + 1)
+      appendFileSync(join(here, 'stdin.jsonl'), `${line}\n`)
+      const message = JSON.parse(line)
+      inbox.push(message)
+      if (answering === 'always') lifecycle(message.uuid, 'queued')
+      else if (answering === 'deaf') ackLater.push(message.uuid)
+    }
+  })
+  process.stdin.on('end', () => {
+    stdinClosed = true
+    writeFileSync(join(here, 'stdin-closed'), 'yes')
+  })
+  while (inbox.length === 0 && !stdinClosed) await sleep(5)
+  lifecycle(inbox[0]?.uuid, 'started')
+}
+
+const replay = (message) =>
+  emit({ type: 'user', isReplay: true, uuid: message.uuid, message: message.message })
+
+let taken = 0
+let sawResult = false
+
+/** What this turn's stdin line says: a second content block names a follow-up's ids. */
+function turnIds() {
+  const content = inbox[taken]?.message?.content
+  const said = Array.isArray(content) ? content.map((block) => block.text ?? '').join('\n') : ''
+  return { $INPUT_ID: /\binp_[\w-]+/.exec(said)?.[0], $MESSAGE_ID: /\bmsg_[\w-]+/.exec(said)?.[0] }
+}
+
+const withTurnIds = (args) =>
+  JSON.parse(
+    JSON.stringify(args).replace(/\$(INPUT|MESSAGE)_ID/g, (name) => turnIds()[name] ?? name),
+  )
+
+async function runStep(step) {
   if (step.emit !== undefined) emit(step.emit)
   else if (step.init === true) emit(INIT)
-  else if (step.result !== undefined) emit(result(step.result))
+  else if (step.result !== undefined) {
+    if (streamInput) replay(inbox[taken])
+    emit(result(step.result))
+    if (streamInput) lifecycle(inbox[taken]?.uuid, 'completed')
+    for (const uuid of ackLater.splice(0)) lifecycle(uuid, 'queued')
+    taken += 1
+    sawResult = true
+  } else if (step.waitEof === true) {
+    while (!stdinClosed) await sleep(5)
+  } else if (step.hold !== undefined) await sleep(step.hold)
+  else if (step.waitInput !== undefined) {
+    while (inbox.length < step.waitInput && !stdinClosed) await sleep(5)
+  }
+  else if (step.deaf === true) answering = 'deaf'
+  else if (step.silent === true) answering = 'never'
   else if (step.sleep !== undefined) await sleep(step.sleep)
   else if (step.forever === true) await new Promise(() => setInterval(() => {}, 1000))
   else if (step.ignoreTerm === true) process.on('SIGTERM', () => {})
@@ -106,8 +195,23 @@ for (const step of steps) {
   else if (step.write !== undefined) {
     mkdirSync(dirname(join(process.cwd(), step.write.path)), { recursive: true })
     writeFileSync(join(process.cwd(), step.write.path), step.write.text)
-  } else if (step.call !== undefined) await call(step.call.tool, step.call.args ?? {})
+  } else if (step.call !== undefined) await call(step.call.tool, withTurnIds(step.call.args ?? {}))
   else if (step.saveToken === true) {
     writeFileSync(join(here, 'token.txt'), mcp().authorization.replace(/^Bearer /, ''))
   } else if (step.exit !== undefined) process.exit(step.exit)
 }
+
+for (const step of steps) await runStep(step)
+
+// The rest of a stream-json session: one turn per waiting message, up until stdin closes.
+if (streamInput && sawResult) {
+  for (;;) {
+    if (taken < inbox.length) {
+      lifecycle(inbox[taken].uuid, 'started')
+      emit(INIT)
+      for (const step of scenario.followUp ?? [{ result: 'completed' }]) await runStep(step)
+    } else if (stdinClosed) break
+    else await sleep(5)
+  }
+}
+process.exit(0)

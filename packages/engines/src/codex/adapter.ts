@@ -2,6 +2,7 @@ import type {
   AttemptHandle,
   AuthHealth,
   Capabilities,
+  Decision,
   EngineAdapter,
   EngineEvent,
   EngineEventBody,
@@ -15,16 +16,17 @@ import { CODEX_ENGINE_VERSION, classifyCodexError, createCodexEventParser } from
 
 /**
  * Codex adapter (plan §9), verified against the real 0.148.0 app-server (docs/engines.md).
- * One `codex app-server` process per slot speaking JSON-RPC over stdio; one thread per
- * attempt; one turn at a time. The app-server process is supervised by the runtime
+ * One `codex app-server` process per attempt (decision #31) speaking JSON-RPC over stdio;
+ * one thread and one turn at a time. The app-server process is supervised by the runtime
  * (plan §8.1), so the adapter only speaks the documented methods: `initialize` + the
  * `initialized` notification, `thread/start` (or `thread/resume`), `turn/start`,
  * `turn/steer`, `turn/interrupt`, and answers the server→client approval REQUESTS
  * (`item/commandExecution/requestApproval` and friends, answered as JSON-RPC responses
  * with the same id) and `item/tool/requestUserInput` (answered `{answers: {}}`).
- * `deps.post` and `deps.notifications` are injectable — tests inject fakes, the runtime
- * injects the client for its spawned app-server process; nothing here ever runs the
- * `codex` binary itself (the probe's defaults defer to injected runners).
+ * `deps.post` and `deps.notifications` are injectable for tests; the runtime passes
+ * `deps.connect`, which starts the attempt's app-server at launch and gives both, so the
+ * spawn sees the attempt's env. Nothing here ever runs the `codex` binary itself (the
+ * probe's defaults defer to injected runners).
  *
  * Real 0.148.0 facts the code leans on: `turn/start` takes
  * `{threadId, input: [{type:'text', text, text_elements: []}]}` — not `{prompt}`; the turn
@@ -47,9 +49,23 @@ export type CodexVersionProbe = () => Promise<string | undefined>
 /** The spawned app-server's process exit code, once its stdout has closed; feeds the crash-rule exit. */
 export type CodexProcessExitCode = () => number | undefined
 
+/** What the runtime's client gives the adapter once its process runs. */
+export type CodexConnection = {
+  post: CodexPost
+  notifications: CodexNotifications
+  processExitCode: CodexProcessExitCode
+}
+
 export type CodexAdapterDeps = {
   post?: CodexPost
   notifications?: CodexNotifications
+  /** Starts the app-server for this launch. A launch through it also starts the turn. */
+  connect?: (spec: LaunchSpec) => Promise<CodexConnection>
+  /**
+   * The permissions profile the app-server was started with. `sandbox` then stays out of
+   * `thread/start`, which would drop the profile, and a thread without it refuses the launch.
+   */
+  profile?: string
   loginStatus?: CodexLoginStatus
   versionProbe?: CodexVersionProbe
   processExitCode?: CodexProcessExitCode
@@ -73,6 +89,31 @@ const defaultLoginStatus: CodexLoginStatus = async () => {
 
 const defaultVersionProbe: CodexVersionProbe = async () => undefined // unprobed → the revision constant
 
+/** What a launch relies on, so what a probe says it still has. */
+export const CODEX_FLAGS_VERIFIED: readonly string[] = [
+  'initialize',
+  'thread/start',
+  'turn/start',
+  'account/rateLimits/read',
+  'item/commandExecution/requestApproval',
+  'login status',
+]
+
+/** The approval answer each native request understands; `decision` here is the bridge's. */
+function answerOf(method: string | undefined, decision: Decision): unknown {
+  const allow = decision === 'allow'
+  switch (method) {
+    case 'item/tool/requestUserInput':
+      return { answers: {} }
+    case 'item/permissions/requestApproval':
+      return { permissions: {}, scope: 'turn' } // grants nothing, whatever was asked
+    case 'mcpServer/elicitation/request':
+      return { action: allow ? 'accept' : 'decline', content: null, _meta: null }
+    default:
+      return { decision: allow ? 'accept' : 'decline' }
+  }
+}
+
 type Launch = {
   handle: AttemptHandle
   spec: LaunchSpec
@@ -85,10 +126,12 @@ type Launch = {
 export class CodexAdapter implements EngineAdapter {
   private readonly launches = new Map<string, Launch>()
   private nextRequestId = 0
+  private connection: CodexConnection | undefined
+  private initialized = false
 
   constructor(private readonly deps: CodexAdapterDeps = {}) {}
 
-  async probe(_slot: SlotRef): Promise<{ capabilities: Capabilities; auth: AuthHealth }> {
+  async probe(_slot?: SlotRef): Promise<{ capabilities: Capabilities; auth: AuthHealth }> {
     const status = await (this.deps.loginStatus ?? defaultLoginStatus)()
     const line = (status.stderr || status.stdout).trim()
     const text = line.toLowerCase()
@@ -106,27 +149,17 @@ export class CodexAdapter implements EngineAdapter {
     return {
       capabilities: {
         engine_version: version || CODEX_ENGINE_VERSION,
-        flags_verified: [
-          'initialize',
-          'thread/start',
-          'thread/resume',
-          'turn/start',
-          'turn/steer',
-          'turn/interrupt',
-          'account/rateLimits/read',
-          'item/commandExecution/requestApproval',
-          'login status',
-        ],
+        flags_verified: [...CODEX_FLAGS_VERIFIED],
         structured_stream: true, // JSON-RPC notifications over stdio
-        questions: true, // item/tool/requestUserInput routed to the bridge
+        questions: false, // answered empty: routing them to the user needs M2.2
         tool_approval: true, // item/*/requestApproval answered accept/decline
-        interrupt: true, // turn/interrupt (needs the active turn id)
-        resume: true, // thread/resume in the same CODEX_HOME
+        interrupt: false, // a stop kills the group; turn/interrupt has not run through the runner
+        resume: false, // thread/resume has not run through the runner
         usage: true, // thread/tokenUsage/updated (cumulative totals; no cost on ChatGPT plans)
         rate_limit_events: true, // account/rateLimits/updated, primary + secondary windows
-        sandbox: true, // sandbox read-only / workspace-write (Seatbelt/landlock)
-        restricted_mode: true, // read-only sandbox + approvalPolicy never
-        mcp_http: true, // [mcp_servers.mec] url + bearer_token_env_var (plan §7)
+        sandbox: true, // a permissions profile on Seatbelt: see codex-client.ts
+        restricted_mode: false, // the read-only role has not run through the runner
+        mcp_http: true, // mcp_servers.mec url + bearer_token_env_var (plan §7)
         usage_mode: 'cumulative',
       },
       auth,
@@ -134,11 +167,16 @@ export class CodexAdapter implements EngineAdapter {
   }
 
   async launch(spec: LaunchSpec): Promise<AttemptHandle> {
-    await this.request('initialize', {
-      clientInfo: { name: 'mec', title: 'Mubit Engineering Control', version: '0.1.0' },
-      capabilities: { experimentalApi: false, requestAttestation: false },
-    })
-    await this.post({ jsonrpc: '2.0', method: 'initialized' }) // notification: no id
+    if (this.deps.connect) this.connection = await this.deps.connect(spec)
+    // One process takes one handshake: a second `initialize` is refused.
+    if (!this.initialized) {
+      await this.request('initialize', {
+        clientInfo: { name: 'mec', title: 'Mubit Engineering Control', version: '0.1.0' },
+        capabilities: { experimentalApi: false, requestAttestation: false },
+      })
+      await this.post({ jsonrpc: '2.0', method: 'initialized' }) // notification: no id
+      this.initialized = true
+    }
     const sandbox = spec.brief.isolation.read_only ? 'read-only' : 'workspace-write'
     const approvalPolicy = spec.brief.isolation.permission_mode === 'bridge' ? 'on-request' : 'never'
     // LaunchSpec.model (additive v0.1): the documented app-server model selection —
@@ -150,24 +188,36 @@ export class CodexAdapter implements EngineAdapter {
         })
       : ((await this.request('thread/start', {
           cwd: spec.cwd,
-          sandbox,
+          ...(this.deps.profile === undefined && { sandbox }),
           approvalPolicy,
           ...(spec.model?.id !== undefined && { model: spec.model.id }),
         })) as { thread?: { id?: string } })
     const threadId = started?.thread?.id || spec.resume?.session_id
     if (!threadId) throw new Error('codex adapter: thread/start returned no thread id')
+    const active = (started as { activePermissionProfile?: { id?: string } | null })?.activePermissionProfile
+    if (this.deps.profile !== undefined && active?.id !== this.deps.profile) {
+      throw new Error(`codex adapter: the '${this.deps.profile}' sandbox profile is not active`)
+    }
     const handle: AttemptHandle = {
       attempt_id: spec.brief.attempt_id,
       generation: spec.brief.generation,
       session_id: threadId,
     }
     this.launches.set(spec.brief.attempt_id, { handle, spec, threadId, turnOpen: false })
+    // The brief is the first turn, as it is on Claude's argv: nobody else starts one.
+    if (this.deps.connect) await this.startTurn(handle, spec.brief.objective)
     return handle
   }
 
   async send(handle: AttemptHandle, input: Input): Promise<void> {
+    // Delivery into a running attempt is 21's `deliver`, and nothing has proven it on this engine.
+    if (this.deps.connect) throw new Error('codex adapter: send is not proven; it stays unsupported')
+    await this.startTurn(handle, input.text)
+  }
+
+  private async startTurn(handle: AttemptHandle, text: string): Promise<void> {
     const launch = this.requireLaunch(handle)
-    const inputParam = [{ type: 'text', text: input.text, text_elements: [] }]
+    const inputParam = [{ type: 'text', text, text_elements: [] }]
     if (!launch.turnOpen) {
       launch.turnOpen = true
       await this.request('turn/start', { threadId: launch.threadId, input: inputParam })
@@ -202,7 +252,8 @@ export class CodexAdapter implements EngineAdapter {
 
   async *events(handle: AttemptHandle): AsyncIterable<EngineEvent> {
     const launch = this.requireLaunch(handle)
-    if (!this.deps.notifications) {
+    const notifications = this.connection?.notifications ?? this.deps.notifications
+    if (!notifications) {
       throw new Error('codex adapter: deps.notifications is not wired to the app-server')
     }
     const now = this.deps.now ?? (() => new Date().toISOString())
@@ -215,7 +266,7 @@ export class CodexAdapter implements EngineAdapter {
       attempt_id: handle.attempt_id,
       generation: handle.generation,
     })
-    for await (const line of this.deps.notifications()) {
+    for await (const line of notifications()) {
       for (const body of parser.push(line)) {
         if (body.type === 'permission_request') {
           // The worktree is ours to state, not the engine thread's claim.
@@ -235,11 +286,11 @@ export class CodexAdapter implements EngineAdapter {
           // The native 'cancel' is reserved for a user-aborted turn and never sent here.
           // A user-input QUESTION has no decision vocabulary: it is answered `{answers: {}}`.
           const native = parser.nativeRequest(body.request_id)
-          const answer =
-            native?.method === 'item/tool/requestUserInput'
-              ? { answers: {} }
-              : { decision: decision === 'allow' ? 'accept' : 'decline' }
-          await this.post({ jsonrpc: '2.0', id: native?.id ?? body.request_id, result: answer })
+          await this.post({
+            jsonrpc: '2.0',
+            id: native?.id ?? body.request_id,
+            result: answerOf(native?.method, decision),
+          })
           yield envelope({
             type: 'permission_result',
             request_id: body.request_id,
@@ -247,8 +298,19 @@ export class CodexAdapter implements EngineAdapter {
           })
         } else {
           yield envelope(body)
-          if (body.type === 'exit') launch.turnOpen = false
+          if (body.type === 'exit') {
+            launch.turnOpen = false
+            // The app-server never exits on its own; the turn's end is the end of this stream.
+            if (this.deps.connect) return
+          }
         }
+      }
+      for (const { id, method } of parser.takeUnhandled()) {
+        await this.post({
+          jsonrpc: '2.0',
+          id,
+          error: { code: -32601, message: `${method} is not supported` },
+        })
       }
       const turnId = parser.activeTurnId()
       if (turnId) {
@@ -258,7 +320,8 @@ export class CodexAdapter implements EngineAdapter {
     }
     // The stream ended. If the turn never completed (a killed or endlessly-retrying
     // server), the exit is synthesised here from the process exit code (CONTRACTS §1).
-    for (const body of parser.finish(this.deps.processExitCode?.())) {
+    const exitCode = this.connection?.processExitCode ?? this.deps.processExitCode
+    for (const body of parser.finish(exitCode?.())) {
       yield envelope(body)
       if (body.type === 'exit') launch.turnOpen = false
     }
@@ -298,9 +361,10 @@ export class CodexAdapter implements EngineAdapter {
   }
 
   private post(payload: unknown): Promise<unknown> {
-    if (!this.deps.post) {
+    const post = this.connection?.post ?? this.deps.post
+    if (!post) {
       throw new Error('codex adapter: deps.post is not wired to the app-server')
     }
-    return this.deps.post(payload)
+    return post(payload)
   }
 }

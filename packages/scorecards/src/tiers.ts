@@ -121,12 +121,17 @@ function cellOf(
     .map((row) => row.durationMs)
     .filter((duration): duration is number => duration !== 'unknown')
   const costs = rows.map((row) => row.spend).filter((spend): spend is number => spend !== 'unknown')
+  // Success is what the checks said, never a clean exit. Rows with no checks leave the divisor.
+  const validated = rows.filter((row) => row.validation === 'passed' || row.validation === 'failed')
   return {
     repository,
     role,
     tier,
     attempts,
-    successRate: rows.filter((row) => row.result === 'completed').length / attempts,
+    successRate:
+      validated.length === 0
+        ? null
+        : validated.filter((row) => row.validation === 'passed').length / validated.length,
     repairRate:
       linked.length === 0
         ? null

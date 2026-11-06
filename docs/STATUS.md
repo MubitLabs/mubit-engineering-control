@@ -67,6 +67,13 @@ The audit above is unchanged as a record. What moved since, against its own thre
 - **Repo**: branch protection live (nine required checks, linear history), all CI on GitHub-hosted runners, community files, plan files renamed, docs/README.md index.
 - Still open: the Session-2 acceptance demo on mec-sandbox (a tiered plan → cheap-tier attempt visible in resolved_model → cross-provider review → prompt-edit visible in the next attempt → setup-agent draft applied); R1.11 (owner's week); the R2 exit review (DECISIONS #8/#9 expiry); Linux §26 rows.
 
+## M2.2 continuing coordination (5 November 2026)
+
+- **Real-process, on the fake CLI:** a two-task `contract` chain finishing with no second message, a failed prerequisite blocking its dependent, two work items sharing one slot unit, a follow-up reaching stdin unchanged with its receipt stopping at `delivered` until a turn end, a delivery before a queued launch, a specialist question and its answer, a confirm-by-default ask waiting on a card.
+- **Against a stub of the API, not a vendor:** `claude` 2.1.318's stream input (`docs/engines.md`). A real run belongs to the M2.2 verifier.
+- **Not built here:** check profiles, review, repair and integration are M2.3, so an `integration` dependent still waits, and a failed task has no second attempt. `send` on Codex and OpenCode, and resuming a parked attempt to deliver to it, are M2.4.
+- **Superseded above:** `deliver` throwing `NotWiredError`, the unwired specialist tools, and second-wave dispatch in the M2.1 notes below.
+
 ## M2.1 real specialist slice (5 November 2026)
 
 - **Proven with a real binary, behind `MEC_REAL_RUNNER=1`:** one Claude specialist on a scratch repo through a linked slot, from a seeded launch row to `succeeded` on the exact head, with a real journal, a commit, a check on that SHA and a report through `mcp__mec__report`. Evidence is in `docs/log/HANDSHAKES.md`.

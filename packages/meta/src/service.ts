@@ -11,10 +11,9 @@
  * - **The brain is injectable.** The real one is the Claude adapter (packages/engines)
  *   given the platform tools; everything here is engine-agnostic and only consumes its
  *   decision. `fakeBrain` scripts one decision for tests and composition wiring.
- * - **No acceptance checks yet.** The validator demands known checks, so every task is
- *   given the single pseudo-check `manual-review` (the only entry in `knownChecks`) — a
- *   plan is never rejected over checks it cannot name yet. Real checks arrive with the
- *   checks registry; until then a human is the acceptance gate.
+ * - **Checks are the repository's.** A plan names registered checks and an unknown one is
+ *   refused by name. `manual-review` only marks a repository with none, and it never passes
+ *   by itself (§15).
  * - **No owned paths from the brain.** Tasks carry no `ownedPaths`, so the path-conflict
  *   signal cannot fire; the graph check still catches cycles, missing dependencies,
  *   unknown roles and budgets.
@@ -45,16 +44,16 @@
 import { createHash } from 'node:crypto'
 import type { Effects, Json, Store, StoreDoc } from '@mec/contracts'
 import { Later } from '@mec/contracts'
-import type { AttemptState, Caps, SchedulableTask, SlotView, WorkItemState } from '@mec/domain'
+import type { BasePolicy, Caps, PlanImpact, PlanTaskLike, WorkItemState } from '@mec/domain'
 import {
-  ACTIVE_ATTEMPT_STATES,
   ATTEMPT_MACHINE,
   BUILTIN_ROLE_NAMES,
   canTransition,
+  computeImpact,
   createMandate,
   DEFAULT_CAPS,
-  dependencySatisfied,
-  planDispatches,
+  NO_CHECKS_MARKER,
+  TASK_MACHINE,
   transition,
   validateGraph,
   WORK_ITEM_MACHINE,
@@ -92,9 +91,12 @@ import {
   slotViewsFromStore,
 } from './context'
 import { EscalationCounter } from './escalation'
+import { enqueueWake, FollowUps } from './followups'
 import { routeMessage } from './routing'
+import { type LaunchRecord, type PlacementTable, type SchedulerDeps, schedulePass } from './scheduler'
 import type { PlannerConfirmationDraft, PlannerQuestionRecord, PlannerTurnJournal } from './tools'
 import { PlannerTools } from './tools'
+import { knownChecks, workResultOf } from './work-facts'
 
 /** One planned task as the service persists it: the v0 four fields, plus the §5.2 brief fields. */
 export type MetaPlanTask = {
@@ -102,10 +104,14 @@ export type MetaPlanTask = {
   objective: string
   dependsOn: string[]
   role: string
+  /** §10, §14: what this task builds on. Absent is `integration`. */
+  basePolicy?: BasePolicy
   /** §6: the original message this task serves (defaults to the originating message id). */
   originalRequestRef?: string
   ownedPaths?: string[]
   acceptanceChecks?: string[]
+  /** Decision #33: the planner says the task touches sensitive ground, so it gets one review. */
+  sensitive?: boolean
   modelRequest?: { tier?: string; model?: string; effort?: string; variant?: string; reason: string }
   slotHint?: { slotClass?: string; slotId?: string }
   budget?: { turns: number; wallClockMs: number; usd?: number }
@@ -179,22 +185,8 @@ type MessageTurn = TurnInput & {
   intent?: SubmissionIntent
 }
 
-/** A launch this turn enqueued, as persisted on the message doc so replays reuse the key. */
-type LaunchRecord = { attemptId: string; key: string; taskId: string; slotId: string }
-
-/** A task the dispatch may place: a plan's, a spawn's, or a stored one on lift. */
-type DispatchCandidate = {
-  taskId: string
-  dependsOn: readonly string[]
-  role: string
-  slotHint?: { slotClass?: string }
-}
-
 /** A wake's queue key is its cause, and the message it runs as derives from the same cause. */
 export type WakeRequest = { causationId: string; reason: string; detail?: string; workItemId?: string }
-
-/** The v0 pseudo-check standing in for the checks registry (see the module doc). */
-const MANUAL_REVIEW_CHECK = 'manual-review'
 
 /**
  * The honest empty table used when no capability-table seam is wired: no tiers, no models,
@@ -215,22 +207,6 @@ const MANDATE_SCOPE_CHARS = 200
 /** v0 escalation is one streak per meta agent (see the module doc). */
 const PLANNING_STREAK_KEY = 'meta-planning'
 
-/** §11 placement ceiling for the v0 fake slot; no reading ranks least utilised, not high. */
-const UTILISATION_CEILING = 0.8
-
-/** v0 reserves no wake unit — nothing yet wakes on a follow-up delivery. */
-const RESERVED_WAKE_SLOT = false
-
-/** The single slot v0 dispatches onto while MEC_FAKE_ENGINE=1 (see the module doc). */
-const FAKE_SLOT: SlotView = {
-  id: 'fake-slot',
-  state: 'healthy',
-  usageUtilization: 0,
-  inUse: 0,
-  concurrency: 4,
-  pinnedRoles: [],
-}
-
 /** Long enough that two keys never collide in one store; short enough to read in a log. */
 const STABLE_ID_HEX_CHARS = 24
 
@@ -250,6 +226,17 @@ export function stableMessageId(idempotencyKey: string): string {
   return `msg_${digest(idempotencyKey)}`
 }
 
+/** Every string in a value, keys included, with key shapes gone. */
+function redactDeep<T>(value: T): T {
+  const walk = (item: unknown): unknown => {
+    if (typeof item === 'string') return redact(item, [], [])
+    if (Array.isArray(item)) return item.map(walk)
+    if (typeof item !== 'object' || item === null) return item
+    return Object.fromEntries(Object.entries(item).map(([key, entry]) => [redact(key, [], []), walk(entry)]))
+  }
+  return walk(value) as T
+}
+
 /** A brain that always answers with `scripted` — the seam tests and composition wire first. */
 export function fakeBrain(scripted: MetaDecision): MetaBrain {
   return async () => scripted
@@ -265,6 +252,8 @@ export class MetaAgentService {
   readonly #marks?: () => Record<string, Record<string, import('@mec/domain').ModelAvailability>>
   readonly #modelsTable?: () => ModelsTableSource | undefined
   readonly #launchableSlots?: () => ReadonlySet<string>
+  readonly #launchRowState?: SchedulerDeps['launchRowState']
+  readonly #followups: FollowUps
   readonly #acks = new Acknowledger()
   readonly #escalation = new EscalationCounter()
   /** Turns running in this process: a concurrent retry joins one instead of starting another. */
@@ -284,6 +273,10 @@ export class MetaAgentService {
     modelsTable?: () => ModelsTableSource | undefined
     /** The slots a launch can start on; absent means every slot. Plans and dispatch both obey it. */
     launchableSlots?: () => ReadonlySet<string>
+    /** A launch row's state, so a row that gave up stops holding capacity (§11). */
+    launchRowState?: SchedulerDeps['launchRowState']
+    /** Follow-ups, with what can deliver them; absent, nothing can. */
+    followups?: FollowUps
   }) {
     this.#store = deps.store
     this.#effects = deps.effects
@@ -294,6 +287,26 @@ export class MetaAgentService {
     this.#marks = deps.marks
     this.#modelsTable = deps.modelsTable
     this.#launchableSlots = deps.launchableSlots
+    this.#launchRowState = deps.launchRowState
+    this.#followups =
+      deps.followups ?? new FollowUps({ store: deps.store, effects: deps.effects, now: this.#now })
+  }
+
+  /** One scheduler pass (§11), in its own transaction. It runs nothing while paused. */
+  runPass(): void {
+    this.#store.atomic(() => schedulePass(this.#scheduler(), { at: this.#now() }))
+  }
+
+  #scheduler(): SchedulerDeps {
+    return {
+      store: this.#store,
+      effects: this.#effects,
+      caps: this.#caps,
+      slots: () => this.#placementSlots(),
+      table: () => this.#modelsTable?.()?.table as PlacementTable | undefined,
+      followups: this.#followups,
+      ...(this.#launchRowState !== undefined && { launchRowState: this.#launchRowState }),
+    }
   }
 
   async onUserMessage(input: {
@@ -383,7 +396,10 @@ export class MetaAgentService {
           taskId: String(task.id),
           status: typeof task.status === 'string' ? task.status : 'ready',
         })),
-        openQuestions: [],
+        openQuestions: this.#store.engines
+          .list({ workItemId: doc.id, status: 'open' })
+          .filter((row) => String(row.id).startsWith('question/'))
+          .map((row) => String(row.id)),
         stopped: String(doc.state) === 'stopped',
       }))
   }
@@ -425,6 +441,7 @@ export class MetaAgentService {
         (loadPolicy(this.#policyText).preAuthorised as Record<string, unknown>).frontier_model !== undefined,
       now: () => new Date(this.#now()),
       liveWork: this.#routingWork(repoId),
+      knownChecks: knownChecks(this.#store, repoId),
     })
   }
 
@@ -510,11 +527,12 @@ export class MetaAgentService {
         error instanceof Error ? error.message : String(error),
       )
     }
-    const plan = 'plan' in decision ? decision.plan : undefined
+    const guarded = this.#store.atomic(() => this.#followups.guardTurn(decision, workItemId, this.#now()))
+    const plan = 'plan' in guarded ? guarded.plan : undefined
     if (plan === undefined) {
-      return this.#ackOnlyTurn({ ...turn, text: input.reason }, workItemId, decision)
+      return this.#ackOnlyTurn({ ...turn, text: input.reason }, workItemId, guarded)
     }
-    return this.#commitPlan({ ...turn, text: input.reason }, workItemId, plan, decision)
+    return this.#commitPlan({ ...turn, text: input.reason }, workItemId, plan, guarded)
   }
 
   /** §13 invariant 4: nothing wakes ended work, so no old question or timer spends quota on it. */
@@ -553,13 +571,7 @@ export class MetaAgentService {
    * a repeat after the row drained.
    */
   enqueueWake(wake: WakeRequest): void {
-    const { causationId, reason, detail, workItemId } = wake
-    this.#effects.enqueue('relay', `wake:${causationId}`, {
-      causationId,
-      reason,
-      ...(detail !== undefined && { detail }),
-      ...(workItemId !== undefined && { workItemId }),
-    })
+    enqueueWake(this.#effects, wake)
   }
 
   /**
@@ -603,12 +615,15 @@ export class MetaAgentService {
       ...(typeof fields.detail === 'string' && { detail: fields.detail }),
       ...(typeof fields.workItemId === 'string' && { workItemId: fields.workItemId }),
     })
+    // The turn that routed a handed-back message is the rerouting §12.4 settles on.
+    if (typeof fields.settles === 'string') this.#followups.settle(fields.settles)
   }
 
   /**
    * §5.2/§12.6: the answer and its wake commit together, first answer wins, and the planner
    * runs from the queue, so the caller never waits on a turn. The answer is redacted before
-   * any write, the wake's detail included (AGENTS non-negotiable 5).
+   * any write, the wake's detail included (AGENTS non-negotiable 5). A specialist's question
+   * has its answer delivered to the attempt that asked, and the planner gets a note (§12.6).
    */
   onQuestionAnswered(
     questionId: string,
@@ -634,16 +649,22 @@ export class MetaAgentService {
         { questionId: typeof doc.questionId === 'string' ? doc.questionId : questionId, answer: stored, at },
         at,
       )
+      if (typeof doc.attemptId === 'string') {
+        this.#followups.answerSpecialist(doc, stored, at)
+        return { status: 'answered' as const, answer: stored }
+      }
       const reason = 'question answered'
       const workItemId = typeof doc.workItemId === 'string' ? doc.workItemId : undefined
       const work = workItemId === undefined ? undefined : this.#store.workItems.get(workItemId)
+      // A replan may have moved on since it was asked: the planner sees under which plan it was.
+      const asked = typeof doc.planRevision === 'number' ? ` (plan revision ${doc.planRevision})` : ''
       if (work !== undefined && (isTerminal(work) || mandateOf(work).status === 'withdrawn')) {
         this.#refuseWake({ reason }, work)
       } else {
         this.enqueueWake({
           causationId: docId,
           reason,
-          detail: `question "${String(doc.question ?? '')}" answered: ${stored}`,
+          detail: `question "${String(doc.question ?? '')}"${asked} answered: ${stored}`,
           ...(workItemId !== undefined && { workItemId }),
         })
       }
@@ -674,9 +695,8 @@ export class MetaAgentService {
 
   /**
    * The only release of a hold (#20): the mandate revalidates first (§10 "before every resume"),
-   * then the hold lifts and saved ready tasks dispatch, in one transaction. A kept task runs
-   * once, as on a replan: a task with any attempt is left alone. A launch already queued starts
-   * on its row's next pass.
+   * then the hold lifts and a pass places what is ready, in one transaction. A launch already
+   * queued starts on its row's next pass.
    */
   liftHold(workItemId: string): LiftOutcome {
     const at = this.#now()
@@ -689,29 +709,21 @@ export class MetaAgentService {
       const authority = revalidateWork(work, at, loadPolicy(this.#policyText).versionHash)
       if (!authority.ok) return { status: 'refused', error: `mandate_${authority.reason}` }
       liftHoldRecord(this.#store, work, at)
-      const candidates = tasks
-        .filter(
-          (task) =>
-            String(task.status) === 'ready' && this.#store.attempts.list({ taskId: task.id }).length === 0,
-        )
-        .map(
-          (task): DispatchCandidate => ({
-            taskId: String(task.id),
-            dependsOn: Array.isArray(task.dependsOn) ? task.dependsOn.map(String) : [],
-            role: String(task.role),
-            ...(task.slotHint !== undefined && { slotHint: task.slotHint as { slotClass?: string } }),
-          }),
-        )
-      const statuses = new Map(tasks.map((task) => [String(task.id), task.status]))
-      const records = this.#dispatch(workItemId, candidates, statuses, at)
+      const records = schedulePass(this.#scheduler(), { at, workItemId })
       return { status: 'lifted', launches: records.map((record) => record.attemptId) }
     })
   }
 
-  /** §6 attach: a message on existing work is acknowledged as a note, nothing more. */
+  /**
+   * §12.3: a message on existing work reaches the attempt that owns it, unchanged and by way of
+   * the queue, and the meta agent stays out of it. With nothing running, it gets a turn instead.
+   */
   #noteAttached(input: TurnInput, workItemId: string): TurnOutcome {
     const at = this.#now()
-    const ack = `Noted on ${workItemId}: it lands with the running work.`
+    const running = this.#followups.ownerOf(workItemId) !== undefined
+    const ack = running
+      ? `Noted on ${workItemId}: it lands with the running work.`
+      : `Noted on ${workItemId}: nothing is running on it, so I'll pick this up.`
     this.#store.atomic(() => {
       this.#appendEvent(
         `work:${workItemId}`,
@@ -720,6 +732,7 @@ export class MetaAgentService {
         at,
       )
       this.#saveMessage(input, { routing: 'attach', at, workItemId, ackText: ack })
+      this.#followups.attach(input.messageId, workItemId, at)
     })
     this.#acks.acknowledge(input.messageId, ack)
     return { acknowledged: ack, workItemId, tasksCreated: 0, launchesEnqueued: [], escalated: false }
@@ -936,7 +949,8 @@ export class MetaAgentService {
     const fenced = this.#fencedTurn(input, workItemId)
     if (fenced !== undefined) return fenced
     const tasks = plan.tasks
-    // v0: every task gets the pseudo-check (module doc); roles must exist in the registry.
+    // §15: the repository's registered checks; the marker stands in only where it has none.
+    const known = knownChecks(this.#store, repoOf(this.#store.workItems.get(workItemId)) ?? input.repoId)
     const issues = validateGraph(
       tasks.map((task) => ({
         id: task.taskId,
@@ -945,12 +959,12 @@ export class MetaAgentService {
         acceptanceChecks:
           task.acceptanceChecks !== undefined && task.acceptanceChecks.length > 0
             ? [...task.acceptanceChecks]
-            : [MANUAL_REVIEW_CHECK],
+            : known,
         maxAttempts: this.#caps.repairAttemptsPerTask + 1,
-        basePolicy: 'integration',
+        basePolicy: task.basePolicy ?? 'integration',
         role: task.role,
       })),
-      { knownChecks: [MANUAL_REVIEW_CHECK], knownRoles: BUILTIN_ROLE_NAMES },
+      { knownChecks: known, knownRoles: BUILTIN_ROLE_NAMES },
     )
     if (issues.length > 0) {
       const first = issues[0]!
@@ -991,9 +1005,8 @@ export class MetaAgentService {
       const work = this.#store.workItems.get(workItemId)
       const repoId = repoOf(work)
       const planRevision = (typeof work?.planRevision === 'number' ? work.planRevision : 0) + 1
-      const canonical = canonicalizePlan(tasks, this.#store.tasks.list({ workItemId }), () =>
-        freshId('task_'),
-      )
+      const stored = this.#store.tasks.list({ workItemId })
+      const canonical = canonicalizePlan(tasks, stored, () => freshId('task_'))
       if (work !== undefined) {
         // A replan (#19) finds the work past planning, where it stays.
         if (canTransition(WORK_ITEM_MACHINE, String(work.state), 'execution_started')) {
@@ -1023,11 +1036,13 @@ export class MetaAgentService {
           objective: task.objective,
           dependsOn: task.dependsOn,
           role: task.role,
+          basePolicy: task.basePolicy ?? (prior?.basePolicy as BasePolicy | undefined) ?? 'integration',
           status: prior?.status ?? 'ready',
           acceptanceChecks:
             task.acceptanceChecks !== undefined && task.acceptanceChecks.length > 0
               ? [...task.acceptanceChecks]
-              : [MANUAL_REVIEW_CHECK],
+              : known,
+          ...((task.sensitive ?? prior?.sensitive) === true && { sensitive: true }),
           // §5.2's brief fields persist verbatim; the runtime's resolveModel reads them.
           originalRequestRef: task.originalRequestRef ?? input.messageId,
           ...(task.ownedPaths !== undefined && { ownedPaths: [...task.ownedPaths] }),
@@ -1039,6 +1054,18 @@ export class MetaAgentService {
           updatedAt: at,
         })
       }
+      const kept = this.#dropMissingKeys(stored, canonical, planRevision, at)
+      const snapshotTasks = canonical.map((task) => ({
+        taskId: task.taskId,
+        localKey: task.localKey,
+        objective: task.objective,
+        dependsOn: task.dependsOn,
+        role: task.role,
+        basePolicy: task.basePolicy ?? 'integration',
+        ownedPaths: task.ownedPaths ?? [],
+        acceptanceChecks: task.acceptanceChecks ?? [],
+      }))
+      const impact = this.#impactOf(workItemId, planRevision, snapshotTasks)
       this.#store.engines.save({
         id: planSnapshotId(workItemId, planRevision),
         workItemId,
@@ -1046,13 +1073,8 @@ export class MetaAgentService {
         revision: planRevision,
         messageId: input.messageId,
         ...(decision.bundleRevision !== undefined && { promptRevision: decision.bundleRevision }),
-        tasks: canonical.map((task) => ({
-          taskId: task.taskId,
-          localKey: task.localKey,
-          objective: task.objective,
-          dependsOn: task.dependsOn,
-          role: task.role,
-        })),
+        tasks: snapshotTasks,
+        impact: { ...impact, keptRunning: kept },
         createdAt: at,
         updatedAt: at,
       })
@@ -1068,8 +1090,10 @@ export class MetaAgentService {
           objective: spawn.objective,
           dependsOn: [],
           role: spawn.role,
+          basePolicy: 'integration',
           status: 'ready',
-          acceptanceChecks: [MANUAL_REVIEW_CHECK],
+          // Names no check, so it is held to what the repository registers (`requiredChecks`).
+          acceptanceChecks: [NO_CHECKS_MARKER],
           originalRequestRef: input.messageId,
           ...(spawn.modelRequest !== undefined && { modelRequest: { ...spawn.modelRequest } }),
           ...(spawn.slotHint !== undefined && { slotHint: { ...spawn.slotHint } }),
@@ -1088,25 +1112,9 @@ export class MetaAgentService {
       // stops, cancels — one transaction with the plan.
       this.#persistExtras(workItemId, decision, at, input.wake === true)
 
-      // Dependency-satisfied tasks only (§14): a fresh task is still `ready` — an integration
-      // dependency needs `integrated` — so only a task a replan kept can satisfy one. A kept
-      // task runs once: nothing launches a key that has moved on or already has an attempt.
-      const candidates: DispatchCandidate[] = [
-        ...canonical.filter(
-          (task) =>
-            (task.prior?.status ?? 'ready') === 'ready' &&
-            this.#store.attempts.list({ taskId: task.taskId }).length === 0,
-        ),
-        ...(decision.spawns ?? []).map((spawn) => ({
-          taskId: spawn.taskId,
-          objective: spawn.objective,
-          dependsOn: [] as string[],
-          role: spawn.role,
-          slotHint: spawn.slotHint,
-        })),
-      ]
-      const statuses = new Map(canonical.map((task) => [task.taskId, task.prior?.status ?? 'ready']))
-      const records = this.#dispatch(workItemId, candidates, statuses, at)
+      // §11: the same pass the timer runs. It re-reads the work, because this turn's own routes
+      // may have held or stopped it, and task state, so a kept task runs once.
+      const records = schedulePass(this.#scheduler(), { at, workItemId })
       const held = this.#store.workItems.get(workItemId)
       const ack =
         held !== undefined && isHeld(held)
@@ -1136,116 +1144,66 @@ export class MetaAgentService {
   }
 
   /**
-   * Places dependency-satisfied tasks (§11, §14), inside the caller's transaction, for plan
-   * commit and lift alike. It re-reads the work, because this turn's own routes may have held
-   * or stopped it: only live, unblocked work with an unwithdrawn mandate launches.
+   * Decision #36 (§10): a key a replan drops is cancelled, with the revision as its reason, when
+   * nothing started it. A started task stays, and the impact summary flags it for the meta agent
+   * to stop explicitly. A spawn has no key, so a plan never drops one.
    */
-  #dispatch(
-    workItemId: string,
-    candidates: readonly DispatchCandidate[],
-    statuses: ReadonlyMap<string, unknown>,
+  #dropMissingKeys(
+    stored: readonly StoreDoc[],
+    canonical: readonly { taskId: string }[],
+    planRevision: number,
     at: string,
-  ): LaunchRecord[] {
-    const work = this.#store.workItems.get(workItemId)
-    if (work === undefined || isTerminal(work) || mandateOf(work).status === 'withdrawn') return []
-    if (String(work.state) === 'blocked') return []
-    if (isHeld(work)) {
-      this.#appendEvent(`work:${workItemId}`, 'launch_withheld', { workItemId, reason: 'held', at }, at)
-      return []
-    }
-    const repoId = repoOf(work)
-    const terminalDep = (dep: string): 'accepted' | 'integrated' | undefined => {
-      const state = statuses.get(dep)
-      return state === 'accepted' || state === 'integrated' ? state : undefined
-    }
-    if (repoId === undefined) {
-      this.#appendEvent(
-        `work:${workItemId}`,
-        'launch_withheld',
-        { workItemId, reason: 'no repository', at },
-        at,
-      )
-    }
-    // Unassigned work is planned but never launched.
-    const ready: SchedulableTask[] = (repoId === undefined ? [] : candidates)
-      .filter((task) =>
-        task.dependsOn.every(
-          (dep) =>
-            terminalDep(dep) !== undefined && dependencySatisfied(dep, terminalDep(dep)!, 'integration'),
-        ),
-      )
-      .map((task) => ({
-        taskId: task.taskId,
-        workItemId,
-        workItemPinned: false,
-        readyAt: Date.parse(at),
-        generation: 1,
-        role: task.role,
-        ...('slotHint' in task && task.slotHint?.slotClass !== undefined
-          ? { slotClass: task.slotHint.slotClass }
-          : {}),
-      }))
-
-    const active = this.#store.attempts
-      .list()
-      .filter((doc) => ACTIVE_ATTEMPT_STATES.includes(String(doc.state) as AttemptState))
-      .map((doc) => ({
-        taskId: String(doc.taskId),
-        slotId: String(doc.slotId),
-        workItemId: String(doc.workItemId),
-      }))
-    // Issue #14: the REAL healthy slots feed the dispatch (the fake shim stays for
-    // MEC_FAKE_ENGINE). Degraded slots never place; usage is honest-unknown when absent.
-    const slotViews = this.#placementSlots()
-    const healthySlots: SlotView[] =
-      process.env.MEC_FAKE_ENGINE === '1'
-        ? [FAKE_SLOT]
-        : slotViews.map((view) => ({
-            id: view.slotId,
-            state: (view.healthy ? 'healthy' : 'degraded') as 'healthy' | 'degraded',
-            pinnedRoles: [] as string[],
-            inUse: 0,
-            concurrency: 1,
-          }))
-    const dispatch = planDispatches({
-      ready,
-      slots: healthySlots,
-      active,
-      caps: this.#caps,
-      utilisationCeiling: UTILISATION_CEILING,
-      reservedWakeSlot: RESERVED_WAKE_SLOT,
-    })
-
-    const records: LaunchRecord[] = []
-    for (const launch of dispatch.launches) {
-      const attemptId = this.#nextAttemptId()
-      this.#store.attempts.save({
-        id: attemptId,
-        taskId: launch.taskId,
-        workItemId,
-        slotId: launch.slotId,
-        state: 'queued',
-        generation: 1,
-        createdAt: at,
+  ): string[] {
+    const planned = new Set(canonical.map((task) => task.taskId))
+    const kept: string[] = []
+    for (const task of stored) {
+      if (typeof task.localKey !== 'string' || planned.has(String(task.id))) continue
+      const status = String(task.status)
+      if (['cancelled', 'integrated'].includes(status)) continue
+      const started = this.#store.attempts.list({ taskId: task.id }).length > 0
+      if (started || !canTransition(TASK_MACHINE, status, 'cancel')) {
+        kept.push(String(task.id))
+        continue
+      }
+      this.#store.tasks.save({
+        ...task,
+        status: transition(TASK_MACHINE, status, 'cancel'),
+        cancelledReason: `dropped by plan revision ${planRevision}`,
         updatedAt: at,
       })
-      this.#appendEvent(
-        `attempt:${attemptId}`,
-        'attempt_queued',
-        { attemptId, taskId: launch.taskId, workItemId, slotId: launch.slotId, generation: 1, at },
-        at,
-      )
-      const key = `${attemptId}:1`
-      this.#effects.enqueue('launch', key, {
-        attempt_id: attemptId,
-        task_id: launch.taskId,
-        work_item_id: workItemId,
-        slot_id: launch.slotId,
-        generation: 1,
-      })
-      records.push({ attemptId, key, taskId: launch.taskId, slotId: launch.slotId })
+      this.#appendEvent(`task:${String(task.id)}`, 'task_cancelled', { taskId: String(task.id), at }, at)
     }
-    return records
+    return kept
+  }
+
+  /** §10: what this revision changes against the one before it. The first adds everything. */
+  #impactOf(
+    workItemId: string,
+    planRevision: number,
+    tasks: readonly {
+      taskId: string
+      objective: string
+      dependsOn: string[]
+      basePolicy: string
+      ownedPaths: readonly string[]
+      acceptanceChecks: readonly string[]
+    }[],
+  ): PlanImpact {
+    const node = (task: (typeof tasks)[number]): PlanTaskLike => ({
+      id: task.taskId,
+      dependsOn: task.dependsOn,
+      ownedPaths: [...task.ownedPaths],
+      acceptanceChecks: [...task.acceptanceChecks],
+      maxAttempts: this.#caps.repairAttemptsPerTask + 1,
+      basePolicy: task.basePolicy as BasePolicy,
+      objective: task.objective,
+    })
+    const previous = this.#store.engines.get(planSnapshotId(workItemId, planRevision - 1))?.tasks
+    // A revision stored before this one recorded no paths or checks.
+    const before = (Array.isArray(previous) ? previous : []) as unknown as (typeof tasks)[number][]
+    const whole = (task: (typeof tasks)[number]) =>
+      node({ ...task, ownedPaths: task.ownedPaths ?? [], acceptanceChecks: task.acceptanceChecks ?? [] })
+    return computeImpact(before.map(whole), tasks.map(node))
   }
 
   /**
@@ -1291,7 +1249,19 @@ export class MetaAgentService {
    * planner sends can lift a hold (#20), and a hold or stop is the user's, so a wake turn's
    * route is refused (§10, §13 invariant 4).
    */
-  #persistExtras(workItemId: string, decision: MetaDecision, at: string, wake: boolean): void {
+  #persistExtras(workItemId: string, unredacted: MetaDecision, at: string, wake: boolean): void {
+    // §13 invariant 3: what a planner writes is outside text, and redaction comes before durability.
+    const { questions, confirmations, routes, reports } = redactDeep({
+      questions: unredacted.questions,
+      confirmations: unredacted.confirmations,
+      routes: unredacted.routes,
+      reports: unredacted.reports,
+    })
+    const decision = { ...unredacted, questions, confirmations, routes, reports }
+    // This turn has now seen the notes its context carried (§6).
+    const seen = this.#store.workItems.get(workItemId)
+    if (seen !== undefined) this.#store.workItems.save({ ...seen, notesSeenAt: at })
+    const planRevision = seen?.planRevision
     for (const question of decision.questions ?? []) {
       this.#store.engines.save({
         id: `question/${question.id}`,
@@ -1301,6 +1271,7 @@ export class MetaAgentService {
         ...(question.forMessageId !== undefined && { forMessageId: question.forMessageId }),
         ...(question.workItemId !== undefined && { workItemId: question.workItemId }),
         ...(question.workItemId === undefined && { workItemId }),
+        ...(typeof planRevision === 'number' && { planRevision }),
         status: 'open',
         askedAt: question.at,
         createdAt: question.at,
@@ -1336,6 +1307,7 @@ export class MetaAgentService {
     }
     for (const route of decision.routes ?? []) {
       if (route.target === undefined) continue
+      if (route.decision === 'attach') this.#followups.reroute(route.messageId, route.target, at)
       if (route.decision !== 'hold' && route.decision !== 'stop') continue
       if (wake) {
         this.#appendEvent(
@@ -1362,7 +1334,14 @@ export class MetaAgentService {
       this.#appendEvent(
         `work:${report.workItemId}`,
         'result_reported',
-        { workItemId: report.workItemId, summary: report.summary, artifacts: report.artifacts, at },
+        // The reducer's output travels with the words: a planner cannot report what is not so.
+        {
+          workItemId: report.workItemId,
+          summary: report.summary,
+          artifacts: report.artifacts,
+          result: workResultOf(this.#store, report.workItemId) as unknown as Json,
+          at,
+        },
         at,
       )
     }
@@ -1413,7 +1392,7 @@ export class MetaAgentService {
             task_id: launch.taskId,
             work_item_id: workItemId,
             slot_id: launch.slotId,
-            generation: 1,
+            generation: Number(this.#store.attempts.get(launch.attemptId)?.generation ?? 1),
           })
         }
       })
@@ -1472,16 +1451,6 @@ export class MetaAgentService {
       ...(fields.launches !== undefined && { launches: fields.launches }),
       ...(fields.escalated !== undefined && { escalated: fields.escalated }),
     })
-  }
-
-  /** The next durable `att_<n>`: one past the highest numbered attempt doc in the store. */
-  #nextAttemptId(): string {
-    let max = 0
-    for (const doc of this.#store.attempts.list()) {
-      const match = /^att_(\d+)$/.exec(String(doc.id))
-      if (match !== null) max = Math.max(max, Number(match[1]))
-    }
-    return `att_${max + 1}`
   }
 }
 

@@ -114,13 +114,28 @@ export class EffectsQueue implements Effects {
     this.health = opts?.health
   }
 
-  /** §26 Pause: every pending/waiting job's deadline moves later by ms. */
+  /**
+   * §26 Pause: a deadline still ahead moves later by ms. A row that fell due during the pause is
+   * due now: moving it would make an answer given in the pause wake up that much late, and an
+   * ordered kind's head holds every row behind it.
+   */
   shiftWaiting(ms: number): void {
     this.db
       .prepare(
-        `UPDATE effects SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', julianday(next_run_at) + (? / 86400000.0)) WHERE state IN ('pending', 'waiting')`,
+        `UPDATE effects SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', julianday(next_run_at) + (? / 86400000.0)) WHERE state IN ('pending', 'waiting') AND next_run_at > ?`,
       )
-      .run(ms)
+      .run(ms, this.now().toISOString())
+  }
+
+  /**
+   * Resume of a pause: rows of these kinds that a `Later` deferred during it are due now. Their 30 s
+   * was the pause's, not a deadline of theirs, so the shift above must not carry them along.
+   */
+  wakeDeferred(kinds: readonly EffectKind[]): void {
+    const places = kinds.map(() => '?').join(', ')
+    this.db
+      .prepare(`UPDATE effects SET next_run_at = ? WHERE state = 'waiting' AND kind IN (${places})`)
+      .run(this.now().toISOString(), ...kinds)
   }
 
   /**

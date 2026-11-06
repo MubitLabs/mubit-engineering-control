@@ -11,14 +11,18 @@ export type {
   StopOutcome,
 } from './authority'
 export {
+  blockWork,
   failLaunch,
   holdWorkItem,
   isHeld,
+  isTerminal,
   launchAuthority,
   launchFailure,
   mandateOf,
+  noVerdict,
   processingOf,
   refuseLaunch,
+  revalidateWork,
   saveProcessing,
   stopWorkItem,
 } from './authority'
@@ -49,11 +53,17 @@ export {
   slotViewsFromStore,
 } from './context'
 export { EscalationCounter } from './escalation'
+export type { DeliveryRuntime, FollowUpsDeps, SpecialistCard } from './followups'
+export { enqueueWake, FollowUps, settleSpecialistCard, unreadNotes } from './followups'
 export { handBack } from './handback'
 export type { BrainEngine, RealClaudeBrainOptions, RecordedToolCall } from './real-brain'
 export { RealClaudeBrain } from './real-brain'
+export type { Continuation, RepairLedger } from './repair'
+export { nextRepair, repairEvidence, repairLedger } from './repair'
 export type { LiveWork, RoutingDecision } from './routing'
 export { routeMessage } from './routing'
+export type { LaunchRecord, PlacementTable, SchedulerDeps } from './scheduler'
+export { blockTask, openRepairTask, schedulePass } from './scheduler'
 export type {
   MetaBrain,
   MetaDecision,
@@ -90,3 +100,4 @@ export type {
 export { decodeToolArgs, PlannerTools } from './tools'
 export type { CandidateEvent } from './wakes'
 export { classifyWake } from './wakes'
+export { integrationDocId, knownChecks, requiredChecks, verdictsOf, workResultOf } from './work-facts'

@@ -3,8 +3,10 @@
  * test harness and the live page share one path from JSON to the screen.
  */
 
-import { api, type ResolveAnswer, type ResolveResult, request } from './api'
+import { api, type ResolveAnswer, type ResolveResult, request, requestResponse } from './api'
 import {
+  decodeActivityPage,
+  decodeArtifact,
   decodeCardEvidence,
   decodeNeedsPage,
   decodeSearchPage,
@@ -14,6 +16,8 @@ import {
   decodeWorkPage,
 } from './inspection-decode'
 import type {
+  ActivityItem,
+  ArtifactPage,
   CardEvidence,
   NeedItem,
   Page,
@@ -64,6 +68,28 @@ export const inspectApi = {
 
   async search(q: string, signal?: AbortSignal): Promise<Page<SearchHit>> {
     return decodeSearchPage(await request<unknown>(`/api/inspect/search?${query({ q })}`, { signal }))
+  },
+
+  async activity(id: string, cursor: string | null, signal?: AbortSignal): Promise<Page<ActivityItem>> {
+    const fields = query({ limit: String(PAGE_LIMIT), cursor })
+    const path = `/api/inspect/attempts/${encoded(id)}/activity?${fields}`
+    return decodeActivityPage(await request<unknown>(path, { signal }))
+  },
+
+  async artifact(
+    id: string,
+    ref: string,
+    cursor: string | null,
+    signal?: AbortSignal,
+  ): Promise<ArtifactPage> {
+    const path = `/api/inspect/artifacts?${query({ attemptId: id, ref, cursor })}`
+    const response = await requestResponse(path, { signal })
+    return decodeArtifact(ref, {
+      contentType: response.headers.get('content-type') ?? '',
+      body: await response.text(),
+      size: response.headers.get('x-mec-artifact-size'),
+      next: response.headers.get('x-mec-next-cursor'),
+    })
   },
 
   /** `api.decisionDetail` answers a 404 with its `absent` placeholder; the decoder keeps the mark. */

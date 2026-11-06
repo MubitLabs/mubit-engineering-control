@@ -57,9 +57,9 @@
   },
   {
     "name": "5b the queue key loses the cause",
-    "file": "packages/meta/src/service.ts",
-    "find": "    this.#effects.enqueue('relay', `wake:${causationId}`, {\n",
-    "replace": "    this.#effects.enqueue('relay', `wake:${freshId('')}`, {\n",
+    "file": "packages/meta/src/followups.ts",
+    "find": "  effects.enqueue('relay', `wake:${causationId}`, {\n",
+    "replace": "  effects.enqueue('relay', `wake:${Math.random()}`, {\n",
     "tests": ["packages/meta/test/durable.test.ts"]
   },
   {
@@ -72,8 +72,8 @@
   {
     "name": "7 enqueue the wake outside the answer's transaction",
     "file": "packages/meta/src/service.ts",
-    "find": "        this.enqueueWake({\n          causationId: docId,\n          reason,\n          detail: `question \"${String(doc.question ?? '')}\" answered: ${stored}`,\n          ...(workItemId !== undefined && { workItemId }),\n        })\n",
-    "replace": "        queueMicrotask(() =>\n          this.#store.atomic(() =>\n            this.enqueueWake({\n              causationId: docId,\n              reason,\n              detail: `question \"${String(doc.question ?? '')}\" answered: ${stored}`,\n              ...(workItemId !== undefined && { workItemId }),\n            }),\n          ),\n        )\n",
+    "find": "        this.enqueueWake({\n          causationId: docId,\n          reason,\n          detail: `question \"${String(doc.question ?? '')}\"${asked} answered: ${stored}`,\n          ...(workItemId !== undefined && { workItemId }),\n        })\n",
+    "replace": "        queueMicrotask(() =>\n          this.#store.atomic(() =>\n            this.enqueueWake({\n              causationId: docId,\n              reason,\n              detail: `question \"${String(doc.question ?? '')}\"${asked} answered: ${stored}`,\n              ...(workItemId !== undefined && { workItemId }),\n            }),\n          ),\n        )\n",
     "tests": ["packages/meta/test/durable.test.ts"]
   },
   {
@@ -212,8 +212,8 @@
   {
     "name": "13c resume does not queue the held turn",
     "file": "apps/desktop/src/composition.ts",
-    "find": "      metaAgent?.enqueueResumes()\n    },\n",
-    "replace": "    },\n",
+    "find": "      metaAgent?.enqueueResumes()\n      schedulerPass()\n    },\n",
+    "replace": "      schedulerPass()\n    },\n",
     "tests": ["apps/desktop/test/composition.test.ts"]
   },
   {
@@ -275,7 +275,7 @@
   {
     "name": "16g close never stops the engine",
     "file": "apps/desktop/src/composition.ts",
-    "find": "        planner.abort().then(() => planner.close()),\n",
+    "find": "        planner\n          .abort()\n          .then(() => planner.kill())\n          .then(() => planner.close()),\n",
     "replace": "        planner.close(),\n",
     "tests": ["apps/desktop/test/composition.test.ts"]
   },

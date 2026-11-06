@@ -2,7 +2,7 @@ import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { loadPolicy } from '../../policy/src/policy'
 import type { MetaBrain, MetaDecision, PlannerTools } from '../src'
-import { fakeBrain, isHeld, launchAuthority, MetaAgentService, mandateOf } from '../src'
+import { fakeBrain, isHeld, launchAuthority, MetaAgentService, mandateOf, refuseLaunch } from '../src'
 
 /**
  * The authority fence (M1.4a, spec §10, §12.5, §13 invariant 4, decisions #20 and #21): a stop
@@ -662,6 +662,110 @@ describe('authority fence', () => {
         verdict: 'drop',
         reason: 'mandate_expired',
       })
+    })
+
+    it('a launch row that drains on an expired mandate settles its attempt', async () => {
+      const { store, id, payload } = await planned()
+      const work = store.workItems.get(id)!
+      store.atomic(() => {
+        store.workItems.save({
+          ...work,
+          mandate: { ...(work.mandate as object), expiresAt: '2026-11-05T11:00:00.000Z' },
+        })
+        refuseLaunch(store, payload, 'mandate_expired', NOW)
+      })
+      expect(store.attempts.get(payload.attempt_id)).toMatchObject({
+        state: 'failed',
+        terminal_reason: 'mandate_expired',
+      })
+      expect(store.workItems.get(id)).toMatchObject({ state: 'blocked', blockedReason: 'mandate_expired' })
+    })
+
+    it.each(['mandate_withdrawn', 'repo_mismatch'] as const)(
+      'a row drained on %s settles too',
+      async (why) => {
+        const { store, id, payload } = await planned()
+        store.atomic(() => refuseLaunch(store, payload, why, NOW))
+        expect(store.attempts.get(payload.attempt_id)).toMatchObject({
+          state: 'failed',
+          terminal_reason: why,
+        })
+        expect(store.workItems.get(id)).toMatchObject({ state: 'blocked', blockedReason: why })
+      },
+    )
+
+    it('a policy change fails the attempt that never started: the work blocks with the reason', async () => {
+      const { store, id, payload } = await planned()
+      store.atomic(() => refuseLaunch(store, payload, 'policy_changed', NOW))
+      expect(store.attempts.get(payload.attempt_id)).toMatchObject({
+        state: 'failed',
+        terminal_reason: 'policy_changed',
+      })
+      expect(store.workItems.get(id)).toMatchObject({ state: 'blocked', blockedReason: 'policy_changed' })
+    })
+
+    it('a policy change cancels no running work (§13)', async () => {
+      const { store, id, payload } = await planned()
+      const live = { taskId: payload.task_id, workItemId: id, slotId: 'slot_a', generation: 1 }
+      store.atomic(() => {
+        store.attempts.save({ ...live, id: 'att_running', state: 'running' })
+        store.attempts.save({ ...live, id: 'att_checks', state: 'work_complete' })
+      })
+      expect(launchAuthority(store, payload, NOW, 'another-hash')).toEqual({
+        verdict: 'drop',
+        reason: 'policy_changed',
+      })
+      store.atomic(() => refuseLaunch(store, payload, 'policy_changed', NOW))
+      expect(store.attempts.get('att_running')?.state).toBe('running')
+      expect(store.attempts.get('att_checks')?.state).toBe('work_complete')
+      expect(store.events.read('attempt:att_running')).toEqual([])
+      expect(store.events.read('attempt:att_checks')).toEqual([])
+    })
+
+    it.each(['mandate_expired', 'mandate_withdrawn', 'policy_changed', 'repo_mismatch'] as const)(
+      'a queued attempt whose group is not proven gone keeps its capacity on %s (§8.1)',
+      async (why) => {
+        const { store, payload } = await planned()
+        const attempt = store.attempts.get(payload.attempt_id)!
+        store.atomic(() => {
+          store.attempts.save({ ...attempt, reconcile_refused: 'unprovable' })
+          refuseLaunch(store, payload, why, NOW)
+        })
+        expect(store.attempts.get(payload.attempt_id)).toMatchObject({
+          state: 'queued',
+          reconcile_refused: 'unprovable',
+        })
+        const types = store.events.read(`attempt:${payload.attempt_id}`).map((event) => event.type)
+        expect(types).not.toContain('attempt.failed')
+      },
+    )
+
+    it('a policy change still blocks the work of an attempt that keeps its capacity', async () => {
+      const { store, id, payload } = await planned()
+      const attempt = store.attempts.get(payload.attempt_id)!
+      store.atomic(() => {
+        store.attempts.save({ ...attempt, reconcile_refused: 'unprovable' })
+        refuseLaunch(store, payload, 'policy_changed', NOW)
+      })
+      expect(store.workItems.get(id)).toMatchObject({ state: 'blocked', blockedReason: 'policy_changed' })
+    })
+
+    it('a stale row for an attempt queued again leaves that attempt alone', async () => {
+      const { store, id, payload } = await planned()
+      store.atomic(() => refuseLaunch(store, payload, 'attempt_not_queued', NOW))
+      expect(store.attempts.get(payload.attempt_id)?.state).toBe('queued')
+      expect(store.workItems.get(id)?.state).toBe('executing')
+    })
+
+    it('a refused resume blocks nothing and leaves a parked attempt as it was', async () => {
+      const { store, id, payload } = await planned()
+      const attempt = store.attempts.get(payload.attempt_id)!
+      store.atomic(() => {
+        store.attempts.save({ ...attempt, state: 'quota_wait' })
+        refuseLaunch(store, payload, 'mandate_expired', NOW)
+      })
+      expect(store.attempts.get(payload.attempt_id)?.state).toBe('quota_wait')
+      expect(store.workItems.get(id)?.state).toBe('executing')
     })
 
     it('launchAuthority drops a launch whose repo differs from the pin', async () => {

@@ -2,6 +2,8 @@ import { AlreadyHandledError, HttpError, type ResolveAnswer, type ResolveResult 
 import { DecodeError } from '../api-decode'
 import { inspectApi } from '../api-inspect'
 import type {
+  ActivityItem,
+  ArtifactPage,
   CardEvidence,
   NeedItem,
   Page,
@@ -11,10 +13,14 @@ import type {
   WorkRow,
 } from '../next/inspection-wire'
 import {
+  type ActivityPages,
   type AnswerOutcome,
   type ApprovalOutcome,
   DENIED,
+  latestAttempt,
+  type OpenArtifact,
   type Read,
+  readData,
   type WorkAction,
 } from '../next/work-model'
 import { describeApproval } from '../release-cards'
@@ -48,6 +54,8 @@ export interface InspectionClient {
   stop(id: string): Promise<CommandResult>
   resolve(id: string, answer: ResolveAnswer): Promise<ResolveResult>
   answer(id: string, answer: string): Promise<void>
+  activity(id: string, cursor: string | null, signal?: AbortSignal): Promise<Page<ActivityItem>>
+  artifact(id: string, ref: string, cursor: string | null, signal?: AbortSignal): Promise<ArtifactPage>
 }
 
 export interface Selected<T> {
@@ -65,6 +73,9 @@ export interface InspectionState {
   needs: Read<Page<NeedItem>>
   delivery: Selected<WorkDetail>
   task: Selected<TaskDetail>
+  /** The attempt on the Activity tab, read in pages. Null when the task has none to show. */
+  activity: { attemptId: string | null; read: Read<ActivityPages> }
+  artifact: OpenArtifact | null
   /** Evidence by card. An id with no entry has not loaded, which is not the same as absent. */
   evidence: Readonly<Record<string, CardEvidence>>
   outcomes: Readonly<Record<string, ApprovalOutcome>>
@@ -73,6 +84,8 @@ export interface InspectionState {
   search: Read<Page<SearchHit>>
   notice: CommandNotice | null
 }
+
+const NO_ACTIVITY: InspectionState['activity'] = { attemptId: null, read: { status: 'loading' } }
 
 const EMPTY_SEARCH: Page<SearchHit> = { items: [], nextCursor: null, observedAt: '' }
 
@@ -86,6 +99,13 @@ export function readFailure(error: unknown): string {
   }
   if (error instanceof DecodeError) return 'The answer could not be read by this version of the page.'
   return 'The workbench did not answer.'
+}
+
+/** The artifact route refuses by design, so those answers are not a fault to report. */
+function artifactFailure(error: unknown): string {
+  if (error instanceof HttpError && error.status === 403) return 'The workbench does not serve this file.'
+  if (error instanceof HttpError && error.status === 404) return 'This file is not there any more.'
+  return readFailure(error)
 }
 
 /** describeApproval reads an approve click; a deny settled with nothing run has its own words. */
@@ -171,6 +191,8 @@ export function createInspection(client: InspectionClient) {
     needs: { status: 'loading' },
     delivery: { id: null, read: { status: 'loading' } },
     task: { id: null, read: { status: 'loading' } },
+    activity: NO_ACTIVITY,
+    artifact: null,
     evidence: {},
     outcomes: {},
     answers: {},
@@ -183,6 +205,12 @@ export function createInspection(client: InspectionClient) {
   let reading: AbortController | null = null
   let readingDelivery: AbortController | null = null
   let readingTask: AbortController | null = null
+  let readingActivity: AbortController | null = null
+  /** A frame landed during a read: one more read of the last page once that one ends. */
+  let activityAgain = false
+  /** The owner's choice of attempt. Null follows the latest. */
+  let chosenAttempt: string | null = null
+  let readingArtifact: AbortController | null = null
   let searching: AbortController | null = null
   let searchTimer: ReturnType<typeof setTimeout> | undefined
   const settling = new Set<string>()
@@ -228,6 +256,93 @@ export function createInspection(client: InspectionClient) {
       })
   }
 
+  const stopActivity = () => {
+    readingActivity?.abort()
+    readingActivity = null
+    activityAgain = false
+  }
+
+  /** The last page read, which is where anything new lands: a stream's end has no next cursor. */
+  const activityTail = (): string | null => readData(state.activity.read)?.tail ?? null
+
+  const readActivity = (id: string, cursor: string | null) => {
+    stopActivity()
+    const controller = new AbortController()
+    readingActivity = controller
+    const live = () => readingActivity === controller
+    within((signal) => client.activity(id, cursor, signal), controller.signal)
+      .then((page) => {
+        if (!live()) return
+        const kept = readData(state.activity.read)?.items ?? []
+        const seen = new Set(kept.map((item) => item.seq))
+        const items = [...kept, ...page.items.filter((item) => !seen.has(item.seq))]
+        const data = { items, tail: cursor, nextCursor: page.nextCursor }
+        set({ activity: { attemptId: id, read: { status: 'ready', data, readAt: now() } } })
+      })
+      .catch((error: unknown) => {
+        if (live()) set({ activity: { attemptId: id, read: failedRead(state.activity.read, error) } })
+      })
+      .then(() => {
+        if (!live()) return
+        readingActivity = null
+        if (!activityAgain) return
+        activityAgain = false
+        readActivity(id, activityTail())
+      })
+  }
+
+  /** Moves on from the last page, or leaves a read in flight to finish first. */
+  const rereadActivity = (id: string) => {
+    if (readingActivity !== null) activityAgain = true
+    else readActivity(id, activityTail())
+  }
+
+  const showAttempt = (id: string | null) => {
+    stopActivity()
+    set({ activity: { attemptId: id, read: { status: 'loading' } } })
+    if (id !== null) readActivity(id, null)
+  }
+
+  /** `coverage.activity` false means nothing is stored, so there is nothing to ask for. */
+  const syncActivity = (detail: TaskDetail) => {
+    const chosen = detail.attempts.find((attempt) => attempt.id === chosenAttempt)
+    const shown = chosen ?? latestAttempt(detail.attempts)
+    const id = detail.coverage.activity ? (shown?.id ?? null) : null
+    if (id !== state.activity.attemptId) showAttempt(id)
+    else if (id !== null) rereadActivity(id)
+  }
+
+  const closeArtifact = () => {
+    readingArtifact?.abort()
+    readingArtifact = null
+    if (state.artifact !== null) set({ artifact: null })
+  }
+
+  const readArtifact = (attemptId: string, ref: string, cursor: string | null) => {
+    readingArtifact?.abort()
+    const controller = new AbortController()
+    readingArtifact = controller
+    const live = () => readingArtifact === controller
+    within((signal) => client.artifact(attemptId, ref, cursor, signal), controller.signal)
+      .then((page) => {
+        if (!live()) return
+        const kept = state.artifact === null ? null : readData(state.artifact.read)
+        const data =
+          page.kind === 'text' && cursor !== null && kept?.kind === 'text'
+            ? { ...page, text: kept.text + page.text }
+            : page
+        set({ artifact: { attemptId, ref, read: { status: 'ready', data, readAt: now() } } })
+      })
+      .catch((error: unknown) => {
+        if (!live()) return
+        const previous = state.artifact?.read ?? { status: 'loading' as const }
+        const kept = readData(previous)
+        const readAt = previous.status === 'loading' ? null : previous.readAt
+        const read = { status: 'failed' as const, message: artifactFailure(error), data: kept, readAt }
+        set({ artifact: { attemptId, ref, read } })
+      })
+  }
+
   const readTask = (id: string) => {
     readingTask?.abort()
     const controller = new AbortController()
@@ -235,7 +350,9 @@ export function createInspection(client: InspectionClient) {
     const live = () => readingTask === controller
     within((signal) => client.taskDetail(id, signal), controller.signal)
       .then((data) => {
-        if (live()) set({ task: { id, read: { status: 'ready', data, readAt: now() } } })
+        if (!live()) return
+        set({ task: { id, read: { status: 'ready', data, readAt: now() } } })
+        syncActivity(data)
       })
       .catch((error: unknown) => {
         if (live()) set({ task: { id, read: failedRead(state.task.read, error) } })
@@ -321,8 +438,60 @@ export function createInspection(client: InspectionClient) {
       if (id === state.task.id) return
       readingTask?.abort()
       readingTask = null
-      set({ task: { id, read: { status: 'loading' } } })
+      stopActivity()
+      chosenAttempt = null
+      readingArtifact?.abort()
+      readingArtifact = null
+      set({ task: { id, read: { status: 'loading' } }, activity: NO_ACTIVITY, artifact: null })
       if (id !== null) readTask(id)
+    },
+
+    selectAttempt(id: string): void {
+      chosenAttempt = id
+      if (id === state.activity.attemptId) return
+      closeArtifact()
+      showAttempt(id)
+    },
+
+    moreActivity(): void {
+      const { attemptId, read } = state.activity
+      const next = readData(read)?.nextCursor ?? null
+      if (attemptId !== null && next !== null) readActivity(attemptId, next)
+    },
+
+    retryActivity(): void {
+      const { attemptId } = state.activity
+      if (attemptId !== null) readActivity(attemptId, activityTail())
+    },
+
+    /** One compact frame's worth of work: the read it names, if that read is on show. */
+    invalidate(stream: string): void {
+      const { attemptId } = state.activity
+      if (attemptId !== null && stream === `attempt:${attemptId}`) rereadActivity(attemptId)
+    },
+
+    /** The same file again closes it, so the link reads as a disclosure. */
+    openArtifact(attemptId: string, ref: string): void {
+      const open = state.artifact
+      closeArtifact()
+      if (open?.attemptId === attemptId && open.ref === ref) return
+      set({ artifact: { attemptId, ref, read: { status: 'loading' } } })
+      readArtifact(attemptId, ref, null)
+    },
+
+    moreArtifact(): void {
+      const open = state.artifact
+      const kept = open === null ? null : readData(open.read)
+      if (open !== null && kept?.kind === 'text' && kept.nextCursor !== null) {
+        readArtifact(open.attemptId, open.ref, kept.nextCursor)
+      }
+    },
+
+    retryArtifact(): void {
+      const open = state.artifact
+      if (open === null) return
+      const kept = readData(open.read)
+      readArtifact(open.attemptId, open.ref, kept?.kind === 'text' ? kept.nextCursor : null)
     },
 
     /** The card's own id, once. The answer is whatever the server said, in describeApproval's words. */

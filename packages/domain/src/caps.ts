@@ -10,9 +10,10 @@ export type Caps = {
   fanOut: number
   agentDepth: number
   repairAttemptsPerTask: number
+  reviewRoundsPerTask: number
 }
 
-/** Defaults from plan §11: 4 global, 2 per work item, 2 per slot, fan-out 3, depth 1, 2 repairs. */
+/** Defaults from plan §11, §15: 4 global, 2 per work item, 2 per slot, fan-out 3, depth 1, 2 repairs, 3 rounds. */
 export const DEFAULT_CAPS: Caps = {
   globalActiveAttempts: 4,
   perWorkItem: 2,
@@ -20,6 +21,7 @@ export const DEFAULT_CAPS: Caps = {
   fanOut: 3,
   agentDepth: 1,
   repairAttemptsPerTask: 2,
+  reviewRoundsPerTask: 3,
 }
 
 export function withinGlobalCaps(active: number, caps: Caps): boolean {

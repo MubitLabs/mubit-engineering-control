@@ -69,6 +69,22 @@ export function opencodeHome(root: string, slot: string): EngineHome {
   return { engine: 'opencode', homeDir, env }
 }
 
+/**
+ * The home variables of a home that already exists, by the same rule as the three above: what
+ * a launch sets from `Slot.home`, so a slot saved before its env was recorded still runs under it.
+ */
+export function engineHomeEnv(engine: EngineHome['engine'], homeDir: string): Record<string, string> {
+  if (engine === 'claude') return { CLAUDE_CONFIG_DIR: homeDir }
+  if (engine === 'codex') return { CODEX_HOME: homeDir }
+  return {
+    XDG_DATA_HOME: join(homeDir, 'data'),
+    XDG_CONFIG_HOME: join(homeDir, 'config'),
+    XDG_STATE_HOME: join(homeDir, 'state'),
+    XDG_CACHE_HOME: join(homeDir, 'cache'),
+    OPENCODE_CONFIG_DIR: join(homeDir, 'config'),
+  }
+}
+
 export function linkedDefault(engine: EngineHome['engine']): EngineHome | null {
   if (engine === 'claude') {
     // Env stays EMPTY — see the module comment (issue #92252): the linked default

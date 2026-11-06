@@ -17,6 +17,10 @@ export type SchedulableTask = {
   generation: number
   /** Slot class the task is bound to, when it declares one. */
   slotClass?: string
+  /** The one slot the plan pinned this task to; it outranks every preference (§11). */
+  slotId?: string
+  /** The slots that can serve the task's model request; absent means it made none (§11, O7). */
+  modelSlots?: readonly string[]
   role: string
 }
 
@@ -40,12 +44,15 @@ export type ActiveAttempt = {
 
 /**
  * `confirmation` and `policy` belong to upstream gates (§13); this pass emits `capacity` (caps,
- * the reserved wake unit, or healthy-but-full slots) and `slot_unhealthy` (no healthy slot
- * matched the task's class or role pinning).
+ * the reserved wake unit, or healthy-but-full slots), `slot_unhealthy` (no healthy slot matched
+ * the task's pin or role pinning) and `model_unavailable` (those that did serve no model
+ * the task asked for: unavailable never silently becomes a default).
  */
+export type DeferReason = 'capacity' | 'slot_unhealthy' | 'model_unavailable' | 'confirmation' | 'policy'
+
 export type DispatchPlan = {
   launches: { taskId: string; slotId: string }[]
-  deferred: { taskId: string; reason: 'capacity' | 'slot_unhealthy' | 'confirmation' | 'policy' }[]
+  deferred: { taskId: string; reason: DeferReason }[]
 }
 
 const utilisation = (slot: SlotView): number => slot.usageUtilization ?? 0
@@ -104,7 +111,7 @@ export function planDispatches(input: {
   const load = (slot: SlotView): number => slot.inUse + (launchPerSlot.get(slot.id) ?? 0)
 
   const matches = (task: SchedulableTask, slot: SlotView): boolean =>
-    (task.slotClass === undefined || slot.slotClass === task.slotClass) &&
+    (task.slotId === undefined || slot.id === task.slotId) &&
     (slot.pinnedRoles.length === 0 || slot.pinnedRoles.includes(task.role))
 
   /** New work only: a slot at/above the ceiling never takes a new attempt; running ones stay. */
@@ -124,10 +131,18 @@ export function planDispatches(input: {
     // Rule 1: one live attempt per task (v1's unique index); a launch made this pass counts too.
     if (activeTaskIds.has(task.taskId) || launchedTaskIds.has(task.taskId)) continue
 
-    // Rules 2 and 4: healthy slots matching the task's slot class and the slot's role pinning.
-    const candidates = input.slots.filter((slot) => slot.state === 'healthy' && matches(task, slot))
-    if (candidates.length === 0) {
+    // Rules 2 and 4: healthy slots matching the task's pin and the slot's role pinning. The slot
+    // class is a preference (§10) applied when choosing below, never a filter.
+    const matching = input.slots.filter((slot) => slot.state === 'healthy' && matches(task, slot))
+    if (matching.length === 0) {
       deferred.push({ taskId: task.taskId, reason: 'slot_unhealthy' })
+      continue
+    }
+    const candidates = matching.filter(
+      (slot) => task.modelSlots === undefined || task.modelSlots.includes(slot.id),
+    )
+    if (candidates.length === 0) {
+      deferred.push({ taskId: task.taskId, reason: 'model_unavailable' })
       continue
     }
 
@@ -155,7 +170,10 @@ export function planDispatches(input: {
 
     // Rule 4 preference: lowest utilisation, then fewest in use, then id for stability. A slot
     // without a reading ranks as least utilised (unknown is not high).
-    const chosen = [...usable].sort(
+    const preferred = usable.filter(
+      (slot) => task.slotClass !== undefined && slot.slotClass === task.slotClass,
+    )
+    const chosen = [...(preferred.length > 0 ? preferred : usable)].sort(
       (a, b) => utilisation(a) - utilisation(b) || load(a) - load(b) || a.id.localeCompare(b.id),
     )[0]!
 

@@ -17,8 +17,8 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 import { ClaudeAdapter } from '../../engines/src/claude/adapter'
 import { git } from '../../git/src/exec'
 import { historyTouches } from '../../git/src/repos'
-import { commitAll, headSha } from '../../git/src/worktrees'
-import { type AttemptFacts, type AttemptPlan, AttemptRunner, NotWiredError } from '../src/attempt-runner'
+import { commitAll, headSha, worktreeAdminDir } from '../../git/src/worktrees'
+import { type AttemptFacts, type AttemptPlan, AttemptRunner } from '../src/attempt-runner'
 import type { CheckOutcome, CheckSpec } from '../src/checks'
 import { ownedSpawn } from '../src/owned-spawn'
 import { writeShimDir } from '../src/shims'
@@ -56,9 +56,11 @@ class Facts implements AttemptFacts {
   reason: string | undefined
   outcomes: CheckOutcome[] = []
   note: string | undefined
+  stopped: string | undefined
   /** Throws from the transaction, as a store on a full disk would. */
   failOn: EngineEvent['type'] | undefined
   commits = 0
+  read: string[] = []
 
   atomic<T>(fn: () => T): T {
     this.log.push('begin')
@@ -76,7 +78,9 @@ class Facts implements AttemptFacts {
     this.state = 'running'
   }
   inputsDelivered(): void {}
-  inputsRead(): void {}
+  inputsRead(_attempt: AttemptRef, ids: string[]): void {
+    this.read.push(...ids)
+  }
   turnEnded(): void {}
   reportReceived(): void {}
   permissionRequested(): void {}
@@ -96,9 +100,10 @@ class Facts implements AttemptFacts {
     this.head = head
     this.outcomes = outcomes
   }
-  checksSkipped(_attempt: AttemptRef, head: string, reason: string): void {
+  checksSkipped(_attempt: AttemptRef, head: string, reason: string, stopped?: string): void {
     this.head = head
     this.note = reason
+    this.stopped = stopped
   }
   attemptParked(_attempt: AttemptRef, state: string, reason: string): void {
     this.state = state
@@ -112,6 +117,11 @@ class Facts implements AttemptFacts {
     this.state = 'failed'
     this.reason = reason
   }
+  stopFailed(): void {}
+  attemptStalled(): void {}
+  journalled(): ReadonlySet<string> {
+    return new Set()
+  }
 }
 
 let counter = 0
@@ -123,11 +133,13 @@ async function rig(
     checks,
     wallClockMs,
     binary: binaryOverride,
+    streamInput,
     ...over
   }: Partial<Omit<AttemptPlan, 'checks'>> & {
     checks?: (worktree: string) => CheckSpec[]
     wallClockMs?: number
     binary?: string | null
+    streamInput?: boolean
   } = {},
 ) {
   counter += 1
@@ -196,10 +208,11 @@ async function rig(
     journalRoot,
     supervisor,
     facts,
-    git: { commitAll, headSha, historyTouches },
+    git: { commitAll, headSha, historyTouches, adminDirOf: worktreeAdminDir },
     adapterFor: () =>
       new ClaudeAdapter({
         ...(binary !== undefined && { binary }),
+        ...(streamInput === true && { streamInput }),
         spawnFn: ownedSpawn(supervisor, { attemptId: attempt.attempt_id, generation: 1 }),
       }),
     planFor: () => plan,
@@ -527,6 +540,7 @@ describe('AttemptRunner', { timeout: 60_000 }, () => {
       expect(tookMs).toBeLessThan(10_000)
       await until(() => groupGone(pid))
       expect(facts.note).toContain('stopped during check unit: server_closing')
+      expect(facts.stopped).toBe('server_closing')
     })
 
     it('the wall clock reaches a hung check', async () => {
@@ -541,7 +555,17 @@ describe('AttemptRunner', { timeout: 60_000 }, () => {
       await until(() => groupGone(pid))
       expect(facts.state).toBe('work_complete')
       expect(facts.note).toContain('stopped during check unit: wall_clock')
+      expect(facts.stopped).toBe('wall_clock')
     })
+  })
+
+  it('a .git that no longer names this attempt commits nothing and fails with the reason', async () => {
+    const { attempt, brief, runner, facts, worktree } = await rig(MADE, { gitAdmin: '/not/this/one' })
+    await runner.launchAttempt(attempt, brief)
+    await runner.settled()
+    expect(facts.state).toBe('failed')
+    expect(facts.reason).toContain('git_pointer_moved')
+    expect(await headSha(worktree)).toBe(brief.base_sha)
   })
 
   it('a crash fails the attempt with the reason', async () => {
@@ -595,12 +619,51 @@ describe('AttemptRunner', { timeout: 60_000 }, () => {
     expect(facts.state).toBe('work_complete')
   })
 
-  it('deliver and replay name what is not wired', async () => {
+  it('replay of an attempt with nothing journalled applies nothing', async () => {
+    const { attempt, runner, facts } = await rig([])
+    await runner.replay(attempt)
+    expect(facts.events).toEqual([])
+  })
+
+  it('a delivery to an attempt with no running engine rejects by name', async () => {
     const { attempt, runner } = await rig([])
     await expect(runner.deliver(attempt, { id: 'inp_1', kind: 'message', text: 'x' })).rejects.toThrow(
-      NotWiredError,
+      'has no running engine',
     )
-    await expect(runner.replay(attempt)).rejects.toThrow(NotWiredError)
+  })
+
+  it('a delivery reaches the engine, and the turn that carried it ending is the read', async () => {
+    const steps = [{ init: true }, { sleep: 300 }, { result: 'completed' }]
+    const { attempt, brief, runner, dir, facts } = await rig(steps, { streamInput: true })
+    await runner.launchAttempt(attempt, brief)
+    await until(() => facts.state === 'running')
+
+    await runner.deliver(attempt, { id: 'inp_1', kind: 'message', text: 'also this' })
+    expect(facts.read).toEqual([])
+    await runner.settled()
+
+    expect(facts.read).toEqual(['inp_1'])
+    const lines = readFileSync(join(dir, 'bin', 'stdin.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+    expect(JSON.parse(lines[1] ?? '{}').message.content).toBe('also this')
+  })
+
+  it('an engine with no proven input rejects, and nothing is sent', async () => {
+    const steps = [{ init: true }, { sleep: 300 }, { result: 'completed' }]
+    const { attempt, brief, runner, dir, facts } = await rig(steps, { streamInput: true })
+    await runner.launchAttempt(attempt, { ...brief, engine: 'codex' })
+    await until(() => facts.state === 'running')
+
+    await expect(runner.deliver(attempt, { id: 'inp_1', kind: 'message', text: 'x' })).rejects.toThrow(
+      'engine codex has no proven input',
+    )
+    await runner.settled()
+    expect(
+      readFileSync(join(dir, 'bin', 'stdin.jsonl'), 'utf8')
+        .trim()
+        .split('\n'),
+    ).toHaveLength(1)
   })
 
   it('a stop for an attempt nobody runs is no error', async () => {

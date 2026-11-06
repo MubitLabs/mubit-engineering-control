@@ -18,6 +18,8 @@ function board(overrides: {
     runtime: { state: 'ready', instances: 1, answering: true, ...overrides.runtime },
     parts: overrides.parts ?? {},
     setup: { has_slot: true, has_repository: true, ...overrides.setup },
+    // §21.2: a healthy board has a live writer; the heartbeat rows are in health-freshness.test.ts.
+    heartbeatAt: new Date().toISOString(),
   }
 }
 
@@ -103,6 +105,27 @@ describe('statusFromSnapshot', () => {
       expect(text(result)).toContain('degraded')
     })
 
+    it('a moved port adds a line and never changes the code', () => {
+      const portMoved = { from: 4100, to: 5200 }
+      const line = 'port 4100 is taken, so mec moved to 5200: reopen http://127.0.0.1:5200'
+      const running = statusFromSnapshot({ ...board({}), portMoved }, { initialized: true })
+      expect(running).toEqual({ code: 0, lines: ['running normally', line] })
+      const waiting = board({ setup: { has_slot: false } })
+      const setup = statusFromSnapshot({ ...waiting, portMoved }, { initialized: true })
+      expect(setup.code).toBe(3)
+      expect(setup.lines).toContain(line)
+      const broken = board({ parts: { store: { state: 'error' } } })
+      const errored = statusFromSnapshot({ ...broken, portMoved }, { initialized: true })
+      expect(errored.code).toBe(2)
+      expect(errored.lines).toContain(line)
+    })
+
+    it('a stale writer says nothing of a port', () => {
+      const stale = { ...board({}), heartbeatAt: '2020-01-01T00:00:00.000Z' }
+      const result = statusFromSnapshot({ ...stale, portMoved: { from: 1, to: 2 } }, { initialized: true })
+      expect(result).toEqual({ code: 1, lines: ['not answering'] })
+    })
+
     it('not answering outranks a part in error', () => {
       const result = statusFromSnapshot(
         board({
@@ -138,7 +161,8 @@ describe('statusFromSnapshot', () => {
       it(`${file} maps to code ${code}`, () => {
         const snapshot = parseHealthSnapshot(readFileSync(join(fixtureDir, file), 'utf8'))
         expect(snapshot).not.toBeNull()
-        const result = statusFromSnapshot(snapshot, { initialized: true })
+        const live = snapshot === null ? null : { ...snapshot, heartbeatAt: new Date().toISOString() }
+        const result = statusFromSnapshot(live, { initialized: true })
         expect(result.code).toBe(code)
       })
     }

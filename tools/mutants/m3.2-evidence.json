@@ -1,0 +1,170 @@
+[
+  {
+    "name": "tool call implies running",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "    text: item.summary,\n",
+    "replace": "    text: item.type === 'tool_call' ? `Running ${item.summary}` : item.summary,\n",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "compact frame ignored",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "          moved.add(event.stream)\n",
+    "replace": "",
+    "tests": ["apps/web/test/sse-resume.test.ts"]
+  },
+  {
+    "name": "an attempt frame refreshes everything",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "          movedTimer = setTimeout(flushMoved, REFETCH_DEBOUNCE_MS)\n          return\n",
+    "replace": "          movedTimer = setTimeout(flushMoved, REFETCH_DEBOUNCE_MS)\n",
+    "tests": ["apps/web/test/sse-resume.test.ts"]
+  },
+  {
+    "name": "frames not compact",
+    "file": "apps/web/src/live/events.ts",
+    "find": "&compact=1",
+    "replace": "",
+    "tests": ["apps/web/test/sse-resume.test.ts"]
+  },
+  {
+    "name": "a reset keeps the attempt's old cursor",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "        if (reset) attemptStream = null\n",
+    "replace": "",
+    "tests": ["apps/web/test/sse-resume.test.ts"]
+  },
+  {
+    "name": "a later after moves the attempt's cursor",
+    "file": "apps/web/src/live/workspace.tsx",
+    "find": "      if (stream === attemptStream) return\n",
+    "replace": "",
+    "tests": ["apps/web/test/sse-resume.test.ts"]
+  },
+  {
+    "name": "a cut attempt stream replays from zero",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  return after === undefined ? null : { stream, after }\n",
+    "replace": "  return { stream, after: after ?? 0 }\n",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "the tail is forgotten",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "const data = { items, tail: cursor, nextCursor: page.nextCursor }",
+    "replace": "const data = { items, tail: null, nextCursor: page.nextCursor }",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "a repeated line is applied twice",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "...page.items.filter((item) => !seen.has(item.seq))",
+    "replace": "...page.items",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "a frame cancels the read in flight",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "    if (readingActivity !== null) activityAgain = true\n    else readActivity(id, activityTail())\n",
+    "replace": "    readActivity(id, activityTail())\n",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "coverage false still reads activity",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "const id = detail.coverage.activity ? (shown?.id ?? null) : null",
+    "replace": "const id = shown?.id ?? null",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "a refresh drops the chosen attempt",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "const shown = chosen ?? latestAttempt(detail.attempts)",
+    "replace": "const shown = latestAttempt(detail.attempts)",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "an open artifact survives another task",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "activity: NO_ACTIVITY, artifact: null })",
+    "replace": "activity: NO_ACTIVITY })",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "another task keeps the last activity",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "activity: NO_ACTIVITY, artifact: null })",
+    "replace": "artifact: null })",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "a later page replaces the file's text",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "? { ...page, text: kept.text + page.text }",
+    "replace": "? page",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "a refused file reads as an outage",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "  if (error instanceof HttpError && error.status === 403) return 'The workbench does not serve this file.'\n",
+    "replace": "",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "any line can name an artifact",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "if (item.type !== 'report' || item.detail === null) return []",
+    "replace": "if (item.detail === null) return []",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "a check's artifact opens under the newest attempt",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "const owner = latestAttempt(detail.attempts.filter((entry) => entry.headSha === head))",
+    "replace": "const owner = latestAttempt(detail.attempts)",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "coverage false shows the lines",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  if (!detail.coverage.activity) return { note: NOT_RECORDED, entries: [] }\n",
+    "replace": "",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "a binary file gets a text block",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "return { note: `Binary file, ${sizeLabel(data.size)}. Its contents are not shown.`, text: null }",
+    "replace": "return { note: `Binary file, ${sizeLabel(data.size)}. Its contents are not shown.`, text: '' }",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "the panel opens under every link",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "const open = artifact?.attemptId === attemptId && artifact.ref === ref ? artifact : null",
+    "replace": "const open = artifact ?? null",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "the body decides what an artifact is",
+    "file": "apps/web/src/inspection-decode.ts",
+    "find": "  if (contentType.startsWith('text/plain')) {\n",
+    "replace": "  if (!body.startsWith('{')) {\n",
+    "tests": ["apps/web/test/inspection-decode.test.ts"]
+  },
+  {
+    "name": "a text artifact needs no size",
+    "file": "apps/web/src/inspection-decode.ts",
+    "find": "if (size === null || !/^\\d+$/.test(size)) throw new DecodeError(path, 'the size header is missing')",
+    "replace": "",
+    "tests": ["apps/web/test/inspection-decode.test.ts"]
+  },
+  {
+    "name": "an artifact renders as markup",
+    "file": "apps/web/src/next/Inspector.tsx",
+    "find": "{panel.text !== null && <pre>{panel.text}</pre>}",
+    "replace": "{panel.text !== null && <pre dangerouslySetInnerHTML={{ __html: panel.text }} />}",
+    "tests": ["apps/web/test/inspector-evidence.test.ts"]
+  }
+]

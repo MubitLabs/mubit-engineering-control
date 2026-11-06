@@ -5,12 +5,21 @@
 // fixture repositories built in tmpdirs and file:// remotes; tests that mutate a source
 // repo get their own fixture so ordering never changes an expectation.
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
+import { join, relative } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { git } from '../src/exec'
 import { RepoCache } from '../src/repos'
-import { commitAll, diffSummary, headSha, Worktrees } from '../src/worktrees'
+import { commitAll, diffSummary, headSha, Worktrees, worktreeAdminDir } from '../src/worktrees'
 
 const root = mkdtempSync(join(process.env.TMPDIR ?? '/tmp', 'mec-git-repos-'))
 afterAll(() => {
@@ -215,6 +224,55 @@ describe('Worktrees', () => {
     expect(
       await commitAll(path, 'still nothing staged', { name: 'Ada', email: 'ada@example.com' }),
     ).toBeNull()
+  })
+
+  describe('worktreeAdminDir', () => {
+    const fresh = async (name: string) => {
+      const path = join(root, 'wt-admin', name)
+      await new Worktrees(gitDir).add({ path, branch: `mec/${name}`, baseSha: base, createBranch: true })
+      return path
+    }
+
+    it('names the admin directory git made for this worktree', async () => {
+      const path = await fresh('admin_own')
+      expect(worktreeAdminDir(path)).toBe(join(realpathSync(gitDir), 'worktrees', 'admin_own'))
+    })
+
+    it('follows a repointed .git, so the caller sees the other directory', async () => {
+      const path = await fresh('admin_moved')
+      const other = await fresh('admin_other')
+      writeFileSync(join(path, '.git'), `gitdir: ${worktreeAdminDir(other)}\n`)
+      expect(worktreeAdminDir(path)).toBe(join(realpathSync(gitDir), 'worktrees', 'admin_other'))
+    })
+
+    it('reads a relative pointer from the worktree', async () => {
+      const path = await fresh('admin_relative')
+      const admin = String(worktreeAdminDir(path))
+      writeFileSync(join(path, '.git'), `gitdir: ${relative(realpathSync(path), admin)}\n`)
+      expect(worktreeAdminDir(path)).toBe(admin)
+    })
+
+    it('answers nothing for anything but one plain pointer file', async () => {
+      const directory = await fresh('admin_dir')
+      rmSync(join(directory, '.git'))
+      mkdirSync(join(directory, '.git'))
+      expect(worktreeAdminDir(directory)).toBeUndefined()
+
+      const link = await fresh('admin_link')
+      renameSync(join(link, '.git'), join(link, 'pointer'))
+      symlinkSync('pointer', join(link, '.git'))
+      expect(worktreeAdminDir(link)).toBeUndefined()
+
+      const garbled = await fresh('admin_garbled')
+      writeFileSync(join(garbled, '.git'), 'gitdir: /nowhere/at/all\n')
+      expect(worktreeAdminDir(garbled)).toBeUndefined()
+      writeFileSync(join(garbled, '.git'), 'not a pointer\n')
+      expect(worktreeAdminDir(garbled)).toBeUndefined()
+
+      const gone = await fresh('admin_gone')
+      rmSync(join(gone, '.git'))
+      expect(worktreeAdminDir(gone)).toBeUndefined()
+    })
   })
 
   it('diffSummary aggregates numstat between two SHAs in the bare cache', async () => {

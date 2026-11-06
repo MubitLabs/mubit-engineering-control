@@ -1,0 +1,9 @@
+[
+  {
+    "name": "a ready delivery no longer reads as ready for review",
+    "file": "packages/domain/src/stages.ts",
+    "find": "match: (w) => w.latestReport === 'ready' || w.deliveryReady === true,",
+    "replace": "match: (w) => w.latestReport === 'ready',",
+    "tests": ["packages/domain/test/stages.test.ts"]
+  }
+]

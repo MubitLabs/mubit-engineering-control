@@ -14,9 +14,14 @@
  *   fewer than two events or the span is zero: an immediate crash, where the runtime's own
  *   `exit` (contracts §1 crash rule) lands in the same tick as `session_started`, leaves no
  *   elapsed time to report — a guess stays out of the record.
- * - Tokens and cost come from the LAST `usage` event: the contracts' cumulative `usage_mode`
- *   (§4 of the adapter contract) makes it the freshest running total. Absent readings are
- *   `'unknown'`, never 0; an engine that really reported 0 keeps its 0.
+ * - Tokens and cost are one mode-aware total (`totalOf`): cumulative mode reads the running
+ *   counter, delta mode sums. A replayed event (same generation and seq) counts once. Absent
+ *   readings are `'unknown'`, never 0; an engine that really reported 0 keeps its 0.
+ *   `spendCoverage` says whether the figure is a total or a known subtotal: a usage event with
+ *   no cost, or a cumulative counter that restarted, leaves a floor and not a total.
+ * - Process, validation and delivery are three facts: `result` is how the process ended,
+ *   `validation` what the checks said on the exact head, and `delivery` whether a tested PR
+ *   exists. A clean exit alone proves neither of the other two.
  * - `result` is the `exit` event's `terminal_reason`; with no `exit` (a stream that died before
  *   the runtime synthesised one) it is `'unknown'`.
  * - `quotaParks` counts `rate_limit` events with status `rejected` — plan §5.9's park signal.
@@ -27,12 +32,18 @@
  * - The tier-era fields (§5.5) come from an optional `AttemptContext`: the stream holds what
  *   the engine said, while the tier asked for, the model the runtime launched, the task and
  *   repository the attempt belongs to, and the adapter's `usage_mode` live on the attempt row.
- *   `spend` totals the usage events as that mode adds up (cumulative: the freshest reading is
- *   the total; delta: the sum), and `utilisationDelta` reads last − before on one window —
- *   a lone reading never fakes a 0, and a mid-attempt reset keeps its real negative.
+ *   `utilisationDelta` reads last − before on one window — a lone reading never fakes a 0,
+ *   and a mid-attempt reset keeps its real negative.
  */
 import type { EngineEvent, UsageMode } from '@mec/contracts'
 import type { LaunchModel, ModelTier } from './tiers'
+
+export type SpendCoverage = 'total' | 'subtotal' | 'unknown'
+export type Validation = 'passed' | 'failed' | 'unknown'
+export type DeliveryOutcome = 'delivered' | 'not-delivered' | 'unknown'
+
+/** One check result as `check/<attempt>/<name>` stores it. */
+export type CheckRecord = { name: string; status: string; sha: string }
 
 export type AttemptOutcome = {
   attemptId: string
@@ -43,7 +54,9 @@ export type AttemptOutcome = {
   durationMs: number | 'unknown'
   inputTokens: number | 'unknown'
   outputTokens: number | 'unknown'
+  /** The same figure as `spend`: there is one calculation. */
   costUsd: number | 'unknown'
+  /** How the process ended. `completed` says nothing about checks or delivery. */
   result: 'completed' | 'max_turns' | 'budget' | 'api_error' | 'aborted' | 'killed' | 'crashed' | 'unknown'
   permissionRequests: number
   quotaParks: number
@@ -57,6 +70,12 @@ export type AttemptOutcome = {
   tierDegraded: string | null
   /** Total spend over the attempt from usage events, as the adapter's `usage_mode` adds up. */
   spend: number | 'unknown'
+  /** `subtotal`: spend is known to be missing from `spend`, so it is a floor and never a total. */
+  spendCoverage: SpendCoverage
+  /** What the checks said on the exact head; a check from another head does not count. */
+  validation: Validation
+  /** `delivered` needs validation passed and a ready or merged PR; a clean exit never is. */
+  delivery: DeliveryOutcome
   /** Last − before utilisation on one window; null without a genuine pair of readings. */
   utilisationDelta: number | null
   repository?: string
@@ -79,7 +98,15 @@ export type AttemptContext = {
   repository?: string
   taskId?: string
   reviewFindings?: number
+  /** The head the attempt ended on; checks speak only for this exact commit. */
+  head?: string
+  checks?: readonly CheckRecord[]
+  /** The stage of the work item's `delivery/<work>` record. */
+  deliveryStage?: string
 }
+
+/** A PR that is ready for review or merged: the default delivery (the handoffs' goal). */
+const DELIVERED_STAGES: readonly string[] = ['ready', 'merged']
 
 type SessionStartedEvent = Extract<EngineEvent, { type: 'session_started' }>
 type UsageEvent = Extract<EngineEvent, { type: 'usage' }>
@@ -98,18 +125,55 @@ function durationOf(events: readonly EngineEvent[]): number | 'unknown' {
 }
 
 /**
- * Total spend from `usage` events as the adapter's `usage_mode` adds up (CONTRACTS §4):
- * cumulative mode reports a running total — the freshest reading IS the total; delta mode
- * reports per-turn spend — the total is the sum. A stream with no reported cost stays
- * `'unknown'`, never 0; an engine that really reported 0 keeps its 0.
+ * One total from a run of readings (CONTRACTS §4). Cumulative mode reports a running counter, so
+ * the freshest reading is the total; delta mode reports per-turn figures, so the total is the sum.
+ * No reading at all stays `'unknown'`, never 0; a reported 0 stays 0.
  */
-function spendOf(usage: readonly UsageEvent[], mode: UsageMode): number | 'unknown' {
-  if (mode === 'none') return 'unknown'
+function totalOf(readings: readonly number[], mode: UsageMode): number | 'unknown' {
+  if (mode === 'none' || readings.length === 0) return 'unknown'
+  if (mode === 'delta') return readings.reduce((sum, value) => sum + value, 0)
+  return readings.at(-1) ?? 'unknown'
+}
+
+/** A cumulative counter that fell has restarted: what it had reached is not in the last reading. */
+const restarted = (readings: readonly number[]): boolean =>
+  readings.some((value, index) => index > 0 && value < (readings[index - 1] ?? 0))
+
+function spendOf(
+  usage: readonly UsageEvent[],
+  mode: UsageMode,
+): { spend: number | 'unknown'; spendCoverage: SpendCoverage } {
   const costs = usage
     .map((event) => event.cost_usd)
     .filter((cost): cost is number => typeof cost === 'number')
-  if (costs.length === 0) return 'unknown'
-  return mode === 'cumulative' ? (costs.at(-1) ?? 'unknown') : costs.reduce((sum, cost) => sum + cost, 0)
+  const spend = totalOf(costs, mode)
+  if (spend === 'unknown') return { spend, spendCoverage: 'unknown' }
+  const partial = costs.length < usage.length || (mode === 'cumulative' && restarted(costs))
+  return { spend, spendCoverage: partial ? 'subtotal' : 'total' }
+}
+
+/** A replay delivers the same event twice; generation and seq name it. */
+function uniqueEvents(events: readonly EngineEvent[]): EngineEvent[] {
+  const seen = new Set<string>()
+  return events.filter((event) => {
+    const key = `${event.generation}:${event.seq}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+/** Only checks on the exact head speak; `error` (a timeout, a spawn failure) is not a pass. */
+function validationOf(context: AttemptContext): Validation {
+  const onHead = (context.checks ?? []).filter((check) => check.sha === context.head)
+  if (context.head === undefined || onHead.length === 0) return 'unknown'
+  return onHead.every((check) => check.status === 'passed') ? 'passed' : 'failed'
+}
+
+function deliveryOf(validation: Validation, stage: string | undefined): DeliveryOutcome {
+  if (validation === 'failed') return 'not-delivered'
+  if (validation === 'unknown' || stage === undefined) return 'unknown'
+  return DELIVERED_STAGES.includes(stage) ? 'delivered' : 'not-delivered'
 }
 
 /**
@@ -138,12 +202,19 @@ export function projectAttempt(
   events: readonly EngineEvent[],
   context: AttemptContext = {},
 ): AttemptOutcome {
-  const own = events.filter((event) => event.attempt_id === attemptId)
+  const own = uniqueEvents(events.filter((event) => event.attempt_id === attemptId))
   const started = own.find((event): event is SessionStartedEvent => event.type === 'session_started')
   const usage = own.filter((event): event is UsageEvent => event.type === 'usage')
   const rateLimits = own.filter((event): event is RateLimitEvent => event.type === 'rate_limit')
   const exit = own.find((event): event is ExitEvent => event.type === 'exit')
-  const lastUsage = usage.at(-1)
+  const usageMode = context.usageMode ?? 'cumulative'
+  const tokens = (field: 'input_tokens' | 'output_tokens'): number | 'unknown' =>
+    totalOf(
+      usage.map((event) => event[field]),
+      usageMode === 'none' ? 'cumulative' : usageMode,
+    )
+  const { spend, spendCoverage } = spendOf(usage, usageMode)
+  const validation = validationOf(context)
   const turns =
     usage.length > 0
       ? usage.length
@@ -154,9 +225,9 @@ export function projectAttempt(
     engine: started?.engine,
     turns,
     durationMs: durationOf(own),
-    inputTokens: lastUsage?.input_tokens ?? 'unknown',
-    outputTokens: lastUsage?.output_tokens ?? 'unknown',
-    costUsd: lastUsage?.cost_usd ?? 'unknown',
+    inputTokens: tokens('input_tokens'),
+    outputTokens: tokens('output_tokens'),
+    costUsd: spend,
     result: exit?.terminal_reason ?? 'unknown',
     permissionRequests: own.filter((event) => event.type === 'permission_request').length,
     quotaParks: rateLimits.filter((event) => event.status === 'rejected').length,
@@ -174,7 +245,10 @@ export function projectAttempt(
           ? { id: started.model }
           : null,
     tierDegraded: context.tierDegraded ?? null,
-    spend: spendOf(usage, context.usageMode ?? 'cumulative'),
+    spend,
+    spendCoverage,
+    validation,
+    delivery: deliveryOf(validation, context.deliveryStage),
     utilisationDelta: utilisationDeltaOf(rateLimits),
     repository: context.repository,
     taskId: context.taskId,

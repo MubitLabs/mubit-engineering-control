@@ -61,6 +61,33 @@ afterEach(async () => {
 })
 
 describe('the configuration client against the real routes', () => {
+  it('reads parked work from the real route', async () => {
+    store.slots.save({ id: 'slot_a', label: 'first', state: 'degraded' })
+    store.messages.save({ id: 'msg_1', text: 'Fix login' })
+    store.workItems.save({ id: 'work_1', state: 'running', originMessageId: 'msg_1' })
+    store.attempts.save({
+      id: 'att_1',
+      workItemId: 'work_1',
+      slotId: 'slot_a',
+      state: 'quota_wait',
+      worktree: '/scratch/wt',
+      parked: { state: 'quota_wait', reason: 'rate limit' },
+    })
+    expect(await configApi.parked()).toEqual([
+      {
+        workItemId: 'work_1',
+        workTitle: 'Fix login',
+        attemptId: 'att_1',
+        slotId: 'slot_a',
+        slotLabel: 'first',
+        state: 'quota_wait',
+        reason: 'rate limit',
+        resetAt: null,
+        worktreeKept: true,
+      },
+    ])
+  })
+
   it('reads status capabilities and readiness on a clean install', async () => {
     expect(await configApi.capabilities()).toMatchObject({ backups: true, switchWork: false })
     const readiness = await configApi.readiness()

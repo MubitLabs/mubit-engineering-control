@@ -2,16 +2,13 @@
  * The guarded server entry (plan §21): start the composition, announce the URL, stay alive
  * until SIGINT/SIGTERM, then close in order. Stop-marker aware on both ends: it refuses to
  * start while an intentional stop stands, and its shutdown leaves no marker behind (a stop
- * is written by `mec stop`, never by a signal).
- *
- * TODO(B0 wiring): `mec.ts`'s `main` still calls a no-op `startServer`; pointing its
- * `CliIo.startServer` at `serveMain(home)` is the wiring step this module exists for.
+ * is written by `mec stop`, never by a signal). `mec restart` starts this entry detached.
  */
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
-import { startServer } from './composition'
+import { type RunningServer, startServer } from './composition'
 import { readStopMarker } from './stop-marker'
 
 /** Setup-completeness from the store (best-effort): the wizard sets both of these. */
@@ -47,14 +44,24 @@ function openBrowser(url: string): void {
   })
 }
 
+/** The real entry: only it keeps a port across restarts, for the tab left open on it. */
+export const serveOptions = (dataDir: string) => ({ dataDir, reuseLastPort: true })
+
+/** Where this start landed. A moved port is said here: a tab on the old one cannot hear it. */
+export function startupLines(handle: Pick<RunningServer, 'url' | 'portMoved'>): string[] {
+  const { url, portMoved } = handle
+  const moved = portMoved && `port ${portMoved.from} is taken, so mec moved to ${portMoved.to}: reopen ${url}`
+  return [`mec server listening on ${url}`, ...(moved ? [moved] : [])]
+}
+
 export async function serveMain(dataDir: string): Promise<void> {
   if (readStopMarker(dataDir).present) {
     console.log('intentional stop marker present; not starting (run: mec restart)')
     return
   }
 
-  const handle = await startServer({ dataDir })
-  console.log(`mec server listening on ${handle.url}`)
+  const handle = await startServer(serveOptions(dataDir))
+  for (const line of startupLines(handle)) console.log(line)
   // Review §3.2: on an incomplete setup, open the browser straight into the wizard;
   // --no-open (exported by bin/mec.js as MEC_NO_OPEN) keeps scripts and CI quiet.
   if (process.env.MEC_NO_OPEN !== '1' && !setupComplete(dataDir)) {

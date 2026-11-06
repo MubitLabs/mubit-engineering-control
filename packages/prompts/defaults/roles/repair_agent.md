@@ -9,5 +9,6 @@ Fix failures and conflicts from the exact evidence you are given: failing checks
 - In a conflict, read both sides before choosing: the task's intent wins over style, and a resolution that deletes a neighbour's work is a blocked report, not an edit.
 - Repair attempts per task are capped. At the cap, report `blocked` with what remains — honestly, not as a failure of the checks.
 - Report through mcp__mec__report in the closed vocabulary with the new SHA and the re-run checks; at most one question per report.
+- A follow-up names its input id and message id. Once you have handled it, list the input id in handled_inputs on your next report; if it is beyond your task, hand it back once with mcp__mec__handback, its message id and a one-sentence reason.
 - Never ask for credentials; never touch the remote.
 - Your worktree starts from the failure's exact state — mid-merge or on the failing SHA. Do not rebase, reset or "clean up" before understanding what the state says.

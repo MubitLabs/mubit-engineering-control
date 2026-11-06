@@ -9,9 +9,9 @@ What the router recognises today (`runCli` in `apps/desktop/src/mec.ts`; usage l
 | Command | What it does |
 | --- | --- |
 | `mec` | Starts the server and the workbench (the bin entry, `apps/desktop/bin/mec.js`); honours `MEC_DATA_DIR`, refuses to start while an intentional stop stands. |
-| `mec status` | Prints the health snapshot's verdict and exits by the §21.2 contract (below). |
+| `mec status` | Prints the health snapshot's verdict and exits by the §21.2 contract (below). A start that lost its last port adds a line naming the new one. |
 | `mec stop` | Writes the intentional-stop marker; `mec restart --respect-stop` will honour it. |
-| `mec restart` | Clears the stop marker and starts the server; `--respect-stop` does nothing if an intentional stop stands. |
+| `mec restart` | Clears the stop marker, stops the data dir's running server and starts a new detached one from the same install on the same port, then prints the port and pid. If nothing is running it starts one. It stops a server with SIGTERM only, and only a pid proven to be MEC's: `.mec.lock` and `health.json` must name the same pid, with the same process start time (or, for a server from before that field, a fresh heartbeat and a `mec` command line). Exit 1, with the reason and no second server, if the pid is not proven, the server has not exited within 45 s, or the new server has not answered within 40 s. The new server takes this command's environment, opens no browser and has no log: to see why a start failed, run `mec`. `--respect-stop` does nothing if an intentional stop stands. |
 | `mec doctor` | Prints a redacted-by-construction diagnostics bundle (engine versions, allowlisted env, health snapshot) safe to paste into a bug report. |
 | `mec slot add <kind> <label>` | Creates a slot home (kinds: `claude-sub`, `claude-api`, `codex-sub`, `opencode-glm`, `opencode-gemini`); local state in the data dir, never a server call — works before any server has started. |
 | `mec slot list` | Lists slots with their state. |
@@ -27,7 +27,7 @@ What the router recognises today (`runCli` in `apps/desktop/src/mec.ts`; usage l
 | Code | Meaning |
 | --- | --- |
 | 0 | Runs normally (paused included); degraded parts add lines |
-| 1 | Not running, running twice, not answering, or runtime error — a restart may fix it |
+| 1 | Not running, running twice, not answering (`health.json`'s heartbeat is missing or more than 10 s from now), or runtime error — a restart may fix it |
 | 2 | A part other than the runtime reports an error — a restart will not fix it; output names the part |
 | 3 | Waiting for setup (no slot, no repository, not initialised) |
 
@@ -35,7 +35,7 @@ The planned §21 surface not yet in the router, `migrate`, is documented as a ga
 
 ## HTTP API
 
-Every route in `apps/desktop/src/server.ts`. **Auth model: loopback only** — the server binds `127.0.0.1` with an ephemeral port (`apps/desktop/src/composition.ts`); there are no remote listeners and no tokens in the API. The browser is the intended client.
+Every route in `apps/desktop/src/server.ts`. **Auth model: loopback only** — the server binds `127.0.0.1` with an ephemeral port on first start and the same port after a restart; if that port is taken it takes a new ephemeral one and prints a line saying so (`apps/desktop/src/composition.ts`); there are no remote listeners and no tokens in the API. The browser is the intended client.
 
 ### Chat
 
@@ -49,13 +49,13 @@ Every route in `apps/desktop/src/server.ts`. **Auth model: loopback only** — t
 | Method | Path | Body | What it does |
 | --- | --- | --- | --- |
 | GET | `/api/inbox` | — | Pending confirmation cards (id, class, operation hash, expiry). |
-| POST | `/api/inbox/:id/resolve` | `{ answer: 'approve' \| 'deny' }` | Resolves a card compare-and-set: the first answer wins; a second answer gets `409 already_handled`. |
+| POST | `/api/inbox/:id/resolve` | `{ answer: 'approve' \| 'deny' }` | Resolves a card compare-and-set: the first answer wins; a second answer gets `409 already_handled`. `continues: true` says a running specialist was waiting on this approval. An approve of a card with no evidence answers `422 no_evidence`, and one nothing here can run answers `422 no_executor`; both stay pending and can be denied. | For a `slot_switch` card, an approve while the work is held answers `{ status: 'pending', reason: 'held' }` and keeps the card, and an approve of stopped work answers `{ status: 'stale', reason: 'mandate_withdrawn' }`.
 
 ### Work
 
 | Method | Path | Body | What it does |
 | --- | --- | --- | --- |
-| GET | `/api/work` | `?repoId=` | Work items with title (the origin message's first line, 80 characters), state, stage, `held` and task counts by status, or one repository's. `unassigned` returns the rows with no repository, which are read-only. An unknown id is a 400. |
+| GET | `/api/work` | `?repoId=` | Work items with title (the origin message's first line, 80 characters), state, stage, `held`, `blockedReason` when blocked, and task counts by status, or one repository's. `unassigned` returns the rows with no repository, which are read-only. An unknown id is a 400. |
 | POST | `/api/work/:id/hold` | `{ reason? }` | Holds the work: `{ id, status: 'held' }`. A hold survives restart, a plan finishing during it is saved with no launches, and launches already queued wait. 404 unknown, 409 `{ error }`: `terminal`, or `read_only` for legacy Unassigned work. |
 | POST | `/api/work/:id/lift` | — | The only release of a hold. Revalidates the mandate, lifts, and launches saved ready tasks that have no attempt: `{ id, status: 'lifted', launches }`. A launch queued before the hold restarts within 30 s. Work not held answers `status: 'free'` and writes nothing. 404 unknown, 409 `{ error }` with the hold kept: `mandate_withdrawn`, `mandate_expired`, `mandate_policy_changed`, `read_only`, or `no_meta_agent`. |
 | POST | `/api/work/:id/stop` | — | Ends the work, withdraws its mandate, interrupts queued attempts and records an interrupt request for running ones: `{ id, status: 'stopped' }`. Final: only a new request starts the work again. Idempotent, works with no meta agent and on legacy work. 404 unknown, 409 `{ error: 'done' }` on finished work. |
@@ -71,9 +71,13 @@ Additive routes for the overhaul's views; `/api/work` and the other routes above
 | GET | `/api/inspect/snapshot` | `?repoId=` | The oldest 100 registered repositories with their needs counts (`repositoriesTruncated` counts those left out), the needs count for the scope, and the event cursors (`repositories` and the newest 100 `work:<id>` streams) read in one consistent call. |
 | GET | `/api/inspect/work` | `?repoId=&cursor=&limit=` | A page of work rows: title, repository, stage (`key`, `label`, `waitingOn`), reason, next action, task counts, last activity. |
 | GET | `/api/inspect/work/:id` | — | One work item: its tasks (`tasksTruncated` counts those left out, and each task's `dependsOnTruncated` the ids left out), hold, delivery, `delegation` (empty until attempts record parents), coverage and cursors (`cursorsTruncated` counts attempt streams left out; the work stream and the newest attempts are kept). 404 for an id that is not a work item. |
-| GET | `/api/inspect/tasks/:id` | — | One task: attempts (requested and actual model kept apart), checks and diff for the exact head only, reported usage, coverage. What was cut is counted: `dependsOnTruncated`, `attemptsTruncated` (older attempts; the newest are kept), `checks.truncated`, `diff.truncated`. |
+| GET | `/api/inspect/tasks/:id` | — | One task: attempts (requested and actual model kept apart), checks and diff for the exact head only, reported usage with `usage.coverage` (`total`, `subtotal` or `unknown`), `outcome` (`process`, `validation` and `delivery` of the latest attempt with a head; a clean exit proves only the first), coverage. What was cut is counted: `dependsOnTruncated`, `attemptsTruncated` (older attempts; the newest are kept), `checks.truncated`, `diff.truncated`. |
 | GET | `/api/inspect/needs` | `?repoId=&recent=1&cursor=&limit=` | A page of open questions and pending cards together, oldest first. `recent=1` adds up to 20 recently settled and expired ones after them, latest settled first (`answeredAt`, `resolvedAt`, or the expiry of a card that lapsed unanswered, then record order). The cursor is keyed by record, so an item settling between pages never skips another, and one walk serves at most 20 recent items; an item that settles while the walk is still on the open rows can appear again under `recent=1` with its new status. A card's `workItemId` is set only from a stored `workItemId` or `mandateId`, never from a branch name. |
-| GET | `/api/inspect/search` | `?q=&repoId=` | Messages by text or id, work by title, tasks by name, and references (`#12`, a GitHub PR URL, a SHA) where a stored field holds them. At most 20 per kind. |
+| GET | `/api/inspect/search` | `?q=&repoId=` | Messages by text or id (wake rows are not messages and are left out), work by title, tasks by name, attempts by id, and references (`#12`, a GitHub PR URL, a SHA) where a stored field holds them. At most 20 per kind. |
+| GET | `/api/inspect/attempts/:id/activity` | `?cursor=&limit=` | A page of `{seq, type, at, summary, detail}` from the attempt's stream, redacted. Only the contract's engine event types; a page can be short, or empty, with `nextCursor` still set. `tool_call` is a completed call, so nothing here says what is running now. 404 for an unknown attempt. |
+| GET | `/api/inspect/artifacts` | `attemptId`, `ref`, `?cursor=` | One file under the attempt's worktree, as `text/plain` with `nosniff`, redacted on read, at most 1 MiB a page. `x-mec-artifact-size` gives the size and `x-mec-next-cursor` the next page. Every redaction layer applies: patterns, slot fingerprints and the attempt's exact token. A page never ends inside a key or a character, and a cursor inside a key answers from the start of that key. Binary files answer `{ref, binary: true, size}`. `..` and absolute refs answer 400; a symlink out of the worktree, and `.mec/` and `.git` in any case, answer 403; a file that is missing, or an attempt with no worktree, answers 404. |
+
+Every `/api/inspect/*` route answers 403 `forbidden_host` unless `Host` is loopback, and 403 `client_header_required` for a browser-shaped request (`Origin`, `Referer`, `Sec-Fetch-*` or a `Mozilla/` user agent) without `x-mec-client: 1`.
 
 ### Slots
 
@@ -81,6 +85,8 @@ Additive routes for the overhaul's views; `/api/work` and the other routes above
 | --- | --- | --- | --- |
 | GET | `/api/slots` | — | All slots — fingerprints only, never keys. |
 | GET | `/api/connections` | — | `{ rows, options }`: one row per live slot from saved facts (engine version, identity, state and reason, last check). `usage`, `pin` and `pair` are `null` until something records them. `concurrency` and `slotClass` appear only when a slot doc sets them; absent means the scheduler's default. `options` lists each engine's real add paths: `link`, `sign_in`, `api_key`. |
+| GET | `/api/parked` | — | `{ rows }`: each parked attempt that has not moved, with its work item, slot, state, redacted reason, `resetAt` (null when none was reported) and `worktreeKept` (§5.10). |
+| POST | `/api/work/:id/switch-slot` | `{ toSlot, reason? }` | Moves parked work to a healthy slot on a new attempt in the same worktree. 202 `{ status: "confirmation", confirmationId }` opens a `slot_switch` card, unless policy pre-authorises it (200 `{ status: "switched" }`). 409 `{ error }` refuses, and an auth park always does. `capabilities.switchWork` says whether this is served. |
 | POST | `/api/slots/dedicated` | `{ engine, label }` | Creates the slot a sign-in fills, `home_ready`, for `claude` or `codex`. 409 for a label in use. |
 | POST | `/api/slots/:id/probe` | — | A signed-in slot's local status command in its own environment, at no token cost: `{ ok, state, reason? }`. Records version and non-secret identity. API-key slots use `validate`. 409 and no write if the slot is retired, even while the check runs. |
 | GET | `/api/slots/:id/impact` | — | `{ slotId, label, running, queued, metaSlot, keyStored }`: what a retire touches, from saved docs. |
@@ -101,7 +107,7 @@ Readiness is read from saved facts: walking through Setup changes none of them. 
 | POST | `/api/setup/drafts/:id/apply` | `{ base }` | Applies a proposal through the manual save's validation and stale check. `base` is the hash or revision the owner was looking at, which is `preview.base` when there is one; a repository draft needs none. |
 | POST | `/api/setup/drafts/:id/dismiss` | — | Marks it `denied`. It can never apply. |
 | GET | `/api/policy` | — | `{ text, sha256, revision, source, activeSha256, restartRequired, updatedAt? }`. |
-| PUT | `/api/policy` | `{ text, base_sha256 }` | Validates with `loadPolicy`, so an always-confirm class is refused, and writes revision `n+1` to `settings/policy` with a `policy_updated` event on the `policy` stream. It applies to new work after the next restart. Work admitted under the old version has its queued launches blocked `policy_changed` by the launch gate. |
+| PUT | `/api/policy` | `{ text, base_sha256 }` | Validates with `loadPolicy`, so an always-confirm class is refused, and writes revision `n+1` to `settings/policy` with a `policy_updated` event on the `policy` stream. It applies to new work after the next restart. A launch queued under the old version never starts: the launch gate fails its attempt, which gives its capacity back, and blocks the work with `policy_changed`. Running attempts are not touched (§13). |
 | GET | `/api/models/text` | — | `{ yaml, sha256, source }`: the words a `PUT /api/models` replaces. |
 | PATCH | `/api/repositories/:id` | `{ base_revision, bootstrapCmds?, checkCmds?, trusted? }` | Edits a repository under the argv rules and appends `repository_updated` to the `repositories` stream. `base_revision` comes from `GET /api/repositories`. Work already admitted keeps its pin. |
 | GET | `/api/backups` | — | `{ lastAt?, archive?, note, excluded }`. Served only with a backup seam. |
@@ -137,7 +143,7 @@ Refusals to open a card answer 422 `{ error, detail }` (404 for `unknown_repo`).
 
 | Method | Path | Query | What it does |
 | --- | --- | --- | --- |
-| GET | `/api/events` | `stream`, `after?` | SSE over the store's gap-free event log (`work:<id>`, `slot:<id>`, `release:…`), from `after` onwards. |
+| GET | `/api/events` | `stream`, `after?`, `compact?` | SSE over the store's gap-free event log (`work:<id>`, `slot:<id>`, `release:…`), from `after` onwards. `stream=a,b&after=1,5` is one connection with comma-aligned cursors, and `Last-Event-ID` is ignored, so a client resumes with its own cursors. Bodies are redacted. `compact=1` sends `{stream, seq, type, at}` and no body. At most 100 events per stream per pass, and nothing while the socket pushes back. A client more than 10,000 events behind on one stream gets one `event: reset` frame (`{reason, stream}`) and the response ends: take a fresh snapshot and reopen. 403 `forbidden_host` unless `Host` is loopback. |
 
 Also: `GET /healthz` → `{ ok: true }`, and `GET /api/status` → the §21.2 snapshot (`runtime`, `parts`, `setup.has_slot` / `setup.has_repository`) that `mec status` reads. The built workbench is served at `/*` with an SPA fallback.
 
@@ -165,7 +171,7 @@ From `packages/policy/src/policy.ts` — v0 is JSON (the plan's YAML is a later 
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `MEC_REAL_RUNNER=1` | off | A launch effect starts a real Claude specialist through the attempt runner. Off, the launch fails with `no_runner`, the work blocks with that reason and no process starts. The flag grants no authority: mandate, hold and repo checks run on every launch. Decision #25: only on scratch repositories and `mec-sandbox`, because repo checks run unsandboxed. On, a planner turn sees only launchable slots, and their marks are the capability table's entries. |
+| `MEC_REAL_RUNNER=1` | off | A launch effect starts a real specialist through the attempt runner, on any engine `apps/desktop/src/engine-registry.ts` lists: Claude, Codex and OpenCode. Off, the launch fails with `no_runner`, the work blocks with that reason and no process starts. The flag grants no authority: mandate, hold and repo checks run on every launch. Decision #25: only on scratch repositories and `mec-sandbox`, because repo checks run unsandboxed. On, a planner turn sees only launchable slots, and their marks are the capability table's entries. |
 | `MEC_FAKE_ENGINE=1` | off | The fixture replay stands in for an engine. It wins over `MEC_REAL_RUNNER`. |
 
 ## Fixture library layout

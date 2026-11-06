@@ -52,7 +52,7 @@ usage: mec [command]
 help            this help
 status          health snapshot + setup state (exit 0–3)
 stop            record an intentional stop
-restart         start the server again (--respect-stop honours an intentional stop)
+restart         stop the running server, start a new one on its port (--respect-stop honours an intentional stop)
 doctor          probe engines, sandbox and store; print a redacted report
 slot            add | list | probe | retire — local slot state (never a running server)
 update          version + the internal reinstall path (no network, by design)
@@ -70,7 +70,8 @@ docs: https://github.com/MubitLabs/mubit-engineering-control — README → guid
     await cliMain()
   } else {
     const { serveMain } = await import(entry)
-    await serveMain(process.env.MEC_DATA_DIR ?? join(homedir(), '.mec'))
+    // cliHome's rule: an empty value is unset, or the server and the commands read different roots.
+    await serveMain(process.env.MEC_DATA_DIR || join(homedir(), '.mec'))
     // §20: close is bounded, and an engine child that outlived it must not hold the process up.
     process.exit()
   }

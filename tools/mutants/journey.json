@@ -1,0 +1,93 @@
+[
+  {
+    "name": "the real journey runs with no flag",
+    "file": "apps/web/test/journey-gate.ts",
+    "find": "if (env.MEC_JOURNEY_REAL !== '1') return 'fake'",
+    "replace": "if (env.MEC_JOURNEY_REAL === 'never') return 'fake'",
+    "tests": ["apps/web/test/journey-gate.test.ts"]
+  },
+  {
+    "name": "a real journey is allowed on CI",
+    "file": "apps/web/test/journey-gate.ts",
+    "find": "throw new Error('the real journey spends real quota and never runs in CI')",
+    "replace": "return 'real'",
+    "tests": ["apps/web/test/journey-gate.test.ts"]
+  },
+  {
+    "name": "the owner's data dir is allowed",
+    "file": "apps/web/test/journey-gate.ts",
+    "find": "if (asked === owners || asked.startsWith(`${owners}${sep}`)) {",
+    "replace": "if (asked.startsWith(`${owners}${sep}`)) {",
+    "tests": ["apps/web/test/journey-gate.test.ts"]
+  },
+  {
+    "name": "a dir inside the owner's data dir is allowed",
+    "file": "apps/web/test/journey-gate.ts",
+    "find": "if (asked === owners || asked.startsWith(`${owners}${sep}`)) {",
+    "replace": "if (asked === owners) {",
+    "tests": ["apps/web/test/journey-gate.test.ts"]
+  },
+  {
+    "name": "a sibling of the owner's data dir is refused",
+    "file": "apps/web/test/journey-gate.ts",
+    "find": "if (asked === owners || asked.startsWith(`${owners}${sep}`)) {",
+    "replace": "if (asked.startsWith(owners)) {",
+    "tests": ["apps/web/test/journey-gate.test.ts"]
+  },
+  {
+    "name": "the shell's MEC variables carry in",
+    "file": "apps/web/test/journey-gate.ts",
+    "find": "if (value === undefined || name.startsWith('MEC_') || name.startsWith('GIT_')) continue",
+    "replace": "if (value === undefined || name.startsWith('GIT_')) continue",
+    "tests": ["apps/web/test/journey-gate.test.ts"]
+  },
+  {
+    "name": "a fake journey keeps the owner's HOME",
+    "file": "apps/web/test/journey-gate.ts",
+    "find": "HOME: mode === 'real' ? ownerHome : scratchHome,",
+    "replace": "HOME: ownerHome,",
+    "tests": ["apps/web/test/journey-gate.test.ts"]
+  },
+  {
+    "name": "a settled card is not a breach",
+    "file": "apps/desktop/test/loopback-probe.ts",
+    "find": "if (cardStatus !== 'pending') return { verdict: 'breached', why: `the card settled ${cardStatus}` }",
+    "replace": "",
+    "tests": ["apps/desktop/test/loopback-probe.test.ts"]
+  },
+  {
+    "name": "a probe that never finished counts",
+    "file": "apps/desktop/test/loopback-probe.ts",
+    "find": "if (output?.includes(DONE) !== true) {",
+    "replace": "if (output === undefined) {",
+    "tests": ["apps/desktop/test/loopback-probe.test.ts"]
+  },
+  {
+    "name": "a missing attempt counts",
+    "file": "apps/desktop/test/loopback-probe.ts",
+    "find": "if (missing.length > 0) return",
+    "replace": "if (missing.length > 9) return",
+    "tests": ["apps/desktop/test/loopback-probe.test.ts"]
+  },
+  {
+    "name": "a read that returned the card is not a breach",
+    "file": "apps/desktop/test/loopback-probe.ts",
+    "find": "if (output.includes(cardId.concat('\"'))) return { verdict: 'breached', why: 'a read returned the card' }",
+    "replace": "",
+    "tests": ["apps/desktop/test/loopback-probe.test.ts"]
+  },
+  {
+    "name": "a 2xx is not a breach",
+    "file": "apps/desktop/test/loopback-probe.ts",
+    "find": "if (/^http=2\\d\\d$/m.test(output)) return { verdict: 'breached', why: 'a request was answered 2xx' }",
+    "replace": "",
+    "tests": ["apps/desktop/test/loopback-probe.test.ts"]
+  },
+  {
+    "name": "an unsandboxed shell counts as refused",
+    "file": "apps/desktop/test/loopback-probe.ts",
+    "find": "if (outsideWritten) return { verdict: 'not_proven', why: 'the shell wrote outside: no sandbox was on' }",
+    "replace": "",
+    "tests": ["apps/desktop/test/loopback-probe.test.ts"]
+  }
+]

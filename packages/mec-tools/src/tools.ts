@@ -86,8 +86,19 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
               original_request_ref: { type: 'string' },
               owned_paths: { type: 'array', items: { type: 'string' } },
               acceptance_checks: { type: 'array', items: { type: 'string' } },
+              sensitive: {
+                type: 'boolean',
+                description:
+                  'True when the task touches secrets, sign-in, permissions, money, deleting or migrating stored data, or a public post: it then gets one read-only review',
+              },
               depends_on: { type: 'array', items: { type: 'string' } },
               role: { type: 'string' },
+              base_policy: {
+                type: 'string',
+                enum: ['integration', 'contract'],
+                description:
+                  'integration (default): starts from the merged result of its dependencies. contract: starts from the pinned base once they are accepted',
+              },
               model_request: {
                 type: 'object',
                 properties: {
@@ -177,6 +188,7 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
         question: { type: 'string' },
         for_message_id: { type: 'string' },
         options: { type: 'array', items: { type: 'string' } },
+        evidence_ref: { type: 'string' },
       },
       required: ['question'],
     },
@@ -233,7 +245,7 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
   },
   report: {
     description:
-      'Report attempt status in the closed vocabulary (progress, waiting, ready, blocked, failed, dropped), optionally one question',
+      'Report status: progress, waiting, ready, blocked, failed or dropped; optionally one question. List a follow-up you handled in handled_inputs by input id; one you cannot own goes to handback',
     inputSchema: {
       type: 'object',
       properties: {
@@ -244,8 +256,16 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
         summary: { type: 'string' },
         head_sha: { type: 'string' },
         checks_run: { type: 'array', items: { type: 'string' } },
-        artifacts: { type: 'array', items: { type: 'object' } },
+        artifacts: {
+          type: 'array',
+          items: { type: 'object' },
+          description: "A reviewer lists each finding as {kind: 'finding', ref: what is wrong and where}",
+        },
         question: { type: 'object' },
+        round: {
+          type: 'object',
+          description: 'The review round from your brief, {count}, so a later attempt continues it',
+        },
         handled_inputs: { type: 'array', items: { type: 'string' } },
       },
       required: ['kind', 'summary'],

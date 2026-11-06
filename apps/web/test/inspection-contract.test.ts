@@ -310,6 +310,80 @@ describe('a wake on the real path (§6, §18.1)', () => {
   })
 })
 
+describe('activity and artifacts on the real routes', () => {
+  const seedAttempt = (worktree: string) =>
+    store.atomic(() => {
+      store.attempts.save({
+        id: 'att_seen',
+        taskId: 'task_seen',
+        workItemId: 'wi_seen',
+        state: 'running',
+        generation: 1,
+        worktree,
+      } as never)
+      for (const [seq, type, body] of [
+        [1, 'tool_call', { tool: 'Bash', ok: true }],
+        [2, 'message', { role: 'assistant', text: `key ${KEY}` }],
+        [3, 'attempt.turn_ended', { generation: 1 }],
+        [
+          4,
+          'report',
+          { report: { kind: 'completion', summary: 'done', artifacts: [{ kind: 'log', ref: 'run.log' }] } },
+        ],
+      ] as const) {
+        const stream = 'attempt:att_seen'
+        store.events.append(stream, { stream, seq, at: AT.toISOString(), type, body } as never)
+      }
+    })
+
+  it('real activity decodes, redacted, and only the contract’s types', async () => {
+    seedAttempt(root)
+    const page = await inspectApi.activity('att_seen', null)
+    expect(page.items.map((item) => item.type)).toEqual(['tool_call', 'message', 'report'])
+    expect(JSON.stringify(page)).not.toContain(KEY)
+    expect(page.nextCursor).toBeNull()
+  })
+
+  it('an unknown attempt is a failed read', async () => {
+    await expect(inspectApi.activity('att_none', null)).rejects.toBeInstanceOf(HttpError)
+  })
+
+  it('a real text artifact decodes as plain text, redacted', async () => {
+    seedAttempt(root)
+    writeFileSync(join(root, 'run.log'), `line\n${KEY}\n`)
+    const page = await inspectApi.artifact('att_seen', 'run.log', null)
+    expect(page).toMatchObject({ kind: 'text', ref: 'run.log', nextCursor: null })
+    expect(JSON.stringify(page)).not.toContain(KEY)
+  })
+
+  it('real JSON text stays text', async () => {
+    seedAttempt(root)
+    writeFileSync(join(root, 'data.json'), '{"binary":true}')
+    expect(await inspectApi.artifact('att_seen', 'data.json', null)).toMatchObject({
+      kind: 'text',
+      text: '{"binary":true}',
+    })
+  })
+
+  it('a real binary artifact is metadata only', async () => {
+    seedAttempt(root)
+    writeFileSync(join(root, 'image.png'), Buffer.from([0x89, 0x50, 0x00, 0x01, 0x00]))
+    expect(await inspectApi.artifact('att_seen', 'image.png', null)).toEqual({
+      kind: 'binary',
+      ref: 'image.png',
+      size: 5,
+    })
+  })
+
+  it('a refused path answers 403 and a missing one 404, read through the same path', async () => {
+    seedAttempt(root)
+    mkdirSync(join(root, '.mec'), { recursive: true })
+    writeFileSync(join(root, '.mec', 'x'), 'token')
+    await expect(inspectApi.artifact('att_seen', '.mec/x', null)).rejects.toMatchObject({ status: 403 })
+    await expect(inspectApi.artifact('att_seen', 'gone.txt', null)).rejects.toMatchObject({ status: 404 })
+  })
+})
+
 describe('actions on the real routes', () => {
   it('a card with no served evidence cannot be approved, and deny still works', async () => {
     seedCard('card_bare', { repoId: 'repo_a' })

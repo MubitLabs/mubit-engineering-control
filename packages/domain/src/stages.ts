@@ -28,6 +28,18 @@ export type WorkItemView = {
   queued?: boolean
   /** The pull request is confirmed merged (never assumed). */
   merged?: boolean
+  /** The delivery is at `pr-ready`: a person has the pull request to review (§10). */
+  deliveryReady?: boolean
+}
+
+/** What a stage reads beyond the work doc. Each caller gathers these from its own store reads. */
+export type WorkFacts = {
+  openQuestions: number
+  awaitingConfirmation: boolean
+  attempts: readonly Record<string, unknown>[]
+  merged: boolean
+  /** The delivery stage is `pr-ready`; absent where the caller reads no delivery. */
+  deliveryReady?: boolean
 }
 
 export type Stage = {
@@ -82,7 +94,7 @@ export const STAGE_TABLE: readonly StageRow[] = [
   {
     key: 'person/review',
     waitingOn: 'person',
-    match: (w) => w.latestReport === 'ready',
+    match: (w) => w.latestReport === 'ready' || w.deliveryReady === true,
     label: () => 'Ready for review',
   },
   {
@@ -164,4 +176,33 @@ export function stageOf(w: WorkItemView): Stage {
   if (ended !== null) return ended
   const row = STAGE_TABLE.find((candidate) => candidate.match(w)) as StageRow
   return { key: row.key, label: row.label(w), waitingOn: row.waitingOn }
+}
+
+const text = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
+
+/**
+ * The one view of a work doc, so chat and Work cannot disagree (§10). `loginNeeded`, `latestReport`,
+ * `userMessageSinceReport` and `queued` are not read yet: an absent fact cannot match its row, so the
+ * item is never a person stage by guesswork.
+ */
+export function workViewOf(doc: Record<string, unknown>, facts: WorkFacts): WorkItemView {
+  const hold = doc.hold as Record<string, unknown> | undefined | null
+  const live = facts.attempts.filter((a) => ['queued', 'running', 'quota_wait'].includes(String(a.state)))
+  const parked = live.length > 0 && live.every((a) => a.state === 'quota_wait')
+  const resets = live
+    .flatMap(
+      (a) =>
+        text((a.parked as { resets_at?: unknown })?.resets_at) ?? text(a.resetsAt) ?? text(a.resetAt) ?? [],
+    )
+    .sort()
+  return {
+    state: text(doc.state) ?? 'admitted',
+    openQuestions: facts.openQuestions,
+    awaitingConfirmation: facts.awaitingConfirmation,
+    holdStatus:
+      typeof hold === 'object' && hold !== null && text(hold.liftedAt) === undefined ? 'held' : 'free',
+    ...(parked && { quotaWait: resets[0] === undefined ? {} : { resetAt: resets[0] } }),
+    merged: facts.merged,
+    ...(facts.deliveryReady === true && { deliveryReady: true }),
+  }
 }

@@ -21,15 +21,19 @@ function makeIo(overrides: { readSnapshotText?: () => string; initialized?: bool
   const dataDir = mkdtempSync(join(tmpdir(), 'mec-cli-data-'))
   tempDirs.push(markerDir, dataDir)
   const io = {
-    readSnapshotText: overrides.readSnapshotText ?? (() => normalBoardText),
+    // A live writer's snapshot: `mec status` reads the heartbeat against the clock (§21.2).
+    readSnapshotText:
+      overrides.readSnapshotText ??
+      (() => JSON.stringify({ ...JSON.parse(normalBoardText), heartbeatAt: new Date().toISOString() })),
     initialized: () => overrides.initialized ?? true,
     markerDir,
     dataDir,
     stdout: (line: string) => {
       lines.push(line)
     },
-    startServer: async () => {
+    restartServer: async () => {
       starts += 1
+      return { started: true, lines: [] }
     },
   }
   return { io, lines, markerDir, dataDir, starts: () => starts }
@@ -151,6 +155,8 @@ describe('cliMain finds the server the way the launcher does', () => {
     const snapshot = (detail: string) =>
       JSON.stringify({
         ...(JSON.parse(normalBoardText) as object),
+        // A live writer's snapshot, as above: without a heartbeat `mec status` says not answering.
+        heartbeatAt: new Date().toISOString(),
         parts: { sample: { state: 'error', detail } },
       })
     const home = join(root, 'home')

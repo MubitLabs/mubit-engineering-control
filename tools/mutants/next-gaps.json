@@ -29,16 +29,16 @@
   },
   {
     "name": "readiness: a linked slot needs a home",
-    "file": "apps/desktop/src/readiness.ts",
-    "find": "slot.linkedDefault === true || text(slot.home) !== ''",
-    "replace": "text(slot.home) !== ''",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "  slot.linkedDefault !== true && (typeof slot.home !== 'string' || slot.home === '')\n",
+    "replace": "  typeof slot.home !== 'string' || slot.home === ''\n",
     "tests": ["apps/desktop/test/meta-slot.test.ts"]
   },
   {
     "name": "readiness: an empty home counts as one",
-    "file": "apps/desktop/src/readiness.ts",
-    "find": "slot.linkedDefault === true || text(slot.home) !== ''",
-    "replace": "slot.linkedDefault === true || typeof slot.home === 'string'",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "  slot.linkedDefault !== true && (typeof slot.home !== 'string' || slot.home === '')\n",
+    "replace": "  slot.linkedDefault !== true && typeof slot.home !== 'string'\n",
     "tests": ["apps/desktop/test/meta-slot.test.ts"]
   },
   {
@@ -58,16 +58,16 @@
   {
     "name": "cli: MEC_DATA_DIR ignored",
     "file": "apps/desktop/src/mec.ts",
-    "find": "const home = process.env.MEC_DATA_DIR ?? join(homedir(), '.mec')",
-    "replace": "const home = join(homedir(), '.mec')",
-    "tests": ["apps/desktop/test/mec.test.ts"]
+    "find": "  const dir = env.MEC_DATA_DIR\n",
+    "replace": "  const dir = undefined as string | undefined\n",
+    "tests": ["apps/desktop/test/mec-cli.test.ts"]
   },
   {
     "name": "cli: no fallback to ~/.mec",
     "file": "apps/desktop/src/mec.ts",
-    "find": "const home = process.env.MEC_DATA_DIR ?? join(homedir(), '.mec')",
-    "replace": "const home = process.env.MEC_DATA_DIR ?? join('/nonexistent', '.mec')",
-    "tests": ["apps/desktop/test/mec.test.ts"]
+    "find": "return dir === undefined || dir === '' ? join(homedir(), '.mec') : dir",
+    "replace": "return dir === undefined || dir === '' ? join('/nonexistent', '.mec') : dir",
+    "tests": ["apps/desktop/test/mec-cli.test.ts"]
   },
   {
     "name": "connections: a zero concurrency reads as unset",

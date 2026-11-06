@@ -14,6 +14,7 @@ import { runBackupCli, runRestoreCli } from './backup-cli'
 import { buildDoctorJson, buildDoctorReport, defaultVersionRunner } from './doctor'
 import type { HealthSnapshot } from './health'
 import { parseHealthSnapshot } from './health'
+import { type RestartOutcome, restartServer } from './restart'
 import { runSlotCli } from './slot-cli'
 import { formatStatus, statusFromSnapshot } from './status'
 import { clearStopMarker, readStopMarker, writeStopMarker } from './stop-marker'
@@ -32,8 +33,8 @@ export type CliIo = {
    */
   dataDir: string
   stdout: (line: string) => void
-  /** called on 'restart' when allowed; record calls in tests */
-  startServer: () => Promise<void>
+  /** called on 'restart' when allowed: says what it did, and whether a server came of it */
+  restartServer: () => Promise<RestartOutcome>
   /** `mec update` seams; defaults read the nearest package.json, git and process.env. */
   readVersion?: () => string
   gitRemote?: () => string | null
@@ -74,9 +75,9 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       return 0
     }
     clearStopMarker(io.markerDir)
-    await io.startServer()
-    io.stdout('server starting')
-    return 0
+    const outcome = await io.restartServer()
+    for (const line of outcome.lines) io.stdout(line)
+    return outcome.started ? 0 : 1
   }
 
   if (command === 'doctor') {
@@ -175,9 +176,15 @@ function defaultGitRemote(): string | null {
   }
 }
 
+/** The root every command reads, the same one the server was told to use. */
+export function cliHome(env: Record<string, string | undefined>): string {
+  const dir = env.MEC_DATA_DIR
+  return dir === undefined || dir === '' ? join(homedir(), '.mec') : dir
+}
+
 /** §21.1 entry for the `mec <command>` dispatch: exports for bin/mec.js and the bundle. */
 export async function cliMain(): Promise<void> {
-  const home = process.env.MEC_DATA_DIR ?? join(homedir(), '.mec')
+  const home = cliHome(process.env)
   const snapshotPath = join(home, 'health.json')
   process.exitCode = await runCli(process.argv.slice(2), {
     readSnapshotText: () => {
@@ -191,7 +198,9 @@ export async function cliMain(): Promise<void> {
     markerDir: home,
     dataDir: home,
     stdout: (line) => console.log(line),
-    startServer: async () => {},
+    // `src/` and `dist/` both sit beside `bin/`, so this is the install that is running.
+    restartServer: () =>
+      restartServer({ dataDir: home, binPath: fileURLToPath(new URL('../bin/mec.js', import.meta.url)) }),
   })
 }
 

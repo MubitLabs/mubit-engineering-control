@@ -8,13 +8,26 @@ export interface Fact {
   mono?: boolean
 }
 
+export interface InspectorAction {
+  label: string
+  onClick: () => void
+}
+
+/** A file an attempt left. The panel shows it as plain text, or says why it does not. */
+export interface ArtifactLinkView {
+  label: string
+  open: boolean
+  onToggle: () => void
+  panel: { note: string; text: string | null; action?: InspectorAction } | null
+}
+
 export interface InspectorChecks {
   /** Only `passed` and `failed` may list results, and only for this scope's exact commit. */
   state: 'not-run' | 'passed' | 'failed' | 'unavailable'
   heading: string
   detail: string
   facts?: readonly Fact[]
-  results?: readonly { label: string; detail: string; passed: boolean }[]
+  results?: readonly { label: string; detail: string; passed: boolean; artifact?: ArtifactLinkView }[]
 }
 
 /** Everything the inspector shows comes from one scope. It has no defaults to fall back on. */
@@ -31,7 +44,20 @@ export interface InspectorScope {
   /** Internal identifiers, folded on the Overview (§18). */
   technical?: readonly Fact[]
   checks: InspectorChecks
-  activity: { note: string; entries: readonly { when: string; text: string }[] }
+  activity: {
+    note: string
+    entries: readonly {
+      key?: string
+      when: string
+      text: string
+      detail?: string | null
+      artifacts?: readonly ArtifactLinkView[]
+    }[]
+    /** Offered when a task has more than one attempt; each reads its own activity. */
+    attempts?: readonly { id: string; label: string; selected: boolean; onSelect: () => void }[]
+    more?: InspectorAction
+    retry?: InspectorAction
+  }
   diff: { summary: string; files: readonly { path: string; lines: readonly string[] }[] }
 }
 
@@ -45,6 +71,24 @@ function Facts({ facts }: { facts: readonly Fact[] }) {
         </div>
       ))}
     </dl>
+  )
+}
+
+function ArtifactLink({ link }: { link: ArtifactLinkView }) {
+  const { panel } = link
+  return (
+    <div className="artifact">
+      <Button variant="quiet" aria-expanded={link.open} onClick={link.onToggle}>
+        {link.label}
+      </Button>
+      {panel && (
+        <div className="artifact-panel">
+          <p>{panel.note}</p>
+          {panel.text !== null && <pre>{panel.text}</pre>}
+          {panel.action && <Button onClick={panel.action.onClick}>{panel.action.label}</Button>}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -86,6 +130,7 @@ function Evidence({ scope, tab, onAsk }: { scope: InspectorScope; tab: Inspector
                 <span>
                   {result.label}
                   <small>{result.detail}</small>
+                  {result.artifact && <ArtifactLink link={result.artifact} />}
                 </span>
               </li>
             ))}
@@ -95,20 +140,46 @@ function Evidence({ scope, tab, onAsk }: { scope: InspectorScope; tab: Inspector
     )
   }
   if (tab === 'activity') {
+    const { note, entries, attempts, more, retry } = scope.activity
     return (
       <>
         <h3>Recorded activity</h3>
-        <p>{scope.activity.note}</p>
-        {scope.activity.entries.length > 0 && (
+        {attempts && (
+          <div className="attempt-choice">
+            {attempts.map((attempt) => (
+              <Button
+                key={attempt.id}
+                variant="quiet"
+                aria-pressed={attempt.selected}
+                onClick={attempt.onSelect}
+              >
+                {attempt.label}
+              </Button>
+            ))}
+          </div>
+        )}
+        <p>{note}</p>
+        {retry && <Button onClick={retry.onClick}>{retry.label}</Button>}
+        {entries.length > 0 && (
           <ol className="timeline">
-            {scope.activity.entries.map((entry) => (
-              <li key={`${entry.when}:${entry.text}`}>
+            {entries.map((entry) => (
+              <li key={entry.key ?? `${entry.when}:${entry.text}`}>
                 <small>{entry.when}</small>
                 {entry.text}
+                {entry.detail && (
+                  <details className="technical">
+                    <summary>Details</summary>
+                    <pre>{entry.detail}</pre>
+                  </details>
+                )}
+                {entry.artifacts?.map((link) => (
+                  <ArtifactLink key={link.label} link={link} />
+                ))}
               </li>
             ))}
           </ol>
         )}
+        {more && <Button onClick={more.onClick}>{more.label}</Button>}
       </>
     )
   }

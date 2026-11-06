@@ -129,16 +129,35 @@ export function createWorkspace(client: WorkspaceClient) {
   /** A reset waits here until a snapshot lands, so one failed read cannot drop it. */
   let resetPending = false
   const refreshed = new Set<() => void>()
+  const invalidated = new Set<(stream: string) => void>()
+  /** Attempt streams with a frame waiting, each read once however many frames arrived. */
+  const moved = new Set<string>()
+  let movedTimer: ReturnType<typeof setTimeout> | undefined
+  /** The attempt on show. Snapshots serve no attempt cursors, so this one came with its delivery. */
+  let attemptStream: string | null = null
 
   const set = (patch: Partial<WorkspaceState>) => {
     state = { ...state, ...patch }
     for (const watcher of watchers) watcher()
   }
 
+  const flushMoved = () => {
+    const streams = [...moved]
+    moved.clear()
+    for (const stream of streams) for (const watcher of invalidated) watcher(stream)
+  }
+
   const follow = () => {
     if (resetPending) return
     const scoped = state.work.rows.map((row) => `work:${row.id}`)
-    const streams = [...new Set([...scoped, ...followed, 'repositories'])]
+    const streams = [
+      ...new Set([
+        ...scoped,
+        ...followed,
+        'repositories',
+        ...(attemptStream === null ? [] : [attemptStream]),
+      ]),
+    ]
     const next = streams.join(',')
     if (next === streamKey) return
     streamKey = next
@@ -147,6 +166,13 @@ export function createWorkspace(client: WorkspaceClient) {
       streams.map((stream) => ({ stream, after: cursors[stream] ?? 0 })),
       (event) => {
         if (typeof event.stream === 'string') cursors[event.stream] = event.seq
+        // An attempt's frames say only that its own activity moved, and they come fast.
+        if (typeof event.stream === 'string' && event.stream.startsWith('attempt:')) {
+          moved.add(event.stream)
+          clearTimeout(movedTimer)
+          movedTimer = setTimeout(flushMoved, REFETCH_DEBOUNCE_MS)
+          return
+        }
         clearTimeout(debounce)
         debounce = setTimeout(refresh, REFETCH_DEBOUNCE_MS)
       },
@@ -165,6 +191,9 @@ export function createWorkspace(client: WorkspaceClient) {
         // A reset's history is gone, so its cursors replace ours even when they are lower.
         const reset = resetPending
         cursors = reset ? { ...served } : { ...served, ...cursors }
+        // Its cursor is gone with the rest, and 0 would only reset again. The next delivery read
+        // brings a new one.
+        if (reset) attemptStream = null
         followed = Object.keys(served)
         streamKey = ''
         set({ labels, ...(reset && { resetAt: new Date().toISOString() }) })
@@ -266,6 +295,26 @@ export function createWorkspace(client: WorkspaceClient) {
       }
     },
 
+    /** Stream by stream, for the reads a compact frame makes out of date. */
+    onInvalidate(watcher: (stream: string) => void): () => void {
+      invalidated.add(watcher)
+      return () => {
+        invalidated.delete(watcher)
+      }
+    },
+
+    /**
+     * Puts the attempt on show on the one connection. Its cursor moves with the frames from then
+     * on, so a later `after` for the same stream changes nothing and reopens nothing.
+     */
+    followAttempt(next: { stream: string; after: number } | null): void {
+      const stream = next?.stream ?? null
+      if (stream === attemptStream) return
+      attemptStream = stream
+      if (next !== null) cursors[next.stream] = Math.max(cursors[next.stream] ?? 0, next.after)
+      if (running) follow()
+    },
+
     start(): () => void {
       running = true
       refresh()
@@ -275,6 +324,7 @@ export function createWorkspace(client: WorkspaceClient) {
         reading?.abort()
         reading = null
         clearTimeout(debounce)
+        clearTimeout(movedTimer)
         unsubscribe()
         unsubscribe = () => {}
         streamKey = ''

@@ -124,3 +124,16 @@ Claude Code 2.1.318 (the installed binary, one above the pinned 2.1.317), `claud
 | 3 | `succeeded` | Confirm saw the real command and path, and allowed `git status` and a Write inside the worktree. The model declined the steps that would have been refused, so this run proves the allow path only. |
 
 Not proven here: the composed chat path with a planner, and a real Read-tool denial on a text file. The token and key-shape sweep over the data dir of runs 1 and 3 found nothing.
+
+## M2.4 Part B: Codex and OpenCode through the runner — 5 November 2026
+
+Each engine was proven on its own, through a seeded queued attempt and the real runner: no planner, scratch `MEC_DATA_DIR`, real `HOME`, fake `gh` first on `PATH`, a scratch repo, and the task's objective naming each step. Logins were the existing default homes. No key was read and no Claude ran. Report, head and checks are the runner's own path.
+
+| Engine | Run | Outcome | What it proved |
+| --- | --- | --- | --- |
+| Codex 0.148.0, `gpt-5.6-luna` low | 1 | `queued → running → succeeded`, 72 s | Check on the exact head, `report` through MCP, `head_matches` true, no `.mec` in history, `MEC_TOOLS_TOKEN` not in the worker's env. Sandbox refused the database, `health.json`, `~/.codex/config.toml`, an outside `touch`, `git add`, `git commit`, `packed-refs`, `objects`, `.mec`. `git push` reached the remote side and failed there, on the same sandbox. |
+| Codex 0.148.0 | 2 | `succeeded`, 41 s | Two real asks, a command and a file change, each recorded and answered `decline`; neither file exists. Sandbox refused a new loose ref, `packed-refs`, `objects`, `update-ref`. |
+| OpenCode 2.2.5, `glm-5.3-flash` | 1 | `failed`, 2 s | MEC's own bug: the client ended the stream on a verdict's name in the echoed brief. No tool ran. Fixed with a test. |
+| OpenCode 2.2.5 | 2 | `succeeded`, 56 s | Check on the exact head, `report` through `mec_report`. Allow round trip: a write inside the worktree came through the bridge, `once`. Deny round trip: `git status`, `git push` and a write into `.mec` asked, were rejected and the turn went on. The engine's own rules refused the database, an outside write and `.mec/opencode.json`. No tool of the linked home's MCP servers reached the model. |
+
+A sweep of each data dir for bearer, key and password shapes found nothing. No process was left. Not exercised on either engine: resume, `turn/interrupt` or `/interrupt`, delivery into a running attempt, a read-only role, the composed path with a planner, a quota or auth park, and a keystore key at launch (a fake covers that one). `gh` on Codex was the fake: the profile refuses network, which `curl` to GitHub under `codex sandbox` showed, and a real `gh` was not run. Not checked: OpenCode's and Codex's own session stores under the linked homes, which are credential stores or sit beside them.

@@ -10,5 +10,6 @@ Review the integrated change on the integration SHA against the plan and the ori
 - Duplicate-work check: when a human branch or PR already contains this work item's change, say so — the release agent yields with a pointer, it does not compete.
 - Bind findings to the SHA with severity; stay inside the review budget and verify rather than blindly apply.
 - Report through mcp__mec__report in the closed vocabulary; at most one question per report.
+- A follow-up names its input id and message id. Once you have handled it, list the input id in handled_inputs on your next report; if it is beyond your task, hand it back once with mcp__mec__handback, its message id and a one-sentence reason.
 - No edits, no merges — ever. Those belong to other roles and to confirmations.
 - Say what the next reader needs: which findings are unresolved, which claims were unverifiable, and where the evidence lives.

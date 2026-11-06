@@ -1,3 +1,11 @@
+export type {
+  Acceptance,
+  AcceptanceInput,
+  BoundFinding,
+  CheckVerdict,
+  RepairReason,
+} from './acceptance'
+export { acceptance, NO_CHECKS_MARKER } from './acceptance'
 export type { BlockerReason } from './blockers'
 export { dependencySatisfied } from './blockers'
 export type { Caps } from './caps'
@@ -12,10 +20,10 @@ export type { Receipt, ReceiptStage } from './receipts'
 export { ReceiptLadder } from './receipts'
 export type { BuiltinRole, ContextPolicy, RoleDef, RoleIssue, SlotClassPreference } from './registry'
 export { BUILTIN_ROLE_NAMES, BUILTIN_ROSTER, compileAdHocRole, RESERVED_NAME_PREFIXES } from './registry'
-export type { ActiveAttempt, DispatchPlan, SchedulableTask, SlotView } from './scheduling'
+export type { ActiveAttempt, DeferReason, DispatchPlan, SchedulableTask, SlotView } from './scheduling'
 export { planDispatches } from './scheduling'
 export type { Stage, StageRow, WorkItemView } from './stages'
-export { STAGE_TABLE, stageOf } from './stages'
+export { STAGE_TABLE, stageOf, workViewOf } from './stages'
 export type {
   AttemptEvent,
   AttemptState,
@@ -53,3 +61,5 @@ export {
 export type { BasePolicy, GraphIssue, GraphIssueKind, RoledTaskNode, TaskNode } from './task-graph'
 export { normalisePath, pathsOverlap, validateGraph } from './task-graph'
 export * from './tiers'
+export type { CombinedChecks, ResultTask, WorkResult, WorkResultInput } from './work-result'
+export { workResult } from './work-result'

@@ -77,3 +77,40 @@ export function redact(
   }
   return out
 }
+
+export type SecretSpan = { start: number; end: number }
+
+/** Printable ASCII only, so it also holds on UTF-8 bytes read as latin1: key material is ASCII. */
+const KEY_RUN = /[!-~]{20,}/g
+
+/**
+ * Where `redact` would act on `text`, so a caller that cuts text can cut outside a secret. A piece of
+ * a key matches nothing `redact` knows. Spans overlap freely and come in no order.
+ */
+export function secretSpans(
+  text: string,
+  fingerprints: readonly KeyFingerprint[],
+  exacts?: readonly string[],
+): SecretSpan[] {
+  const spans: SecretSpan[] = []
+  for (const key of exacts ?? []) {
+    if (key === '') continue
+    for (let at = text.indexOf(key); at !== -1; at = text.indexOf(key, at + 1)) {
+      spans.push({ start: at, end: at + key.length })
+    }
+  }
+  const add = (match: RegExpMatchArray): void => {
+    const start = match.index as number
+    spans.push({ start, end: start + match[0].length })
+  }
+  for (const { pattern } of PROVIDER_KEY_PATTERNS) {
+    for (const match of text.matchAll(new RegExp(pattern.source, 'g'))) add(match)
+  }
+  const last4 = new Set(fingerprints.map((fingerprint) => fingerprint.last4))
+  if (last4.size > 0) {
+    for (const match of text.matchAll(KEY_RUN)) {
+      if (last4.has(match[0].slice(-4))) add(match)
+    }
+  }
+  return spans
+}

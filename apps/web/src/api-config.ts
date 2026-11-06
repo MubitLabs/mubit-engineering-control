@@ -13,6 +13,7 @@ import {
   decodeDrafts,
   decodeImpact,
   decodeModelsText,
+  decodeParked,
   decodePartTexts,
   decodePolicy,
   decodePreview,
@@ -27,6 +28,7 @@ import type {
   Connections,
   DraftView,
   ModelsText,
+  ParkedRow,
   PolicyView,
   PromptChange,
   PromptsConfig,
@@ -82,6 +84,15 @@ export const configApi = {
 
   async connections(): Promise<Connections> {
     return decodeConnections(await request<unknown>('/api/connections'))
+  },
+
+  async parked(): Promise<ParkedRow[]> {
+    return decodeParked(await request<unknown>('/api/parked'))
+  },
+
+  /** A refusal is the server's reason on an HttpError, never read as stale. */
+  switchWork(workItemId: string, toSlot: string): Promise<{ status: unknown }> {
+    return send(`/api/work/${encodeURIComponent(workItemId)}/switch-slot`, 'POST', { toSlot })
   },
 
   async impact(id: string): Promise<SlotImpact> {

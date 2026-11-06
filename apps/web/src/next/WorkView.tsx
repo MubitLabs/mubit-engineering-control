@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { DeliveryPlan, PageHeader } from './Conversation'
 import { Approval } from './Decision'
 import { GlossaryButton } from './GlossarySheet'
@@ -235,6 +235,8 @@ export interface WorkViewProps {
   onRetry: () => void
   /** Set when the list stops short of what the server holds. */
   partialNote?: string | null
+  /** §5.10: what is parked on this delivery, always shown, never only behind a selection. */
+  parkedNotice?: (workItemId: string) => ReactNode
 }
 
 function WorkEntry({ row, props, acted }: { row: WorkRowView; props: WorkViewProps; acted: boolean }) {
@@ -268,6 +270,7 @@ function WorkEntry({ row, props, acted }: { row: WorkRowView; props: WorkViewPro
         </span>
         <Status tone={row.tone}>{row.stageLabel}</Status>
       </button>
+      {props.parkedNotice?.(row.id)}
       {selected && delivery.status === 'failed' && (
         <StateNotice
           kind="error"

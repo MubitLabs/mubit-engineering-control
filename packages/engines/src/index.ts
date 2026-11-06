@@ -10,9 +10,11 @@ export {
 } from './claude/stream'
 // Codex app-server (plan §9): one `codex app-server` per slot, one thread per attempt.
 export {
+  CODEX_FLAGS_VERIFIED,
   CODEX_PERMISSION_DEADLINE_MS,
   CodexAdapter,
   type CodexAdapterDeps,
+  type CodexConnection,
   type CodexLoginStatus,
   type CodexNotifications,
   type CodexPost,
@@ -27,9 +29,11 @@ export {
 } from './codex/protocol'
 // OpenCode V2 (plan §9): one `opencode serve --stdio` per slot, one server session per attempt.
 export {
+  OPENCODE_FLAGS_VERIFIED,
   OpenCodeAdapter,
   type OpenCodeAdapterDeps,
   type OpenCodeAuthList,
+  type OpenCodeConnection,
   type OpenCodePost,
   type OpenCodeSpawnFn,
   type OpenCodeSse,

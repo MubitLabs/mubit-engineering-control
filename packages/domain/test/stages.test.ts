@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkItemView } from '../src'
-import { STAGE_TABLE, stageOf } from '../src'
+import { STAGE_TABLE, stageOf, workViewOf } from '../src'
 
 /** The neutral view: open, mid-execution, no hold, no question, nothing reported. */
 const view = (overrides: Partial<WorkItemView> = {}): WorkItemView => ({
@@ -151,5 +151,31 @@ describe('stageOf', () => {
     expect(stageOf(view({ state: 'stopped', openQuestions: 3, holdStatus: 'held' })).key).toBe(
       'ended/stopped',
     )
+  })
+})
+
+describe('a delivery ready for review (§10)', () => {
+  const facts = { openQuestions: 0, awaitingConfirmation: false, attempts: [], merged: false }
+
+  it('reads Ready for review on the row, though no worker reported ready', () => {
+    const stage = stageOf(workViewOf({ state: 'executing' }, { ...facts, deliveryReady: true }))
+    expect(stage).toEqual({ key: 'person/review', label: 'Ready for review', waitingOn: 'person' })
+  })
+
+  it('stays Working while the delivery is any other stage', () => {
+    expect(stageOf(workViewOf({ state: 'executing' }, { ...facts, deliveryReady: false })).key).toBe(
+      'working',
+    )
+    expect(stageOf(workViewOf({ state: 'executing' }, facts)).key).toBe('working')
+  })
+
+  it('an approval still outranks it, and a merged item shows its outcome', () => {
+    const asked = workViewOf(
+      { state: 'executing' },
+      { ...facts, awaitingConfirmation: true, deliveryReady: true },
+    )
+    expect(stageOf(asked).label).toBe('Needs your approval')
+    const merged = workViewOf({ state: 'done' }, { ...facts, merged: true, deliveryReady: true })
+    expect(stageOf(merged).key).toBe('ended/merged')
   })
 })

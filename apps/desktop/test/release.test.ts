@@ -102,6 +102,34 @@ afterEach(async () => {
 })
 
 describe('yieldCheck (§14 yield-to-duplicate first)', () => {
+  const MAIN = { defaultBranch: 'main' }
+
+  it('compares against the pinned default branch, never a hardcoded one', async () => {
+    const seen: string[] = []
+    const run: GhRun = async (args) => {
+      seen.push(args.join(' '))
+      if (args[1]?.endsWith('/branches')) return { code: 0, stdout: 'trunk\nfeat/x\n', stderr: '' }
+      return { code: 1, stdout: '', stderr: '' }
+    }
+    await yieldCheck(run, REPO, ['a.ts'], { defaultBranch: 'trunk' })
+    expect(seen).toContain(`api repos/${REPO}/compare/trunk...feat/x --jq .files[].filename`)
+    expect(seen.join('\n')).not.toContain('compare/trunk...trunk')
+    expect(seen.join('\n')).not.toContain('compare/main')
+  })
+
+  it('never yields to its own branch or PR', async () => {
+    const run: GhRun = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'list') {
+        return { code: 0, stdout: '[{"number":1,"headRefName":"mec/x/integration"}]', stderr: '' }
+      }
+      if (args[0] === 'pr') return { code: 0, stdout: '{"files":[{"filename":"a.ts"}]}', stderr: '' }
+      if (args[1]?.endsWith('/branches')) return { code: 0, stdout: 'mec/x/integration\n', stderr: '' }
+      return { code: 0, stdout: 'a.ts\n', stderr: '' }
+    }
+    const answer = await yieldCheck(run, REPO, ['a.ts'], { ...MAIN, ownBranch: 'mec/x/integration' })
+    expect(answer).toEqual({ yieldTo: null })
+  })
+
   it('yields to an open PR whose files are a strict superset of the change', async () => {
     const { run } = fakeGh((args) => {
       const text = args.join(' ')
@@ -110,7 +138,7 @@ describe('yieldCheck (§14 yield-to-duplicate first)', () => {
         return ok(JSON.stringify({ files: [{ filename: 'a.ts' }, { filename: 'b.ts' }] }))
       return ok('')
     })
-    await expect(yieldCheck(run, REPO, ['a.ts'])).resolves.toEqual({ yieldTo: 'human/fix' })
+    await expect(yieldCheck(run, REPO, ['a.ts'], MAIN)).resolves.toEqual({ yieldTo: 'human/fix' })
   })
 
   it('partial overlap is related work, not a duplicate', async () => {
@@ -122,7 +150,7 @@ describe('yieldCheck (§14 yield-to-duplicate first)', () => {
       if (text.includes('/compare/')) return ok('a.ts\nc.ts\n')
       return ok('')
     })
-    await expect(yieldCheck(run, REPO, ['a.ts', 'b.ts'])).resolves.toEqual({ yieldTo: null })
+    await expect(yieldCheck(run, REPO, ['a.ts', 'b.ts'], MAIN)).resolves.toEqual({ yieldTo: null })
   })
 
   it('falls back to remote branches and yields when one contains every changed file', async () => {
@@ -133,12 +161,14 @@ describe('yieldCheck (§14 yield-to-duplicate first)', () => {
       if (text.includes('/compare/')) return ok('a.ts\nb.ts\n')
       return ok('')
     })
-    await expect(yieldCheck(run, REPO, ['a.ts', 'b.ts'])).resolves.toEqual({ yieldTo: 'feat/everything' })
+    await expect(yieldCheck(run, REPO, ['a.ts', 'b.ts'], MAIN)).resolves.toEqual({
+      yieldTo: 'feat/everything',
+    })
   })
 
   it('an empty change set never yields', async () => {
     const { run, calls } = fakeGh(() => ok('[]'))
-    await expect(yieldCheck(run, REPO, [])).resolves.toEqual({ yieldTo: null })
+    await expect(yieldCheck(run, REPO, [], MAIN)).resolves.toEqual({ yieldTo: null })
     expect(calls).toHaveLength(0)
   })
 })

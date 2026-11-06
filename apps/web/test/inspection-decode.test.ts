@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { DecodeError } from '../src/api-decode'
 import {
+  decodeActivityPage,
+  decodeArtifact,
   decodeCardEvidence,
   decodeChatLines,
   decodeNeedsPage,
@@ -11,6 +13,8 @@ import {
   decodeWorkPage,
 } from '../src/inspection-decode'
 import {
+  activityPage,
+  artifactPages,
   cardEvidence,
   chatLines,
   needsPage,
@@ -20,6 +24,66 @@ import {
   workDetails,
   workPage,
 } from './fixtures/inspection-fixtures'
+
+describe('activity and artifacts', () => {
+  it('an activity page survives its decoder unchanged', () => {
+    expect(decodeActivityPage(activityPage)).toEqual(activityPage)
+  })
+
+  it('an activity line with no seq rejects', () => {
+    const { seq: _seq, ...line } = activityPage.items[0] as (typeof activityPage.items)[number]
+    expect(() => decodeActivityPage({ ...activityPage, items: [line] })).toThrow(DecodeError)
+  })
+
+  it('an activity page with no cursor rejects', () => {
+    const { nextCursor: _cursor, ...rest } = activityPage
+    expect(() => decodeActivityPage(rest)).toThrow(DecodeError)
+  })
+
+  it('a text artifact keeps its size and next cursor', () => {
+    expect(
+      decodeArtifact('out/run.log', {
+        contentType: 'text/plain; charset=utf-8',
+        body: 'SAMPLE-ONLY log\n',
+        size: '1536',
+        next: 'cursor-artifact',
+      }),
+    ).toEqual(artifactPages.text)
+  })
+
+  it('JSON served as text stays text', () => {
+    const page = decodeArtifact('a.json', {
+      contentType: 'text/plain; charset=utf-8',
+      body: '{"binary":true,"size":1}',
+      size: '24',
+      next: null,
+    })
+    expect(page).toMatchObject({ kind: 'text', text: '{"binary":true,"size":1}' })
+  })
+
+  it('a binary artifact is metadata only', () => {
+    expect(
+      decodeArtifact('out/image.png', {
+        contentType: 'application/json; charset=utf-8',
+        body: JSON.stringify({ ref: 'out/image.png', binary: true, size: 2048 }),
+        size: null,
+        next: null,
+      }),
+    ).toEqual(artifactPages.binary)
+  })
+
+  it('a text artifact with no size rejects', () => {
+    expect(() =>
+      decodeArtifact('a.txt', { contentType: 'text/plain', body: 'x', size: null, next: null }),
+    ).toThrow(DecodeError)
+  })
+
+  it('a JSON answer that is not the binary shape rejects', () => {
+    expect(() =>
+      decodeArtifact('a.txt', { contentType: 'application/json', body: '{}', size: null, next: null }),
+    ).toThrow(DecodeError)
+  })
+})
 
 describe('inspection decoders', () => {
   it('every fixture survives its decoder unchanged', () => {

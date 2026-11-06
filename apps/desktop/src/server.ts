@@ -14,7 +14,16 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { Socket } from 'node:net'
 import { extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { Effects, HealthBoard, HealthName, Json, ProviderId, Store, StoreDoc } from '@mec/contracts'
+import type {
+  DomainEvent,
+  Effects,
+  HealthBoard,
+  HealthName,
+  Json,
+  ProviderId,
+  Store,
+  StoreDoc,
+} from '@mec/contracts'
 import { matchesSecret } from '@mec/contracts'
 import { WORK_ITEM_TERMINAL, type WorkItemState } from '@mec/domain'
 import type { LiveWork } from '@mec/meta'
@@ -35,6 +44,7 @@ import {
   type SetupDraftRecord,
   type SetupSettingsApi,
   type StopOutcome,
+  settleSpecialistCard,
   stableMessageId,
   stopWorkItem,
 } from '@mec/meta'
@@ -58,7 +68,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { type BackupControl, liveSlot, registerConfigRoutes, repositoryRevision } from './config-routes'
 import { buildDoctorReport } from './doctor'
 import type { HealthSnapshot, PartEntry } from './health'
-import { registerInspectionRoutes } from './inspection'
+import { hostIsLoopback, registerInspectionRoutes, scrub } from './inspection'
 import { type CardEvent, LoginCardManager } from './login-cards'
 import { metaSlotRefusal } from './readiness'
 import {
@@ -77,6 +87,7 @@ import {
   resolvePush,
   resolveReleaseCard,
 } from './release'
+import { type SwitchAnswer, switchCardBlocked, withdrawSwitchCard } from './slot-switch'
 
 export type ServerDeps = {
   store: Store
@@ -108,6 +119,8 @@ export type ServerDeps = {
    * real repository.
    */
   ghRun?: GhRun
+  /** The result path's seam on the release routes (`delivery.ts`). */
+  delivery?: Pick<ReleaseDeps, 'pushSource' | 'onCardSettled' | 'cardBlocked'>
   /** The push card's git; tests may inject it, production uses the argv-only default. */
   gitExec?: GitExec
   /**
@@ -150,6 +163,11 @@ export type ServerDeps = {
     stopWork?(id: string): StopOutcome
   }
   /** §20 pause: the composition root owns the queue timer; absent, the routes answer 404. */
+  /** §5.10: what the switch and resume routes reach; absent, they answer 404. */
+  parked?: {
+    switchSlot(input: { workItemId: string; toSlot: string; reason: string }): Promise<SwitchAnswer>
+    resumeNow(workItemId: string): string[]
+  }
   pauseControl?: { pause(): void; resume(): void; isPaused(): boolean }
   /** T7: the setup agent for Chat's Setup mode; a store-backed default is built when absent. */
   setupAgent?: SetupAgentSurface
@@ -161,6 +179,8 @@ export type ServerDeps = {
   backups?: BackupControl
   /** The setup agent's model seam; absent, it answers from real reads. */
   setupDecide?: SetupDecide
+  /** M3.1: one attempt's exact secrets, for what an artifact read must not serve. */
+  inspectionExacts?: (attemptId: string) => string[]
 }
 
 /** The chat route's setup-mode surface — `SetupAgent` from @mec/meta satisfies it structurally. */
@@ -210,6 +230,10 @@ const MIME_TYPES: Record<string, string> = {
 }
 
 const SSE_POLL_MS = 500
+/** Events one stream may write in one flush: the store's page limit. */
+export const EVENT_FLUSH_CAP = 100
+/** Events a client may be behind on one stream before it is told to take a fresh snapshot. */
+export const EVENT_BACKLOG_CAP = 10_000
 
 let idCounter = 0
 
@@ -386,10 +410,16 @@ function slotDocOf(store: Store, id: string): ApiSlotDoc | undefined {
  * live from boards that expose `names()`/`entry()` (the `HealthBoardImpl` the composition
  * root uses does): the contracts interface deliberately carries no snapshot seam, so nothing
  * is added to it here. A board without that surface contributes no parts — what the server
- * cannot see is reported as unknown, never healthy (§21.2).
+ * cannot see is reported as unknown, never healthy (§21.2). `answering` is true only because this
+ * code is running: `observedAt` says when, and it claims nothing about any later moment.
  */
-export function buildHealthSnapshot(store: Store, health: HealthBoard): HealthSnapshot {
+export function buildHealthSnapshot(
+  store: Store,
+  health: HealthBoard,
+  now: Date = new Date(),
+): HealthSnapshot {
   return {
+    observedAt: now.toISOString(),
     runtime: { state: processingOf(store).paused ? 'paused' : 'ready', instances: 1, answering: true },
     parts: partsOf(health),
     setup: {
@@ -513,6 +543,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     effects: deps.effects,
     now,
     ...(deps.gitExec !== undefined && { git: deps.gitExec }),
+    ...deps.delivery,
   }
   const app = Fastify({ logger: false })
 
@@ -573,7 +604,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     ...buildHealthSnapshot(store, deps.health),
     // What the workbench may offer. False is said before the click, never after it.
     capabilities: {
-      switchWork: false,
+      switchWork: deps.parked !== undefined,
       drain: false,
       backups: deps.backups !== undefined,
       isolationEdit: false,
@@ -854,21 +885,43 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       reply.code(422).send({ error: 'no_executor', detail: `nothing here can run a '${cls}' card` })
       return
     }
+    // §13: an approval is of what the card states. One that states nothing can only be denied.
+    if (body.answer === 'approve' && cardDetail(doc) === undefined) {
+      reply.code(422).send({ error: 'no_evidence', detail: 'this card states nothing to approve' })
+      return
+    }
     const pending = doc as unknown as ConfirmationRecord
+    const at = now().toISOString()
+    // The rule the release cards follow: a stop withdraws the card, a hold leaves it pending (§12).
+    const blocked =
+      body.answer === 'approve' && cls === 'slot_switch' && at <= pending.expiresAt
+        ? switchCardBlocked(store, doc)
+        : undefined
+    if (blocked !== undefined && !blocked.withdraw) return { id, status: 'pending', reason: blocked.reason }
     try {
       const { outcome } = resolveConfirmation(pending, {
-        now: now().toISOString(),
+        now: at,
         answer: body.answer,
-        // The card's own hash is the expected one: the user answered what they saw.
-        expectedOperationHash: typeof pending.operationHash === 'string' ? pending.operationHash : '',
+        // The card's own hash is the expected one: the user answered what they saw. A reason
+        // never equals a hash, so a withdrawn card settles stale.
+        expectedOperationHash:
+          blocked?.reason ?? (typeof pending.operationHash === 'string' ? pending.operationHash : ''),
         // A repo-bound confirmation binds to the SHA on the card; the record's own value is
         // what the card rendered (audit #5 — absent, every bound resolution went stale).
         expectedInputSha: typeof pending.inputSha === 'string' ? pending.inputSha : undefined,
       })
-      store.atomic(() => {
-        store.confirmations.save(outcome as unknown as StoreDoc)
+      const continues = store.atomic(() => {
+        const settled = outcome as unknown as StoreDoc
+        if (blocked === undefined) store.confirmations.save(settled)
+        else withdrawSwitchCard(store, settled, blocked.reason, at)
+        return settleSpecialistCard(store, deps.effects, settled)
       })
-      return { id: outcome.id, status: outcome.status }
+      return {
+        id: outcome.id,
+        status: outcome.status,
+        ...(blocked !== undefined && { reason: blocked.reason }),
+        ...(continues && { continues }),
+      }
     } catch (error) {
       // The first answer won (§13): a second resolve is a CAS race, not a server error.
       if (error instanceof Error && error.message.startsWith('already_handled')) {
@@ -911,6 +964,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         // then the work item's own lifecycle state is the honest stage.
         stage: state,
         held: isHeld(doc),
+        ...(typeof doc.blockedReason === 'string' && { blockedReason: doc.blockedReason }),
         taskCounts: { total: tasks.length, byStatus },
         updatedAt: String(doc.updatedAt ?? ''),
       }
@@ -972,6 +1026,25 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   })
 
   app.get('/api/processing', async () => processingOf(store))
+
+  // §5.10: moving parked work, and the owner's own resume. Neither lifts a hold.
+  app.post('/api/work/:id/switch-slot', async (request, reply) => {
+    if (deps.parked === undefined) return reply.code(404).send({ error: 'switching is not available' })
+    const { id } = request.params as { id: string }
+    const { toSlot, reason } = (request.body ?? {}) as { toSlot?: unknown; reason?: unknown }
+    if (typeof toSlot !== 'string' || toSlot === '') {
+      return reply.code(400).send({ error: 'toSlot is required' })
+    }
+    const why = typeof reason === 'string' && reason.trim() !== '' ? reason : 'asked by the owner'
+    const answer = await deps.parked.switchSlot({ workItemId: id, toSlot, reason: why })
+    return reply.code(answer.status).send(answer.body)
+  })
+
+  app.post('/api/work/:id/resume', async (request, reply) => {
+    if (deps.parked === undefined) return reply.code(404).send({ error: 'resume is not available' })
+    const { id } = request.params as { id: string }
+    return { id, resumed: deps.parked.resumeNow(id) }
+  })
 
   app.post('/api/slots/login', async (request, reply) => {
     const body = (request.body ?? {}) as { engine?: unknown; slotHome?: unknown; label?: unknown }
@@ -1688,7 +1761,12 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   })
 
   app.get('/api/events', (request, reply) => {
-    const query = (request.query ?? {}) as { stream?: string; after?: string }
+    // No header check here: `EventSource` can't set one. A rebound page still arrives with its Host.
+    if (!hostIsLoopback(request.headers.host)) {
+      reply.code(403).send({ error: 'forbidden_host' })
+      return
+    }
+    const query = (request.query ?? {}) as { stream?: string; after?: string; compact?: string }
     const streamParam = typeof query.stream === 'string' ? query.stream : ''
     if (streamParam === '') {
       reply.code(400).send({ error: 'stream is required' })
@@ -1708,8 +1786,17 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       const after = afters[i] ?? Number.NaN
       cursors.set(name, Number.isFinite(after) && after >= 0 ? after : 0)
     })
-    const stream = streams[0] ?? ''
-    let cursor = cursors.get(stream) ?? 0
+    const compact = query.compact === '1'
+    const tail = (name: string, after: number): DomainEvent[] =>
+      deps.inspection?.pageEvents(name, { after, limit: EVENT_FLUSH_CAP }).rows ??
+      store.events.read(name, after).slice(0, EVENT_FLUSH_CAP)
+    const newest = (name: string): number =>
+      deps.inspection?.cursors([name])[name] ?? store.events.read(name).at(-1)?.seq ?? 0
+    const frameOf = (name: string, event: DomainEvent): string => {
+      const { seq, type, at } = event
+      const data = compact ? { stream: name, seq, type, at } : scrub(event)
+      return `id: ${name}:${seq}\ndata: ${JSON.stringify(data)}\n\n`
+    }
 
     reply.hijack()
     const raw = reply.raw
@@ -1719,16 +1806,58 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       connection: 'keep-alive',
       'x-accel-buffering': 'no',
     })
+    // A connection never holds more than the socket takes: `waiting` stops every write until `drain`.
+    let waiting = false
+    let ended = false
+    let timer: NodeJS.Timeout | undefined
+    let more: NodeJS.Immediate | undefined
+    const stop = (): void => {
+      ended = true
+      clearInterval(timer)
+      clearImmediate(more)
+    }
+    /** Past the cap a replay is no use: one frame, then the client reads a fresh snapshot. */
+    const reset = (behind: string): void => {
+      stop()
+      raw.write(`event: reset\ndata: ${JSON.stringify({ reason: 'backlog', stream: behind })}\n\n`)
+      raw.end()
+      // A socket that stopped reading would never take the end either, and would hold this open.
+      if (waiting) raw.destroy()
+    }
     const flush = (): void => {
-      for (const name of streams) {
-        let at = cursors.get(name) ?? 0
-        for (const event of store.events.read(name, at)) {
-          raw.write(`id: ${name}:${event.seq}\ndata: ${JSON.stringify(event)}\n\n`)
-          at = event.seq
-        }
-        cursors.set(name, at)
+      if (ended) return
+      const behind = streams.find((name) => newest(name) - (cursors.get(name) ?? 0) > EVENT_BACKLOG_CAP)
+      if (behind !== undefined) {
+        reset(behind)
+        return
       }
-      cursor = cursors.get(stream) ?? cursor
+      if (waiting) return
+      let full = false
+      for (const name of streams) {
+        const events = tail(name, cursors.get(name) ?? 0)
+        full ||= events.length === EVENT_FLUSH_CAP
+        for (const event of events) {
+          waiting = !raw.write(frameOf(name, event))
+          cursors.set(name, event.seq)
+          if (waiting) {
+            raw.once('drain', () => {
+              waiting = false
+              pass()
+            })
+            return
+          }
+        }
+      }
+      // A capped stream has more now: the next pass need not wait for the poll.
+      if (full && raw.socket instanceof Socket) more = setImmediate(pass)
+    }
+    /** A read must never kill the loop; the next pass tries again. */
+    const pass = (): void => {
+      try {
+        flush()
+      } catch {
+        // Tried again at the next tick. A closing store ends with the connection.
+      }
     }
     raw.on('error', () => {})
     flush()
@@ -1739,16 +1868,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       raw.end()
       return
     }
-    const timer = setInterval(() => {
-      try {
-        flush()
-      } catch {
-        // A read must never kill the poll loop; the next pass tries again.
-      }
-    }, SSE_POLL_MS)
+    timer = setInterval(pass, SSE_POLL_MS)
     timer.unref()
     raw.on('close', () => {
-      clearInterval(timer)
+      stop()
       raw.end()
     })
   })
@@ -1759,6 +1882,15 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // that records the user's word and WAKES the planner, and Chat's Setup mode backing
   // (the store-backed default setup agent). Other lanes may append after this block.
 
+  /** Who asked: a question with an attempt is a specialist's, whatever message it is bound to. */
+  const questionWhy = (doc: StoreDoc): string => {
+    const forMessage = typeof doc.forMessageId === 'string' ? `for message ${doc.forMessageId}` : undefined
+    if (typeof doc.attemptId === 'string') {
+      return [`asked by the specialist on attempt ${doc.attemptId}`, forMessage].filter(Boolean).join(' ')
+    }
+    return forMessage === undefined ? 'asked by the planner this turn' : `asked ${forMessage}`
+  }
+
   /**
    * The decision-card evidence mapping (what/why/facts/consequences) from the question
    * record alone: every field is served from what exists, and what does not exist says
@@ -1766,12 +1898,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
    */
   const questionEvidence = (doc: StoreDoc): Record<string, unknown> => ({
     what: typeof doc.question === 'string' ? doc.question : 'unknown',
-    why:
-      typeof doc.forMessageId === 'string'
-        ? `asked for message ${doc.forMessageId}`
-        : 'asked by the planner this turn',
+    why: questionWhy(doc),
     facts: Array.isArray(doc.options) ? doc.options : [],
     consequences: 'unknown — not recorded in this build',
+    ...(typeof doc.evidenceRef === 'string' && { evidenceRef: doc.evidenceRef }),
   })
 
   app.get('/api/questions', async () =>
@@ -2204,12 +2334,16 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   app.get('/api/prompts/changes', async () => ({ changes: prompts.changes() }))
 
   // M3.1 canonical inspection: read-only, bounded, redacted `GET /api/inspect/*`.
-  if (deps.inspection !== undefined) registerInspectionRoutes(app, { store, reads: deps.inspection, now })
+  if (deps.inspection !== undefined) {
+    const exactsFor = deps.inspectionExacts ?? (() => [])
+    registerInspectionRoutes(app, { store, reads: deps.inspection, now, exactsFor })
+  }
 
   // M3.3 setup and configuration: readiness, connections, policy, repository edits, drafts, backups.
   const applyConfigDraft = registerConfigRoutes(app, {
     store,
     now,
+    workTitle: (doc) => workTitleOf(store, doc),
     keystoreRoot,
     probeCmd,
     policyText: deps.policyText,

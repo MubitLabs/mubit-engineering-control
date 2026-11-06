@@ -241,6 +241,8 @@ export type ResolveResult = {
   merged?: boolean
   pushed?: boolean
   prNumber?: number
+  /** A running agent was waiting on this answer, and now has it. */
+  continues?: boolean
 }
 
 /**
@@ -330,7 +332,8 @@ export function newIdempotencyKey(): string {
   return crypto.randomUUID()
 }
 
-export async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/** The checked response, for the one route whose body is not always JSON. */
+export async function requestResponse(path: string, init?: RequestInit): Promise<Response> {
   // §22 CSRF discipline: the custom header every mutating call must carry; a
   // cross-origin page cannot add it without a preflight this server never answers.
   const withHeader: RequestInit = {
@@ -342,7 +345,11 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const { error, detail } = await errorOf(response)
     throw new HttpError(path, response.status, error, detail)
   }
-  return (await response.json()) as T
+  return response
+}
+
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return (await (await requestResponse(path, init)).json()) as T
 }
 
 const text = (value: unknown): string | undefined =>

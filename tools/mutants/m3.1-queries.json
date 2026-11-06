@@ -37,7 +37,7 @@
   {
     "name": "make a missing record coverage true",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "      usage: some((a) => num(a.costUsd) !== null),",
+    "find": "      usage: some((a) => num(a.costUsd) !== null || obj(a.usage) !== null),",
     "replace": "      usage: true,",
     "tests": ["apps/desktop/test/inspection.test.ts"]
   },

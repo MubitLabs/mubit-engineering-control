@@ -44,22 +44,22 @@
   {
     "name": "card: a card with nothing to show still serves detail",
     "file": "apps/desktop/src/release.ts",
-    "find": "  if (facts.length === 0) return undefined\n",
+    "find": "  if (evidence.length === 0) return undefined\n",
     "replace": "",
     "tests": ["apps/desktop/test/release-cards.test.ts"]
   },
   {
     "name": "card: evidence shown unredacted",
     "file": "apps/desktop/src/release.ts",
-    "find": "    value: redact(typeof value === 'string' ? value : JSON.stringify(value), [], []),\n",
+    "find": "    value: shownSafe(typeof value === 'string' ? value : JSON.stringify(value)),\n",
     "replace": "    value: typeof value === 'string' ? value : JSON.stringify(value),\n",
     "tests": ["apps/desktop/test/release-cards.test.ts"]
   },
   {
     "name": "card: structured evidence loses its shape",
     "file": "apps/desktop/src/release.ts",
-    "find": "redact(typeof value === 'string' ? value : JSON.stringify(value), [], [])",
-    "replace": "redact(String(value), [], [])",
+    "find": "shownSafe(typeof value === 'string' ? value : JSON.stringify(value))",
+    "replace": "shownSafe(String(value))",
     "tests": ["apps/desktop/test/release-cards.test.ts"]
   },
   {
@@ -156,15 +156,15 @@
   {
     "name": "root: MEC_DATA_DIR ignored",
     "file": "packages/prompts/src/models.ts",
-    "find": "export const mecRoot = (): string => process.env.MEC_DATA_DIR ?? join(homedir(), '.mec')",
+    "find": "export const mecRoot = (): string => process.env.MEC_DATA_DIR || join(homedir(), '.mec')",
     "replace": "export const mecRoot = (): string => join(homedir(), '.mec')",
     "tests": ["apps/desktop/test/keystore-root.test.ts"]
   },
   {
     "name": "root: unset no longer ~/.mec",
     "file": "packages/prompts/src/models.ts",
-    "find": "export const mecRoot = (): string => process.env.MEC_DATA_DIR ?? join(homedir(), '.mec')",
-    "replace": "export const mecRoot = (): string => process.env.MEC_DATA_DIR ?? join(homedir(), 'mec')",
+    "find": "export const mecRoot = (): string => process.env.MEC_DATA_DIR || join(homedir(), '.mec')",
+    "replace": "export const mecRoot = (): string => process.env.MEC_DATA_DIR || join(homedir(), 'mec')",
     "tests": ["apps/desktop/test/keystore-root.test.ts"]
   },
   {
@@ -177,7 +177,7 @@
   {
     "name": "root: the planner protocol stays on ~/.mec",
     "file": "packages/meta/src/brain.ts",
-    "find": "join(process.env.MEC_DATA_DIR ?? join(homedir(), '.mec'), 'prompts')",
+    "find": "join(process.env.MEC_DATA_DIR || join(homedir(), '.mec'), 'prompts')",
     "replace": "join(homedir(), '.mec', 'prompts')",
     "tests": ["apps/desktop/test/keystore-root.test.ts"]
   },

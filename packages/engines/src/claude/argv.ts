@@ -6,8 +6,10 @@
  */
 
 export type ClaudeArgvInput = {
-  /** The prompt for `-p`; the runtime composes it from the brief. */
-  prompt: string
+  /** The prompt for `-p`; the runtime composes it from the brief. Absent with `streamInput`. */
+  prompt?: string
+  /** §9: the objective and every later input arrive on stdin, one user message per line. */
+  streamInput?: boolean
   sessionId: string
   /** Per-attempt settings JSON path (plan §8.4). */
   settingsPath: string
@@ -32,11 +34,32 @@ export type ClaudeArgvInput = {
   maxBudgetUsd?: number
 }
 
+/**
+ * §6: a run that asks nothing reads and calls its platform tools, and has no shell. These are deny
+ * rules because a deny beats an allow, and `--setting-sources user` keeps a linked slot's own
+ * `permissions.allow` in force. `--tools` would be an allow list, and no real run has tried it.
+ */
+const UNASKED_DENIED = [
+  'Bash',
+  'Edit',
+  'MultiEdit',
+  'NotebookEdit',
+  'Write',
+  'WebFetch',
+  'WebSearch',
+  'Task',
+  'Agent',
+  'Monitor',
+] as const
+
 export function buildClaudeArgv(input: ClaudeArgvInput): string[] {
-  const argv = ['claude', '-p', input.prompt, '--verbose', '--output-format', 'stream-json']
-  // NOTE: --input-format stream-json is deliberately absent in v0: with it, `-p` waits on a
-  // stdin user-message that a one-shot spawn must write and close. Steering (send) brings the
-  // two-way wiring; until then the objective rides the -p prompt.
+  // With --input-format stream-json `-p` waits on stdin and stays up until it closes, so only a
+  // caller that owns that pipe asks for it. `--replay-user-messages` makes the engine say which
+  // message it took. A planner turn is one-shot, and its prompt rides argv.
+  const argv = input.streamInput
+    ? ['claude', '-p', '--verbose', '--output-format', 'stream-json']
+    : ['claude', '-p', input.prompt ?? '', '--verbose', '--output-format', 'stream-json']
+  if (input.streamInput) argv.push('--input-format', 'stream-json', '--replay-user-messages')
   if (input.resumeSessionId) {
     argv.push('--resume', input.resumeSessionId)
   } else {
@@ -57,6 +80,10 @@ export function buildClaudeArgv(input: ClaudeArgvInput): string[] {
     // Explicit: a linked slot's own settings may name another mode, and the prompt tool hears
     // nothing in a mode that does not ask.
     argv.push('--permission-prompt-tool', 'mcp__mec__confirm', '--permission-mode', 'default')
+  } else {
+    // Explicit for the same reason: a linked slot's `defaultMode` must not choose for this run.
+    argv.push('--permission-mode', 'default')
+    for (const tool of UNASKED_DENIED) argv.push('--disallowedTools', tool)
   }
   if (input.readOnly) {
     argv.push('--restricted', '--permission-prompts', 'none')

@@ -35,6 +35,7 @@ describe('buildClaudeArgv', () => {
       ]),
     )
     expect(argv).not.toContain('--restricted')
+    expect(argv).not.toContain('Bash')
     expect(argv).not.toContain('--bare')
   })
 
@@ -42,6 +43,10 @@ describe('buildClaudeArgv', () => {
     const argv = buildClaudeArgv({ ...base, readOnly: true, permissionMode: 'none' })
     expect(argv).toEqual(expect.arrayContaining(['--restricted', '--permission-prompts', 'none']))
     expect(argv).not.toContain('--permission-prompt-tool')
+    expect(argv).toEqual(expect.arrayContaining(['--permission-mode', 'default']))
+    expect(argv).toEqual(expect.arrayContaining(['--disallowedTools', 'Bash']))
+    // Claude 2.1.319's Monitor runs code, so a run that asks nothing must not have it.
+    expect(argv).toEqual(expect.arrayContaining(['--disallowedTools', 'Monitor']))
   })
 
   it('resume replaces --session-id; budget only when given; model when given', () => {

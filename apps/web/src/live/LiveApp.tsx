@@ -16,6 +16,7 @@ import { ConversationView } from '../next/ConversationView'
 import type { NeedItem } from '../next/inspection-wire'
 import { NeedsView } from '../next/NeedsView'
 import { NextApp } from '../next/NextApp'
+import { ParkedNotices } from '../next/ParkedNotice'
 import { CONFIGURATION_ROUTES, ROUTE_LABELS } from '../next/routes'
 import { SearchSheet } from '../next/SearchSheet'
 import type { RepositoryOption } from '../next/Sidebar'
@@ -24,6 +25,7 @@ import { useTheme } from '../next/theme'
 import { WorkView } from '../next/WorkView'
 import {
   approvalScope,
+  attemptSubscription,
   conversationView,
   type DiscussAction,
   deliveryDetail,
@@ -44,6 +46,7 @@ import {
   searchRows,
   searchTarget,
   selectionInScope,
+  type TaskEvidence,
   taskInspector,
   threadQuestions,
   usableEvidence,
@@ -54,6 +57,7 @@ import { repositoryName } from '../repo-target'
 import { createConfigStore } from './config-store'
 import { createDrafts, type Intent, resolveIntent } from './drafts'
 import { createInspection, liveInspectionClient } from './inspection'
+import { switchWork, useParked } from './parked'
 import { usePause } from './pause'
 import { createSubmissions, draftScope, type Frozen, type Submission } from './submission'
 import {
@@ -89,6 +93,7 @@ function createLive() {
   const workspace = createWorkspace(liveClient)
   const inspection = createInspection(liveInspectionClient)
   workspace.onRefresh(inspection.refresh)
+  workspace.onInvalidate(inspection.invalidate)
   const drafts = createDrafts(() => window.localStorage)
   const send = async (frozen: Frozen) => {
     const { key, text, ...target } = frozen
@@ -147,6 +152,7 @@ export function LiveApp() {
   useWorkspaceUpkeep(workspace)
   const [configStore] = useState(createConfigStore)
   const pause = usePause()
+  const parked = useParked(address.route === 'work')
 
   const [notice, setNotice] = useState<string | null>(null)
   /** Work and Needs you start on every repository: the first question is whether anything needs you. */
@@ -354,10 +360,31 @@ export function LiveApp() {
 
   const ownerRow = rows.find((row) => row.id === deliveryId)
   const ownerTitle = ownerRow ? workRowView(ownerRow).title : 'This delivery'
+  const taskEvidence: TaskEvidence = {
+    attemptId: inspected.activity.attemptId,
+    activity: inspected.activity.read,
+    artifact: inspected.artifact,
+    onAttempt: inspection.selectAttempt,
+    onMore: inspection.moreActivity,
+    onRetry: inspection.retryActivity,
+    onArtifact: inspection.openArtifact,
+    onArtifactMore: inspection.moreArtifact,
+    onArtifactRetry: inspection.retryArtifact,
+  }
   const taskView =
     taskId !== null && deliveryId !== null && inspected.task.id === taskId
-      ? taskInspector(taskId, inspected.task.read, deliveryId, ownerTitle)
+      ? taskInspector(taskId, inspected.task.read, deliveryId, ownerTitle, taskEvidence)
       : null
+
+  // Each delivery read, not each cursor: a reset drops the attempt until a new read brings one.
+  const attemptFeed = attemptSubscription(inspected.activity.attemptId, deliveryData?.cursors ?? {})
+  const attemptStream = attemptFeed?.stream ?? null
+  const attemptAfter = attemptFeed?.after ?? 0
+  const deliveryReadAt = deliveryRead.status === 'loading' ? null : deliveryRead.readAt
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deliveryReadAt is the trigger
+  useEffect(() => {
+    workspace.followAttempt(attemptStream === null ? null : { stream: attemptStream, after: attemptAfter })
+  }, [attemptStream, attemptAfter, deliveryReadAt, workspace])
 
   const card = (item: (typeof items)[number]) =>
     needCard(
@@ -483,6 +510,18 @@ export function LiveApp() {
           onDiscuss={discuss}
           onRetry={retryRead}
           partialNote={readData(inspected.work)?.nextCursor == null ? null : WORK_CUT}
+          parkedNotice={(workItemId) => (
+            <ParkedNotices
+              rows={parked.rows.filter((row) => row.workItemId === workItemId)}
+              all={parked.rows}
+              connections={parked.connections}
+              capabilities={parked.capabilities}
+              commands={{
+                switchWork: (row, target) => switchWork(row, target).finally(parked.refresh),
+                signIn: () => navigate('slots'),
+              }}
+            />
+          )}
         />
       )
     }

@@ -215,6 +215,32 @@ describe('planDispatches', () => {
     expect(solo.deferred).toEqual([{ taskId: 't2', reason: 'capacity' }])
   })
 
+  it('places a hinted task on a classless slot: the class is a preference (§10)', () => {
+    const r = plan({
+      ready: [task('r1', { slotClass: 'review', role: 'reviewer' })],
+      slots: [slot('s1')],
+    })
+    expect(r.launches).toEqual([{ taskId: 'r1', slotId: 's1' }])
+    expect(r.deferred).toEqual([])
+  })
+
+  it('still defers a hinted task when no slot is healthy', () => {
+    const r = plan({
+      ready: [task('r1', { slotClass: 'review' })],
+      slots: [slot('s1', { state: 'degraded' })],
+    })
+    expect(r.launches).toEqual([])
+    expect(r.deferred).toEqual([{ taskId: 'r1', reason: 'slot_unhealthy' }])
+  })
+
+  it('prefers the matching slot even when the other is less loaded', () => {
+    const r = plan({
+      ready: [task('r1', { slotClass: 'review' })],
+      slots: [slot('s1'), slot('s2', { slotClass: 'review', inUse: 1 })],
+    })
+    expect(r.launches).toEqual([{ taskId: 'r1', slotId: 's2' }])
+  })
+
   it('honours slot class bindings', () => {
     const r = plan({
       ready: [task('r1', { slotClass: 'review', role: 'reviewer' })],

@@ -15,6 +15,9 @@ import {
   loadEditor,
   metaChoices,
   openStage,
+  type ParkedRow,
+  parkedFacts,
+  parkedMoves,
   parseChecks,
   parseLines,
   proposalBase,
@@ -24,6 +27,9 @@ import {
   saveFailed,
   saveStarted,
   saveSucceeded,
+  switchPlan,
+  switchRefusal,
+  switchResult,
 } from '../src/next/config-model'
 
 const editor = (over: Partial<Editor> = {}): Editor => ({
@@ -345,5 +351,93 @@ describe('compare', () => {
     const rows = shown(table, table)
     expect(rows).toHaveLength(1)
     expect(rows[0]?.kind).toBe('fold')
+  })
+})
+
+describe('parked work (§5.10)', () => {
+  const ON: Capabilities = { ...NONE, switchWork: true }
+  const parked = (over: Partial<ParkedRow> = {}): ParkedRow => ({
+    workItemId: 'work_1',
+    workTitle: 'Fix the login page',
+    attemptId: 'att_1',
+    slotId: 'slot_a',
+    slotLabel: 'first',
+    state: 'quota_wait',
+    reason: 'rate limit reached',
+    resetAt: null,
+    worktreeKept: true,
+    ...over,
+  })
+  const spare = row({ id: 'slot_b', label: 'spare' })
+  const home = row({ id: 'slot_a', label: 'first', state: 'degraded' })
+
+  it('an auth park offers no switch', () => {
+    const auth = parked({ state: 'auth_required' })
+    expect(parkedMoves(auth, [auth], [home, spare], ON)).toMatchObject({ signIn: true, targets: [] })
+    // The route refuses the whole work item, so its quota sibling offers no switch either.
+    const sibling = parked({ attemptId: 'att_2', slotId: 'slot_c' })
+    expect(parkedMoves(sibling, [auth, sibling], [home, spare], ON).targets).toEqual([])
+    const other = parked({ workItemId: 'work_2', attemptId: 'att_3' })
+    expect(parkedMoves(other, [auth, other], [home, spare], ON)).toMatchObject({
+      signIn: false,
+      targets: [spare],
+    })
+  })
+
+  it('offers only a healthy connection this work is not parked on', () => {
+    const one = parked()
+    const down = row({ id: 'slot_c', label: 'down', state: 'degraded' })
+    expect(parkedMoves(one, [one], [home, spare, down], ON).targets).toEqual([spare])
+    const none = parkedMoves(one, [one], [home, down], ON)
+    expect(none.targets).toEqual([])
+    expect(none.note).toMatch(/healthy/)
+    // A slot can recover before its parked work resumes, and the route refuses the same slot.
+    const recovered = row({ id: 'slot_a', label: 'first', state: 'healthy' })
+    expect(parkedMoves(one, [one], [recovered, spare], ON).targets).toEqual([spare])
+  })
+
+  it('without the capability nothing is offered, and it says why', () => {
+    const one = parked()
+    const moves = parkedMoves(one, [one], [home, spare], NONE)
+    expect(moves.targets).toEqual([])
+    expect(moves.note).toMatch(/cannot switch/)
+  })
+
+  it('unknown reset stays unknown', () => {
+    const format = (iso: string) => `at ${iso}`
+    expect(parkedFacts(parked(), format).reset).toBe('Reset unknown')
+    expect(parkedFacts(parked({ resetAt: 'unknown' }), format).reset).toBe('Reset unknown')
+    expect(parkedFacts(parked({ resetAt: 'soon' }), format).reset).toBe('Reset unknown')
+    expect(parkedFacts(parked({ resetAt: '2026-11-06T12:30:00.000Z' }), format).reset).toBe(
+      'Resets at 2026-11-06T12:30:00.000Z',
+    )
+  })
+
+  it('states the slot, the reason and the kept worktree, as chat does', () => {
+    const facts = parkedFacts(parked(), (iso) => iso)
+    expect(facts).toMatchObject({ slot: 'first', reason: 'rate limit reached' })
+    expect(facts.worktree).toMatch(/kept/)
+    expect(parkedFacts(parked({ worktreeKept: false }), (iso) => iso).worktree).not.toMatch(/ kept/)
+    expect(parkedFacts(parked({ state: 'auth_required' }), (iso) => iso).heading).toMatch(/sign-in/i)
+  })
+
+  it('switch names its target', () => {
+    const plan = switchPlan(parked(), spare)
+    expect(plan.title).toContain('spare')
+    expect(plan.confirmLabel).toContain('spare')
+    expect(plan.lines.join(' ')).toContain('from first to spare')
+    expect(plan.lines.join(' ')).toMatch(/same worktree/)
+    expect(switchResult({ status: 'confirmation' }, spare)).toMatch(/Needs you.*spare/)
+    expect(switchResult({ status: 'switched' }, spare)).toMatch(/spare/)
+  })
+
+  it('a refusal says why, and that nothing moved', () => {
+    expect(switchRefusal('held')).toMatch(/hold/)
+    expect(switchRefusal('auth_park_never_switches')).toMatch(/Sign in again/)
+    expect(switchRefusal('new_code')).toMatch(/new_code.*Nothing moved/)
+  })
+
+  it('an answer it does not know is not read as a move', () => {
+    expect(switchResult({ status: 'other' }, spare)).not.toMatch(/Moved|Needs you/)
   })
 })

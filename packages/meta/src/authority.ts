@@ -44,7 +44,7 @@ export type LaunchFailureReason = string
 /** What the launch gate decides: `defer` keeps the row, `drop` lets it drain unlaunched. */
 export type LaunchAuthority =
   | { verdict: 'run' }
-  | { verdict: 'defer'; reason: 'held' }
+  | { verdict: 'defer'; reason: 'held' | 'reconcile_refused' }
   | { verdict: 'drop'; reason: LaunchDropReason }
 
 export type HoldOutcome = 'held' | 'missing' | 'terminal' | 'read_only'
@@ -81,6 +81,11 @@ export function isTerminal(doc: StoreDoc): boolean {
   return WORK_ITEM_TERMINAL.includes(String(doc.state) as WorkItemState)
 }
 
+/** A repo with no checks leaves its attempt `work_complete` with a note: no verdict is coming. */
+export function noVerdict(attempt: StoreDoc): boolean {
+  return attempt.state === 'work_complete' && typeof attempt.checks_note === 'string'
+}
+
 /** §10's check before every resume; a legacy row has no hash to compare. */
 export function revalidateWork(
   doc: StoreDoc,
@@ -108,7 +113,8 @@ export function launchAuthority(
   const work = store.workItems.get(workItemId)
   if (work === undefined) return drop('work_missing')
   if (isTerminal(work)) return drop('work_terminal')
-  if (store.attempts.get(attemptId)?.state !== 'queued') return drop('attempt_not_queued')
+  const attempt = store.attempts.get(attemptId)
+  if (attempt?.state !== 'queued') return drop('attempt_not_queued')
   const repoId = repoOf(work)
   const pinned = (work.pin as { repoId?: string } | undefined)?.repoId
   if (repoId === undefined || pinned !== repoId || repoOf(store.tasks.get(taskId)) !== repoId) {
@@ -117,17 +123,40 @@ export function launchAuthority(
   const authority = revalidateWork(work, now, policyHash)
   if (!authority.ok && authority.reason !== 'policy_changed') return drop(`mandate_${authority.reason}`)
   if (isHeld(work)) return { verdict: 'defer', reason: 'held' }
-  return authority.ok ? { verdict: 'run' } : drop('policy_changed')
+  if (!authority.ok) return drop('policy_changed')
+  // A group a boot could not prove gone may still be running here (§8.1): nothing goes beside it.
+  return attempt.reconcile_refused === undefined
+    ? { verdict: 'run' }
+    : { verdict: 'defer', reason: 'reconcile_refused' }
 }
 
 /**
+ * A queued attempt behind one of these has lost its only launch. `policy_changed` is here by owner
+ * ruling: an attempt that never started is not the live work §13 protects, and running work is
+ * not touched.
+ */
+const UNRUNNABLE: readonly LaunchDropReason[] = [
+  'mandate_expired',
+  'mandate_withdrawn',
+  'policy_changed',
+  'repo_mismatch',
+]
+
+/**
  * Records a dropped launch. The mandates module lets work continue after a policy change only
- * once it revalidates clean, so that reason also blocks the work.
+ * once it revalidates clean, so that reason also blocks the work, whatever the attempt's state.
+ * The row is about to drain, so an attempt still queued would hold its capacity with nothing left
+ * to start it: it fails (§10). A resume's attempt is parked and keeps its state. So does one whose
+ * group a boot could not prove gone (§8.1): boot keeps retrying it, and its capacity stays held.
  */
 export function refuseLaunch(store: Store, payload: Json, reason: LaunchDropReason, at: string): void {
   const { work_item_id: workItemId, attempt_id: attemptId } = launchFields(payload)
   appendEvent(store, `work:${workItemId}`, 'launch_refused', { workItemId, attemptId, reason, at }, at)
   if (reason === 'policy_changed') blockWork(store, workItemId, reason, at)
+  const attempt = store.attempts.get(attemptId)
+  if (UNRUNNABLE.includes(reason) && attempt?.state === 'queued' && attempt.reconcile_refused === undefined) {
+    failLaunch(store, payload, reason, at)
+  }
 }
 
 /**
@@ -156,7 +185,7 @@ export function launchFailure(store: Store, payload: Json): string | undefined {
 }
 
 /** The machine refuses a second block, so blocked work keeps its first reason. */
-function blockWork(store: Store, workItemId: string, reason: string, at: string): void {
+export function blockWork(store: Store, workItemId: string, reason: string, at: string): void {
   const work = store.workItems.get(workItemId)
   if (work === undefined || !canTransition(WORK_ITEM_MACHINE, String(work.state), 'block')) return
   store.workItems.save({

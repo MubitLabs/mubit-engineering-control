@@ -1,0 +1,387 @@
+[
+  {
+    "name": "remove the Host check",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "  if (!hostIsLoopback(request.headers.host)) {\n    return reply.code(403).send({ error: 'forbidden_host' })\n  }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "remove the Host check on events",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    if (!hostIsLoopback(request.headers.host)) {\n      reply.code(403).send({ error: 'forbidden_host' })\n      return\n    }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/events-bounded.test.ts"]
+  },
+  {
+    "name": "loopback by prefix",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "return name === 'localhost' || name === '127.0.0.1' || name === '[::1]'",
+    "replace": "return name?.startsWith('localhost') === true || name?.startsWith('127.0.0.1') === true || name === '[::1]'",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "remove the client-header check",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "  if (isBrowser(request) && request.headers['x-mec-client'] !== '1') {\n    return reply.code(403).send({ error: 'client_header_required' })\n  }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "ask the client header of every tool",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "if (isBrowser(request) && request.headers['x-mec-client'] !== '1') {",
+    "replace": "if (request.headers['x-mec-client'] !== '1') {",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "gate only the first route",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "  const gated = { preHandler: readGate }\n",
+    "replace": "  const gated = {}\n",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "resolve the artifact ref without realpath",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    real = realpathSync.native(join(realRoot, ref))\n",
+    "replace": "    real = join(realRoot, ref)\n",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "let .. through",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "  if (isAbsolute(ref) || ref.includes('\\0') || ref.split(/[\\\\/]/).includes('..')) {",
+    "replace": "  if (ref.includes('\\0')) {",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "skip the root containment check",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "  if (inside === '' || segments[0] === '..' || isAbsolute(inside)) throw new Refused('outside the attempt')\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "serve the control directories",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "  if (segments.some((segment) => CONTROL_DIRS.includes(segment.toLowerCase()))) {\n    throw new Refused('a control file')\n  }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "serve artifacts as text/html",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      reply.type('text/plain; charset=utf-8')\n      return page.text",
+    "replace": "      reply.type('text/html; charset=utf-8')\n      return page.text",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "drop nosniff",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    reply.header('x-content-type-options', 'nosniff')\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "serve an artifact unredacted",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "text: redact(text, secrets.fingerprints, secrets.exacts),",
+    "replace": "text,",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "cut a page inside a key",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "  for (const { start, end } of spans) if (start < at && at < end) at = start\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "cut a page inside a character",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "  while (end > start && ((chunk[end] as number) & 0xc0) === 0x80) end -= 1\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "serve a binary file as text",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    if (sniff.includes(0)) return { size, binary: true }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "no page limit on artifacts",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "  if (chunk.length - start <= ARTIFACT_PAGE_BYTES) return chunk.length\n  let end = start + ARTIFACT_PAGE_BYTES\n",
+    "replace": "  let end = chunk.length\n",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "drop the activity allow-list",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      if (ACTIVITY_TYPES.has(row.type)) {",
+    "replace": "      if (row.type !== '') {",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "activity pages without the byte cap",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "        if (items.length > 0 && bytes + size > MAX_PAGE_BYTES) {\n          return { items, nextCursor: encodeCursor(read), observedAt: this.observedAt() }\n        }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "uncut activity detail",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "detail: text === null ? null : cutText(text, ACTIVITY_DETAIL_CAP),",
+    "replace": "detail: text,",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "include body in compact frames",
+    "file": "apps/desktop/src/server.ts",
+    "find": "const data = compact ? { stream: name, seq, type, at } : scrub(event)",
+    "replace": "const data = scrub(event)",
+    "tests": ["apps/desktop/test/events-bounded.test.ts"]
+  },
+  {
+    "name": "send frames unredacted",
+    "file": "apps/desktop/src/server.ts",
+    "find": "const data = compact ? { stream: name, seq, type, at } : scrub(event)",
+    "replace": "const data = compact ? { stream: name, seq, type, at } : event",
+    "tests": ["apps/desktop/test/events-bounded.test.ts"]
+  },
+  {
+    "name": "remove the flush cap",
+    "file": "apps/desktop/src/server.ts",
+    "find": "      deps.inspection?.pageEvents(name, { after, limit: EVENT_FLUSH_CAP }).rows ??\n      store.events.read(name, after).slice(0, EVENT_FLUSH_CAP)\n",
+    "replace": "      store.events.read(name, after)\n",
+    "tests": ["apps/desktop/test/events-bounded.test.ts"]
+  },
+  {
+    "name": "remove the backlog reset",
+    "file": "apps/desktop/src/server.ts",
+    "find": "      if (behind !== undefined) {\n        reset(behind)\n        return\n      }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/events-bounded.test.ts"]
+  },
+  {
+    "name": "ignore the socket pushing back",
+    "file": "apps/desktop/src/server.ts",
+    "find": "          waiting = !raw.write(frameOf(name, event))\n",
+    "replace": "          raw.write(frameOf(name, event))\n",
+    "tests": ["apps/desktop/test/events-bounded.test.ts"]
+  },
+  {
+    "name": "no next pass after a capped flush",
+    "file": "apps/desktop/src/server.ts",
+    "find": "      if (full && raw.socket instanceof Socket) more = setImmediate(pass)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/events-bounded.test.ts"]
+  },
+  {
+    "name": "restore the identical-text skip",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    const live = {\n      ...snapshot,\n      instanceId,\n",
+    "replace": "    const same = JSON.stringify({ ...snapshot, observedAt: '' })\n    if (same === (globalThis as { lastHealth?: string }).lastHealth) return\n    ;(globalThis as { lastHealth?: string }).lastHealth = same\n    const live = {\n      ...snapshot,\n      instanceId,\n",
+    "tests": ["apps/desktop/test/health-freshness.test.ts"]
+  },
+  {
+    "name": "a failed tick takes the server down",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    try {\n      writeHealth()\n    } catch (error) {\n      console.error(`[health] snapshot not written: ${String(error)}`)\n    }\n",
+    "replace": "    writeHealth()\n",
+    "tests": ["apps/desktop/test/health-freshness.test.ts"]
+  },
+  {
+    "name": "one instance id for ever",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  const instanceId = randomUUID()\n",
+    "replace": "  const instanceId = String(process.pid)\n",
+    "tests": ["apps/desktop/test/health-freshness.test.ts"]
+  },
+  {
+    "name": "trust a stale heartbeat",
+    "file": "apps/desktop/src/status.ts",
+    "find": "  if (!heartbeatIsFresh(snapshot.heartbeatAt, opts.now ?? new Date())) {\n    return { code: 1, lines: ['not answering'] }\n  }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/health-freshness.test.ts"]
+  },
+  {
+    "name": "trust a missing heartbeat",
+    "file": "apps/desktop/src/status.ts",
+    "find": "  const at = heartbeatAt === undefined ? Number.NaN : Date.parse(heartbeatAt)\n",
+    "replace": "  if (heartbeatAt === undefined) return true\n  const at = Date.parse(heartbeatAt)\n",
+    "tests": ["apps/desktop/test/health-freshness.test.ts"]
+  },
+  {
+    "name": "trust a future heartbeat",
+    "file": "apps/desktop/src/status.ts",
+    "find": "return Math.abs(now.getTime() - at) <= HEARTBEAT_STALE_MS",
+    "replace": "return now.getTime() - at <= HEARTBEAT_STALE_MS",
+    "tests": ["apps/desktop/test/health-freshness.test.ts"]
+  },
+  {
+    "name": "parse drops the heartbeat",
+    "file": "apps/desktop/src/health.ts",
+    "find": "    ...(typeof heartbeatAt === 'string' && { heartbeatAt }),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/health-freshness.test.ts"]
+  },
+  {
+    "name": "equate exit completed with delivered",
+    "file": "packages/scorecards/src/project.ts",
+    "find": "  if (validation === 'unknown' || stage === undefined) return 'unknown'\n  return DELIVERED_STAGES.includes(stage) ? 'delivered' : 'not-delivered'\n",
+    "replace": "  return 'delivered'\n",
+    "tests": ["packages/scorecards/test/delivery-outcomes.test.ts"]
+  },
+  {
+    "name": "a failed check still delivers",
+    "file": "packages/scorecards/src/project.ts",
+    "find": "  if (validation === 'failed') return 'not-delivered'\n",
+    "replace": "",
+    "tests": ["packages/scorecards/test/delivery-outcomes.test.ts"]
+  },
+  {
+    "name": "count a check from another head",
+    "file": "packages/scorecards/src/project.ts",
+    "find": "(context.checks ?? []).filter((check) => check.sha === context.head)",
+    "replace": "(context.checks ?? [])",
+    "tests": ["packages/scorecards/test/delivery-outcomes.test.ts"]
+  },
+  {
+    "name": "take cost from the last usage event in delta mode",
+    "file": "packages/scorecards/src/project.ts",
+    "find": "  if (mode === 'delta') return readings.reduce((sum, value) => sum + value, 0)\n",
+    "replace": "",
+    "tests": ["packages/scorecards/test/delivery-outcomes.test.ts"]
+  },
+  {
+    "name": "call a partial figure a total",
+    "file": "packages/scorecards/src/project.ts",
+    "find": "const partial = costs.length < usage.length || (mode === 'cumulative' && restarted(costs))",
+    "replace": "const partial = false",
+    "tests": ["packages/scorecards/test/delivery-outcomes.test.ts"]
+  },
+  {
+    "name": "sum a cumulative counter",
+    "file": "packages/scorecards/src/project.ts",
+    "find": "  return readings.at(-1) ?? 'unknown'\n",
+    "replace": "  return readings.reduce((sum, value) => sum + value, 0)\n",
+    "tests": ["packages/scorecards/test/delivery-outcomes.test.ts"]
+  },
+  {
+    "name": "count a replay twice",
+    "file": "packages/scorecards/src/project.ts",
+    "find": "    if (seen.has(key)) return false\n",
+    "replace": "",
+    "tests": ["packages/scorecards/test/delivery-outcomes.test.ts"]
+  },
+  {
+    "name": "rate success on a clean exit",
+    "file": "packages/scorecards/src/tiers.ts",
+    "find": "        : validated.filter((row) => row.validation === 'passed').length / validated.length,",
+    "replace": "        : rows.filter((row) => row.result === 'completed').length / attempts,",
+    "tests": ["packages/scorecards/test/delivery-outcomes.test.ts"]
+  },
+  {
+    "name": "read a stored stage in the planner",
+    "file": "packages/meta/src/context.ts",
+    "find": "stage: stageOf(workViewOf(doc, stageFacts(store, doc, now))).label,",
+    "replace": "stage: String(doc.stage ?? doc.state ?? 'unknown'),",
+    "tests": ["packages/meta/test/context-stage.test.ts"]
+  },
+  {
+    "name": "count a lapsed card in the planner stage",
+    "file": "packages/meta/src/context.ts",
+    "find": "      .filter((card) => String(card.expiresAt ?? '') > now)\n",
+    "replace": "",
+    "tests": ["packages/meta/test/context-stage.test.ts"]
+  },
+  {
+    "name": "keep the raw time in a held reason",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "Held by you since ${whenText(str(hold?.at), this.#now()) ?? 'an unknown time'}",
+    "replace": "Held by you since ${shortOrNull(str(hold?.at)) ?? 'an unknown time'}",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "list wake rows in search",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      excludeIdPrefix: WAKE_MESSAGE_PREFIX,\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "find a wake row by id",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "const byId = q.startsWith(WAKE_MESSAGE_PREFIX) ? undefined : this.#reads.getDoc('message', q)",
+    "replace": "const byId = this.#reads.getDoc('message', q)",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "read no delivery record",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    if (record !== undefined) {\n      return {\n        stage: DELIVERY_STAGES",
+    "replace": "    if (record === null) {\n      return {\n        stage: DELIVERY_STAGES",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "a planned model reads as what ran",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "const model = str(attempt.model) ?? (engine === null ? null : str(attempt.resolved_model))",
+    "replace": "const model = str(attempt.model) ?? str(attempt.resolved_model)",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "a check from another head shows",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      if (str(check.name) === null || str(check.sha) !== head) return []\n",
+    "replace": "      if (str(check.name) === null) return []\n",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "an errored check reads not-run",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "status === 'failed' || status === 'error' ? 'failed'",
+    "replace": "status === 'failed' ? 'failed'",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "hide skipped checks",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    if (allChecks.length === 0 && skipped !== null) {",
+    "replace": "    if (allChecks.length < 0 && skipped !== null) {",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "attempts leave search",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      if (!inScope(workItemId, null)) continue\n      const id = String(attempt.id)\n      add({\n        kind: 'attempt',",
+    "replace": "      if (!inScope(workItemId, null)) continue\n      const id = String(attempt.id)\n      void add\n      void ({\n        kind: 'attempt',",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "attempt search ignores the repo filter",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      if (!inScope(workItemId, null)) continue\n      const id = String(attempt.id)\n      add({\n        kind: 'attempt',",
+    "replace": "      const id = String(attempt.id)\n      add({\n        kind: 'attempt',",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "usage stops at the last reading of the doc",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      if (spend === 'unknown') return { usd: stored, partial: false }\n      return { usd: spend, partial: capped || spendCoverage === 'subtotal' }\n",
+    "replace": "      void spend\n      void spendCoverage\n      void capped\n      return { usd: stored, partial: false }\n",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "billing mode ignores the slot",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    if (kind?.endsWith('-sub')) return 'subscription'\n    return kind?.endsWith('-api') ? 'api' : undefined\n",
+    "replace": "    return kind === null ? undefined : undefined\n",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  }
+]

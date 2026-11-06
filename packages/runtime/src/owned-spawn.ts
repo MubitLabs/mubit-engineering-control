@@ -6,6 +6,7 @@
  */
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
+import type { Readable, Writable } from 'node:stream'
 import type { Supervisor } from './supervisor'
 import { SupervisorError } from './supervisor'
 
@@ -15,6 +16,8 @@ export type OwnedSpawn = (
 ) => {
   pid: number | undefined
   stdout: AsyncIterable<string>
+  /** Absent with `stdin: false`: an engine that speaks over stdio, or takes stream input, has it. */
+  stdin?: Writable
   exited: Promise<number>
   kill(signal?: string): void
 }
@@ -24,6 +27,10 @@ export type OwnedSpawnHooks = {
   onStderr?: (chunk: string) => void
   /** How long a group may outlive its leader before it is stopped. */
   reapAfterMs?: number
+  /** `false` gives the engine an empty stdin. Otherwise it is an open pipe, for stream input or stdio. */
+  stdin?: boolean
+  /** Called as soon as the group exists, so its identity is stored before anything else can fail. */
+  onStart?: (pid: number) => void
 }
 
 /** §8.5: what a finished engine left behind ends with it, or it would hold stdout open. */
@@ -43,7 +50,7 @@ export function ownedSpawn(
       cwd: opts.cwd,
       env: opts.env,
       detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [hooks.stdin === false ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     })
     // spawn() reports ENOENT and friends through an async 'error' event; without a pid there is
     // no process to own, and the caller hears it as a throw.
@@ -58,9 +65,13 @@ export function ownedSpawn(
       })
     }
     supervisor.adopt(owner.attemptId, owner.generation, pid)
+    hooks.onStart?.(pid)
 
-    child.stderr.setEncoding('utf8')
-    child.stderr.on('data', (chunk: string) => hooks.onStderr?.(chunk))
+    // A write after the engine has gone is the caller's to notice, through `exited`.
+    child.stdin?.on('error', () => {})
+    const stderr = child.stderr as Readable
+    stderr.setEncoding('utf8')
+    stderr.on('data', (chunk: string) => hooks.onStderr?.(chunk))
     const exited = new Promise<number>((resolve) => {
       child.once('exit', (code, signal) => {
         resolve(code ?? 128 + (SIGNAL_NUMBERS[signal ?? ''] ?? 15))
@@ -74,7 +85,8 @@ export function ownedSpawn(
     })
     return {
       pid,
-      stdout: createInterface({ input: child.stdout }),
+      stdout: createInterface({ input: child.stdout as Readable }),
+      ...(child.stdin !== null && { stdin: child.stdin as Writable }),
       exited,
       kill: (signal = 'SIGTERM') => {
         try {

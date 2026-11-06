@@ -14,6 +14,7 @@ import type {
   IsoTime,
   Json,
   Operation,
+  Question,
   Report,
   Slot,
   SlotId,
@@ -23,7 +24,7 @@ import type {
   UsageReading,
 } from '@mec/contracts'
 import { ATTEMPT_MACHINE, canTransition, TASK_MACHINE, transition } from '@mec/domain'
-import { failLaunch } from '@mec/meta'
+import { type FollowUps, failLaunch } from '@mec/meta'
 import type { AttemptFacts, CheckOutcome, ParkedState } from '@mec/runtime'
 
 type AttemptEvent = (typeof ATTEMPT_MACHINE)[number]['event']
@@ -41,16 +42,43 @@ export const reportDocId = (attemptId: string, n: number): string => `report/${a
 
 export type Cleaner = <T>(attemptId: string, value: T) => T
 
+/** Where a fact goes past the store: reports and reads to follow-ups, and a nudge for a pass. */
+export type FactsListener = {
+  followups?: Pick<FollowUps, 'onReport' | 'inputsRead' | 'openQuestion'>
+  /** A fact a scheduler pass should see now, not at the next tick (§11). After the commit. */
+  changed?: () => void
+  /** §5.10 Inform: in the park's own transaction. */
+  parked?: (
+    doc: StoreDoc,
+    state: ParkedState,
+    reason: string,
+    resetsAt: string | undefined,
+    at: string,
+  ) => void
+}
+
 export class StoreFacts implements AttemptFacts {
   readonly #store: Store
   readonly #clean: Cleaner
   readonly #now: () => string
+  readonly #listener: FactsListener
 
   /** `clean` redacts for one attempt: anything an agent wrote passes it before a write. */
-  constructor(store: Store, clean: Cleaner, now: () => string = () => new Date().toISOString()) {
+  constructor(
+    store: Store,
+    clean: Cleaner,
+    now: () => string = () => new Date().toISOString(),
+    listener: FactsListener = {},
+  ) {
     this.#store = store
     this.#clean = clean
     this.#now = now
+    this.#listener = listener
+  }
+
+  #changed(): void {
+    const { changed } = this.#listener
+    if (changed !== undefined) this.#store.afterCommit(changed)
   }
 
   atomic<T>(fn: () => T): T {
@@ -64,9 +92,11 @@ export class StoreFacts implements AttemptFacts {
   attemptStarted(attempt: AttemptRef, generation: Generation, session_id: string | undefined): void {
     const doc = this.#current(attempt)
     if (doc === undefined || generation !== attempt.generation) return
-    if (this.#move(doc, 'agent_started', { ...(session_id !== undefined && { session_id }) })) {
-      this.#moveTask(doc, 'attempt_started')
-    }
+    const session: StoreDoc = session_id !== undefined ? { session_id } : {}
+    if (this.#move(doc, 'agent_started', session)) this.#moveTask(doc, 'attempt_started')
+    // A resumed attempt is running already, and the session it continues may have a new id.
+    else if (doc.state === 'running')
+      this.#store.attempts.save({ ...doc, ...session, updatedAt: this.#now() })
   }
 
   inputsDelivered(attempt: AttemptRef, input_ids: InputId[]): void {
@@ -74,7 +104,9 @@ export class StoreFacts implements AttemptFacts {
   }
 
   inputsRead(attempt: AttemptRef, input_ids: InputId[]): void {
-    this.#note(attempt, 'attempt.inputs_read', { input_ids })
+    const { followups } = this.#listener
+    if (followups !== undefined) followups.inputsRead(attempt.attempt_id, input_ids)
+    else this.#note(attempt, 'attempt.inputs_read', { input_ids })
   }
 
   turnEnded(attempt: AttemptRef, generation: Generation): void {
@@ -105,7 +137,22 @@ export class StoreFacts implements AttemptFacts {
     })
     if (doc !== undefined) this.#store.attempts.save({ ...doc, reports: n, updatedAt: at })
     this.#note(attempt, 'attempt.report', { n, kind: clean.kind, summary: clean.summary })
+    // §6: the wake or note commits with the report it came from.
+    const current = this.#store.attempts.get(attemptId)
+    if (current !== undefined) this.#listener.followups?.onReport(current, clean, n, at)
+    this.#changed()
     return n
+  }
+
+  /** §12.6: `ask_user` is a question with no report around it. */
+  questionAsked(
+    attempt: AttemptRef,
+    question: Question,
+  ): { questionId: string; reused: boolean; answer?: string } {
+    const doc = this.#store.attempts.get(attempt.attempt_id)
+    const followups = this.#listener.followups
+    if (doc === undefined || followups === undefined) throw new Error('mec-tools: questions are not wired')
+    return followups.openQuestion(doc, this.#clean(attempt.attempt_id, question), this.#now())
   }
 
   permissionRequested(attempt: AttemptRef, request_id: string, operation: Operation): void {
@@ -118,6 +165,12 @@ export class StoreFacts implements AttemptFacts {
   rateLimitObserved(attempt: AttemptRef, slot: SlotId, reading: UsageReading): void {
     const stream = `slot:${slot}`
     const body = { attemptId: attempt.attempt_id, ...reading } as unknown as Json
+    const doc = this.#store.slots.get(slot)
+    if (doc !== undefined && reading.utilization !== undefined) {
+      // §11: placement reads this against the ceiling. No reading stays no reading.
+      const usage = { usageUtilization: reading.utilization, updatedAt: reading.observed_at }
+      this.#store.slots.save({ ...doc, ...usage })
+    }
     this.#store.events.append(stream, {
       stream,
       seq: (this.#store.events.read(stream).at(-1)?.seq ?? 0) + 1,
@@ -154,6 +207,7 @@ export class StoreFacts implements AttemptFacts {
 
   slotChanged(slot: Slot): void {
     this.#store.slots.save(slot as unknown as StoreDoc)
+    this.#changed()
   }
 
   workCompleted(attempt: AttemptRef, head: string): void {
@@ -183,20 +237,56 @@ export class StoreFacts implements AttemptFacts {
     if (doc === undefined) return
     const names = outcomes.map((outcome) => outcome.name)
     this.#move(doc, passed ? 'checks_passed' : 'checks_failed', { head_sha: head, checks: names })
+    this.#changed()
   }
 
-  checksSkipped(attempt: AttemptRef, head: string, reason: string): void {
+  checksSkipped(attempt: AttemptRef, head: string, reason: string, stopped?: string): void {
     const doc = this.#current(attempt)
     if (doc !== undefined) {
-      this.#store.attempts.save({ ...doc, checks_note: reason, updatedAt: this.#now() })
+      this.#store.attempts.save({
+        ...doc,
+        checks_note: reason,
+        ...(stopped !== undefined && { checks_stopped: stopped }),
+        updatedAt: this.#now(),
+      })
     }
     this.#note(attempt, 'attempt.checks_skipped', { head_sha: head, reason })
   }
 
-  attemptParked(attempt: AttemptRef, state: ParkedState, reason: string): void {
+  attemptParked(attempt: AttemptRef, state: ParkedState, reason: string, resetsAt?: string): void {
     const doc = this.#current(attempt)
     if (doc === undefined) return
-    this.#move(doc, PARK_EVENT[state], { terminal_reason: reason })
+    const at = this.#now()
+    const clean = this.#clean(attempt.attempt_id, reason)
+    const parked = { state, reason: clean, at, ...(resetsAt !== undefined && { resets_at: resetsAt }) }
+    if (!this.#move(doc, PARK_EVENT[state], { terminal_reason: clean, parked })) return
+    this.#note(attempt, 'attempt.parked', parked)
+    this.#listener.parked?.(doc, state, clean, resetsAt, at)
+    this.#changed()
+  }
+
+  stopFailed(attempt: AttemptRef, detail: string): void {
+    const doc = this.#store.attempts.get(attempt.attempt_id)
+    if (doc !== undefined) {
+      this.#store.attempts.save({ ...doc, stop_failed: detail, updatedAt: this.#now() })
+    }
+    this.#note(attempt, 'attempt.stop_failed', { detail })
+  }
+
+  attemptStalled(attempt: AttemptRef): void {
+    const doc = this.#current(attempt)
+    if (doc !== undefined && this.#move(doc, 'stall_detected', {})) {
+      this.#note(attempt, 'attempt.stalled', { attemptId: attempt.attempt_id })
+    }
+  }
+
+  journalled(attemptId: string): ReadonlySet<string> {
+    const held = new Set<string>()
+    for (const { body } of this.#store.events.read(`attempt:${attemptId}`)) {
+      const { generation, seq } = (body ?? {}) as { generation?: unknown; seq?: unknown }
+      if (typeof seq === 'number') held.add(`${String(generation)} ${seq}`)
+    }
+    return held
   }
 
   attemptInterrupted(attempt: AttemptRef, reason: string): void {
@@ -218,6 +308,7 @@ export class StoreFacts implements AttemptFacts {
     }
     failLaunch(this.#store, payload, reason, this.#now())
     this.#moveTask(doc, 'attempt_failed')
+    this.#changed()
   }
 
   /** The attempt this fact speaks for; an older generation's fact moves nothing. */

@@ -1,0 +1,16 @@
+[
+  {
+    "name": "class back to a requirement",
+    "file": "packages/domain/src/scheduling.ts",
+    "find": "    (slot.pinnedRoles.length === 0 || slot.pinnedRoles.includes(task.role))",
+    "replace": "    (task.slotClass === undefined || slot.slotClass === task.slotClass) &&\n    (slot.pinnedRoles.length === 0 || slot.pinnedRoles.includes(task.role))",
+    "tests": ["packages/domain/test/scheduling.test.ts"]
+  },
+  {
+    "name": "class preference ignored",
+    "file": "packages/domain/src/scheduling.ts",
+    "find": "(preferred.length > 0 ? preferred : usable)",
+    "replace": "usable",
+    "tests": ["packages/domain/test/scheduling.test.ts"]
+  }
+]

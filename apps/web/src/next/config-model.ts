@@ -246,7 +246,7 @@ export function saveBar(editor: Editor): SaveBarView {
 // ─── Capabilities ───────────────────────────────────────────────────────────────
 
 const CAPABILITY_REASONS: Record<keyof Capabilities, string> = {
-  switchWork: 'Switching work to another connection is not available in this release.',
+  switchWork: 'This server cannot switch work to another connection.',
   drain: 'Draining a connection is not available in this release.',
   backups: 'This server cannot take a backup.',
   isolationEdit:
@@ -261,6 +261,104 @@ export function capabilityGate(
   if (capabilities?.[name] === true) return { enabled: true }
   return { enabled: false, reason: CAPABILITY_REASONS[name] }
 }
+
+// ─── Parked work ────────────────────────────────────────────────────────────────
+
+/** One parked attempt, as `GET /api/parked` states it (§5.10). */
+export interface ParkedRow {
+  workItemId: string
+  workTitle: string
+  attemptId: string
+  slotId: string
+  slotLabel: string
+  state: string
+  reason: string
+  /** Null is what the provider left unsaid. */
+  resetAt: string | null
+  worktreeKept: boolean
+}
+
+const PARK_HEADINGS: Record<string, string> = {
+  quota_wait: 'Parked: out of quota',
+  auth_required: 'Parked: needs sign-in',
+  provider_down: 'Parked: provider unreachable',
+}
+
+export function parkedFacts(row: ParkedRow, format: (iso: string) => string) {
+  const known = row.resetAt !== null && !Number.isNaN(Date.parse(row.resetAt))
+  return {
+    heading: PARK_HEADINGS[row.state] ?? 'Parked',
+    slot: row.slotLabel,
+    reason: row.reason,
+    reset: known ? `Resets ${format(row.resetAt as string)}` : 'Reset unknown',
+    worktree: row.worktreeKept ? 'The worktree is kept' : 'No worktree on record',
+  }
+}
+
+export interface ParkedMoves {
+  signIn: boolean
+  targets: ConnectionRow[]
+  note: string | null
+}
+
+/**
+ * What parked work may do. An auth park moves nowhere (§5.10), and the switch route answers for a
+ * whole work item, so one auth park rules out a switch for its siblings too.
+ */
+export function parkedMoves(
+  row: ParkedRow,
+  all: readonly ParkedRow[],
+  connections: readonly ConnectionRow[],
+  capabilities: Capabilities | null,
+): ParkedMoves {
+  const siblings = all.filter((other) => other.workItemId === row.workItemId)
+  if (siblings.some((other) => other.state === 'auth_required')) {
+    return { signIn: row.state === 'auth_required', targets: [], note: null }
+  }
+  const gate = capabilityGate(capabilities, 'switchWork')
+  if (!gate.enabled) return { signIn: false, targets: [], note: gate.reason }
+  const parkedOn = new Set(siblings.map((other) => other.slotId))
+  const targets = connections.filter(
+    (connection) => connection.state === 'healthy' && !parkedOn.has(connection.id),
+  )
+  return {
+    signIn: false,
+    targets,
+    note: targets.length === 0 ? 'No other healthy connection can take this work.' : null,
+  }
+}
+
+export function switchPlan(row: ParkedRow, target: ConnectionRow) {
+  return {
+    title: `Switch this work to ${target.label}?`,
+    lines: [
+      `Moves ${row.workTitle} from ${row.slotLabel} to ${target.label}.`,
+      'A new attempt starts on the same worktree with a handoff note. The session does not carry over.',
+      'The parked attempt stays on the record and does not resume.',
+    ],
+    confirmLabel: `Switch to ${target.label}`,
+  }
+}
+
+/** Only what the route answered: a card is not a move. */
+export function switchResult(answer: { status: unknown }, target: ConnectionRow): string {
+  if (answer.status === 'confirmation') {
+    return `Confirmation opened. Approve it in Needs you to move this work to ${target.label}.`
+  }
+  if (answer.status === 'switched') return `Moved to ${target.label}. A new attempt is queued.`
+  return 'The server gave no result. Check this work before trying again.'
+}
+
+const SWITCH_REFUSALS: Record<string, string> = {
+  held: 'This work is on hold. Nothing moved.',
+  nothing_parked: 'This work is no longer parked. Nothing moved.',
+  auth_park_never_switches: 'Work waiting on a sign-in cannot move. Sign in again.',
+  target_unhealthy: 'That connection is not healthy now. Nothing moved.',
+  same_slot: 'This work is already on that connection.',
+}
+
+export const switchRefusal = (code: string): string =>
+  SWITCH_REFUSALS[code] ?? `The switch was refused: ${code}. Nothing moved.`
 
 // ─── Connections ────────────────────────────────────────────────────────────────
 

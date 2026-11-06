@@ -20,7 +20,13 @@ import type { EngineEvent, ErrorClass } from '@mec/contracts'
 
 export type ParkDecision =
   | { park: false }
-  | { park: true; state: 'quota_wait' | 'auth_required' | 'provider_down'; reason: string }
+  | {
+      park: true
+      state: 'quota_wait' | 'auth_required' | 'provider_down'
+      reason: string
+      /** The reset the engine reported, when it reported one. */
+      resetsAt?: string
+    }
 
 /** The parkable error classes; the attempt-local classes map to nothing and are skipped. */
 const ERROR_PARK_STATE: Readonly<
@@ -51,8 +57,45 @@ export function parkFromEvents(events: readonly EngineEvent[]): ParkDecision {
         park: true,
         state: 'quota_wait',
         reason: `rate_limit rejected in window ${event.window}${resets}`,
+        ...(resets !== '' && { resetsAt: String(event.resets_at) }),
       }
     }
   }
   return decision
+}
+
+/** What §10 says of a mandate before a resume; the same shape `revalidate` answers with. */
+export type MandateCheck = { ok: true } | { ok: false; reason: 'expired' | 'withdrawn' | 'policy_changed' }
+
+export type ResumeVerdict =
+  | { verdict: 'run' }
+  | { verdict: 'defer'; reason: 'held' }
+  | { verdict: 'drop'; reason: 'mandate_expired' | 'mandate_withdrawn' | 'policy_changed' }
+
+/**
+ * §5.10, §10, §13.4, in the launch gate's order: a dead mandate ends the resume, a hold keeps it
+ * waiting, and a policy change alone does not outrank a hold. Nothing here lifts one.
+ */
+export function resumeVerdict(input: { held: boolean; mandate: MandateCheck }): ResumeVerdict {
+  const { held, mandate } = input
+  if (!mandate.ok && mandate.reason !== 'policy_changed') {
+    return { verdict: 'drop', reason: `mandate_${mandate.reason}` }
+  }
+  if (held) return { verdict: 'defer', reason: 'held' }
+  return mandate.ok ? { verdict: 'run' } : { verdict: 'drop', reason: 'policy_changed' }
+}
+
+/**
+ * §5.10: a reported reset makes parked work eligible once a probe confirms health; an unknown one
+ * waits for the next healthy probe. `resuming` is the row already on its way: it resumes once.
+ */
+export function parkReady(input: {
+  resetsAt?: string
+  slotHealthy: boolean
+  resuming: boolean
+  now: string
+}): boolean {
+  const { resetsAt, slotHealthy, resuming, now } = input
+  if (resuming || !slotHealthy) return false
+  return resetsAt === undefined || resetsAt === 'unknown' || resetsAt <= now
 }

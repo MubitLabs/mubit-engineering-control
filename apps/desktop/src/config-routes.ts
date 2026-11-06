@@ -24,6 +24,7 @@ import type { FastifyInstance } from 'fastify'
 import { readPolicy, savePolicy } from './policy-store'
 import { buildReadiness, type Readiness, SETUP_DOC_ID, SETUP_STEPS, type SetupStep } from './readiness'
 import type { ProbeCmd } from './server'
+import { parkedAttempts } from './slot-switch'
 
 const WIZARD_ENGINES = ['claude', 'codex', 'opencode'] as const
 const BACKUPS_DOC_ID = 'settings/backups'
@@ -67,6 +68,8 @@ export type ConfigDeps = {
   probeCmd: ProbeCmd
   /** The text this process started with, which is the one in force. */
   policyText: string
+  /** A work item's stored title, else its origin message's first line. */
+  workTitle: (work: StoreDoc) => string | undefined
   backups?: BackupControl
   /** The shape gate of `POST /api/slots/api-key`, by keystore id. */
   keyShape(provider: string): { pattern: RegExp; shape: string } | undefined
@@ -152,6 +155,27 @@ function connectionRow(doc: StoreDoc) {
   }
 }
 
+/** §5.10: what chat says of a park. A reset nobody reported stays null. */
+function parkedRow(deps: ConfigDeps, doc: StoreDoc) {
+  const { store } = deps
+  const park = doc.parked as { reason?: unknown; resets_at?: unknown } | undefined
+  const reset = text(park?.resets_at)
+  const workItemId = String(doc.workItemId)
+  const slotId = String(doc.slotId)
+  const work = store.workItems.get(workItemId)
+  return {
+    workItemId,
+    workTitle: (work === undefined ? undefined : deps.workTitle(work)) ?? workItemId,
+    attemptId: String(doc.id),
+    slotId,
+    slotLabel: text(store.slots.get(slotId)?.label) ?? slotId,
+    state: String(doc.state),
+    reason: redact(text(park?.reason) ?? text(doc.terminal_reason) ?? 'No reason was recorded', [], []),
+    resetAt: reset !== undefined && !Number.isNaN(Date.parse(reset)) ? reset : null,
+    worktreeKept: text(doc.worktree) !== undefined,
+  }
+}
+
 export function registerConfigRoutes(
   app: FastifyInstance,
   deps: ConfigDeps,
@@ -196,6 +220,8 @@ export function registerConfigRoutes(
       .map(connectionRow),
     options: CONNECTION_OPTIONS,
   }))
+
+  app.get('/api/parked', async () => ({ rows: parkedAttempts(store).map((doc) => parkedRow(deps, doc)) }))
 
   // §5.6: a dedicated sign-in needs a slot to land in; the vendor's own card fills its home.
   app.post('/api/slots/dedicated', async (request, reply) => {

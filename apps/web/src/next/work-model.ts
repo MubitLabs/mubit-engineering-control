@@ -1,7 +1,9 @@
 import type { TaskProgress, TaskRowProps } from './Conversation'
 import type { ApprovalProps, DecisionStatus, QuestionProps } from './Decision'
-import type { Fact, InspectorChecks, InspectorScope } from './Inspector'
+import type { ArtifactLinkView, Fact, InspectorChecks, InspectorScope } from './Inspector'
 import type {
+  ActivityItem,
+  ArtifactPage,
   AttemptView,
   CardEvidence,
   CardItem,
@@ -363,14 +365,180 @@ const FINISHED_TASKS = new Set(['awaiting_review', 'accepted', 'integrated'])
 
 const short = (sha: string) => sha.slice(0, 7)
 
-function latestAttempt(attempts: readonly AttemptView[]): AttemptView | null {
+export function latestAttempt(attempts: readonly AttemptView[]): AttemptView | null {
   return attempts.reduce<AttemptView | null>(
     (latest, attempt) => (latest === null || attempt.generation >= latest.generation ? attempt : latest),
     null,
   )
 }
 
-function taskChecks(detail: TaskDetail, head: string | null): InspectorChecks {
+/** What the Activity tab has read of one attempt. `tail` is the cursor of the last page read. */
+export interface ActivityPages {
+  items: readonly ActivityItem[]
+  tail: string | null
+  nextCursor: string | null
+}
+
+export type ArtifactPages = ArtifactPage
+
+export interface OpenArtifact {
+  attemptId: string
+  ref: string
+  read: Read<ArtifactPages>
+}
+
+/** The reads behind a task's Activity tab and artifacts, and what the page does with them. */
+export interface TaskEvidence {
+  attemptId: string | null
+  activity: Read<ActivityPages>
+  artifact: OpenArtifact | null
+  onAttempt: (id: string) => void
+  onMore: () => void
+  onRetry: () => void
+  onArtifact: (attemptId: string, ref: string) => void
+  onArtifactMore: () => void
+  onArtifactRetry: () => void
+}
+
+const ACTIVITY_NOTE =
+  'What this attempt recorded, oldest first. A line appears once a step has finished, so this does not show what is running now.'
+
+function sizeLabel(bytes: number): string {
+  if (bytes < 1024) return `${bytes} bytes`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+const staleNote = (message: string, readAt: string | null): string =>
+  `${message} What is shown may be out of date.${readAt ? ` Last read ${timeLabel(readAt)}.` : ''}`
+
+function artifactPanel(read: Read<ArtifactPages>, evidence: TaskEvidence): ArtifactLinkView['panel'] {
+  if (read.status === 'loading') return { note: 'Reading this file', text: null }
+  const { data } = read
+  const retry = { label: 'Retry', onClick: evidence.onArtifactRetry }
+  if (data === null) {
+    return { note: read.status === 'failed' ? read.message : NOT_RECORDED, text: null, action: retry }
+  }
+  if (data.kind === 'binary') {
+    return { note: `Binary file, ${sizeLabel(data.size)}. Its contents are not shown.`, text: null }
+  }
+  if (read.status === 'failed') {
+    return { note: staleNote(read.message, read.readAt), text: data.text, action: retry }
+  }
+  return {
+    note: `${sizeLabel(data.size)}. Read ${timeLabel(read.readAt)}.`,
+    text: data.text,
+    ...(data.nextCursor !== null && {
+      action: { label: 'Show more', onClick: evidence.onArtifactMore },
+    }),
+  }
+}
+
+function artifactLink(
+  attemptId: string,
+  ref: string,
+  label: string,
+  evidence: TaskEvidence,
+): ArtifactLinkView {
+  const { artifact } = evidence
+  const open = artifact?.attemptId === attemptId && artifact.ref === ref ? artifact : null
+  return {
+    label,
+    open: open !== null,
+    onToggle: () => evidence.onArtifact(attemptId, ref),
+    panel: open === null ? null : artifactPanel(open.read, evidence),
+  }
+}
+
+/** Only a report names artifacts. The server cuts a long detail, and a cut one names none. */
+function reportArtifacts(item: ActivityItem): { kind: string; ref: string }[] {
+  if (item.type !== 'report' || item.detail === null) return []
+  let body: unknown
+  try {
+    body = JSON.parse(item.detail)
+  } catch {
+    return []
+  }
+  const artifacts = (body as { report?: { artifacts?: unknown } } | null)?.report?.artifacts
+  if (!Array.isArray(artifacts)) return []
+  return artifacts.flatMap((entry: { kind?: unknown; ref?: unknown } | null) =>
+    typeof entry?.kind === 'string' && typeof entry.ref === 'string'
+      ? [{ kind: entry.kind, ref: entry.ref }]
+      : [],
+  )
+}
+
+/** A line says what the record says. A `tool_call` is a finished call and earns no state here. */
+function activityEntry(item: ActivityItem, attemptId: string, evidence: TaskEvidence) {
+  return {
+    key: String(item.seq),
+    when: timeLabel(item.at),
+    text: item.summary,
+    detail: item.detail === item.summary ? null : item.detail,
+    artifacts: reportArtifacts(item).map(({ kind, ref }) =>
+      artifactLink(attemptId, ref, `${kind}: ${ref}`, evidence),
+    ),
+  }
+}
+
+function taskActivity(detail: TaskDetail, evidence?: TaskEvidence): InspectorScope['activity'] {
+  if (!detail.coverage.activity) return { note: NOT_RECORDED, entries: [] }
+  if (evidence === undefined || evidence.attemptId === null) {
+    return {
+      note: `Attempts recorded for this task${leftOut(detail.attemptsTruncated, 'older attempts')}.`,
+      entries: detail.attempts.map((entry) => ({
+        when: entry.lastActivityAt ? timeLabel(entry.lastActivityAt) : NOT_RECORDED,
+        text: `Attempt ${entry.generation}: ${entry.state}`,
+      })),
+    }
+  }
+  const { attemptId, activity: read } = evidence
+  const chooser =
+    detail.attempts.length > 1
+      ? {
+          attempts: detail.attempts.map((entry) => ({
+            id: entry.id,
+            label: `Attempt ${entry.generation}: ${entry.state}`,
+            selected: entry.id === attemptId,
+            onSelect: () => evidence.onAttempt(entry.id),
+          })),
+        }
+      : {}
+  if (read.status === 'loading') {
+    return { note: 'Reading this attempt’s activity', entries: [], ...chooser }
+  }
+  const { data } = read
+  const entries = (data?.items ?? []).map((item) => activityEntry(item, attemptId, evidence))
+  if (read.status === 'failed') {
+    return {
+      note: data === null ? read.message : staleNote(read.message, read.readAt),
+      entries,
+      retry: { label: 'Retry', onClick: evidence.onRetry },
+      ...chooser,
+    }
+  }
+  const nextCursor = data?.nextCursor ?? null
+  return {
+    note:
+      entries.length > 0 || nextCursor !== null ? ACTIVITY_NOTE : 'Nothing recorded for this attempt yet.',
+    entries,
+    ...(nextCursor !== null && { more: { label: 'Show more', onClick: evidence.onMore } }),
+    ...chooser,
+  }
+}
+
+/** The attempt's stream at the delivery's cursor. Cut from the cursors, it stays on the 10 s read. */
+export function attemptSubscription(
+  attemptId: string | null,
+  cursors: Readonly<Record<string, number>>,
+): { stream: string; after: number } | null {
+  if (attemptId === null) return null
+  const stream = `attempt:${attemptId}`
+  const after = cursors[stream]
+  return after === undefined ? null : { stream, after }
+}
+
+function taskChecks(detail: TaskDetail, head: string | null, evidence?: TaskEvidence): InspectorChecks {
   if (!detail.coverage.checks) {
     return { state: 'unavailable', heading: NOT_RECORDED, detail: 'No check result is stored for this task.' }
   }
@@ -385,6 +553,7 @@ function taskChecks(detail: TaskDetail, head: string | null): InspectorChecks {
   const decided = results.filter((result) => result.state !== 'not-run')
   if (decided.length === 0) return notRun('No checks ran on this task’s commit.')
   const failed = decided.some((result) => result.state === 'failed')
+  const owner = latestAttempt(detail.attempts.filter((entry) => entry.headSha === head))
   return {
     state: failed ? 'failed' : 'passed',
     heading: failed ? 'Checks failed on this commit' : 'Checks passed on this commit',
@@ -393,6 +562,11 @@ function taskChecks(detail: TaskDetail, head: string | null): InspectorChecks {
       label: result.name,
       detail: result.detail ?? '',
       passed: result.state === 'passed',
+      ...(evidence !== undefined &&
+        owner !== null &&
+        result.artifactRef !== null && {
+          artifact: artifactLink(owner.id, result.artifactRef, result.artifactRef, evidence),
+        }),
     })),
   }
 }
@@ -411,7 +585,7 @@ function usageLabel(detail: TaskDetail): string {
   return missingAttempts > 0 ? `${known}, ${missingAttempts} attempts unknown` : known
 }
 
-export function taskScope(detail: TaskDetail, workTitle: string): InspectorScope {
+export function taskScope(detail: TaskDetail, workTitle: string, evidence?: TaskEvidence): InspectorScope {
   const attempt = latestAttempt(detail.attempts)
   const head = attempt?.headSha ?? detail.diff.headSha
   const actual = attempt?.actual ?? null
@@ -444,16 +618,8 @@ export function taskScope(detail: TaskDetail, workTitle: string): InspectorScope
     title: detail.title,
     overview: { sections: [{ heading: 'Objective', body: detail.objective }], facts },
     technical,
-    checks: taskChecks(detail, head),
-    activity: detail.coverage.activity
-      ? {
-          note: `Attempts recorded for this task${leftOut(detail.attemptsTruncated, 'older attempts')}.`,
-          entries: detail.attempts.map((entry) => ({
-            when: entry.lastActivityAt ? timeLabel(entry.lastActivityAt) : NOT_RECORDED,
-            text: `Attempt ${entry.generation}: ${entry.state}`,
-          })),
-        }
-      : { note: NOT_RECORDED, entries: [] },
+    checks: taskChecks(detail, head, evidence),
+    activity: taskActivity(detail, evidence),
     diff: detail.coverage.diff
       ? {
           summary: `${detail.diff.summary ?? NOT_RECORDED}${leftOut(detail.diff.truncated, 'more files')}`,
@@ -492,12 +658,13 @@ export function taskInspector(
   read: Read<TaskDetail>,
   workId: string,
   workTitle: string,
+  evidence?: TaskEvidence,
 ): InspectorScope | null {
   if (read.status === 'loading') return pendingScope(taskId, workTitle, 'Reading this task')
   const { data } = read
   if (data === null) return pendingScope(taskId, workTitle, read.status === 'failed' ? read.message : '')
   if (data.id !== taskId || data.workItemId !== workId) return null
-  const scope = taskScope(data, workTitle)
+  const scope = taskScope(data, workTitle, evidence)
   return read.status === 'failed' ? staleScope(scope, readSurface(read, () => false).freshness ?? '') : scope
 }
 
@@ -617,6 +784,7 @@ const CARD_LABELS: Record<string, string> = {
   push: 'Push approval',
   pr_create: 'Pull request approval',
   pr_merge: 'Merge approval',
+  slot_switch: 'Switch approval',
 }
 
 const cardLabel = (cls: string) => CARD_LABELS[cls] ?? 'Approval'

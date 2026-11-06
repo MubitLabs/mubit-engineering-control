@@ -1,6 +1,6 @@
 // M2.1's permission boundary: what a specialist's token reaches, on the real server with real
 // tokens over real HTTP. The fence is the point, so everything goes through `tools/call`.
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Operation } from '@mec/contracts'
@@ -92,6 +92,15 @@ afterAll(async () => {
 })
 
 describe('read', () => {
+  it('a follow-up routed to this attempt reached it, so it may read it', async () => {
+    store.atomic(() => {
+      store.messages.save({ id: 'msg_follow', text: 'a follow-up', ownerAttemptId: 'att_1' })
+      store.messages.save({ id: 'msg_other', text: 'not yours', ownerAttemptId: 'att_2' })
+    })
+    expect(answer(await call(own, 'read', { resource: 'message/msg_follow' })).text).toContain('a follow-up')
+    expect((await call(own, 'read', { resource: 'message/msg_other' })).result).toBeUndefined()
+  })
+
   it('specialist reads only its own attempt', async () => {
     expect(answer(await call(own, 'read', { resource: 'attempt/att_1' })).text).toContain('att_1')
     expect(answer(await call(own, 'read', { resource: 'task/task_1' })).text).toContain('own task')
@@ -268,6 +277,43 @@ describe('confirm', () => {
     expect(verdict.behavior).toBe('deny')
   })
 
+  it('a hard link to a control file is that file, whatever it is called', async () => {
+    mkdirSync(join(worktree, '.mec', 'nested'))
+    writeFileSync(join(worktree, '.mec', 'nested', 'token'), 'x')
+    const controls = [join('.git'), join('.mec', 'claude-settings.json'), join('.mec', 'nested', 'token')]
+    for (const [index, control] of controls.entries()) {
+      const alias = join(worktree, `alias-${index}.txt`)
+      linkSync(join(worktree, control), alias)
+      for (const tool of ['Write', 'Edit']) {
+        const verdict = await ask(tool, { file_path: alias })
+        expect(verdict.behavior, control).toBe('deny')
+        expect(String(verdict.message), control).toContain('belongs to MEC')
+      }
+    }
+  })
+
+  it('a link to a hard link to .git is denied too', async () => {
+    linkSync(join(worktree, '.git'), join(worktree, 'alias-pointer.txt'))
+    symlinkSync('alias-pointer.txt', join(worktree, 'to-alias'))
+    expect((await ask('Write', { file_path: join(worktree, 'to-alias') })).behavior).toBe('deny')
+  })
+
+  it('a leaf with another name anywhere is denied, in the worktree or the temp dir', async () => {
+    writeFileSync(join(root, 'outside', 'shared.txt'), 'x')
+    linkSync(join(root, 'outside', 'shared.txt'), join(worktree, 'shared.txt'))
+    linkSync(join(root, 'outside', 'shared.txt'), join(tempDir, 'shared.txt'))
+    for (const file_path of [join(worktree, 'shared.txt'), join(tempDir, 'shared.txt')]) {
+      const verdict = await ask('Edit', { file_path })
+      expect(verdict.behavior, file_path).toBe('deny')
+      expect(String(verdict.message), file_path).toContain('hard link')
+    }
+  })
+
+  it('a file with one name stays writable', async () => {
+    writeFileSync(join(worktree, 'plain.txt'), 'x')
+    expect((await ask('Edit', { file_path: join(worktree, 'plain.txt') })).behavior).toBe('allow')
+  })
+
   it('a link loop is denied with a reason, and returns', async () => {
     symlinkSync('loop-b', join(worktree, 'loop-a'))
     symlinkSync('loop-a', join(worktree, 'loop-b'))
@@ -338,7 +384,7 @@ describe('the fence', () => {
     expect(rpc.error?.message).toContain('meta agent')
   })
 
-  it('unwired tools answer an error, never success', async () => {
+  it('a tool with nothing behind it answers an error, never success', async () => {
     for (const [tool, args] of [
       ['ask_user', { question: 'which one?' }],
       ['handback', { message_id: 'msg_1', reason: 'not mine' }],
@@ -346,7 +392,7 @@ describe('the fence', () => {
     ] as const) {
       const rpc = await call(own, tool, args)
       expect(rpc.result, tool).toBeUndefined()
-      expect(rpc.error?.message).toContain('not wired until M2.2')
+      expect(rpc.error?.message).toMatch(/not wired|not available here/)
     }
   })
 

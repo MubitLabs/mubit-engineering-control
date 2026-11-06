@@ -1,4 +1,6 @@
 import type {
+  ActivityItem,
+  ArtifactPage,
   AttemptView,
   CardEvidence,
   ChatLine,
@@ -297,6 +299,57 @@ export const taskDetails = {
     diff: { headSha: TASK_HEAD, summary: 'SAMPLE-ONLY two files changed', files: [], truncated: 0 },
   }),
 } satisfies Record<string, TaskDetail>
+
+const REPORT_BODY = JSON.stringify({
+  report: {
+    kind: 'completion',
+    summary: 'SAMPLE-ONLY done',
+    artifacts: [{ kind: 'log', ref: 'out/run.log' }],
+  },
+})
+
+/** One line of each kind the Activity tab treats differently. */
+export const activityItems = {
+  tool: {
+    seq: 2,
+    type: 'tool_call',
+    at: '2026-11-05T09:58:00.000Z',
+    summary: 'SAMPLE-ONLY Bash',
+    detail: '{"tool":"Bash"}',
+  },
+  report: {
+    seq: 5,
+    type: 'report',
+    at: '2026-11-05T09:59:00.000Z',
+    summary: 'completion: SAMPLE-ONLY done',
+    detail: REPORT_BODY,
+  },
+  // The server cuts a long detail, so this body is not JSON any more.
+  cutReport: {
+    seq: 6,
+    type: 'report',
+    at: '2026-11-05T09:59:30.000Z',
+    summary: 'completion: SAMPLE-ONLY cut',
+    detail: '{"report":{"kind":"comple',
+  },
+} satisfies Record<string, ActivityItem>
+
+export const activityPage = {
+  items: [activityItems.tool, activityItems.report],
+  nextCursor: 'cursor-activity',
+  observedAt: OBSERVED,
+} satisfies Page<ActivityItem>
+
+export const artifactPages = {
+  text: {
+    kind: 'text',
+    ref: 'out/run.log',
+    text: 'SAMPLE-ONLY log\n',
+    size: 1536,
+    nextCursor: 'cursor-artifact',
+  },
+  binary: { kind: 'binary', ref: 'out/image.png', size: 2048 },
+} satisfies Record<string, ArtifactPage>
 
 export const needs = {
   question: {

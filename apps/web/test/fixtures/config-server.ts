@@ -18,10 +18,12 @@ const LONG_TABLE_EDITED = LONG_TABLE.replace('model_81: fast', 'model_81: balanc
 export function sampleServer({
   fail,
   empty,
+  parked = false,
   noChecks = false,
   longProposals = false,
 }: {
   fail: string[]
+  parked?: boolean
   empty: boolean
   noChecks?: boolean
   longProposals?: boolean
@@ -273,7 +275,7 @@ export function sampleServer({
           runtime: { state: paused ? 'paused' : 'ready', instances: 1, answering: true },
           parts: {},
           setup: { has_slot: slots.length > 0, has_repository: repositories.length > 0 },
-          capabilities: { switchWork: false, drain: false, backups: true, isolationEdit: false, pause: true },
+          capabilities: { switchWork: parked, drain: false, backups: true, isolationEdit: false, pause: true },
         })
       }
       if (route === 'GET /api/processing') return json({ paused })
@@ -300,6 +302,39 @@ export function sampleServer({
       if (route === 'GET /api/repositories') return json(repositories)
       if (route === 'GET /api/setup/readiness') return json(readiness())
       if (route === 'GET /api/connections') return json({ rows: slots, options })
+      if (route === 'GET /api/parked') {
+        return json({
+          rows: parked
+            ? [
+                {
+                  workItemId: 'work_quota',
+                  workTitle: 'Sample quota work',
+                  attemptId: 'att_quota',
+                  slotId: 'slot_sample-key',
+                  slotLabel: 'sample-key',
+                  state: 'quota_wait',
+                  reason: 'sample rate limit',
+                  resetAt: null,
+                  worktreeKept: true,
+                },
+                {
+                  workItemId: 'work_auth',
+                  workTitle: 'Sample login work',
+                  attemptId: 'att_auth',
+                  slotId: 'slot_sample-expired',
+                  slotLabel: 'sample-expired',
+                  state: 'auth_required',
+                  reason: 'sample sign-in expired',
+                  resetAt: null,
+                  worktreeKept: true,
+                },
+              ]
+            : [],
+        })
+      }
+      if (route === 'POST /api/work/work_quota/switch-slot') {
+        return json({ status: 'confirmation', confirmationId: 'conf_sample' }, 202)
+      }
       if (route === 'GET /api/setup/drafts') return json(frozenDrafts ?? draftsNow())
       // The one sample proposal asks for what no policy may hold, so Apply shows a refusal.
       if (route === 'POST /api/setup/drafts/draft_sample/apply') {

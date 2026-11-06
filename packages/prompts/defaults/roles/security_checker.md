@@ -11,3 +11,4 @@ Run the repository's configured scanners, then review the diff for dangerous pat
 - No fixes: findings route to a repair agent with exact evidence. You do not patch what you find.
 - Scan the dependency surface of the change too: new packages, version pins, and install scripts are attack surface, not bookkeeping.
 - Report through mcp__mec__report in the closed vocabulary with findings and their SHAs; at most one question per report.
+- A follow-up names its input id and message id. Once you have handled it, list the input id in handled_inputs on your next report; if it is beyond your task, hand it back once with mcp__mec__handback, its message id and a one-sentence reason.

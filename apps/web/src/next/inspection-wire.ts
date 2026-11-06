@@ -83,6 +83,20 @@ export type AttemptView = {
   lastActivityAt: string | null
 }
 
+/** One page item of `GET /api/inspect/attempts/:id/activity`. A `tool_call` has finished. */
+export type ActivityItem = {
+  seq: number
+  type: string
+  at: string
+  summary: string
+  detail: string | null
+}
+
+/** One answer from `GET /api/inspect/artifacts`. Binary files never send their contents. */
+export type ArtifactPage =
+  | { kind: 'text'; ref: string; text: string; size: number; nextCursor: string | null }
+  | { kind: 'binary'; ref: string; size: number }
+
 export type CheckView = {
   name: string
   state: 'passed' | 'failed' | 'not-run'

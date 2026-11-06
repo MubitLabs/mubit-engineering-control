@@ -1,0 +1,171 @@
+#!/usr/bin/env node
+/**
+ * A stand-in for the `codex` binary that really runs as a process. `app-server` speaks the 0.148.0
+ * JSON-RPC shapes over stdio and, like the real one, never exits on its own after a turn. It calls
+ * the same mec-tools endpoint a real engine does, from the `-c` values it was started with and the
+ * token in its environment, so tests see process groups, pipes and tokens for real.
+ *
+ * A test copies this file into its own directory and writes `scenario.json` beside it. Fields:
+ *
+ *   version: 'codex-cli 0.148.0'   what `--version` prints
+ *   login: 'Logged in using ChatGPT'
+ *   mcp: [{name, transport}]       what `mcp list --json` prints, transport being a type name
+ *   profile: 'mec'                 `activePermissionProfile.id`; null drops it, as `sandbox` does
+ *   steps: [...]                   what a turn does, each one of:
+ *
+ *   {notify: {method, params}}     one notification line
+ *   {write: {path, text}}          write a file relative to the working directory
+ *   {ask: {method, params}}        a server request; the answer lands in answers.jsonl
+ *   {call: {tool, args}}           a mec-tools call; the answer lands in tool-answers.jsonl
+ *   {saveToken: true}              copy the bearer token to token.txt beside this file
+ *   {command: seconds}             a `sleep` in a process group of its own, as the real one runs
+ *                                  each shell command; its pid lands in command.pid
+ *   {stubborn: seconds}            the same, but a shell that ignores SIGTERM
+ *   {background: seconds}          the same, but a shell that runs `(sleep &); sleep`, so the job
+ *                                  has no parent left and shares only the group; its pid lands
+ *                                  in command.pid
+ *   {sleep: ms}                    wait
+ *   {complete: 'completed'}        turn/completed with this status
+ *   {exit: n}                      exit with this code
+ *
+ * It writes `seen.json` beside itself on app-server start, and appends each client request it
+ * took to `requests.jsonl`.
+ */
+import { spawn } from 'node:child_process'
+import { appendFileSync, existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { createInterface } from 'node:readline'
+
+const here = dirname(realpathSync(process.argv[1]))
+const scenario = JSON.parse(readFileSync(join(here, 'scenario.json'), 'utf8'))
+const argv = process.argv.slice(2)
+
+if (argv[0] === '--version') {
+  console.log(scenario.version ?? 'codex-cli 0.148.0')
+  process.exit(0)
+}
+if (argv[0] === 'login') {
+  console.error(scenario.login ?? 'Logged in using ChatGPT')
+  process.exit(0)
+}
+if (argv[0] === 'mcp') {
+  const servers = (scenario.mcp ?? []).map(({ name, transport }) => ({
+    name,
+    enabled: true,
+    transport: { type: transport },
+  }))
+  console.log(JSON.stringify(servers))
+  process.exit(0)
+}
+if (argv[0] !== 'app-server') process.exit(64)
+
+const overrides = argv.flatMap((value, index) => (argv[index - 1] === '-c' ? [value] : []))
+const tokenVar = overrides.join(' ').match(/bearer_token_env_var="([^"]+)"/)?.[1]
+const toolsUrl = overrides.join(' ').match(/mcp_servers\.mec=\{url="([^"]+)"/)?.[1]
+const token = tokenVar === undefined ? undefined : process.env[tokenVar]
+
+writeFileSync(
+  join(here, 'seen.json'),
+  `${JSON.stringify({
+    argv,
+    cwd: process.cwd(),
+    pid: process.pid,
+    path0: (process.env.PATH ?? '').split(':')[0],
+    codex_home: process.env.CODEX_HOME ?? null,
+    attempt: process.env.MEC_ATTEMPT_ID ?? null,
+    token_file: existsSync(join(process.cwd(), '.mec', 'mcp.json')),
+    self: process.argv[1],
+    env_names: Object.keys(process.env),
+  })}\n`,
+)
+
+const send = (value) => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...value })}\n`)
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const asked = new Map()
+let nextAsk = 0
+let initialized = false
+const THREAD = 'thr_fake_1'
+const TURN = 'trn_fake_1'
+
+async function call(tool, args) {
+  const response = await fetch(toolsUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: tool, arguments: args },
+    }),
+  })
+  appendFileSync(join(here, 'tool-answers.jsonl'), `${JSON.stringify({ tool, answer: await response.json() })}\n`)
+}
+
+async function turn() {
+  send({ method: 'turn/started', params: { threadId: THREAD, turn: { id: TURN, status: 'inProgress' } } })
+  for (const step of scenario.steps ?? []) {
+    if (step.notify !== undefined) send(step.notify)
+    else if (step.write !== undefined) writeFileSync(join(process.cwd(), step.write.path), step.write.text)
+    else if (step.ask !== undefined) {
+      const id = nextAsk
+      nextAsk += 1
+      const answer = new Promise((resolve) => asked.set(id, resolve))
+      send({ id, ...step.ask })
+      appendFileSync(
+        join(here, 'answers.jsonl'),
+        `${JSON.stringify({ method: step.ask.method, answer: await answer })}\n`,
+      )
+    } else if (step.call !== undefined) await call(step.call.tool, step.call.args ?? {})
+    else if (step.saveToken === true) writeFileSync(join(here, 'token.txt'), token ?? '')
+    else if (step.command !== undefined) {
+      const { pid } = spawn('sleep', [String(step.command)], { detached: true, stdio: 'ignore' })
+      writeFileSync(join(here, 'command.pid'), String(pid))
+    } else if (step.stubborn !== undefined) {
+      const script = `trap "" TERM; sleep ${step.stubborn}; sleep ${step.stubborn}`
+      const { pid } = spawn('/bin/sh', ['-c', script], { detached: true, stdio: 'ignore' })
+      writeFileSync(join(here, 'command.pid'), String(pid))
+    }
+    else if (step.background !== undefined) {
+      const script = `(sleep ${step.background} & echo $! > command.pid); sleep ${step.background}`
+      spawn('/bin/sh', ['-c', script], { cwd: here, detached: true, stdio: 'ignore' })
+    }
+    else if (step.sleep !== undefined) await sleep(step.sleep)
+    else if (step.complete !== undefined) {
+      send({ method: 'turn/completed', params: { threadId: THREAD, turn: { status: step.complete } } })
+    } else if (step.exit !== undefined) process.exit(step.exit)
+  }
+}
+
+createInterface({ input: process.stdin }).on('line', (line) => {
+  const message = JSON.parse(line)
+  appendFileSync(join(here, 'requests.jsonl'), `${line}\n`)
+  if (message.method === undefined) {
+    asked.get(message.id)?.(message.result ?? { error: message.error })
+    return
+  }
+  if (message.method === 'initialize') {
+    if (initialized) send({ id: message.id, error: { code: -32600, message: 'Already initialized' } })
+    else send({ id: message.id, result: { userAgent: 'fake', codexHome: '/nowhere' } })
+    initialized = true
+  } else if (message.method === 'thread/start') {
+    const profile = scenario.profile === undefined ? 'mec' : scenario.profile
+    send({
+      id: message.id,
+      result: {
+        thread: { id: THREAD },
+        ...(profile !== null && message.params.sandbox === undefined
+          ? { activePermissionProfile: { id: profile, extends: null } }
+          : { activePermissionProfile: null }),
+      },
+    })
+    send({ method: 'thread/started', params: { thread: { id: THREAD, cliVersion: '0.148.0' } } })
+  } else if (message.method === 'turn/start') {
+    send({ id: message.id, result: { turn: { id: TURN } } })
+    void turn()
+  } else if (message.id !== undefined && message.method !== 'never/answered') {
+    send({ id: message.id, result: {} })
+  }
+})
+// The real one stays up after a turn, with its stdin open.
+setInterval(() => {}, 1000)

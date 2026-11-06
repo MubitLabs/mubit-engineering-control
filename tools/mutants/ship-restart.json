@@ -1,0 +1,205 @@
+[
+  {
+    "name": "a policy change leaves the queued attempt holding capacity",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  'policy_changed',\n  'repo_mismatch',\n]",
+    "replace": "  'repo_mismatch',\n]",
+    "tests": ["packages/meta/test/scheduler.test.ts", "-t", "gives its slot unit back"]
+  },
+  {
+    "name": "a policy change interrupts running work",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (reason === 'policy_changed') blockWork(store, workItemId, reason, at)\n",
+    "replace": "  if (reason === 'policy_changed') {\n    blockWork(store, workItemId, reason, at)\n    interruptAttempts(store, workItemId, at)\n  }\n",
+    "tests": ["packages/meta/test/authority.test.ts", "-t", "cancels no running work"]
+  },
+  {
+    "name": "a policy change interrupts running work, through the launch queue",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (reason === 'policy_changed') blockWork(store, workItemId, reason, at)\n",
+    "replace": "  if (reason === 'policy_changed') {\n    blockWork(store, workItemId, reason, at)\n    interruptAttempts(store, workItemId, at)\n  }\n",
+    "tests": ["apps/desktop/test/composition.test.ts", "-t", "leaves a running attempt alone"]
+  },
+  {
+    "name": "a policy change does not block work whose attempt stays",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (reason === 'policy_changed') blockWork(store, workItemId, reason, at)\n",
+    "replace": "",
+    "tests": ["packages/meta/test/authority.test.ts", "-t", "still blocks the work"]
+  },
+  {
+    "name": "a drop fails an attempt whose group is not proven gone",
+    "file": "packages/meta/src/authority.ts",
+    "find": " && attempt.reconcile_refused === undefined) {\n    failLaunch",
+    "replace": ") {\n    failLaunch",
+    "tests": ["packages/meta/test/authority.test.ts", "-t", "not proven gone keeps its capacity"]
+  },
+  {
+    "name": "the lock and the snapshot need not name one pid",
+    "file": "apps/desktop/src/restart.ts",
+    "find": "  if (health?.pid !== pid) return false\n",
+    "replace": "  if (health === null) return false\n",
+    "tests": ["apps/desktop/test/restart-proof.test.ts", "-t", "name different pids"]
+  },
+  {
+    "name": "a recorded start time is not compared",
+    "file": "apps/desktop/src/restart.ts",
+    "find": "return processStart(pid) === health.started",
+    "replace": "return processStart(pid) !== undefined",
+    "tests": ["apps/desktop/test/restart-proof.test.ts", "-t", "a pid reused by another process"]
+  },
+  {
+    "name": "an old server needs no fresh heartbeat",
+    "file": "apps/desktop/src/restart.ts",
+    "find": "return heartbeatIsFresh(health.heartbeatAt, new Date()) && commandIsMec(pid)",
+    "replace": "return commandIsMec(pid)",
+    "tests": ["apps/desktop/test/restart-proof.test.ts", "-t", "such a server with a stale heartbeat"]
+  },
+  {
+    "name": "an old server needs no mec command line",
+    "file": "apps/desktop/src/restart.ts",
+    "find": "return heartbeatIsFresh(health.heartbeatAt, new Date()) && commandIsMec(pid)",
+    "replace": "return heartbeatIsFresh(health.heartbeatAt, new Date())",
+    "tests": ["apps/desktop/test/restart-proof.test.ts", "-t", "not the launcher"]
+  },
+  {
+    "name": "an unreadable lock counts as nothing running",
+    "file": "apps/desktop/src/restart.ts",
+    "find": "if (owner === 'unreadable') return { status: 'unproven', why: 'the lock file names no pid' }",
+    "replace": "if (owner === 'unreadable') return { status: 'none' }",
+    "tests": ["apps/desktop/test/restart-proof.test.ts", "-t", "names no pid"]
+  },
+  {
+    "name": "a live writer with no lock counts as nothing running",
+    "file": "apps/desktop/src/restart.ts",
+    "find": "  if (writer !== undefined && isProcessAlive(writer) && heartbeatIsFresh(health?.heartbeatAt, new Date())) {\n",
+    "replace": "  if (writer === -1) {\n",
+    "tests": ["apps/desktop/test/restart-proof.test.ts", "-t", "a live writer with no lock file"]
+  },
+  {
+    "name": "an unproven pid is started beside",
+    "file": "apps/desktop/src/restart.ts",
+    "find": "    return { started: false, lines: [`not restarted: ${found.why}; nothing was signalled`] }\n",
+    "replace": "    return start(deps, 'started one')\n",
+    "tests": ["apps/desktop/test/restart-proof.test.ts", "-t", "a pid reused by another process"]
+  },
+  {
+    "name": "a stop is a SIGKILL",
+    "file": "apps/desktop/src/restart.ts",
+    "find": "process.kill(pid, 'SIGTERM')",
+    "replace": "process.kill(pid, 'SIGKILL')",
+    "tests": ["apps/desktop/test/restart-proof.test.ts", "-t", "will not stop within the bound"]
+  },
+  {
+    "name": "a server that will not stop counts as stopped",
+    "file": "apps/desktop/src/restart.ts",
+    "find": "  return !isProcessAlive(pid)\n}\n\n/** Up means",
+    "replace": "  return true\n}\n\n/** Up means",
+    "tests": ["apps/desktop/test/restart-proof.test.ts", "-t", "will not stop within the bound"]
+  },
+  {
+    "name": "no wait for the old server to exit",
+    "file": "apps/desktop/src/restart.ts",
+    "find": "  const deadline = Date.now() + boundMs\n  while (Date.now() < deadline) {\n    if (!isProcessAlive(pid)) return true\n    await sleep(POLL_MS)\n  }\n  return !isProcessAlive(pid)\n",
+    "replace": "  return true\n",
+    "tests": ["apps/desktop/test/restart-proof.test.ts", "-t", "only after the old pid has gone"]
+  },
+  {
+    "name": "the new server stays in this command's group",
+    "file": "apps/desktop/src/restart.ts",
+    "find": "    detached: true,\n",
+    "replace": "    detached: false,\n",
+    "tests": ["apps/desktop/test/restart.test.ts", "-t", "stops the running server"]
+  },
+  {
+    "name": "a restart may open a browser",
+    "file": "apps/desktop/src/restart.ts",
+    "find": "    env: { ...process.env, MEC_NO_OPEN: '1' },\n",
+    "replace": "    env: process.env,\n",
+    "tests": ["apps/desktop/test/restart-proof.test.ts", "-t", "opens no browser"]
+  },
+  {
+    "name": "a start that ended is waited out",
+    "file": "apps/desktop/src/restart.ts",
+    "find": "    if (ended !== undefined) {\n",
+    "replace": "    if (ended === 'never') {\n",
+    "tests": ["apps/desktop/test/restart-proof.test.ts", "-t", "a start that ends says so"]
+  },
+  {
+    "name": "a start past the bound is called a success",
+    "file": "apps/desktop/src/restart.ts",
+    "find": "  return {\n    started: false,\n    lines: [\n      `no server was confirmed",
+    "replace": "  return {\n    started: true,\n    lines: [\n      `no server was confirmed",
+    "tests": ["apps/desktop/test/restart-proof.test.ts", "-t", "not called a success"]
+  },
+  {
+    "name": "a moved port goes unsaid",
+    "file": "apps/desktop/src/restart.ts",
+    "find": "          ...(moved === undefined ? [] : [movedLine(moved)]),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/restart.test.ts", "-t", "says where it went"]
+  },
+  {
+    "name": "the launcher is not this install's",
+    "file": "apps/desktop/src/mec.ts",
+    "find": "new URL('../bin/mec.js', import.meta.url)",
+    "replace": "new URL('../../bin/mec.js', import.meta.url)",
+    "tests": ["apps/desktop/test/restart.test.ts", "-t", "stops the running server"]
+  },
+  {
+    "name": "restart still does nothing",
+    "file": "apps/desktop/src/mec.ts",
+    "find": "    const outcome = await io.restartServer()\n",
+    "replace": "    const outcome = { started: true, lines: [] as string[] }\n",
+    "tests": ["apps/desktop/test/mec-cli.test.ts", "-t", "says what it did"]
+  },
+  {
+    "name": "a failed restart exits 0",
+    "file": "apps/desktop/src/mec.ts",
+    "find": "    return outcome.started ? 0 : 1\n",
+    "replace": "    return 0\n",
+    "tests": ["apps/desktop/test/mec-cli.test.ts", "-t", "does not claim success"]
+  },
+  {
+    "name": "the snapshot leaves out the start time",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "      ...(started !== undefined && { started }),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/health-freshness.test.ts", "-t", "which process wrote it"]
+  },
+  {
+    "name": "the snapshot never says the port",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  listening = port\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/health-freshness.test.ts", "-t", "which process wrote it"]
+  },
+  {
+    "name": "the snapshot is not rewritten after the listen",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  portMoved = moved\n  writeHealth()\n",
+    "replace": "  portMoved = moved\n",
+    "tests": ["apps/desktop/test/health-freshness.test.ts", "-t", "which process wrote it"]
+  },
+  {
+    "name": "the start time is not parsed",
+    "file": "apps/desktop/src/health.ts",
+    "find": "    ...(typeof started === 'string' && { started }),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/restart-proof.test.ts", "-t", "a pid reused by another process"]
+  },
+  {
+    "name": "an unreadable lock reads as stale",
+    "file": "packages/store/src/lock.ts",
+    "find": "  return owner !== 'unreadable' && !isProcessAlive(owner)\n",
+    "replace": "  return owner === 'unreadable' || !isProcessAlive(owner)\n",
+    "tests": ["packages/store/test"]
+  },
+  {
+    "name": "the lock reader takes any leading digits",
+    "file": "packages/store/src/lock.ts",
+    "find": "pid > 0 && /^\\d+$/.test(text.trim()) ? pid",
+    "replace": "pid > 0 ? pid",
+    "tests": ["packages/store/test/lock.test.ts"]
+  }
+]

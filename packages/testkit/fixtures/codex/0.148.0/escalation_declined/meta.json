@@ -1,0 +1,18 @@
+{
+  "engine": "codex",
+  "engine_version": "0.148.0",
+  "scenario": "escalation_declined",
+  "recorded_at": "2026-11-05T23:37:50.000Z",
+  "recorded_by": "real",
+  "redacted": true,
+  "expected": {
+    "reports": [],
+    "permission_requests": 2,
+    "rate_limits": [
+      "five_hour",
+      "seven_day"
+    ],
+    "exit": "completed"
+  },
+  "notes": "real run through the attempt runner on a scratch repo, linked login, gpt-5.6-luna, under the mec permissions profile (M2.4 Part B, Codex builder run 2). A command and a file change ask to leave the sandbox and are declined. Trimmed for size: deltas, reasoning, the user message, startup and status notifications and all but the last usage and rate-limit lines are removed, and paths are rewritten. stdout was teed, so the two client answers are not in the capture: they are written back in here as what MEC sent. Six commands the sandbox refused left no item in the stream at all."
+}

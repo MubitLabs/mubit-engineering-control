@@ -40,6 +40,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AttemptHandle, EngineEvent, IsolationProfile, LaunchSpec } from '@mec/contracts'
+import type { BasePolicy } from '@mec/domain'
 import { BUILTIN_ROLE_NAMES, DEFAULT_CAPS, validateGraph } from '@mec/domain'
 import { ClaudeAdapter } from '../../engines/src/claude/adapter'
 import { MecToolsServer } from '../../mec-tools/src/server'
@@ -49,7 +50,7 @@ import { type CompiledBundle, compileBundle, componentHash } from '../../prompts
 import { buildAgentEnv } from '../../runtime/src/env'
 import { buildAttemptSettings, serialiseAttemptSettings } from '../../runtime/src/isolation'
 import { metaSlotEnv, PlannerBrain, turnCutShort } from './brain'
-import type { MetaBrain, MetaDecision } from './service'
+import type { MetaBrain, MetaDecision, MetaPlanTask } from './service'
 
 /** The engine surface the brain uses; `ClaudeAdapter` satisfies it structurally. */
 export type BrainEngine = {
@@ -75,6 +76,8 @@ export type RealClaudeBrainOptions = {
   adapter?: BrainEngine
   /** §16.1: the user's prompt store; the default is `~/.mec/prompts`. */
   promptsRoot?: string
+  /** Hears each tmpdir this brain makes: they hold a bearer token, so a boot must find them. */
+  onTempDir?: (dir: string) => void
 }
 
 /** The v0 pseudo-check every proposed task carries (see service.ts's module doc). */
@@ -126,7 +129,15 @@ const META_PROTOCOL_TEXT = [
 ].join('\n')
 
 /** A mapped plan task — the service's MetaDecision shape. */
-type PlanTask = { taskId: string; objective: string; dependsOn: string[]; role: string }
+type PlanTask = {
+  taskId: string
+  objective: string
+  dependsOn: string[]
+  role: string
+  basePolicy?: BasePolicy
+  modelRequest?: MetaPlanTask['modelRequest']
+  slotHint?: MetaPlanTask['slotHint']
+}
 
 /** The per-decide in-memory state the platform tools execute against. */
 type TurnState = { acks: string[]; reports: string[]; proposals: number }
@@ -149,6 +160,7 @@ export class RealClaudeBrain {
   readonly #now: () => Date
   readonly #engine: BrainEngine
   readonly #promptsRoot: string | undefined
+  readonly #onTempDir: ((dir: string) => void) | undefined
   /** The brain-owned tmpdir: cwd, only writable path, and home of the engine config. */
   readonly #root: string
   #retriesUsed = 0
@@ -173,7 +185,9 @@ export class RealClaudeBrain {
     this.#now = opts.now ?? (() => new Date())
     this.#engine = opts.adapter ?? new ClaudeAdapter()
     this.#promptsRoot = opts.promptsRoot
+    this.#onTempDir = opts.onTempDir
     this.#root = mkdtempSync(join(tmpdir(), 'mec-meta-brain-'))
+    this.#onTempDir?.(this.#root)
   }
 
   /** The running tools server's URL (ends in `/mcp`), once a decide has started it. */
@@ -202,6 +216,7 @@ export class RealClaudeBrain {
       now: this.#now,
       adapter: this.#engine,
       ...(this.#promptsRoot !== undefined && { promptsRoot: this.#promptsRoot }),
+      ...(this.#onTempDir !== undefined && { onTempDir: this.#onTempDir }),
     })
     return this.#planner
   }
@@ -532,6 +547,27 @@ function buildTurnBundle(
 
 // ── The decision, derived from the normalised event stream ─────────────────────────────────
 
+/** The model and slot a propose_plan task asked for, in the stored shape. */
+function placementRequest(task: Record<string, unknown>): Pick<PlanTask, 'modelRequest' | 'slotHint'> {
+  const text = (value: unknown): string | undefined =>
+    typeof value === 'string' && value !== '' ? value : undefined
+  const model = task.model_request as Record<string, unknown> | undefined
+  const hint = task.slot_hint as Record<string, unknown> | undefined
+  const slotClass = text(hint?.slot_class)
+  const slotId = text(hint?.slot_id)
+  const fields = ['tier', 'model', 'effort', 'variant'].map((key) => [key, text(model?.[key])])
+  const modelRequest =
+    model === undefined ? undefined : Object.fromEntries(fields.filter(([, value]) => value))
+  return {
+    ...(modelRequest !== undefined && {
+      modelRequest: { ...modelRequest, reason: text(model?.reason) ?? 'no reason given' },
+    }),
+    ...((slotClass !== undefined || slotId !== undefined) && {
+      slotHint: { ...(slotClass !== undefined && { slotClass }), ...(slotId !== undefined && { slotId }) },
+    }),
+  }
+}
+
 /** Maps propose_plan args onto plan tasks and validates them exactly as the service will. */
 function planFromToolArgs(
   args: Record<string, unknown>,
@@ -560,6 +596,9 @@ function planFromToolArgs(
         ? task.depends_on.filter((dep): dep is string => typeof dep === 'string')
         : [],
       role: typeof task.role === 'string' && task.role.trim() !== '' ? task.role.trim() : DEFAULT_ROLE,
+      ...(task.base_policy === 'contract' && { basePolicy: 'contract' as const }),
+      // §11: what the planner asked of placement; deterministic code grants it or defers.
+      ...placementRequest(task),
     })
   }
   const issues = validateGraph(
@@ -569,7 +608,7 @@ function planFromToolArgs(
       ownedPaths: [],
       acceptanceChecks: [MANUAL_REVIEW_CHECK],
       maxAttempts: DEFAULT_CAPS.repairAttemptsPerTask + 1,
-      basePolicy: 'integration',
+      basePolicy: task.basePolicy ?? 'integration',
       role: task.role,
     })),
     { knownChecks: [MANUAL_REVIEW_CHECK], knownRoles: BUILTIN_ROLE_NAMES },

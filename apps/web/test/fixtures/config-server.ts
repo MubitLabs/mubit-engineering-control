@@ -481,6 +481,12 @@ export function sampleServer({
         slots.splice(index, 1)
         return json({ id: retire[1], state: 'retired' })
       }
+      const hostRun = /^\/api\/repositories\/([^/]+)\/host-run\/(agree|withdraw)$/.exec(path)
+      if (hostRun !== null) {
+        const repo = repositories.find((entry) => entry.id === hostRun[1]) as Record<string, unknown>
+        repo.hostRunAgreedAt = hostRun[2] === 'agree' ? '2026-11-06T10:00:00.000Z' : null
+        return json({ id: hostRun[1] })
+      }
       const repository = /^\/api\/repositories\/([^/]+)$/.exec(path)
       if (method === 'PATCH' && repository) {
         const repo = repositories.find((entry) => entry.id === repository[1])

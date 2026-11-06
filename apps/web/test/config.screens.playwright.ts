@@ -137,6 +137,22 @@ test('trust arms and disarms', async ({ page }) => {
   await expect(page.getByText('Trusted: engines honour')).toBeVisible()
 })
 
+test('the agreement says what it allows, arms, and can be withdrawn', async ({ page }) => {
+  await open(page, 'settings')
+  await page.getByRole('button', { name: 'Repositories' }).click()
+  await expect(page.getByText('Waiting for your agreement: nothing runs')).toBeVisible()
+  await expect(page.getByText('This browser cannot answer yet')).toBeVisible()
+  await page.getByRole('button', { name: 'Review and agree…' }).click()
+  await expect(page.getByText('outside any sandbox, with your files and your network')).toBeVisible()
+  await expect(page.getByText('No work is waiting on this now.')).toBeVisible()
+  await expect(page.getByText('You can withdraw this here at any time')).toBeVisible()
+  await page.getByRole('button', { name: 'Agree to run here' }).click()
+  await expect(page.getByText('Agreed: MEC may run work')).toBeVisible()
+  await page.getByRole('button', { name: 'Withdraw…' }).click()
+  await page.getByRole('button', { name: 'Withdraw agreement' }).click()
+  await expect(page.getByText('Waiting for your agreement: nothing runs')).toBeVisible()
+})
+
 test('settings failure leaves navigation usable', async ({ page }) => {
   await open(page, 'settings', 'fail=/api/policy')
   await expect(page.getByRole('alert').getByText('Could not load the policy')).toBeVisible()

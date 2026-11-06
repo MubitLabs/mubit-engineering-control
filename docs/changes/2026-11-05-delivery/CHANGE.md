@@ -61,6 +61,12 @@ UI evidence (§15) is not required: repository docs have no such field yet.
 - **The first exec of a new script took 25 s** on this machine, late in a test file: the fake CLI's own start, `seen.json` shows it. The tests in `delivery-flow.test.ts` allow 120 s for it.
 - **`local_result` wakes nobody.** It is an event and a note, so §6 is untouched, but the planner says it only on its next turn. The push card is what the owner sees first.
 
+## On the repaired M2.2 base
+
+- **A repair or a review keeps the pointer check.** The launch named `worktrees/<attemptId>` as the admin directory, but a continuation works in an earlier path, so every repair and review failed with `git_pointer_moved`. It now derives the name from the worktree path. Git names the directory after that path.
+- **Stopped checks are not settled.** Sending every `noVerdict` attempt to acceptance left `failure()` unreachable for `checks_stopped`, so a stop blocked as "no checks are registered". Stopped checks now go to `failure()`: a wall clock blocks with its own reason, and a stop or a close stays fenced.
+- **`commitWork` runs after the pointer check,** in `#settle`, so a mid-merge repair commits through a checked `.git`.
+
 ## Not in this PR
 
 Crash reconciliation (23 Part A), stage labels (M3.1), showing delivery stages (M3.2), profile editing (M3.3), scorecard outcomes, and any real GitHub write. `prTarget: 'pending'` is on the delivery record for M3.2 to show.

@@ -51,8 +51,8 @@
   {
     "name": "accept without a verdict",
     "file": "packages/meta/src/scheduler.ts",
-    "find": "    if (latest.state === 'succeeded') {\n",
-    "replace": "    if (latest.state === 'succeeded' || latest.state === 'work_complete') {\n",
+    "find": "(noVerdict(latest) && !stopped)) {\n",
+    "replace": "noVerdict(latest)) {\n",
     "tests": ["packages/meta/test/scheduler.test.ts"]
   },
   {
@@ -275,8 +275,8 @@
   {
     "name": "no pass after effects",
     "file": "apps/desktop/src/composition.ts",
-    "find": "    void store.effects.run().catch(() => {})\n    schedulerPass()\n  }, PASS_INTERVAL_MS)\n",
-    "replace": "    void store.effects.run().catch(() => {})\n  }, PASS_INTERVAL_MS)\n",
+    "find": "    void store.effects.run().catch(() => {})\n    schedulerPass()\n    delivery?.kick()\n  }, PASS_INTERVAL_MS)\n",
+    "replace": "    void store.effects.run().catch(() => {})\n    delivery?.kick()\n  }, PASS_INTERVAL_MS)\n",
     "tests": ["apps/desktop/test/coordination.test.ts", "-t", "pass places work"]
   },
   {
@@ -511,7 +511,7 @@
   {
     "name": "launch names no admin directory",
     "file": "apps/desktop/src/attempt-launch.ts",
-    "find": "      gitAdmin: join(realpathSync(gitDir), 'worktrees', attemptId),\n",
+    "find": "      gitAdmin: join(realpathSync(gitDir), 'worktrees', basename(worktree)),\n",
     "replace": "",
     "tests": ["apps/desktop/test/attempt-launch.test.ts"]
   },

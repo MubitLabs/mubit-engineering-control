@@ -16,7 +16,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { delimiter, isAbsolute, join, resolve } from 'node:path'
+import { basename, delimiter, isAbsolute, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type {
   AttemptBrief,
@@ -502,8 +502,9 @@ export class AttemptLauncher {
       exacts: [token],
       seal: () => rmSync(mcpPath, { force: true }),
       stderrTail: () => stderr,
-      // Derived, not read back: a resumed worktree's `.git` has been in a worker's hands.
-      gitAdmin: join(realpathSync(gitDir), 'worktrees', attemptId),
+      // Derived, not read back: a resumed worktree's `.git` has been in a worker's hands. Git names
+      // the admin directory after the path, and a continuation's path is not this attempt's.
+      gitAdmin: join(realpathSync(gitDir), 'worktrees', basename(worktree)),
     })
     this.#stderr.set(attemptId, (chunk) => {
       stderr = `${stderr}${chunk}`.slice(-STDERR_TAIL_CHARS)

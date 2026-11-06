@@ -408,7 +408,9 @@ function settleTasks(deps: SchedulerDeps, workItemId: string, at: string): void 
     const latest = latestOf(attempts)
     if (latest === undefined) continue
     if (settleOnReport(store, task, latest, at)) continue
-    if (['succeeded', 'checks_failed'].includes(String(latest.state)) || noVerdict(latest)) {
+    // Checks that were stopped are no verdict to judge: `failure` says what the stop means.
+    const stopped = noVerdict(latest) && latest.checks_stopped !== undefined
+    if (['succeeded', 'checks_failed'].includes(String(latest.state)) || (noVerdict(latest) && !stopped)) {
       settleAttempt(deps, task, attempts, latest, at)
       continue
     }

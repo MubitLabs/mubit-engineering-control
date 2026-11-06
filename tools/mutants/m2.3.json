@@ -264,5 +264,12 @@
     "find": "    if (pinned !== undefined && pinned !== current.profileHash) {\n",
     "replace": "    if (false as boolean) {\n",
     "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a continuation names its own attempt's admin directory",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "'worktrees', basename(worktree)),\n",
+    "replace": "'worktrees', attemptId),\n",
+    "tests": ["apps/desktop/test/delivery-flow.test.ts", "-t", "a repair attempt fixes failed checks"]
   }
 ]

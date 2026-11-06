@@ -49,6 +49,7 @@ const UNASKED_DENIED = [
   'WebSearch',
   'Task',
   'Agent',
+  'Monitor',
 ] as const
 
 export function buildClaudeArgv(input: ClaudeArgvInput): string[] {

@@ -1206,11 +1206,14 @@ function plannerCardDetail(doc: StoreDoc): Record<string, Json> | undefined {
   if (evidence.length === 0) return undefined
   const facts = [...factsFrom('Operation', operation), ...evidence]
   const cls = shownSafe(String(doc.cls ?? ''))
-  const asker = doc.requestedBy === 'specialist' ? 'The specialist' : 'The meta agent'
+  const owner = doc.requestedBy === 'owner'
+  const asker = owner ? 'You' : doc.requestedBy === 'specialist' ? 'The specialist' : 'The meta agent'
   return {
-    what: `${asker} asks for: ${cls.replaceAll('_', ' ')}`,
+    what: `${asker} ${owner ? 'asked' : 'asks'} for: ${cls.replaceAll('_', ' ')}`,
     verb: 'approve',
-    why: `${asker} cannot approve its own requests, so this one waits for you.`,
+    why: owner
+      ? 'A slot switch is confirm-by-default (§13), so it waits for a second look.'
+      : `${asker} cannot approve its own requests, so this one waits for you.`,
     facts: [
       { label: 'Class', value: cls, mono: true },
       ...(typeof doc.workItemId === 'string'
@@ -1223,9 +1226,11 @@ function plannerCardDetail(doc: StoreDoc): Record<string, Json> | undefined {
     consequences: {
       approve: (ALWAYS_CONFIRM as readonly string[]).includes(cls)
         ? 'Nothing here can run this card, so an approve is refused. Deny it.'
-        : doc.requestedBy === 'specialist'
-          ? 'The specialist is told yes and carries on with exactly this operation.'
-          : 'MEC records your approval of exactly this operation. The click itself runs nothing.',
+        : owner
+          ? 'The parked work moves to this slot on a new attempt, in the same worktree.'
+          : doc.requestedBy === 'specialist'
+            ? 'The specialist is told yes and carries on with exactly this operation.'
+            : 'MEC records your approval of exactly this operation. The click itself runs nothing.',
       deny:
         doc.requestedBy === 'specialist'
           ? 'The specialist is told no. Nothing runs.'

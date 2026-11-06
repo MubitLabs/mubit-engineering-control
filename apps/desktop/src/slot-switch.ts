@@ -142,6 +142,7 @@ export async function requestSwitch(
     store.confirmations.save({
       ...record,
       workItemId,
+      requestedBy: 'owner',
       payload: {
         operation: { class: 'slot_switch', toSlot },
         evidence: {

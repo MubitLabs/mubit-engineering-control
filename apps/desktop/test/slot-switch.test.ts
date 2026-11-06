@@ -112,6 +112,23 @@ describe('switch slot', { timeout: 40_000 }, () => {
     expect((await fetch(`${server.url}/api/inbox/${confirmationId}/detail`)).status).toBe(200)
   })
 
+  it('a card opened from the workbench names its real asker, and says what an approve does', async () => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    const server = await serve(rig, QUIET)
+    const id = await card(server)
+    const detail = (await (await fetch(`${server.url}/api/inbox/${id}/detail`)).json()) as {
+      what: string
+      why: string
+      requestedBy: string
+      consequences: { approve: string }
+    }
+    expect(detail.what).toBe('You asked for: slot switch')
+    expect(detail.requestedBy).toBe('You')
+    expect(JSON.stringify(detail)).not.toContain('meta agent')
+    expect(detail.consequences.approve).not.toContain('runs nothing')
+  })
+
   it('a denied card moves nothing', async () => {
     const rig = scratch(STEPS)
     parked(rig)

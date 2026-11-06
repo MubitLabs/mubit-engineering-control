@@ -274,6 +274,40 @@ describe('the scheduler pass (§11)', () => {
     })
   })
 
+  it('a wall clock during the checks blocks the task and its dependents', () => {
+    const { store, pass } = rig()
+    work(store)
+    task(store, 'task_a', { status: 'awaiting_review' })
+    task(store, 'task_b', { dependsOn: ['task_a'] })
+    attempt(store, {
+      state: 'work_complete',
+      checks_note: 'stopped during check unit: wall_clock',
+      checks_stopped: 'wall_clock',
+    })
+
+    expect(pass()).toEqual([])
+    expect(store.tasks.get('task_a')).toMatchObject({
+      status: 'blocked',
+      blockedReason: 'attempt att_1 ran out of its wall clock',
+    })
+    expect(String(store.tasks.get('task_b')?.blockedReason)).toContain('prerequisite a cannot finish')
+  })
+
+  it('a stop or a close during the checks stays fenced', () => {
+    for (const checks_stopped of ['stop_requested', 'server_closing']) {
+      const { store, pass } = rig()
+      work(store)
+      task(store, 'task_a', { status: 'awaiting_review' })
+      attempt(store, {
+        state: 'work_complete',
+        checks_note: `stopped during check unit: ${checks_stopped}`,
+        checks_stopped,
+      })
+      pass()
+      expect(store.tasks.get('task_a')?.status).toBe('awaiting_review')
+    }
+  })
+
   it('a stopped attempt, or one the server closed on, is not a failure', () => {
     for (const terminal_reason of ['stop_requested', 'server_closing', undefined]) {
       const { store, pass } = rig()

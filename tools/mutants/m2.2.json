@@ -411,5 +411,33 @@
     "find": "        wall_clock_ms: budget.wallClockMs ?? budget.wall_clock_ms ?? DEFAULT_WALL_CLOCK_MS,\n",
     "replace": "        wall_clock_ms: budget.wallClockMs ?? DEFAULT_WALL_CLOCK_MS,\n",
     "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "wall clock in a check is no failure",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "if (noVerdict(attempt) && attempt.checks_stopped === 'wall_clock') {",
+    "replace": "if (noVerdict(attempt) && attempt.checks_stopped === 'never') {",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "a stop during the checks counts as a failure",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "if (noVerdict(attempt) && attempt.checks_stopped === 'wall_clock') {",
+    "replace": "if (noVerdict(attempt) && attempt.checks_stopped !== undefined) {",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "stop reason not recorded",
+    "file": "apps/desktop/src/core-facts.ts",
+    "find": "...(stopped !== undefined && { checks_stopped: stopped }),",
+    "replace": "",
+    "tests": ["apps/desktop/test/coordination.test.ts"]
+  },
+  {
+    "name": "runner drops the stop reason",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "facts.checksSkipped(attempt, head, skipped, stopReason)",
+    "replace": "facts.checksSkipped(attempt, head, skipped)",
+    "tests": ["packages/runtime/test/attempt-runner.test.ts"]
   }
 ]

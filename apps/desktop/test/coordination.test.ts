@@ -382,6 +382,24 @@ describe('continuing coordination (§11, §12)', () => {
     expect(attemptIn(r)?.terminal_reason).toBe('wall_clock')
   }, 60_000)
 
+  it('a wall clock during a slow check blocks the task and its dependent', async () => {
+    const first = { ...task('first'), budget: { turns: 5, wallClockMs: 8000 } }
+    const r = await serve(
+      scratch({ steps: WORK }, {}, [{ name: 'slow', cmd: 'sleep 120' }]),
+      planOf(first, task('second', ['first'])),
+    )
+    await r.post('/api/chat/messages', { text: 'go', repoId: REPO })
+
+    const taskOf = (key: string) => r.read((store) => store.tasks.list({ localKey: key })[0])
+    await until(() => taskOf('first')?.status === 'blocked', 30_000)
+    expect(attemptIn(r)).toMatchObject({ state: 'work_complete', checks_stopped: 'wall_clock' })
+    expect(taskOf('first')?.blockedReason).toBe('attempt att_1 ran out of its wall clock')
+
+    await until(() => taskOf('second')?.status === 'blocked')
+    expect(String(taskOf('second')?.blockedReason)).toContain('prerequisite first cannot finish')
+    expect(r.read((store) => store.attempts.list({ taskId: taskOf('second')?.id }))).toEqual([])
+  }, 60_000)
+
   it('reserved wake delivers before a queued launch', async () => {
     const steps = [{ init: true }, { sleep: 3000 }, ...WORK.slice(1)]
     let turns = 0

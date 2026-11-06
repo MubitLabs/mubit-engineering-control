@@ -224,10 +224,15 @@ export class StoreFacts implements AttemptFacts {
     this.#changed()
   }
 
-  checksSkipped(attempt: AttemptRef, head: string, reason: string): void {
+  checksSkipped(attempt: AttemptRef, head: string, reason: string, stopped?: string): void {
     const doc = this.#current(attempt)
     if (doc !== undefined) {
-      this.#store.attempts.save({ ...doc, checks_note: reason, updatedAt: this.#now() })
+      this.#store.attempts.save({
+        ...doc,
+        checks_note: reason,
+        ...(stopped !== undefined && { checks_stopped: stopped }),
+        updatedAt: this.#now(),
+      })
     }
     this.#note(attempt, 'attempt.checks_skipped', { head_sha: head, reason })
   }

@@ -56,6 +56,7 @@ class Facts implements AttemptFacts {
   reason: string | undefined
   outcomes: CheckOutcome[] = []
   note: string | undefined
+  stopped: string | undefined
   /** Throws from the transaction, as a store on a full disk would. */
   failOn: EngineEvent['type'] | undefined
   commits = 0
@@ -99,9 +100,10 @@ class Facts implements AttemptFacts {
     this.head = head
     this.outcomes = outcomes
   }
-  checksSkipped(_attempt: AttemptRef, head: string, reason: string): void {
+  checksSkipped(_attempt: AttemptRef, head: string, reason: string, stopped?: string): void {
     this.head = head
     this.note = reason
+    this.stopped = stopped
   }
   attemptParked(_attempt: AttemptRef, state: string, reason: string): void {
     this.state = state
@@ -533,6 +535,7 @@ describe('AttemptRunner', { timeout: 60_000 }, () => {
       expect(tookMs).toBeLessThan(10_000)
       await until(() => groupGone(pid))
       expect(facts.note).toContain('stopped during check unit: server_closing')
+      expect(facts.stopped).toBe('server_closing')
     })
 
     it('the wall clock reaches a hung check', async () => {
@@ -547,6 +550,7 @@ describe('AttemptRunner', { timeout: 60_000 }, () => {
       await until(() => groupGone(pid))
       expect(facts.state).toBe('work_complete')
       expect(facts.note).toContain('stopped during check unit: wall_clock')
+      expect(facts.stopped).toBe('wall_clock')
     })
   })
 

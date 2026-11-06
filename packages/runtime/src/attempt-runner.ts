@@ -52,7 +52,8 @@ export interface AttemptFacts extends CoreForEngines {
   engineEvent(attempt: AttemptRef, event: EngineEvent): void
   workCompleted(attempt: AttemptRef, head: string): void
   checksFinished(attempt: AttemptRef, head: string, outcomes: CheckOutcome[], passed: boolean): void
-  checksSkipped(attempt: AttemptRef, head: string, reason: string): void
+  /** `stopped` says what ended the checks, when something did: the note is for reading. */
+  checksSkipped(attempt: AttemptRef, head: string, reason: string, stopped?: string): void
   attemptParked(attempt: AttemptRef, state: ParkedState, reason: string): void
   attemptInterrupted(attempt: AttemptRef, reason: string): void
   attemptFailed(attempt: AttemptRef, reason: string): void
@@ -327,22 +328,21 @@ export class AttemptRunner {
     }
     const outcomes: CheckOutcome[] = []
     for (const spec of plan.checks) {
-      if (live.stopReason !== undefined) {
-        const skipped = `stopped before check ${spec.name}: ${live.stopReason}`
-        facts.atomic(() => facts.checksSkipped(attempt, head, skipped))
-        return
-      }
+      if (live.stopReason !== undefined) return this.#checksStopped(live, head, `before check ${spec.name}`)
       const outcome = await runCheck(spec, live.checks.signal)
       // A stopped attempt gets no verdict, whatever the check's last act was.
-      if (live.stopReason !== undefined) {
-        const skipped = `stopped during check ${spec.name}: ${live.stopReason}`
-        facts.atomic(() => facts.checksSkipped(attempt, head, skipped))
-        return
-      }
+      if (live.stopReason !== undefined) return this.#checksStopped(live, head, `during check ${spec.name}`)
       outcomes.push({ ...outcome, logTail: this.#clean(live, outcome.logTail) })
     }
     const passed = outcomes.every((outcome) => outcome.status === 'passed')
     facts.atomic(() => facts.checksFinished(attempt, head, outcomes, passed))
+  }
+
+  #checksStopped(live: Live, head: string, where: string): void {
+    const { facts } = this.#deps
+    const { attempt, stopReason } = live
+    const skipped = `stopped ${where}: ${String(stopReason)}`
+    facts.atomic(() => facts.checksSkipped(attempt, head, skipped, stopReason))
   }
 
   /** §17: every failure after the engine started ends here; a launch failure ends the same way. */

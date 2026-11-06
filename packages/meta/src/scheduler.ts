@@ -104,6 +104,10 @@ function failure(deps: SchedulerDeps, attempt: StoreDoc): string | undefined {
   if (state === 'interrupted' && attempt.terminal_reason === 'wall_clock') {
     return `attempt ${id} ran out of its wall clock`
   }
+  // The same clock landing during a repo check ends in `checksSkipped`, with no interruption.
+  if (noVerdict(attempt) && attempt.checks_stopped === 'wall_clock') {
+    return `attempt ${id} ran out of its wall clock`
+  }
   if (state === 'queued' && deps.launchRowState?.(launchKey(attempt)) === 'failed') {
     return `attempt ${id} could not launch`
   }

@@ -85,7 +85,8 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
     invariant 3), and `cardDetail` does not redact field names or class.
   - A `{class}`-only `request_confirmation` is deny-only.
   - The toast says "agent was told to continue" on a planner card that runs nothing.
-- **An open tab goes stale if the server restarts on a new port.** An owner ruling is needed.
+- **An open tab goes stale if the server restarts on a new port.** An owner ruling is still needed
+  (DECISIONS #41 makes a restart reuse the last port; #44 makes `mec restart` really restart).
   A repository edit stops admitted work at its next launch (`repo_profile_changed`); that
   behaviour is kept and the Settings text now says so.
 - **`MEC_FAKE_ENGINE=1` cannot run an attempt from a package.** The fake launch replays a fixture
@@ -127,3 +128,24 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
   - `opencode-gemini` slots can be added and do not launch, until a real run proves that login.
   - The Claude profile does not deny `<data>/work` or `<data>/tmp`, so a sibling's `.mec/mcp.json`
     is readable there. Codex's profile denies both.
+- **Unproven on the way to 0.3.0 (6 November 2026, DECISIONS #41-42).**
+  - No real-engine run of handoffs 22 or 23 A; no separate verifier has looked at any change
+    since the owner's ruling; the worker loopback route has not run under a real engine. The
+    combined PR (#47) is on `main`; 33 B and real Claude runs on a release candidate are in
+    progress.
+  - 0.3.0 is proven on Claude only. Codex and OpenCode have not run on the final build.
+  - Nothing has been checked on an installed copy, and `classic` is still the default UI.
+- **A server logged "stopping on SIGTERM" and stayed alive after a planner turn** (handoff 23?).
+  Not reproduced and not fixed.
+- **Cause of the earlier empty tarball is unknown.** A real tarball once shipped with empty models
+  and prompts. The package fix is on `main` (#44: a package with no catalogue is refused); the
+  release build is still checked for it, but it is no longer a known blocker.
+- **Open for 31 C (the combined PR #47 is merged; not re-checked since):** a held row shows a raw ISO time
+  (`inspection.ts:597`); wake rows appear in search (`inspection.ts:895-905`); the second-tab 409
+  message says "was not sent" though the message was sent and refused.
+- **A process group that refuses to die (DECISIONS #45).** In 0.3.0 the attempt is failed, the
+  failed stop is recorded and its capacity is freed, even though the group is still alive. 0.3.1
+  keeps the capacity held until the group is gone (`reconcileProcesses` must track failed attempts
+  with a live group).
+- **A late wake after a pause is assigned to handoff 21** with the card resolve gaps above.
+- **`next/work-model` `canApprove` must map absent to null when it is wired (31 B).**

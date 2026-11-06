@@ -43,7 +43,7 @@ The coordinator session has these in flight. Never rebuild them or edit their br
 1. **Isolate.** Work in your own worktree on the branch your handoff names: `git worktree add ../mec-<branch-slug> -b <branch> origin/main`. Don't switch branches, stash or edit in the main checkout. Leave `/Users/shankhadutta/code/mec` untouched.
 2. **Stay in scope.** Edit only what your handoff owns. If you need a file another handoff owns, stop and report. Touch shared hot files (`packages/meta/src/service.ts`, `apps/desktop/src/server.ts`) only in the blocks your handoff names.
 3. **Prove it.** Write the failing test first and see it fail for the right reason. Then implement. Then run the mutants with `tools/mutants/run.py`. Finish with `pnpm check`.
-4. **Baseline.** One failure is pre-existing: `apps/desktop/test/login-cards.test.ts` "drives a real interactive shell through the seam", because the node-pty helper loses its execute bit in fresh installs. Anything else failing is yours.
+4. **Baseline.** There is no permitted failure now. `apps/desktop/test/login-cards.test.ts` "drives a real interactive shell through the seam" used to fail because the node-pty helper loses its execute bit in fresh installs; #44 (`b57d1da`, on `origin/main`) removed it from the permitted list. If it fails for you, that is yours to report, not a known baseline. Anything failing is yours.
 5. **Keep tests honest.** Never weaken a test. A changed assertion must be an intended behaviour change, and you must say so.
 6. **Verify separately.** A builder never verifies its own change. Use a second agent or session for behaviour verification.
 7. **Blockers-only review.** Only where your handoff says so, by a different agent. Its fixes need no re-review.
@@ -75,7 +75,7 @@ S=$(mktemp -d)
 MEC_DATA_DIR=$S/home/.mec HOME=$S/home MEC_FAKE_ENGINE=1 MEC_NO_OPEN=1 node apps/desktop/bin/mec.js
 ```
 
-Without `dist` the launcher's source fallback fails. The port is ephemeral: read it from the "mec server listening on" line. The data dir sits at `$HOME/.mec` on purpose: `mec status` and every other CLI command read `$HOME/.mec` whatever `MEC_DATA_DIR` says (`cliMain` in `apps/desktop/src/mec.ts`), so run them as `HOME=$S/home node apps/desktop/bin/mec.js status`. The store file is `$S/home/.mec/mec.db`.
+Without `dist` the launcher's source fallback fails. The port is ephemeral: read it from the "mec server listening on" line. The data dir sits at `$HOME/.mec` on purpose: since #45 (`730dd5b`) every `mec` command follows `MEC_DATA_DIR` the way the server does (`cliMain` in `apps/desktop/src/mec.ts` reads `MEC_DATA_DIR ?? ~/.mec`). Setting both to the same place, as the recipe does, still works on any build, so keep the scratch `HOME` too: run `HOME=$S/home MEC_DATA_DIR=$S/home/.mec node apps/desktop/bin/mec.js status`. A tree from before #45 reads `$HOME/.mec` only. The store file is `$S/home/.mec/mec.db`.
 
 ## Shared machine
 

@@ -14,6 +14,8 @@ export type MergeIntoIntegrationOptions = {
   worktree: string
   taskBranch: string
   message: string
+  /** Supplied through `-c`, as `commitAll` does: a bare cache has no identity of its own. */
+  identity?: { name: string; email: string }
 }
 
 export type MergeIntoIntegrationResult =
@@ -32,7 +34,11 @@ export async function mergeIntoIntegration(
     throw new Error(`task branch not found in the repository cache: ${JSON.stringify(branch)}`)
   }
 
-  const merged = await git(['merge', '--no-ff', '--no-edit', '-m', opts.message, branch], {
+  const identity =
+    opts.identity === undefined
+      ? []
+      : ['-c', `user.name=${opts.identity.name}`, '-c', `user.email=${opts.identity.email}`]
+  const merged = await git([...identity, 'merge', '--no-ff', '--no-edit', '-m', opts.message, branch], {
     cwd: opts.worktree,
     allowFailure: true,
   })

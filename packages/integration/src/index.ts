@@ -1,3 +1,13 @@
+export type {
+  ControllerDeps,
+  ControllerTask,
+  IntegrationCheck,
+  IntegrationEffect,
+  IntegrationFailure,
+  IntegrationRun,
+  IntegrationState,
+} from './controller'
+export { dependencyOrder, repairSettled, runIntegration } from './controller'
 export type { PrEvent, PrState } from './prflow'
 export { prTransition } from './prflow'
 export type { IntegrationTask, QueueStep } from './queue'

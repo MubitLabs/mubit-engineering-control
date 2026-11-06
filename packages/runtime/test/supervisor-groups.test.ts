@@ -2,7 +2,7 @@
 // we may signal and -0 is our own group. No real process has them in reach, so `ps` and the kill
 // are both faked here, and nothing is ever signalled.
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Supervisor } from '../src/supervisor'
+import { reapGroup, Supervisor } from '../src/supervisor'
 
 const ATTEMPT = 500
 const IN_GROUP_ONE = 502
@@ -60,5 +60,12 @@ describe('Supervisor stray groups', () => {
     await expect(supervisor.stop('pids', 1, { graceMs: 50 })).resolves.toBe('escalated')
     expect(signalled).toContainEqual([IN_GROUP_ONE, 'SIGKILL'])
     expect(signalled).toContainEqual([IN_GROUP_ZERO, 'SIGKILL'])
+  })
+
+  it('a boot reap of a group another process started reaches its strays too', async () => {
+    const { signalled } = fakeKill()
+    await expect(reapGroup(ATTEMPT, { graceMs: 50 })).resolves.toBe('escalated')
+    expect(signalled.map(([target]) => target)).toContain(-777)
+    expect(signalled).toContainEqual([IN_GROUP_ONE, 'SIGKILL'])
   })
 })

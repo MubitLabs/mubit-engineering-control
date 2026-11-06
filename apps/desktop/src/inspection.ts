@@ -25,7 +25,7 @@ import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } fro
 import { isAbsolute, join, relative, sep } from 'node:path'
 import type { EngineEvent, Json, KeyFingerprint, Store, StoreDoc } from '@mec/contracts'
 import { type Stage, stageOf, workViewOf } from '@mec/domain'
-import { assertRepoAdmission } from '@mec/meta'
+import { assertRepoAdmission, holdsGroup } from '@mec/meta'
 import { type AttemptOutcome, type CheckRecord, projectAttempt } from '@mec/scorecards'
 import { redact, type SecretSpan, secretSpans } from '@mec/slots'
 import {
@@ -422,6 +422,8 @@ const REPO_PREFIX = 'repo_'
 const RECENT_CAP = 20
 /** A task answer is cut to these before it is built; what was cut is counted in the response. */
 const ATTEMPT_CAP = 50
+/** Said on an attempt whose group outlived it (§8.1). */
+const HELD_OUTCOME = 'process group still running, capacity held'
 const CHECK_CAP = 200
 const DIFF_FILE_CAP = 500
 const TASK_CAP = 200
@@ -1080,6 +1082,7 @@ class Inspector {
       const model = str(attempt.model) ?? (engine === null ? null : str(attempt.resolved_model))
       const exitCode = num(attempt.exit_code)
       const terminal = str(attempt.terminal_reason) ?? str(attempt.exit_reason)
+      const outcome = terminal ?? (exitCode === null ? 'unknown' : `exit ${exitCode}`)
       return {
         id: String(attempt.id),
         generation: num(attempt.generation) ?? 1,
@@ -1097,7 +1100,7 @@ class Inspector {
               },
         baseSha: str(attempt.base_sha) ?? str(attempt.baseSha),
         headSha: headOf(attempt),
-        processOutcome: terminal ?? (exitCode === null ? 'unknown' : `exit ${exitCode}`),
+        processOutcome: holdsGroup(attempt) ? `${outcome} (${HELD_OUTCOME})` : outcome,
         lastActivityAt: lastAt[`attempt:${String(attempt.id)}`] ?? null,
       }
     })

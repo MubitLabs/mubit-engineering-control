@@ -86,6 +86,11 @@ export function noVerdict(attempt: StoreDoc): boolean {
   return attempt.state === 'work_complete' && typeof attempt.checks_note === 'string'
 }
 
+/** A group that outlived its attempt: the attempt stays as it ended, and keeps its capacity (§8.1). */
+export function holdsGroup(attempt: StoreDoc): boolean {
+  return Array.isArray(attempt.held_groups) && attempt.held_groups.length > 0
+}
+
 /** §10's check before every resume; a legacy row has no hash to compare. */
 export function revalidateWork(
   doc: StoreDoc,

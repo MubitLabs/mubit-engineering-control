@@ -373,6 +373,37 @@ describe('the scheduler pass (§11)', () => {
     expect(store.workItems.get('wi_1')).toMatchObject({ state: 'blocked', blockedReason: 'policy_changed' })
   })
 
+  it('a failed attempt keeps its slot unit while its group is still there (§8.1)', () => {
+    const { store, pass } = rig([slot('slot_a', { concurrency: 1 })])
+    work(store)
+    task(store, 'task_a', { status: 'blocked' })
+    attempt(store, { state: 'failed', held_groups: [{ pid: 4242, started: 'then' }] })
+    task(store, 'task_b')
+    expect(pass()).toEqual([])
+    expect(store.tasks.get('task_b')?.deferred).toMatchObject({ reason: 'capacity' })
+
+    const { held_groups: _gone, ...rest } = store.attempts.get('att_1') as StoreDoc
+    store.atomic(() => store.attempts.save(rest))
+    expect(pass().map((row) => row.taskId)).toEqual(['task_b'])
+  })
+
+  it('a held group leaves its failed attempt failed, and the task still blocks', () => {
+    const { store, pass } = rig([slot('slot_a', { concurrency: 1 })])
+    work(store)
+    task(store, 'task_a', { status: 'active' })
+    attempt(store, {
+      state: 'failed',
+      terminal_reason: 'refused to die',
+      held_groups: [{ pid: 4242, started: 'then' }],
+    })
+    pass('wi_1')
+    expect(store.tasks.get('task_a')).toMatchObject({
+      status: 'blocked',
+      blockedReason: 'attempt att_1 failed: refused to die',
+    })
+    expect(store.attempts.get('att_1')?.state).toBe('failed')
+  })
+
   it('an attempt that gets no verdict stops holding its slot', () => {
     const { store, pass } = rig([slot('slot_a', { concurrency: 1 })])
     work(store)

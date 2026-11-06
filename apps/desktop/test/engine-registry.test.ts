@@ -505,6 +505,49 @@ describe('Codex through the runner', { timeout: 180_000 }, () => {
     }
   })
 
+  it('a group that outlives its failed attempt holds capacity until it goes (§8.1)', async () => {
+    const steps = [{ stubborn: 60 }, { sleep: 60_000 }]
+    const { dataDir, repo, bin } = scratch('codex', { steps })
+    seed(dataDir, repo, { slot: CODEX_SLOT, task: { budget: { wall_clock_ms: 1500 } } })
+    const commandPid = (): number | undefined => {
+      const path = join(bin, 'command.pid')
+      return existsSync(path) ? Number(readFileSync(path, 'utf8')) : undefined
+    }
+    const kill = process.kill.bind(process)
+    const spy = vi
+      .spyOn(process, 'kill')
+      .mockImplementation((target, signal) =>
+        Math.abs(target) === commandPid() ? true : kill(target, signal),
+      )
+    const reapLater = (): void => {
+      const pid = commandPid()
+      if (pid === undefined) return
+      try {
+        kill(-pid, 'SIGKILL')
+      } catch {
+        // gone, as it should be
+      }
+    }
+    try {
+      const end = await launched(dataDir)
+      expect(end.state).toBe('failed')
+      const held = end.held_groups as { pid: number; started: string }[]
+      expect(held.map((mark) => mark.pid)).toContain(commandPid())
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+      expect(attempt(dataDir)?.held_groups).toBeDefined()
+
+      spy.mockRestore()
+      reapLater()
+      await until(() => attempt(dataDir)?.held_groups === undefined, 20_000)
+      expect(attempt(dataDir)?.state).toBe('failed')
+      const events = peek(dataDir, (store) => store.events.read('attempt:att_1').map((event) => event.type))
+      expect(events).toContain('attempt.capacity_released')
+    } finally {
+      spy.mockRestore()
+      reapLater()
+    }
+  })
+
   it('the server dying mid-turn fails the attempt, it does not hang', async () => {
     const { dataDir, repo } = scratch('codex', { steps: [{ exit: 3 }] })
     seed(dataDir, repo, { slot: CODEX_SLOT })

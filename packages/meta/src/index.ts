@@ -13,6 +13,7 @@ export type {
 export {
   blockWork,
   failLaunch,
+  holdsGroup,
   holdWorkItem,
   isHeld,
   isTerminal,

@@ -52,6 +52,7 @@ import {
   PLANNER_DOC,
   probeSlot,
   reconcileExternal,
+  reconcileHeld,
   reconcilePlanner,
   reconcileProcesses,
   reconcileStalled,
@@ -427,9 +428,19 @@ export async function startServer(opts: {
   const effectsPass = (): void => {
     void store.effects.run().catch(() => {})
   }
+  // §8.1: one look at a time; a group that still refuses takes seconds to say so.
+  let heldLook: Promise<void> | undefined
+  const heldPass = (): void => {
+    heldLook ??= reconcileHeld(processDeps)
+      .catch((error: unknown) => console.error(`[recovery] held groups: ${String(error)}`))
+      .finally(() => {
+        heldLook = undefined
+      })
+  }
   const queueTimer = setInterval(() => {
     effectsPass()
     parkPass()
+    heldPass()
     schedulerPass()
     if (!paused) delivery?.kick()
   }, PASS_INTERVAL_MS)

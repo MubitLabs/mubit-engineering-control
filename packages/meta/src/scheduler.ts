@@ -36,7 +36,7 @@ import {
 } from '@mec/domain'
 import { type ResolvedModel, resolveModel } from '../../runtime/src/model'
 import { repoOf } from './admission'
-import { blockWork, isHeld, isTerminal, mandateOf, noVerdict, processingOf } from './authority'
+import { blockWork, holdsGroup, isHeld, isTerminal, mandateOf, noVerdict, processingOf } from './authority'
 import { enqueueWake, type FollowUps } from './followups'
 import { type Continuation, nextRepair, nextReview, repairLedger } from './repair'
 import { classifyWake } from './wakes'
@@ -641,7 +641,7 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
 
   const active = store.attempts
     .list()
-    .filter((doc) => occupies(deps, doc))
+    .filter((doc) => occupies(deps, doc) || holdsGroup(doc))
     .map((doc) => ({
       taskId: String(doc.taskId),
       slotId: String(doc.slotId),

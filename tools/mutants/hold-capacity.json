@@ -1,0 +1,118 @@
+[
+  {
+    "name": "a pass stops counting a held group against capacity",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    .filter((doc) => occupies(deps, doc) || holdsGroup(doc))\n",
+    "replace": "    .filter((doc) => occupies(deps, doc))\n",
+    "tests": ["packages/meta/test/scheduler.test.ts", "-t", "keeps its slot unit"]
+  },
+  {
+    "name": "a held group keeps its failed task from blocking",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (attempt.resuming === true) return true\n  if (!OCCUPYING",
+    "replace": "  if (attempt.resuming === true || holdsGroup(attempt)) return true\n  if (!OCCUPYING",
+    "tests": ["packages/meta/test/scheduler.test.ts", "-t", "the task still blocks"]
+  },
+  {
+    "name": "a resume does not count a held group against its slot",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "    if (doc.resuming === true || holdsGroup(doc)) return true\n",
+    "replace": "    if (doc.resuming === true) return true\n",
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "a held group fills"]
+  },
+  {
+    "name": "the monitor does not say what the refused stop left",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "this.#stopFailed(live, error, supervisor.survivors(attempt_id, generation))",
+    "replace": "this.#stopFailed(live, error)",
+    "tests": ["apps/desktop/test/engine-registry.test.ts", "-t", "outlives its failed attempt"]
+  },
+  {
+    "name": "the attempt does not keep what the refused stop left",
+    "file": "apps/desktop/src/core-facts.ts",
+    "find": "        ...(held.length > 0 && { held_groups: [...held] }),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/engine-registry.test.ts", "-t", "outlives its failed attempt"]
+  },
+  {
+    "name": "only the leader is marked, so a stray outlives the hold",
+    "file": "packages/runtime/src/supervisor.ts",
+    "find": "return [...new Set([...groups, ...pids])].map((pid) => ({",
+    "replace": "return [owned.pid].map((pid) => ({",
+    "tests": ["packages/runtime/test/supervisor.test.ts", "-t", "names what it left"]
+  },
+  {
+    "name": "a mark loses its start time, so no boot can prove it",
+    "file": "packages/runtime/src/supervisor.ts",
+    "find": "      started: readProcess(pid)?.started ?? '',\n",
+    "replace": "      started: '',\n",
+    "tests": ["packages/runtime/test/supervisor.test.ts", "-t", "names what it left"]
+  },
+  {
+    "name": "a boot leaves held groups alone",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "  await reconcileHeld(deps)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "keeps the hold while it is there"]
+  },
+  {
+    "name": "a running server never looks at held groups again",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    heldPass()\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/engine-registry.test.ts", "-t", "outlives its failed attempt"]
+  },
+  {
+    "name": "one group gone releases the whole hold",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "...(left.length > 0 && { held_groups: left }), ",
+    "replace": "",
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "only what has gone leaves the list"]
+  },
+  {
+    "name": "a hold is never released",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "      if ((await groupLeft(mark, deps)) !== undefined) left.push(mark)\n",
+    "replace": "      left.push(mark)\n",
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "keeps the hold while it is there"]
+  },
+  {
+    "name": "a release leaves nothing on the record",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "      appendEvent(store, `attempt:${id}`, 'attempt.capacity_released', { attemptId: id, at }, at)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "keeps the hold while it is there"]
+  },
+  {
+    "name": "an unprovable group reads as gone",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "  if (found === 'unprovable') return found\n",
+    "replace": "  if (found === 'unprovable') return undefined\n",
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "cannot prove its own is never signalled"]
+  },
+  {
+    "name": "a recycled pid keeps the hold",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "  if (found === 'gone' || found === 'recycled') return undefined\n",
+    "replace": "  if (found === 'gone') return undefined\n",
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "a recycled pid means the group has gone"]
+  },
+  {
+    "name": "inspection does not say the capacity is held",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "processOutcome: holdsGroup(attempt) ? `${outcome} (${HELD_OUTCOME})` : outcome,",
+    "replace": "processOutcome: outcome,",
+    "tests": [
+      "apps/desktop/test/inspection.test.ts",
+      "-t",
+      "says on the attempt that its group is still there"
+    ]
+  },
+  {
+    "name": "a stray ps could not read reads as gone",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "(pid) => groupAlive(pid) || processAlive(pid),",
+    "replace": "(pid) => groupAlive(pid),",
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "because ps could not read it"]
+  }
+]

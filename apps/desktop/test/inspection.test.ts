@@ -1,4 +1,4 @@
-import type { HealthBoard, HealthClaim, HealthName } from '@mec/contracts'
+import type { HealthBoard, HealthClaim, HealthName, StoreDoc } from '@mec/contracts'
 import { fakeBrain, MetaAgentService, type MetaDecision } from '@mec/meta'
 import { InspectionReads, MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import Database from 'better-sqlite3'
@@ -541,6 +541,32 @@ describe('inspection routes: honesty', () => {
     // Checks belong to the exact head they ran on; the stale one is not carried over.
     expect(some.checks.headSha).toBe('abc1234')
     expect(some.checks.results.map((c: any) => c.name)).toEqual(['unit'])
+  })
+})
+
+describe('inspection routes: a held group', () => {
+  it('says on the attempt that its group is still there, and stops once it has gone', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    store.atomic(() => {
+      store.tasks.save({ id: 'task_1', workItemId: 'wi_1', repoId: 'repo_a', status: 'blocked' })
+      store.attempts.save({
+        id: 'att_1',
+        taskId: 'task_1',
+        workItemId: 'wi_1',
+        state: 'failed',
+        generation: 1,
+        terminal_reason: 'monitor_error: refused to die',
+        held_groups: [{ pid: 4242, started: 'then' }],
+      })
+    })
+    const held = (await get('/api/inspect/tasks/task_1')).json()
+    expect(held.attempts[0].processOutcome).toBe(
+      'monitor_error: refused to die (process group still running, capacity held)',
+    )
+    const { held_groups: _gone, ...rest } = store.attempts.get('att_1') as StoreDoc
+    store.atomic(() => store.attempts.save(rest))
+    const gone = (await get('/api/inspect/tasks/task_1')).json()
+    expect(gone.attempts[0].processOutcome).toBe('monitor_error: refused to die')
   })
 })
 

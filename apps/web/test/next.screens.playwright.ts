@@ -1242,3 +1242,85 @@ test.describe('the two-step approval', () => {
     await expect(question.getByRole('heading', { level: 2 })).toBeFocused()
   })
 })
+
+test.describe('the card shortcuts', () => {
+  test.use({ viewport: { width: 1440, height: 900 } })
+
+  const approve = (page: Page) => page.getByRole('button', { name: 'Approve push' })
+  const confirm = (page: Page) => page.getByRole('button', { name: 'Confirm: push sample branch' })
+  const cards = (page: Page) => page.locator('.decision')
+
+  test('J walks the open cards and skips settled and expired ones', async ({ page }) => {
+    await harness(page, '', 'needs')
+    await page.keyboard.press('j')
+    await expect(cards(page).nth(0).getByRole('heading', { level: 2 })).toBeFocused()
+    await page.keyboard.press('j')
+    await expect(cards(page).nth(1).getByRole('heading', { level: 2 })).toBeFocused()
+    await page.keyboard.press('j')
+    await expect(cards(page).nth(1).getByRole('heading', { level: 2 })).toBeFocused()
+  })
+
+  test('A arms the focused approval and never confirms it', async ({ page }) => {
+    await harness(page, '', 'needs')
+    await page.keyboard.press('j')
+    await page.keyboard.press('a')
+    await expect(confirm(page)).toBeFocused()
+    await expect(cards(page).first()).toHaveAttribute('data-state', 'open')
+    await page.keyboard.press('a')
+    await expect(cards(page).first()).toHaveAttribute('data-state', 'open')
+    await expect(confirm(page)).toBeVisible()
+    await page.keyboard.press('Enter')
+    await expect(cards(page).first()).toHaveAttribute('data-state', 'resolved')
+  })
+
+  test('A with no card focused does nothing', async ({ page }) => {
+    await harness(page, '', 'needs')
+    await page.keyboard.press('a')
+    await expect(confirm(page)).toHaveCount(0)
+    await expect(approve(page).first()).toBeVisible()
+  })
+
+  test('A on a settled card does nothing', async ({ page }) => {
+    await harness(page, '', 'needs')
+    await cards(page).nth(2).getByRole('heading', { level: 2 }).focus()
+    await page.keyboard.press('a')
+    await expect(cards(page).nth(2)).toHaveAttribute('data-state', 'resolved')
+    await expect(confirm(page)).toHaveCount(0)
+  })
+
+  test('none fire while typing in a field', async ({ page }) => {
+    await harness(page, '', 'needs')
+    const text = cards(page).nth(1).getByRole('textbox')
+    await text.focus()
+    await page.keyboard.type('jag')
+    await expect(text).toHaveValue('jag')
+    await expect(page).toHaveURL(/#needs$/)
+    await expect(confirm(page)).toHaveCount(0)
+  })
+
+  test('G then W goes to Work, and W alone does not', async ({ page }) => {
+    await harness(page, '', 'needs')
+    await page.keyboard.press('w')
+    await expect(page).toHaveURL(/#needs$/)
+    await page.keyboard.press('g')
+    await page.keyboard.press('w')
+    await expect(page).toHaveURL(/#work$/)
+  })
+
+  test('the palette names the shortcut beside Go to Work', async ({ page }) => {
+    await harness(page, '', 'needs')
+    await page.keyboard.press('Control+k')
+    await expect(page.getByRole('option', { name: /Go to Work/ })).toContainText('G then W')
+  })
+
+  test('none fire under an open palette', async ({ page }) => {
+    await harness(page, '', 'needs')
+    await page.keyboard.press('j')
+    await page.keyboard.press('Control+k')
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Control+k')
+    await page.keyboard.type('a')
+    await expect(page.getByRole('combobox')).toHaveValue('a')
+    await expect(confirm(page)).toHaveCount(0)
+  })
+})

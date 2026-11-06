@@ -226,12 +226,21 @@ export function Shell({
     setPaletteAfter(null)
   }, [paletteAfter, paletteOpen])
 
+  const navigate = useCallback(
+    (target: Route) => {
+      setDrawerOpen(false)
+      onNavigate(target)
+    },
+    [onNavigate],
+  )
+
   const keys = useMemo(
     () => ({
       onPalette: () => setPaletteOpen((open) => !open),
       onFocusComposer: () => void focusComposer(),
+      onGoWork: () => navigate('work'),
     }),
-    [focusComposer],
+    [focusComposer, navigate],
   )
   useGlobalKeys(keys)
 
@@ -292,14 +301,6 @@ export function Shell({
     if (!drawerMode) setDrawerOpen(false)
   }, [drawerMode])
 
-  const navigate = useCallback(
-    (target: Route) => {
-      setDrawerOpen(false)
-      onNavigate(target)
-    },
-    [onNavigate],
-  )
-
   const switchRepository = useCallback(
     (id: string) => {
       setDrawerOpen(false)
@@ -321,6 +322,7 @@ export function Shell({
     ...(['chat', 'work', 'needs', 'slots', 'setup', 'settings'] as const).map((target) => ({
       id: `route-${target}`,
       label: `Go to ${ROUTE_LABELS[target]}`,
+      hint: target === 'work' ? 'G then W' : undefined,
       run: () => navigate(target),
     })),
     ...(['auto', 'light', 'dark'] as const).map((choice) => ({

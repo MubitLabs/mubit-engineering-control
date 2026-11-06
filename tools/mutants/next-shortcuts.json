@@ -1,0 +1,44 @@
+[
+  {
+    "name": "keys: J, A and G fire while typing in a field",
+    "file": "apps/web/src/next/keyboard.ts",
+    "find": "if (event.shiftKey || event.typing || state.modalOpen) return null",
+    "replace": "if (event.shiftKey || state.modalOpen) return null",
+    "tests": ["apps/web/test/next-keyboard.test.ts"]
+  },
+  {
+    "name": "keys: J, A and G fire under a modal or the palette",
+    "file": "apps/web/src/next/keyboard.ts",
+    "find": "if (event.shiftKey || event.typing || state.modalOpen) return null",
+    "replace": "if (event.shiftKey || event.typing) return null",
+    "tests": ["apps/web/test/next-keyboard.test.ts"]
+  },
+  {
+    "name": "keys: Shift+A also fires",
+    "file": "apps/web/src/next/keyboard.ts",
+    "find": "if (event.shiftKey || event.typing || state.modalOpen) return null",
+    "replace": "if (event.typing || state.modalOpen) return null",
+    "tests": ["apps/web/test/next-keyboard.test.ts"]
+  },
+  {
+    "name": "keys: any key after G goes to Work",
+    "file": "apps/web/src/next/keyboard.ts",
+    "find": "if (state.pendingGo) return letter === 'w' ? 'go-work' : null",
+    "replace": "if (state.pendingGo) return 'go-work'",
+    "tests": ["apps/web/test/next-keyboard.test.ts"]
+  },
+  {
+    "name": "keys: W alone goes to Work",
+    "file": "apps/web/src/next/keyboard.ts",
+    "find": "if (letter === 'j') return 'next-card'",
+    "replace": "if (letter === 'w') return 'go-work'\n  if (letter === 'j') return 'next-card'",
+    "tests": ["apps/web/test/next-keyboard.test.ts"]
+  },
+  {
+    "name": "keys: a modifier chord fires the shortcut",
+    "file": "apps/web/src/next/keyboard.ts",
+    "find": "if (event.metaKey || event.ctrlKey || event.altKey) return null\n  if (event.key === '/')",
+    "replace": "if (event.key === '/')",
+    "tests": ["apps/web/test/next-keyboard.test.ts"]
+  }
+]

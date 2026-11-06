@@ -14,6 +14,8 @@ One linear branch from `origin/main` (#46), landed as one PR by the owner's appr
 | 30 S2 | `feat/inspection-live` | `53b6992..000ac04` |
 | 32 stage B | `feat/recovery-controls` | `f02cd7e` alone |
 | 31 C | `feat/work-evidence` | `11e2a4e`, `277554f`, `f9ae9d9` |
+| Hardening and restart | `fix/ship-hardening`, `fix/ship-restart` | `4cba2e6..6351fdf` |
+| Work row and journey | `fix/work-row-ready`, `feat/journey-tests` | `4cba2e6..023b2ab` |
 
 32's first two commits in `9ecc226..f02cd7e` replay #38 and #40, which are on main, so only its last commit was picked. 31 C's earlier commits merge `feat/work-live`, which is #38.
 
@@ -21,7 +23,7 @@ One linear branch from `origin/main` (#46), landed as one PR by the owner's appr
 
 - **Cleaner.** A park reason and the handoff pack now go through the attempt's cleaner. Cards and handbacks from the other branches already did, or are the owner's own text. Delivery's blocked reasons now sweep key last-fours.
 - **Stop and hold.** A stop withdraws an open `slot_switch` card at the approve, a hold keeps it pending, and a card approved before a hold waits for the lift. Parked resume and 32's routes already honoured both.
-- **Data root and port.** An empty `MEC_DATA_DIR` is unset in `bin/mec.js`, `mecRoot` and the planner's prompt root, as in `cliHome`. `mec restart` and the last port already agreed.
+- **Data root and port.** An empty `MEC_DATA_DIR` is unset in `bin/mec.js`, `mecRoot` and the planner's prompt root, as in `cliHome`. `fix/ship-restart` makes `mec restart` start the server under the same root.
 - **Refusals.** Readiness uses `lacksHome`, so there is one rule for a slot's home. A retired meta slot is refused by name with or without a home.
 - **`slot_switch` cards.** `request_confirmation` refuses the class, even where policy pre-authorises it. The card names the owner as its asker.
 
@@ -38,7 +40,7 @@ One linear branch from `origin/main` (#46), landed as one PR by the owner's appr
 
 ## Mutants
 
-43 stale `find` strings were repaired, 4 of them already stale on main. `tools/mutants/m2-ship.json` covers the new gates.
+50 stale `find` strings were repaired, 4 of them already stale on main. `tools/mutants/m2-ship.json` covers the new gates.
 
 ## Unproven
 

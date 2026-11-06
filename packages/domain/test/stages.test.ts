@@ -163,12 +163,17 @@ describe('a delivery ready for review (§10)', () => {
   })
 
   it('stays Working while the delivery is any other stage', () => {
-    expect(stageOf(workViewOf({ state: 'executing' }, { ...facts, deliveryReady: false })).key).toBe('working')
+    expect(stageOf(workViewOf({ state: 'executing' }, { ...facts, deliveryReady: false })).key).toBe(
+      'working',
+    )
     expect(stageOf(workViewOf({ state: 'executing' }, facts)).key).toBe('working')
   })
 
   it('an approval still outranks it, and a merged item shows its outcome', () => {
-    const asked = workViewOf({ state: 'executing' }, { ...facts, awaitingConfirmation: true, deliveryReady: true })
+    const asked = workViewOf(
+      { state: 'executing' },
+      { ...facts, awaitingConfirmation: true, deliveryReady: true },
+    )
     expect(stageOf(asked).label).toBe('Needs your approval')
     const merged = workViewOf({ state: 'done' }, { ...facts, merged: true, deliveryReady: true })
     expect(stageOf(merged).key).toBe('ended/merged')

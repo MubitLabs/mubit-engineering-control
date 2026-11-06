@@ -184,8 +184,8 @@
   {
     "name": "restore the identical-text skip",
     "file": "apps/desktop/src/composition.ts",
-    "find": "    const live = { ...snapshot, instanceId, pid: process.pid, heartbeatAt: now.toISOString() }\n",
-    "replace": "    const same = JSON.stringify({ ...snapshot, observedAt: '' })\n    if (same === (globalThis as { lastHealth?: string }).lastHealth) return\n    ;(globalThis as { lastHealth?: string }).lastHealth = same\n    const live = { ...snapshot, instanceId, pid: process.pid, heartbeatAt: now.toISOString() }\n",
+    "find": "    const live = {\n      ...snapshot,\n      instanceId,\n",
+    "replace": "    const same = JSON.stringify({ ...snapshot, observedAt: '' })\n    if (same === (globalThis as { lastHealth?: string }).lastHealth) return\n    ;(globalThis as { lastHealth?: string }).lastHealth = same\n    const live = {\n      ...snapshot,\n      instanceId,\n",
     "tests": ["apps/desktop/test/health-freshness.test.ts"]
   },
   {

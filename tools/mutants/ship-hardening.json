@@ -100,43 +100,47 @@
   {
     "name": "a drained row leaves an expired attempt queued",
     "file": "packages/meta/src/authority.ts",
-    "find": "const UNRUNNABLE: readonly LaunchDropReason[] = ['mandate_expired', 'mandate_withdrawn', 'repo_mismatch']\n",
-    "replace": "const UNRUNNABLE: readonly LaunchDropReason[] = ['mandate_withdrawn', 'repo_mismatch']\n",
+    "find": "const UNRUNNABLE: readonly LaunchDropReason[] = [\n  'mandate_expired',\n  'mandate_withdrawn',\n  'policy_changed',\n  'repo_mismatch',\n]\n",
+    "replace": "const UNRUNNABLE: readonly LaunchDropReason[] = [\n  'mandate_withdrawn',\n  'policy_changed',\n  'repo_mismatch',\n]\n",
     "tests": ["packages/meta/test/authority.test.ts", "-t", "drains on an expired mandate settles"]
   },
   {
     "name": "a drained row leaves a withdrawn attempt queued",
     "file": "packages/meta/src/authority.ts",
-    "find": "const UNRUNNABLE: readonly LaunchDropReason[] = ['mandate_expired', 'mandate_withdrawn', 'repo_mismatch']\n",
-    "replace": "const UNRUNNABLE: readonly LaunchDropReason[] = ['mandate_expired', 'repo_mismatch']\n",
+    "find": "const UNRUNNABLE: readonly LaunchDropReason[] = [\n  'mandate_expired',\n  'mandate_withdrawn',\n  'policy_changed',\n  'repo_mismatch',\n]\n",
+    "replace": "const UNRUNNABLE: readonly LaunchDropReason[] = [\n  'mandate_expired',\n  'policy_changed',\n  'repo_mismatch',\n]\n",
     "tests": ["packages/meta/test/authority.test.ts", "-t", "settles too"]
   },
   {
     "name": "a drained row leaves a mismatched attempt queued",
     "file": "packages/meta/src/authority.ts",
-    "find": "const UNRUNNABLE: readonly LaunchDropReason[] = ['mandate_expired', 'mandate_withdrawn', 'repo_mismatch']\n",
-    "replace": "const UNRUNNABLE: readonly LaunchDropReason[] = ['mandate_expired', 'mandate_withdrawn']\n",
+    "find": "const UNRUNNABLE: readonly LaunchDropReason[] = [\n  'mandate_expired',\n  'mandate_withdrawn',\n  'policy_changed',\n  'repo_mismatch',\n]\n",
+    "replace": "const UNRUNNABLE: readonly LaunchDropReason[] = [\n  'mandate_expired',\n  'mandate_withdrawn',\n  'policy_changed',\n]\n",
     "tests": ["packages/meta/test/authority.test.ts", "-t", "settles too"]
   },
   {
-    "name": "a policy change fails the attempt",
+    "name": "a policy change leaves the attempt queued",
     "file": "packages/meta/src/authority.ts",
-    "find": "const UNRUNNABLE: readonly LaunchDropReason[] = ['mandate_expired', 'mandate_withdrawn', 'repo_mismatch']\n",
-    "replace": "const UNRUNNABLE: readonly LaunchDropReason[] = ['mandate_expired', 'mandate_withdrawn', 'repo_mismatch', 'policy_changed']\n",
-    "tests": ["packages/meta/test/authority.test.ts", "-t", "a policy change cancels nothing"]
+    "find": "const UNRUNNABLE: readonly LaunchDropReason[] = [\n  'mandate_expired',\n  'mandate_withdrawn',\n  'policy_changed',\n  'repo_mismatch',\n]\n",
+    "replace": "const UNRUNNABLE: readonly LaunchDropReason[] = [\n  'mandate_expired',\n  'mandate_withdrawn',\n  'repo_mismatch',\n]\n",
+    "tests": [
+      "packages/meta/test/authority.test.ts",
+      "-t",
+      "a policy change fails the attempt that never started"
+    ]
   },
   {
     "name": "a stale row fails an attempt queued again",
     "file": "packages/meta/src/authority.ts",
-    "find": "  if (UNRUNNABLE.includes(reason) && store.attempts.get(attemptId)?.state === 'queued') {\n",
-    "replace": "  if (store.attempts.get(attemptId)?.state === 'queued') {\n",
+    "find": "  if (UNRUNNABLE.includes(reason) && attempt?.state === 'queued' && attempt.reconcile_refused === undefined) {\n",
+    "replace": "  if (attempt?.state === 'queued' && attempt.reconcile_refused === undefined) {\n",
     "tests": ["packages/meta/test/authority.test.ts", "-t", "a stale row for an attempt queued again"]
   },
   {
     "name": "a refused resume blocks the work",
     "file": "packages/meta/src/authority.ts",
-    "find": "  if (UNRUNNABLE.includes(reason) && store.attempts.get(attemptId)?.state === 'queued') {\n",
-    "replace": "  if (UNRUNNABLE.includes(reason)) {\n",
+    "find": "  if (UNRUNNABLE.includes(reason) && attempt?.state === 'queued' && attempt.reconcile_refused === undefined) {\n",
+    "replace": "  if (UNRUNNABLE.includes(reason) && attempt?.reconcile_refused === undefined) {\n",
     "tests": ["packages/meta/test/authority.test.ts", "-t", "a refused resume blocks nothing"]
   }
 ]

@@ -20,7 +20,7 @@ import type { AttemptRef, Effects, Input, Json, Report, Store, StoreDoc } from '
 import { Later } from '@mec/contracts'
 import { ATTEMPT_TERMINAL, type AttemptState, ReceiptLadder, type ReceiptStage } from '@mec/domain'
 import { redact } from '../../slots/src/redaction'
-import { isHeld, isTerminal, mandateOf } from './authority'
+import { isHeld, isTerminal, mandateOf, noVerdict } from './authority'
 import { handBack } from './handback'
 import type { MetaDecision, WakeRequest } from './service'
 import { classifyWake } from './wakes'
@@ -57,7 +57,9 @@ const isLive = (attempt: StoreDoc | undefined): boolean =>
   attempt?.state === 'running' || attempt?.state === 'queued'
 
 const isEnded = (attempt: StoreDoc | undefined): boolean =>
-  attempt === undefined || ATTEMPT_TERMINAL.includes(String(attempt.state) as AttemptState)
+  attempt === undefined ||
+  ATTEMPT_TERMINAL.includes(String(attempt.state) as AttemptState) ||
+  noVerdict(attempt)
 
 /** Wake keys are their cause, and a turn's message id derives from it (§6). */
 export function enqueueWake(effects: Effects, wake: WakeRequest & { settles?: string }): void {

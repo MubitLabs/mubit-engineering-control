@@ -238,6 +238,62 @@ describe('ownership (§12.3)', () => {
     expect(h.relayRows()[0]).toMatchObject({ key: 'wake:released:msg_1' })
   })
 
+  // §12.3, decision #34: a repository with no checks leaves the attempt `work_complete` with a note.
+  describe('an attempt with no verdict coming', () => {
+    const NOTE = 'no checks are registered for this repository'
+    const finish = (h: Rig, fields: StoreDoc) =>
+      h.store.atomic(() => {
+        h.store.attempts.save({ ...attempt(h), state: 'work_complete', ...fields })
+        h.followups.sweep(AT)
+      })
+
+    it('releases what it left unhandled, and the planner gets the turn', async () => {
+      const h = rig()
+      await send(h)
+      await h.drainDeliver()
+      h.store.atomic(() => h.followups.inputsRead('att_1', [inputIdOf(h)]))
+      finish(h, { checks_note: NOTE })
+
+      expect(h.store.messages.get('msg_1')).toMatchObject({
+        owned: false,
+        released: { reason: 'its attempt ended before it handled the message' },
+      })
+      expect(h.relayRows()[0]).toMatchObject({ key: 'wake:released:msg_1' })
+    })
+
+    it('settles what it handled, with no wake', async () => {
+      const h = rig()
+      await send(h)
+      await h.drainDeliver()
+      h.store.atomic(() => h.followups.inputsRead('att_1', [inputIdOf(h)]))
+      onReport(h, { kind: 'progress', handled_inputs: [inputIdOf(h)] })
+      finish(h, { checks_note: NOTE })
+
+      expect(stage(h)).toBe('settled')
+      expect(h.store.messages.get('msg_1')).toMatchObject({ owned: false })
+      expect(h.relayRows()).toHaveLength(0)
+    })
+
+    it('stops fencing the planner off the work', async () => {
+      const h = rig()
+      await send(h)
+      finish(h, { checks_note: NOTE })
+
+      const decision: MetaDecision = { ack: 'ok', plan: { tasks: [] } }
+      expect(h.followups.guardTurn(decision, 'wi_1', AT)).toBe(decision)
+    })
+
+    it('work_complete with checks still running keeps the message: its verdict is coming', async () => {
+      const h = rig()
+      await send(h)
+      await h.drainDeliver()
+      finish(h, {})
+
+      expect(h.store.messages.get('msg_1')).toMatchObject({ owned: true, ownerAttemptId: 'att_1' })
+      expect(h.relayRows()).toHaveLength(0)
+    })
+  })
+
   it('a stopped item releases into a note: nothing wakes ended work', async () => {
     const h = rig()
     await send(h)

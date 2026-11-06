@@ -41,7 +41,13 @@ const gitIn = (cwd: string, ...args: string[]): string =>
 
 type Scenario = { steps: unknown[]; followUp?: unknown[] }
 
-function scratch(scenario: Scenario, slot: Record<string, unknown> = {}) {
+type Check = { name: string; cmd: string }
+
+function scratch(
+  scenario: Scenario,
+  slot: Record<string, unknown> = {},
+  checks: Check[] = [{ name: 'made', cmd: 'test -f made.txt' }],
+) {
   const root = mkdtempSync(join(tmpdir(), 'mec-coord-'))
   roots.push(root)
   const dataDir = join(root, 'state')
@@ -71,7 +77,7 @@ function scratch(scenario: Scenario, slot: Record<string, unknown> = {}) {
       id: REPO,
       url: repo,
       bootstrap: [],
-      checks: [{ name: 'made', cmd: 'test -f made.txt' }],
+      checks,
       trust: false,
     })
     store.slots.save({
@@ -265,15 +271,18 @@ describe('continuing coordination (§11, §12)', () => {
 
   // The fake reads `$INPUT_ID` and `$MESSAGE_ID` from the follow-up's own stdin line, as an engine
   // has to: nothing else tells it either.
-  const followUpRun = async (followUp: unknown[]) => {
+  const followUpRun = async (followUp: unknown[], checks?: Check[], onWake?: MetaBrain) => {
     const steps = [{ init: true }, { waitInput: 2 }, ...WORK.slice(1)]
     const wakes: string[] = []
     const plan = planOf(task('first'))
     const brain: MetaBrain = async (context) => {
-      if (context.wake?.reason !== 'user message') wakes.push(String(context.wake?.reason))
+      if (context.wake?.reason !== 'user message') {
+        wakes.push(String(context.wake?.reason))
+        if (onWake !== undefined) return onWake(context)
+      }
       return plan(context)
     }
-    const r = await serve(scratch({ steps, followUp }), brain)
+    const r = await serve(scratch({ steps, followUp }, {}, checks), brain)
     const { body } = await r.post('/api/chat/messages', { text: 'go', repoId: REPO })
     await until(() => attemptIn(r)?.state === 'running')
     const follow = await r.post('/api/chat/messages', {
@@ -320,6 +329,48 @@ describe('continuing coordination (§11, §12)', () => {
     expect(message).toMatchObject({ handback: { reason: 'beyond this task', attemptId: 'att_1' } })
     expect(message?.released).toBeUndefined()
     expect(wakes).not.toContain('message released')
+  }, 60_000)
+
+  // Decision #34: a repository with no checks never gets a verdict, so the attempt stays
+  // `work_complete` with a note, and it has still stopped.
+  it('with no checks, a handled follow-up settles', async () => {
+    const { r, wakes, messageId } = await followUpRun(
+      [
+        {
+          call: { tool: 'report', args: { kind: 'progress', summary: 'ok', handled_inputs: ['$INPUT_ID'] } },
+        },
+        { result: 'completed' },
+      ],
+      [],
+    )
+
+    await until(() => typeof attemptIn(r)?.checks_note === 'string')
+    expect(attemptIn(r)?.state).toBe('work_complete')
+    await until(() => stageOf(r, messageId) === 'settled')
+    expect(r.read((store) => store.messages.get(messageId))?.owned).toBe(false)
+    expect(wakes).toEqual([])
+  }, 60_000)
+
+  it('with no checks, an unhandled follow-up reaches the planner, and its plan lands', async () => {
+    const replan: MetaBrain = async () => ({
+      ack: 'Taking it',
+      plan: { tasks: [task('first'), task('later')] },
+    })
+    const { r, wakes, messageId } = await followUpRun([{ result: 'completed' }], [], replan)
+
+    await until(() => typeof attemptIn(r)?.checks_note === 'string')
+    expect(attemptIn(r)?.state).toBe('work_complete')
+    await until(() => wakes.includes('message released'))
+    await until(() => r.read((store) => store.tasks.list({ localKey: 'later' }).length) === 1)
+
+    const message = r.read((store) => store.messages.get(messageId))
+    expect(message).toMatchObject({ owned: false, released: { reason: expect.any(String) } })
+    const refused = r.read((store) =>
+      store.events
+        .read(`work:${String(message?.workItemId)}`)
+        .filter((event) => event.type === 'route_refused'),
+    )
+    expect(refused).toEqual([])
   }, 60_000)
 
   it('reserved wake delivers before a queued launch', async () => {

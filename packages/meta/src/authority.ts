@@ -81,6 +81,11 @@ export function isTerminal(doc: StoreDoc): boolean {
   return WORK_ITEM_TERMINAL.includes(String(doc.state) as WorkItemState)
 }
 
+/** A repo with no checks leaves its attempt `work_complete` with a note: no verdict is coming. */
+export function noVerdict(attempt: StoreDoc): boolean {
+  return attempt.state === 'work_complete' && typeof attempt.checks_note === 'string'
+}
+
 /** §10's check before every resume; a legacy row has no hash to compare. */
 export function revalidateWork(
   doc: StoreDoc,

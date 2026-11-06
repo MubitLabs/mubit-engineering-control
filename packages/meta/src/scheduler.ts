@@ -25,7 +25,7 @@ import {
 } from '@mec/domain'
 import { type ResolvedModel, resolveModel } from '../../runtime/src/model'
 import { repoOf } from './admission'
-import { blockWork, isHeld, isTerminal, mandateOf, processingOf } from './authority'
+import { blockWork, isHeld, isTerminal, mandateOf, noVerdict, processingOf } from './authority'
 import type { FollowUps } from './followups'
 
 /** The capability table `resolveModel` reads; the planner's seam supplies it. */
@@ -74,10 +74,6 @@ const RELEASES: Readonly<Record<string, string>> = {
 }
 
 const launchKey = (attempt: StoreDoc): string => `${String(attempt.id)}:${Number(attempt.generation ?? 1)}`
-
-/** A repo with no checks leaves its attempt `work_complete` with a note: no verdict is coming. */
-const noVerdict = (attempt: StoreDoc): boolean =>
-  attempt.state === 'work_complete' && typeof attempt.checks_note === 'string'
 
 function occupies(deps: SchedulerDeps, attempt: StoreDoc): boolean {
   const state = String(attempt.state) as AttemptState

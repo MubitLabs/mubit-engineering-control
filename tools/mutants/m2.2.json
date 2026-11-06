@@ -383,5 +383,19 @@
     "find": "    ...(typeof doc.evidenceRef === 'string' && { evidenceRef: doc.evidenceRef }),\n",
     "replace": "",
     "tests": ["apps/desktop/test/planner.test.ts"]
+  },
+  {
+    "name": "no-checks attempt keeps its follow-ups",
+    "file": "packages/meta/src/followups.ts",
+    "find": "  ATTEMPT_TERMINAL.includes(String(attempt.state) as AttemptState) ||\n  noVerdict(attempt)\n",
+    "replace": "  ATTEMPT_TERMINAL.includes(String(attempt.state) as AttemptState)\n",
+    "tests": ["packages/meta/test/followups.test.ts", "apps/desktop/test/coordination.test.ts"]
+  },
+  {
+    "name": "checks still running count as ended",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  return attempt.state === 'work_complete' && typeof attempt.checks_note === 'string'\n",
+    "replace": "  return attempt.state === 'work_complete'\n",
+    "tests": ["packages/meta/test/followups.test.ts"]
   }
 ]

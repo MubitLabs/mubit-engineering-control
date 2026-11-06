@@ -266,8 +266,11 @@ describe('evidence from the records M2 wrote', () => {
     expect(task.coverage.diff).toBe(false)
   })
 
-  it('no delegation is recorded by M2, so nothing is inferred', async () => {
-    expect((await get('/api/inspect/work/wi_1')).json().delegation).toEqual([])
+  it('delegation comes from the attempt, never from dependencies', async () => {
+    const [row, ...rest] = (await get('/api/inspect/work/wi_1')).json().delegation
+    expect(rest).toEqual([])
+    expect(row).toMatchObject({ taskId: 'task_1', attempts: 1 })
+    expect(row.latest.id).toBe('att_1')
   })
 
   it('usage is summed from the stream, and a gap is a labelled subtotal', async () => {

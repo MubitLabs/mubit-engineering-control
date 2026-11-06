@@ -1,0 +1,149 @@
+[
+  {
+    "name": "delegation forgets the attempts again",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "latest: latest === undefined ? null : this.#attemptView(latest, task, lastAt),",
+    "replace": "latest: null,",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the attempt's alias replaces the model the session reported",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      this.#sessionModel(String(attempt.id)) ??\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the placement reason is dropped",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "placement: str(attempt.placement),",
+    "replace": "placement: null,",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "a question with no reply reads as answered",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "return replyOf(this.#store, origin) === null ? 'no-answer' : 'answered'",
+    "replace": "return 'answered'",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "an open question stops holding the item open",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "if (str(doc.state) !== 'planning' || tasks > 0 || waitingOnPerson) return null",
+    "replace": "if (str(doc.state) !== 'planning' || tasks > 0) return null",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "a message still in its turn counts as finished",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "if (typeof origin?.ackText !== 'string') return null\n",
+    "replace": "if (origin === undefined) return null\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "any report on the stream passes as this message's answer",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": ".find((event) => event.type === 'result_reported' && event.at === str(message.updatedAt))",
+    "replace": ".find((event) => event.type === 'result_reported')",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "a reply leaves unredacted",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "return summary === null ? null : cutText(summary, ANSWER_CAP)",
+    "replace": "return summary",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "a stuck turn keeps reading as progress",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "${late ? '. This turn is past its time limit, so it may be stuck' : ''}",
+    "replace": "",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the connection claims a model it never saw",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      model: str(session?.model),\n",
+    "replace": "      model: str(session?.model) ?? 'claude',\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the phase ignores what the planner has called",
+    "file": "packages/meta/src/service.ts",
+    "find": "return journal.acks.length > 0 ? 'planning' : 'reading'",
+    "replace": "return 'reading'",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "a finished turn stays in flight",
+    "file": "packages/meta/src/service.ts",
+    "find": "      this.#thinking.delete(turn.messageId)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the live line reads failure as idle",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "      headline: 'Could not read what the meta agent is doing',",
+    "replace": "      headline: row?.line ?? '',",
+    "tests": ["apps/web/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "a send waits for a read to say anything",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  if (sending && row?.running !== true) {",
+    "replace": "  if (false) {",
+    "tests": ["apps/web/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the heading goes back to the newest request",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "    title: input.repository ?? 'Conversation',",
+    "replace": "    title: input.row ? workRowView(input.row).title : 'Conversation',",
+    "tests": ["apps/web/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the answer is left out of the thread",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "    return [...ack, ...reply, ...lost]",
+    "replace": "    return [...ack, ...lost]",
+    "tests": ["apps/web/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "a lost answer goes unsaid",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "      replyText === undefined && ackText !== undefined && owner?.turnOutcome === 'no-answer'",
+    "replace": "      replyText === undefined && ackText !== undefined && owner?.turnOutcome === 'answered'",
+    "tests": ["apps/web/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "delivery still speaks for a request with no tasks",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "      footnote: count === 0 ? '' : deliveryLabel(detail),",
+    "replace": "      footnote: deliveryLabel(detail),",
+    "tests": ["apps/web/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "an echo shows beside the stored message",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  lines.some((line) => line.idempotencyKey === key)",
+    "replace": "  false",
+    "tests": ["apps/web/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "a send leaves its text in the box",
+    "file": "apps/web/src/live/submission.ts",
+    "find": "    deps.drafts.holdPending(frozen)\n    deps.drafts.write(frozen.repoId, scope, withoutSent(deps.drafts.read(frozen.repoId, scope), frozen.text))\n",
+    "replace": "    deps.drafts.holdPending(frozen)\n",
+    "tests": ["apps/web/test/submission.test.ts"]
+  },
+  {
+    "name": "a failed send loses its text",
+    "file": "apps/web/src/live/submission.ts",
+    "find": "      current.set(frozen.repoId, { frozen, state: 'failed', error })\n      restore(frozen)\n",
+    "replace": "      current.set(frozen.repoId, { frozen, state: 'failed', error })\n",
+    "tests": ["apps/web/test/submission.test.ts"]
+  }
+]

@@ -46,6 +46,7 @@ const taskOfId = (id: string) => taskDetails[id as keyof typeof taskDetails] as 
 function rig(over: Partial<InspectionClient> = {}) {
   const calls: string[] = []
   const client: InspectionClient = {
+    meta: async () => ({ observedAt: '', connection: null, repositories: [] }),
     work: async () => workPage as Page<WorkRow>,
     needs: async () => needsOf([needs.pending, needs.question]),
     workDetail: async (id) => workOfId(id),

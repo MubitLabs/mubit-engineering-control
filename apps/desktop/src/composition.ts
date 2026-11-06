@@ -40,6 +40,7 @@ import { AttemptLauncher, realRunnerOn } from './attempt-launch'
 import { backupStore } from './backup-cli'
 import { type Cleaner, StoreFacts } from './core-facts'
 import { Delivery } from './delivery'
+import { META_SESSION_ID } from './inspection'
 import { plannerPlacement } from './planner-placement'
 import { savedPolicyText } from './policy-store'
 import {
@@ -679,6 +680,13 @@ function composePlanner(
     slotDir: metaSlot.dir,
     linked: metaSlot.linked,
     toolsSecret: randomBytes(24).toString('hex'),
+    // What the conversation shows as the meta agent's model: what really started, never a request.
+    onSession: ({ engine: name, model }) => {
+      const at = new Date().toISOString()
+      store.atomic(() =>
+        store.engines.save({ id: META_SESSION_ID, engine: name, ...(model !== undefined && { model }), at }),
+      )
+    },
     // §5.4: the data dir is the root, so a scratch server never reads the real prompts.
     promptsRoot: join(opts.dataDir, 'prompts'),
   })

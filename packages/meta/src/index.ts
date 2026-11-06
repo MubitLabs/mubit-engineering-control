@@ -69,6 +69,8 @@ export type {
   MetaBrain,
   MetaDecision,
   MetaPlanTask,
+  MetaTurn,
+  MetaTurnPhase,
   MetaWake,
   TurnOutcome,
   WakeRequest,

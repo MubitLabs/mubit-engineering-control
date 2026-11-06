@@ -498,7 +498,8 @@ describe('inspection routes: honesty', () => {
     const work = (await get('/api/inspect/work/wi_1')).json()
     expect(work.coverage.delivery).toBe(false)
     expect(work.delivery).toEqual({ stage: 'none', branch: null, headSha: null, prNumber: null, prUrl: null })
-    expect(work.delegation).toEqual([])
+    // A task nothing picked up is still listed: delegation says who holds it, and nobody does yet.
+    expect(work.delegation).toMatchObject([{ taskId: 'task_1', latest: null, attempts: 0 }])
 
     store.atomic(() => {
       store.attempts.save({

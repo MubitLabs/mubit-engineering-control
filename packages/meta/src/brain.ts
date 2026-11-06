@@ -104,6 +104,8 @@ export type PlannerBrainOptions = {
   homeDir?: string
   /** The HMAC secret mec-tools tokens are signed with. */
   toolsSecret: string
+  /** Hears which engine and model a turn really started on. */
+  onSession?: (session: { engine: string; model?: string }) => void
   now?: () => Date
   /** The engine adapter to launch through; defaults to the real `ClaudeAdapter`. */
   adapter?: BrainEngine
@@ -401,7 +403,15 @@ export class PlannerBrain {
     if (this.#closing) await this.#stopEngine(handle)
 
     const events: EngineEvent[] = []
-    for await (const event of this.#engine.events(handle)) events.push(event)
+    for await (const event of this.#engine.events(handle)) {
+      events.push(event)
+      if (event.type === 'session_started') {
+        this.#opts.onSession?.({
+          engine: event.engine,
+          ...(event.model !== undefined && { model: event.model }),
+        })
+      }
+    }
     this.#running = null
     await this.#stopEngine(handle)
     this.#currentExecutor = null

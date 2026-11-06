@@ -663,6 +663,38 @@ describe('shutdown owns the planner (§20)', () => {
     dirs.length = 0
   })
 
+  it('says which model a turn really started on, as soon as the engine does', async () => {
+    const envelope = (handle: AttemptHandle) => ({
+      seq: 1,
+      at: NOW,
+      attempt_id: handle.attempt_id,
+      generation: handle.generation,
+    })
+    const engine: BrainEngine = {
+      launch: heldEngine().engine.launch,
+      async *events(handle) {
+        yield {
+          ...envelope(handle),
+          type: 'session_started',
+          session_id: 'sess',
+          engine: 'claude',
+          engine_version: '2.1.317',
+          model: 'claude-opus-5-5',
+        } as EngineEvent
+        yield { ...envelope(handle), type: 'exit', code: 0, terminal_reason: 'completed' } as EngineEvent
+      },
+      async stop() {},
+    }
+    const sessions: unknown[] = []
+    const brain = new PlannerBrain({
+      ...brainOptions(engine),
+      readProtocol: () => 'The protocol.',
+      onSession: (session) => sessions.push(session),
+    })
+    await brain.decide(plannerTurn())
+    expect(sessions[0]).toEqual({ engine: 'claude', model: 'claude-opus-5-5' })
+  })
+
   it('abort stops the running engine, and the turn is deferred, not failed', async () => {
     const held = heldEngine()
     const brain = planner(held.engine)

@@ -42,6 +42,7 @@ import {
   type WorkAction,
   workGroups,
   workRowView,
+  metaStatus,
 } from '../../src/next/work-model'
 import { WorkView } from '../../src/next/WorkView'
 import { describeApproval } from '../../src/release-cards'
@@ -160,7 +161,37 @@ function HarnessApp() {
   const repository = SAMPLE_REPOSITORIES.find((entry) => entry.id === repositoryId)
   const chatRow = rows.find((row) => row.repoId === repositoryId && row.id === 'work_working') ?? null
   const chatDetail = chatRow ? workDetail(chatRow.id) : null
-  const chat = conversationView({ row: chatRow, detail: chatDetail, messages: chatRow ? lines : [] })
+  const chat = conversationView({
+    row: chatRow,
+    detail: chatDetail,
+    messages: chatRow ? lines : [],
+    work: rows,
+    repository: repository?.name ?? null,
+    open: rows.filter(
+      (row) =>
+        row.repoId === repositoryId && row.id !== chatRow?.id && workRowView(row).outcome === null,
+    ),
+  })
+  const meta = metaStatus(
+    {
+      status: 'ready',
+      data: {
+        observedAt: READ_AT,
+        connection: { slotLabel: 'sample-slot', engine: 'claude', model: 'sample-large', modelAt: READ_AT },
+        repositories: SAMPLE_REPOSITORIES.map(({ id }) => ({
+          repoId: id,
+          state: 'waiting_specialist',
+          line: 'Waiting for implementer on sample-slot: SAMPLE-ONLY build the index',
+          workItemId: null,
+          running: false,
+          at: READ_AT,
+        })),
+      },
+      readAt: READ_AT,
+    },
+    repositoryId,
+    false,
+  )
   const chatQuestions = items
     .filter((item) => item.kind === 'question' && item.repoId === repositoryId)
     .map((item) => card(item).view as QuestionView)
@@ -244,6 +275,12 @@ function HarnessApp() {
           onOpenTask={setSelectedTask}
           onInspect={() => setSelectedTask(chatDetail ? focusTask(chatDetail) : null)}
           onDiscuss={() => setFollowing(true)}
+          onOpenWork={(id) => {
+            setSelectedWork(id)
+            navigate('work')
+          }}
+          planWorkId={chatRow?.id ?? null}
+          meta={meta}
           onAnswer={answer}
           onRetry={retry}
         />

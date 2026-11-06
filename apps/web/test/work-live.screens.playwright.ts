@@ -43,6 +43,8 @@ interface Over {
   events?: (search: string) => string | null
   /** The event cursor a snapshot serves. */
   cursor?: () => number
+  /** Holds a chat POST open, the way a planner turn does. */
+  chatPost?: () => Promise<Reply>
 }
 
 async function server(page: Page, over: Over = {}) {
@@ -66,6 +68,7 @@ async function server(page: Page, over: Over = {}) {
       if (pathname.endsWith('/resolve')) {
         return send(over.resolve?.(body?.answer ?? '') ?? { status: 200, body: { status: 'denied' } })
       }
+      if (pathname === '/api/chat/messages' && over.chatPost) return send(await over.chatPost())
       if (pathname.endsWith('/answer')) {
         return send(over.answer?.() ?? { status: 200, body: { status: 'answered' } })
       }
@@ -75,6 +78,21 @@ async function server(page: Page, over: Over = {}) {
         return ok({ id: command[1], status })
       }
       return send({ status: 404, body: { error: 'not found' } })
+    }
+
+    if (pathname === '/api/inspect/meta') {
+      return ok({
+        observedAt: OBSERVED,
+        connection: { slotLabel: 'sample-slot', engine: 'claude', model: null, modelAt: null },
+        repositories: REPOSITORIES.map(({ id }) => ({
+          repoId: id,
+          state: 'idle',
+          line: 'Nothing is running',
+          workItemId: null,
+          running: false,
+          at: OBSERVED,
+        })),
+      })
     }
 
     if (pathname === '/api/events') {
@@ -182,6 +200,94 @@ test.describe('Work', () => {
       .click()
     await expect(page.locator('.inspector')).toHaveCount(0)
     await expect(page.getByRole('combobox', { name: 'Repository' })).toHaveValue('repo_b')
+  })
+
+  test('a send shows once, empties the box and says so at once', async ({ page }) => {
+    let key: string | null = null
+    let reply: (done: Reply) => void = () => {}
+    await page.route('**/api/chat/messages', async (route) => {
+      key = route.request().headers()['x-idempotency-key'] ?? key
+      await route.fallback()
+    })
+    await server(page, {
+      chatPost: () => new Promise((resolve) => (reply = resolve)),
+      chat: () => ({
+        status: 200,
+        body:
+          key === null
+            ? []
+            : [
+                {
+                  id: 'msg_new',
+                  text: 'add a thing',
+                  createdAt: OBSERVED,
+                  repoId: 'repo_a',
+                  idempotencyKey: key,
+                },
+              ],
+      }),
+    })
+    await open(page, 'repo/repo_a/chat')
+    const box = page.getByRole('textbox', { name: 'Message the meta agent' })
+    await box.fill('add a thing')
+    await page.keyboard.press('Enter')
+    await expect(box).toHaveValue('')
+    await expect(page.locator('.meta-line')).toContainText('Sending your request')
+    await expect(page.locator('.message-user')).toHaveCount(1)
+    // The stored message has arrived and replaced the echo: still one.
+    await expect.poll(() => page.locator('.message-user').count()).toBe(1)
+    await page.waitForResponse('**/api/chat/messages?*')
+    await expect(page.locator('.message-user')).toHaveCount(1)
+    reply({ status: 200, body: { messageId: 'msg_new', routing: 'attach' } })
+  })
+
+  test('the heading stays the repository and Inspect sits inside the plan', async ({ page }) => {
+    await server(page)
+    await open(page, 'repo/repo_a/chat')
+    await expect(page.locator('.conversation h1')).toHaveText('sample-console')
+    await expect(page.locator('.delivery-foot').getByRole('button', { name: 'Inspect' })).toBeVisible()
+    await expect(page.locator('.conversation > .actions')).toHaveCount(0)
+  })
+
+  test('Discuss this work moves focus to the composer and says where it goes', async ({ page }) => {
+    await server(page)
+    await open(page, 'repo/repo_a/work/work_working')
+    await page.getByRole('button', { name: /^Discuss this work/ }).click()
+    const box = page.getByRole('textbox', { name: 'Message the meta agent' })
+    await expect(box).toBeFocused()
+    await expect(page.locator('.composer-scope')).toContainText('Following up on')
+    await expect(page.locator('.composer-bottom')).toContainText('Your next message goes to this work')
+  })
+
+  test('at 390 the scope line stays one line beside a long follow-up toggle', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await server(page)
+    await open(page, 'repo/repo_a/work/work_working')
+    await page.getByRole('button', { name: /^Discuss this work/ }).click()
+    await page.getByRole('button', { name: 'New request' }).click()
+    const scope = page.locator('.composer-scope > span')
+    await expect(scope).toHaveText(/^New request in/)
+    expect((await scope.boundingBox())?.height).toBeLessThan(24)
+    const toggle = page.locator('.composer-scope .btn')
+    await expect(toggle).toContainText('Follow up on')
+    expect((await toggle.boundingBox())?.width).toBeLessThanOrEqual(390)
+  })
+
+  test('an answered question shows its answer and no delivery controls', async ({ page }) => {
+    const question = {
+      ...workDetails.work_working,
+      tasks: [],
+      delegation: [],
+      stage: { key: 'ended/answered', label: 'Answered', waitingOn: 'none' },
+      turnOutcome: 'answered',
+      answer: 'SAMPLE-ONLY it exports wave(name)',
+    }
+    await server(page, { workDetail: () => ({ status: 200, body: question }) })
+    await open(page, 'repo/repo_a/work/work_working')
+    await expect(page.locator('.work-answer')).toContainText('SAMPLE-ONLY it exports wave(name)')
+    await expect(page.locator('.work-detail')).not.toContainText('Delegation')
+    await expect(page.locator('.work-detail')).not.toContainText('Dependencies')
+    await expect(page.locator('.work-detail .delivery')).toHaveCount(0)
   })
 
   test('a filter that hides the row drops its inspector and selection', async ({ page }) => {
@@ -340,10 +446,10 @@ test.describe('Conversation and search', () => {
     body: { ...workPage, items: workPage.items.filter((row) => row.id === 'work_working') },
   })
 
-  test('the request title leads, the plan shows and tool activity stays out', async ({ page }) => {
+  test('the repository leads, the plan shows and tool activity stays out', async ({ page }) => {
     await server(page, { work: oneDelivery })
     await open(page, 'repo/repo_a/chat')
-    await expect(page.getByRole('heading', { level: 1 })).toContainText('search for the console')
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('sample-console')
     await expect(page.locator('.delivery')).toBeVisible()
     await expect(page.getByText('tool call that stays out of chat')).toHaveCount(0)
   })

@@ -25,7 +25,7 @@ import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } fro
 import { isAbsolute, join, relative, sep } from 'node:path'
 import type { EngineEvent, Json, KeyFingerprint, Store, StoreDoc } from '@mec/contracts'
 import { type Stage, stageOf, workViewOf } from '@mec/domain'
-import { assertRepoAdmission, holdsGroup } from '@mec/meta'
+import { assertRepoAdmission, holdsGroup, type MetaTurn, processingOf } from '@mec/meta'
 import { type AttemptOutcome, type CheckRecord, projectAttempt } from '@mec/scorecards'
 import { redact, type SecretSpan, secretSpans } from '@mec/slots'
 import {
@@ -70,6 +70,8 @@ export type WorkRow = {
   taskCounts: { total: number; byStatus: Record<string, number> }
   lastActivityAt: string | null
   updatedAt: string
+  /** A turn that ended with no plan and nothing asked: answered, or stopped with no answer. Else null. */
+  turnOutcome: 'answered' | 'no-answer' | null
 }
 
 export type TaskRow = {
@@ -96,12 +98,15 @@ export type DeliveryView = {
 export type WorkDetail = WorkRow & {
   originMessageId: string | null
   goal: string | null
+  /** What an answered question's turn reported. Null on anything else. */
+  answer: string | null
   hold: { since: string; reason: string | null } | null
   planRevision: number | null
   tasks: TaskRow[]
   /** Tasks left out of `tasks`. */
   tasksTruncated: number
-  delegation: { parentAttemptId: string; childAttemptId: string }[]
+  /** Who holds each task, read from its attempts. One row per task in `tasks`. */
+  delegation: DelegationRow[]
   delivery: DeliveryView
   /** What the owner may ask for again, and why it stopped. Null when a retry would answer nothing. */
   retry: RetryOffer | null
@@ -122,6 +127,23 @@ export type AttemptView = {
   headSha: string | null
   processOutcome: string
   lastActivityAt: string | null
+  /** Why this connection: the scheduler's own words. */
+  placement: string | null
+}
+
+/** Who a task went to and why. `latest` is null until placement picks a connection. */
+export type DelegationRow = {
+  taskId: string
+  title: string
+  role: string | null
+  status: string
+  requested: { tier: string | null; model: string | null }
+  attempts: number
+  latest: AttemptView | null
+  /** Why a task with nothing running has not started. */
+  waiting: string | null
+  /** The newest thing the latest attempt recorded. A step shows here once it has finished. */
+  activity: { summary: string; at: string } | null
 }
 
 export type CheckView = {
@@ -190,6 +212,42 @@ export type NeedItem =
       expiresAt: string
       detailPath: string
     }
+
+/** What the meta agent is doing for one repository, from running turns and stored facts. */
+export type MetaActivity = {
+  repoId: string
+  state:
+    | MetaTurn['phase']
+    | 'paused'
+    | 'queued'
+    | 'waiting_you'
+    | 'waiting_specialist'
+    | 'integrating'
+    | 'blocked'
+    | 'held'
+    | 'between'
+    | 'idle'
+  line: string
+  workItemId: string | null
+  /** A planner turn is running now. */
+  running: boolean
+  /** When a running turn began, else the last recorded event. */
+  at: string | null
+}
+
+export type MetaConnection = {
+  slotLabel: string | null
+  engine: string | null
+  /** What the last turn really started on. Never the model asked for. */
+  model: string | null
+  modelAt: string | null
+}
+
+export type MetaAnswer = {
+  observedAt: string
+  connection: MetaConnection | null
+  repositories: MetaActivity[]
+}
 
 export type SearchHit = {
   kind: 'message' | 'work' | 'task' | 'attempt' | 'reference'
@@ -418,6 +476,30 @@ function readArtifact(path: string, offset: number, secrets: ArtifactSecrets): A
 // ── The inspector ────────────────────────────────────────────────────────────────────────────
 
 const QUESTION_PREFIX = 'question/'
+/** What the meta agent's last turn really started on (`composition.ts` writes it). */
+export const META_SESSION_ID = 'meta/session'
+const META_SLOT_ID = 'settings/meta-slot'
+/**
+ * Two engine runs at 5 minutes each (`WALL_CLOCK_MS`, one corrective retry), and a margin. Past
+ * this the line stops reading as progress.
+ */
+const TURN_LIMIT_MS = 11 * 60_000
+/** Attempts a specialist is really on. Any other state is ended or waits on something else. */
+const SPECIALIST_STATES = new Set(['queued', 'running', 'work_complete'])
+/** The types worth a line about what an attempt is doing: `usage` and the like say nothing. */
+const ACTIVITY_LINE_TYPES = new Set([
+  'message',
+  'tool_call',
+  'permission_request',
+  'rate_limit',
+  'report',
+  'error',
+  'exit',
+  'session_started',
+])
+/** How far back from a stream's end a line is looked for. */
+const ACTIVITY_LOOKBACK = 20
+const ANSWER_CAP = 8000
 const REPO_PREFIX = 'repo_'
 const RECENT_CAP = 20
 /** A task answer is cut to these before it is built; what was cut is counted in the response. */
@@ -484,6 +566,8 @@ type InspectDeps = {
   now: () => Date
   /** The exact secrets of one attempt, which only the launcher holds. */
   exactsFor: (attemptId: string) => string[]
+  /** The planner turns running now, which only the service knows. */
+  metaTurns?: () => readonly MetaTurn[]
 }
 
 /** A need with the rowid that keys its page: stable, unlike its position in the list. */
@@ -498,6 +582,7 @@ class Inspector {
   readonly #reads: InspectionReads
   readonly #now: () => Date
   readonly #exactsFor: (attemptId: string) => string[]
+  readonly #metaTurns: () => readonly MetaTurn[]
   readonly #labels = new Map<string, string | null>()
 
   constructor(deps: InspectDeps) {
@@ -505,6 +590,7 @@ class Inspector {
     this.#reads = deps.reads
     this.#now = deps.now
     this.#exactsFor = deps.exactsFor
+    this.#metaTurns = deps.metaTurns ?? (() => [])
   }
 
   observedAt(): string {
@@ -821,6 +907,18 @@ class Inspector {
     }
   }
 
+  /**
+   * A planning item whose turn ended with no task and nothing asked. Nothing more will happen on
+   * it, so it must not read as Working: its reply is what it was for, and if none came it says so.
+   */
+  #turnOutcome(doc: StoreDoc, tasks: number, waitingOnPerson: boolean): WorkRow['turnOutcome'] {
+    if (str(doc.state) !== 'planning' || tasks > 0 || waitingOnPerson) return null
+    const origin = this.#store.messages.get(str(doc.originMessageId) ?? '')
+    if (typeof origin?.ackText !== 'string') return null
+    if (this.#metaTurns().some((turn) => turn.workItemId === String(doc.id))) return null
+    return replyOf(this.#store, origin) === null ? 'no-answer' : 'answered'
+  }
+
   /** The row for each doc. Every batch read below is one query for the whole page, not one per row. */
   workRows(docs: StoreDoc[], needs: NeedItem[]): WorkRow[] {
     const ids = docs.map((doc) => String(doc.id))
@@ -835,15 +933,20 @@ class Inspector {
         awaitingConfirmation: mine.some((item) => item.kind === 'card'),
       }
       const delivery = this.#deliveryOf(doc).stage
-      const stage = stageOf(
-        workViewOf(doc, {
-          ...facts,
-          attempts: attempts.get(id) ?? [],
-          merged: delivery === 'merged',
-          deliveryReady: delivery === 'pr-ready',
-        }),
-      )
       const byStatus = counts[id] ?? {}
+      const total = Object.values(byStatus).reduce((sum, n) => sum + n, 0)
+      const turnOutcome = this.#turnOutcome(doc, total, mine.length > 0)
+      const stage =
+        turnOutcome !== null
+          ? TURN_STAGES[turnOutcome]
+          : stageOf(
+              workViewOf(doc, {
+                ...facts,
+                attempts: attempts.get(id) ?? [],
+                merged: delivery === 'merged',
+                deliveryReady: delivery === 'pr-ready',
+              }),
+            )
       const repoId = repoIdOf(doc)
       return {
         id,
@@ -853,10 +956,15 @@ class Inspector {
         readOnly: repoId === null,
         state: shortText(str(doc.state) ?? 'admitted'),
         stage,
-        ...this.#reasonAndAction(stage, doc, facts),
-        taskCounts: { total: Object.values(byStatus).reduce((sum, n) => sum + n, 0), byStatus },
+        ...(turnOutcome === 'no-answer'
+          ? { reason: 'The meta agent stopped without answering', nextAction: 'Ask again' }
+          : turnOutcome === 'answered'
+            ? { reason: null, nextAction: null }
+            : this.#reasonAndAction(stage, doc, facts)),
+        taskCounts: { total, byStatus },
         lastActivityAt: lastAt[`work:${id}`] ?? null,
         updatedAt: shortText(str(doc.updatedAt) ?? ''),
+        turnOutcome,
       }
     })
   }
@@ -955,6 +1063,7 @@ class Inspector {
       ...row,
       originMessageId: shortOrNull(originId),
       goal: goalText === null ? null : cutText(goalText, 2000),
+      answer: row.turnOutcome === 'answered' ? this.#answerOf(originId) : null,
       hold:
         hold !== null && str(hold.liftedAt) === null
           ? {
@@ -965,8 +1074,7 @@ class Inspector {
       planRevision: num(doc.planRevision),
       tasks,
       tasksTruncated: allTasks.length - tasks.length,
-      // Parent and child attempts: empty until M2 records them, never inferred from dependencies.
-      delegation: [],
+      delegation: this.#delegation(allTasks.slice(0, tasks.length), attempts),
       delivery: this.#deliveryOf(doc),
       retry: retryOffer(this.#store, doc) ?? null,
       coverage: this.#coverage(attempts, doc),
@@ -976,6 +1084,209 @@ class Inspector {
   }
 
   // ── tasks ──
+
+  #answerOf(messageId: string | null): string | null {
+    const origin = this.#store.messages.get(messageId ?? '')
+    return origin === undefined ? null : replyOf(this.#store, origin)
+  }
+
+  /** Who holds each task. Only what the attempts record: nothing is copied from the request. */
+  #delegation(tasks: StoreDoc[], attempts: StoreDoc[]): DelegationRow[] {
+    const byTask = this.#groupBy(attempts, 'taskId')
+    const newest = [...byTask.values()].map((mine) =>
+      mine.reduce((latest, attempt) =>
+        attemptOrderOf(attempt) >= attemptOrderOf(latest) ? attempt : latest,
+      ),
+    )
+    const lastAt = this.#reads.lastEventAt(newest.map((a) => `attempt:${String(a.id)}`))
+    const rows = this.taskRows(tasks)
+    return tasks.map((task, index) => {
+      const row = rows[index] as TaskRow
+      const mine = byTask.get(row.id) ?? []
+      const latest = newest.find((attempt) => str(attempt.taskId) === row.id)
+      const modelRequest = obj(task.modelRequest)
+      const deferred = obj(task.deferred)
+      return {
+        taskId: row.id,
+        title: row.title,
+        role: row.role,
+        status: row.status,
+        requested: { tier: str(modelRequest?.tier), model: str(modelRequest?.model) },
+        attempts: mine.length,
+        latest: latest === undefined ? null : this.#attemptView(latest, task, lastAt),
+        waiting: str(deferred?.reason),
+        activity: latest === undefined ? null : this.#lastActivity(String(latest.id)),
+      }
+    })
+  }
+
+  /** The newest event worth a line. A `tool_call` has finished, so this is never "running now". */
+  #lastActivity(attemptId: string): DelegationRow['activity'] {
+    const stream = `attempt:${attemptId}`
+    const end = this.#reads.cursors([stream])[stream] ?? 0
+    const after = Math.max(0, end - ACTIVITY_LOOKBACK)
+    const { rows } = this.#reads.pageEvents(stream, { after, limit: ACTIVITY_LOOKBACK })
+    const row = rows.findLast((event) => ACTIVITY_LINE_TYPES.has(event.type))
+    if (row === undefined) return null
+    const body = obj(row.body ?? undefined) ?? {}
+    return { summary: cutText(activitySummary(row.type, body), ACTIVITY_SUMMARY_CAP), at: shortText(row.at) }
+  }
+
+  /** What the engine itself said it started on. A slot's alias is only what was asked for. */
+  #sessionModel(attemptId: string): string | null {
+    const [row] = this.#reads.eventsOfType(`attempt:${attemptId}`, 'session_started', 1)
+    return str(obj(row?.body ?? undefined)?.model)
+  }
+
+  #attemptView(attempt: StoreDoc, task: StoreDoc, lastAt: Record<string, string>): AttemptView {
+    const modelRequest = obj(task.modelRequest)
+    const slotId = str(attempt.slotId)
+    const engine = str(attempt.engine)
+    // The scheduler names a model before launch; only a pinned engine means one really ran.
+    const model =
+      str(attempt.model) ??
+      this.#sessionModel(String(attempt.id)) ??
+      (engine === null ? null : str(attempt.resolved_model))
+    const exitCode = num(attempt.exit_code)
+    const terminal = str(attempt.terminal_reason) ?? str(attempt.exit_reason)
+    const outcome = terminal ?? (exitCode === null ? 'unknown' : `exit ${exitCode}`)
+    return {
+      id: String(attempt.id),
+      generation: num(attempt.generation) ?? 1,
+      state: str(attempt.state) ?? 'unknown',
+      role: str(attempt.role) ?? str(task.role),
+      requested: { tier: str(modelRequest?.tier), model: str(modelRequest?.model) },
+      // The model that actually ran is recorded by the attempt; never copied from the request.
+      actual:
+        model === null && engine === null && slotId === null
+          ? null
+          : {
+              model,
+              engine,
+              slotLabel: slotId === null ? null : (str(this.#store.slots.get(slotId)?.label) ?? null),
+            },
+      baseSha: str(attempt.base_sha) ?? str(attempt.baseSha),
+      headSha: headOf(attempt),
+      processOutcome: holdsGroup(attempt) ? `${outcome} (${HELD_OUTCOME})` : outcome,
+      lastActivityAt: lastAt[`attempt:${String(attempt.id)}`] ?? null,
+      placement: str(attempt.placement),
+    }
+  }
+
+  // ── the meta agent ──
+
+  #metaConnection(): MetaConnection | null {
+    const slot = this.#store.slots.get(str(this.#store.engines.get(META_SLOT_ID)?.slotId) ?? '')
+    if (slot === undefined) return null
+    const session = this.#store.engines.get(META_SESSION_ID)
+    return {
+      slotLabel: str(slot.label),
+      engine: str(slot.engine),
+      model: str(session?.model),
+      modelAt: str(session?.model) === null ? null : str(session?.at),
+    }
+  }
+
+  /** First true wins: a running turn, then what stops work, then what work is waiting on. */
+  #metaOf(repoId: string, rows: WorkRow[], needs: NeedItem[], turns: readonly MetaTurn[]): MetaActivity {
+    const mine = rows.filter((row) => row.repoId === repoId)
+    const open = mine.filter((row) => !row.stage.key.startsWith('ended/'))
+    const lastEvent = mine.reduce<string | null>(
+      (latest, { lastActivityAt: at }) => (at !== null && (latest === null || at > latest) ? at : latest),
+      null,
+    )
+    const quiet = (state: MetaActivity['state'], line: string, row: WorkRow | undefined): MetaActivity => ({
+      repoId,
+      state,
+      line,
+      workItemId: row?.id ?? null,
+      running: false,
+      at: row?.lastActivityAt ?? lastEvent,
+    })
+    const titled = (row: WorkRow | undefined): string => row?.title ?? 'this request'
+
+    const turn = turns.find((candidate) => candidate.repoId === repoId)
+    if (turn !== undefined) {
+      const work = rows.find((row) => row.id === turn.workItemId)
+      const late = this.#now().getTime() - new Date(turn.startedAt).getTime() > TURN_LIMIT_MS
+      return {
+        repoId,
+        state: turn.phase,
+        line: `${turnLine(turn, titled(work))}${late ? '. This turn is past its time limit, so it may be stuck' : ''}`,
+        workItemId: turn.workItemId,
+        running: true,
+        at: shortText(turn.startedAt),
+      }
+    }
+    if (processingOf(this.#store).paused) return quiet('paused', 'Processing is paused', undefined)
+    const queued = open.find((row) => {
+      if (row.state !== 'planning') return false
+      const doc = this.#store.workItems.get(row.id)
+      const origin = this.#store.messages.get(str(doc?.originMessageId) ?? '')
+      return origin !== undefined && typeof origin.ackText !== 'string'
+    })
+    if (queued !== undefined) return quiet('queued', 'Your request is stored and has not started', queued)
+    const need = needs.find((item) => item.repoId === repoId)
+    if (need !== undefined) {
+      const row = rows.find((candidate) => candidate.id === need.workItemId)
+      return quiet(
+        'waiting_you',
+        need.kind === 'question'
+          ? `Waiting for your answer: ${need.question.slice(0, 120)}`
+          : 'Waiting for your approval on a card',
+        row,
+      )
+    }
+    const active = this.#reads
+      .docsByField(
+        'attempt',
+        'workItemId',
+        open.map((row) => row.id),
+      )
+      .filter((attempt) => SPECIALIST_STATES.has(str(attempt.state) ?? ''))
+    const [first] = active
+    if (first !== undefined) {
+      const row = rows.find((candidate) => candidate.id === str(first.workItemId))
+      const streams = active.map((attempt) => `attempt:${String(attempt.id)}`)
+      const times = Object.values(this.#reads.lastEventAt(streams)).sort()
+      const line =
+        active.length > 1 ? `Waiting for ${active.length} specialists` : this.#specialistLine(first)
+      return { ...quiet('waiting_specialist', line, row), at: times.at(-1) ?? row?.lastActivityAt ?? null }
+    }
+    const integrating = open.find((row) => row.state === 'integrating')
+    if (integrating !== undefined) {
+      return quiet('integrating', `Integrating ${titled(integrating)}`, integrating)
+    }
+    const blocked = open.find((row) => row.stage.key === 'person/blocked')
+    if (blocked !== undefined) return quiet('blocked', blocked.reason ?? 'Blocked', blocked)
+    const held = open.find((row) => row.stage.key === 'held')
+    if (held !== undefined) return quiet('held', held.reason ?? 'Held by you', held)
+    const [next] = open
+    if (next !== undefined) {
+      return quiet('between', `No specialist is running on ${titled(next)}`, next)
+    }
+    return quiet('idle', 'Nothing is running', undefined)
+  }
+
+  #specialistLine(attempt: StoreDoc): string {
+    const task = this.#store.tasks.get(str(attempt.taskId) ?? '')
+    const [row] = task === undefined ? [] : this.taskRows([task])
+    const label = str(this.#store.slots.get(str(attempt.slotId) ?? '')?.label)
+    const who = `${row?.role ?? 'a specialist'}${label === null ? '' : ` on ${label}`}`
+    return `Waiting for ${who}${row === undefined ? '' : `: ${row.title}`}`
+  }
+
+  metaActivity(): MetaAnswer {
+    const needs = this.openNeeds()
+    const docs = this.#collect('work_item', {}).map((row) => row.doc)
+    const rows = this.workRows(docs, needs)
+    const turns = this.#metaTurns()
+    return {
+      observedAt: this.observedAt(),
+      connection: this.#metaConnection(),
+      repositories: this.repositories().items.map(({ id }) => this.#metaOf(id, rows, needs, turns)),
+    }
+  }
 
   /** `check/<attempt>/<name>`: what `StoreFacts.checksFinished` stored. */
   #checkDocs(attemptId: string | undefined): StoreDoc[] {
@@ -1073,37 +1384,8 @@ class Inspector {
       .docsByField('attempt', 'taskId', [id])
       .sort((a, b) => (num(a.generation) ?? 0) - (num(b.generation) ?? 0))
     const lastAt = this.#reads.lastEventAt(attempts.slice(-ATTEMPT_CAP).map((a) => `attempt:${String(a.id)}`))
-    const modelRequest = obj(task.modelRequest)
     const shown = attempts.slice(-ATTEMPT_CAP)
-    const built = shown.map((attempt): AttemptView => {
-      const slotId = str(attempt.slotId)
-      const engine = str(attempt.engine)
-      // The scheduler names a model before launch; only a pinned engine means one really ran.
-      const model = str(attempt.model) ?? (engine === null ? null : str(attempt.resolved_model))
-      const exitCode = num(attempt.exit_code)
-      const terminal = str(attempt.terminal_reason) ?? str(attempt.exit_reason)
-      const outcome = terminal ?? (exitCode === null ? 'unknown' : `exit ${exitCode}`)
-      return {
-        id: String(attempt.id),
-        generation: num(attempt.generation) ?? 1,
-        state: str(attempt.state) ?? 'unknown',
-        role: str(attempt.role) ?? str(task.role),
-        requested: { tier: str(modelRequest?.tier), model: str(modelRequest?.model) },
-        // The model that actually ran is recorded by the attempt; never copied from the request.
-        actual:
-          model === null && engine === null && slotId === null
-            ? null
-            : {
-                model,
-                engine,
-                slotLabel: slotId === null ? null : (str(this.#store.slots.get(slotId)?.label) ?? null),
-              },
-        baseSha: str(attempt.base_sha) ?? str(attempt.baseSha),
-        headSha: headOf(attempt),
-        processOutcome: holdsGroup(attempt) ? `${outcome} (${HELD_OUTCOME})` : outcome,
-        lastActivityAt: lastAt[`attempt:${String(attempt.id)}`] ?? null,
-      }
-    })
+    const built = shown.map((attempt) => this.#attemptView(attempt, task, lastAt))
     const views = takeWithin(built.reverse(), ATTEMPT_CAP, ATTEMPT_BYTES).reverse()
     const named = [...attempts].reverse().find((attempt) => headOf(attempt) !== null)
     const head = named === undefined ? null : headOf(named)
@@ -1416,6 +1698,47 @@ class Inspector {
   }
 }
 
+/** The words for a stage a planner turn ended in. They are not in `stageOf`: only a read can tell. */
+const TURN_STAGES: Record<'answered' | 'no-answer', Stage> = {
+  answered: { key: 'ended/answered', label: 'Answered', waitingOn: 'none' },
+  'no-answer': { key: 'ended/no-answer', label: 'No answer', waitingOn: 'none' },
+}
+
+const attemptOrderOf = (attempt: StoreDoc): number =>
+  (num(attempt.generation) ?? 0) * 1e6 + Number(/(\d+)$/.exec(String(attempt.id))?.[1] ?? 0)
+
+/** A running turn in words. Each says only what the planner's tool calls prove. */
+function turnLine(turn: MetaTurn, title: string): string {
+  switch (turn.phase) {
+    case 'reading':
+      return turn.wake === null ? 'Reading your request' : `Reading: ${turn.wake}`
+    case 'planning':
+      return `Planning a response to ${title}`
+    case 'delegating':
+      return `Handing out tasks for ${title}`
+    case 'asking':
+      return 'Writing a question for you'
+    case 'answering':
+      return `Answering ${title}`
+    default:
+      return 'Opening a card for you'
+  }
+}
+
+/**
+ * What a turn that planned nothing said back. The turn writes its report and its receipt in one
+ * transaction with one time, which is the only join there is: a report has no message id.
+ */
+export function replyOf(store: Store, message: StoreDoc): string | null {
+  const workItemId = str(message.workItemId)
+  if (workItemId === null || message.tasksCreated !== 0) return null
+  const report = store.events
+    .read(`work:${workItemId}`)
+    .find((event) => event.type === 'result_reported' && event.at === str(message.updatedAt))
+  const summary = str(obj(report?.body ?? undefined)?.summary)
+  return summary === null ? null : cutText(summary, ANSWER_CAP)
+}
+
 // ── Activity lines ───────────────────────────────────────────────────────────────────────────
 
 /** What one event says, in a line. Only the fields the contract names for that type. */
@@ -1531,6 +1854,12 @@ export function registerInspectionRoutes(app: FastifyInstance, deps: InspectDeps
     '/api/inspect/snapshot',
     gated,
     serve((request) => inspector.snapshot(repoFilter(request))),
+  )
+
+  app.get(
+    '/api/inspect/meta',
+    gated,
+    serve(() => inspector.metaActivity()),
   )
 
   app.get(

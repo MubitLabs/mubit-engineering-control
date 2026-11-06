@@ -78,6 +78,8 @@ export type RealClaudeBrainOptions = {
   promptsRoot?: string
   /** Hears each tmpdir this brain makes: they hold a bearer token, so a boot must find them. */
   onTempDir?: (dir: string) => void
+  /** Hears which engine and model a turn really started on. */
+  onSession?: (session: { engine: string; model?: string }) => void
 }
 
 /** The v0 pseudo-check every proposed task carries (see service.ts's module doc). */
@@ -161,6 +163,7 @@ export class RealClaudeBrain {
   readonly #engine: BrainEngine
   readonly #promptsRoot: string | undefined
   readonly #onTempDir: ((dir: string) => void) | undefined
+  readonly #onSession: ((session: { engine: string; model?: string }) => void) | undefined
   /** The brain-owned tmpdir: cwd, only writable path, and home of the engine config. */
   readonly #root: string
   #retriesUsed = 0
@@ -186,6 +189,7 @@ export class RealClaudeBrain {
     this.#engine = opts.adapter ?? new ClaudeAdapter()
     this.#promptsRoot = opts.promptsRoot
     this.#onTempDir = opts.onTempDir
+    this.#onSession = opts.onSession
     this.#root = mkdtempSync(join(tmpdir(), 'mec-meta-brain-'))
     this.#onTempDir?.(this.#root)
   }
@@ -217,6 +221,7 @@ export class RealClaudeBrain {
       adapter: this.#engine,
       ...(this.#promptsRoot !== undefined && { promptsRoot: this.#promptsRoot }),
       ...(this.#onTempDir !== undefined && { onTempDir: this.#onTempDir }),
+      ...(this.#onSession !== undefined && { onSession: this.#onSession }),
     })
     return this.#planner
   }

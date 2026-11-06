@@ -8,6 +8,7 @@ import {
   decodeActivityPage,
   decodeArtifact,
   decodeCardEvidence,
+  decodeMeta,
   decodeNeedsPage,
   decodeSearchPage,
   decodeSnapshot,
@@ -19,6 +20,7 @@ import type {
   ActivityItem,
   ArtifactPage,
   CardEvidence,
+  MetaAnswer,
   NeedItem,
   Page,
   SearchHit,
@@ -45,6 +47,10 @@ const encoded = encodeURIComponent
 export const inspectApi = {
   async snapshot(signal?: AbortSignal): Promise<Snapshot> {
     return decodeSnapshot(await request<unknown>('/api/inspect/snapshot', { signal }))
+  },
+
+  async meta(signal?: AbortSignal): Promise<MetaAnswer> {
+    return decodeMeta(await request<unknown>('/api/inspect/meta', { signal }))
   },
 
   async work(cursor: string | null, signal?: AbortSignal): Promise<Page<WorkRow>> {

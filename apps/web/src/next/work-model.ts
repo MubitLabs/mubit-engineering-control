@@ -8,6 +8,8 @@ import type {
   CardEvidence,
   CardItem,
   ChatLine,
+  DelegationRow,
+  MetaAnswer,
   NeedItem,
   Page,
   QuestionItem,
@@ -322,6 +324,59 @@ function discussAction(row: WorkRow, filter: RepoFilter | null): DiscussAction |
   }
 }
 
+/** Who holds one task, shown without opening it. */
+export interface DelegationView {
+  taskId: string
+  title: string
+  stateLabel: string
+  /** Role, connection, engine, the tier asked for and the model that ran, in a sentence. */
+  who: string
+  why: string
+  attempts: string
+  activity: string | null
+}
+
+function assignment(row: DelegationRow): string {
+  const actual = row.latest?.actual ?? null
+  const role = row.role ?? 'No role recorded'
+  const engine = actual?.engine ? ` (${actual.engine})` : ''
+  const where = actual?.slotLabel ? `${role} on ${actual.slotLabel}${engine}` : `${role}, no connection yet`
+  const asked = row.requested.tier ?? row.requested.model
+  const ran = actual?.model ? `ran ${actual.model}` : row.latest === null ? null : 'model not recorded yet'
+  return [where, asked === null ? null : `asked for ${asked}`, ran].filter((part) => part !== null).join(', ')
+}
+
+function delegationView(row: DelegationRow): DelegationView {
+  const { latest } = row
+  return {
+    taskId: row.taskId,
+    title: row.title,
+    stateLabel: taskLabel(row.status).label,
+    who: assignment(row),
+    why: latest?.placement
+      ? `Why here: ${latest.placement}`
+      : row.waiting
+        ? `Waiting: ${row.waiting}`
+        : 'No reason recorded',
+    attempts:
+      latest === null
+        ? 'Not started'
+        : `${row.attempts} ${row.attempts === 1 ? 'attempt' : 'attempts'}, latest ${latest.state}`,
+    activity: row.activity && `Last step: ${row.activity.summary}, ${timeLabel(row.activity.at)}`,
+  }
+}
+
+export type TurnOutcomeView = { kind: 'answered'; text: string } | { kind: 'no-answer'; text: string }
+
+const NO_ANSWER = 'The meta agent stopped without answering.'
+
+function turnOutcome(detail: WorkDetail): TurnOutcomeView | null {
+  if (detail.turnOutcome === null) return null
+  return detail.turnOutcome === 'answered'
+    ? { kind: 'answered', text: detail.answer ?? NOT_RECORDED }
+    : { kind: 'no-answer', text: `${NO_ANSWER} Ask again in Conversation.` }
+}
+
 export interface DeliveryDetailView {
   plan: {
     title: string
@@ -333,8 +388,10 @@ export interface DeliveryDetailView {
   }
   /** Read only from `dependsOn`. */
   dependencies: readonly { task: string; on: readonly string[]; more?: number }[]
-  /** Read only from `delegation`. */
-  delegation: readonly { parent: string; child: string }[]
+  /** Read only from `delegation`: every task, whoever holds it. */
+  delegation: readonly DelegationView[]
+  /** Set on a request that never was delivery work. Nothing else here applies to it. */
+  outcome: TurnOutcomeView | null
   actions: readonly WorkAction[]
   discuss: DiscussAction | null
 }
@@ -362,7 +419,8 @@ export function deliveryDetail(detail: WorkDetail, filter: RepoFilter | null): D
           progress,
         }
       }),
-      footnote: deliveryLabel(detail),
+      // Delivery is about tasks. With none it cannot apply, so it says nothing.
+      footnote: count === 0 ? '' : deliveryLabel(detail),
     },
     dependencies: detail.tasks
       .filter((task) => task.dependsOn.length > 0)
@@ -371,10 +429,8 @@ export function deliveryDetail(detail: WorkDetail, filter: RepoFilter | null): D
         on: task.dependsOn.map((id) => titles.get(id) ?? id),
         ...(task.dependsOnTruncated > 0 && { more: task.dependsOnTruncated }),
       })),
-    delegation: detail.delegation.map((link) => ({
-      parent: link.parentAttemptId,
-      child: link.childAttemptId,
-    })),
+    delegation: detail.delegation.map(delegationView),
+    outcome: turnOutcome(detail),
     actions: workActions(detail, filter ?? { kind: 'all' }, detail.hold, detail.retry),
     discuss: discussAction(detail, filter),
   }
@@ -968,6 +1024,68 @@ export function threadQuestions(
 
 export type ConversationEntry = { id: string; kind: 'user' | 'agent' | 'note'; text: string }
 
+/** One open delivery in the conversation: what it is and where it stands. */
+export interface OpenWorkView {
+  id: string
+  title: string
+  stageLabel: string
+  tone: StatusTone
+  reason: string | null
+}
+
+/** The live line. Only what the server read says; a send is the one thing the page knows first. */
+export interface MetaStatusView {
+  headline: string
+  connection: string
+  when: string
+  tone: StatusTone
+  /** Worth reading again soon: something is moving. */
+  active: boolean
+}
+
+function connectionLabel(connection: MetaAnswer['connection']): string {
+  if (connection === null) return 'No meta connection chosen'
+  const engine = connection.engine ? ` (${connection.engine})` : ''
+  const slot = `${connection.slotLabel ?? 'Unnamed connection'}${engine}`
+  return connection.model ? `${connection.model} on ${slot}` : `${slot}, model not recorded yet`
+}
+
+export function metaStatus(
+  read: Read<MetaAnswer>,
+  repoId: string | null,
+  sending: boolean,
+): MetaStatusView | null {
+  const data = readData(read)
+  const row = data?.repositories.find((entry) => entry.repoId === repoId)
+  const connection = data === null ? '' : connectionLabel(data.connection)
+  if (sending && row?.running !== true) {
+    return { headline: 'Sending your request', connection, when: 'Just now', tone: 'neutral', active: true }
+  }
+  if (repoId === null || (data !== null && row === undefined)) return null
+  if (read.status === 'failed') {
+    return {
+      headline: 'Could not read what the meta agent is doing',
+      connection,
+      when: read.readAt ? `Last read ${timeLabel(read.readAt)}` : 'Not read yet',
+      tone: 'bad',
+      active: false,
+    }
+  }
+  if (row === undefined) return null
+  const label = row.running ? 'Started' : 'Last event'
+  return {
+    headline: row.line,
+    connection,
+    when: row.at === null ? 'No events yet' : `${label} ${timeLabel(row.at)}`,
+    tone: row.state === 'waiting_you' || row.state === 'blocked' ? 'attention' : 'neutral',
+    active: row.running || row.state === 'queued',
+  }
+}
+
+/** The stored message is the one to show: an echo of it would say everything twice. */
+export const sentAlready = (lines: readonly ChatLine[], key: string): boolean =>
+  lines.some((line) => line.idempotencyKey === key)
+
 const ENTRY_KINDS: Record<string, ConversationEntry['kind']> = {
   user: 'user',
   agent: 'agent',
@@ -980,6 +1098,8 @@ export interface ConversationViewModel {
   entries: readonly ConversationEntry[]
   plan: DeliveryDetailView['plan'] | null
   discuss: DiscussAction | null
+  /** Open deliveries besides the one the plan shows. */
+  open: readonly OpenWorkView[]
 }
 
 /** §12.7: an acknowledgement can name work by id, and an id is not for the owner to read. */
@@ -1000,14 +1120,39 @@ export function conversationView(input: {
   detail: WorkDetail | null
   messages: readonly ChatLine[]
   work?: readonly WorkRow[]
+  /** The stable heading: a request's title reads wrongly the moment a newer one arrives. */
+  repository?: string | null
+  /** Open deliveries to list. */
+  open?: readonly WorkRow[]
 }): ConversationViewModel {
   const work = input.work ?? []
   const delivery = input.detail ? deliveryDetail(input.detail, null) : null
-  const entries = input.messages.flatMap((line): ConversationEntry[] => {
-    const ack =
-      line.ackText === undefined
+  const said = (line: ChatLine): ConversationEntry[] => {
+    const { ackText, replyText } = line
+    const reply =
+      replyText === undefined
         ? []
-        : [{ id: `${line.id}:ack`, kind: 'agent' as const, text: withTitles(line.ackText, work) }]
+        : [{ id: `${line.id}:reply`, kind: 'agent' as const, text: withTitles(replyText, work) }]
+    const repeats = ackText !== undefined && replyText?.startsWith(ackText) === true
+    const ack =
+      ackText === undefined || repeats
+        ? []
+        : [{ id: `${line.id}:ack`, kind: 'agent' as const, text: withTitles(ackText, work) }]
+    const owner = work.find((row) => row.id === line.workItemId)
+    const lost =
+      replyText === undefined && ackText !== undefined && owner?.turnOutcome === 'no-answer'
+        ? [
+            {
+              id: `${line.id}:lost`,
+              kind: 'note' as const,
+              text: `${NO_ANSWER} Ask again.${owner.lastActivityAt ? ` Last event ${timeLabel(owner.lastActivityAt)}.` : ''}`,
+            },
+          ]
+        : []
+    return [...ack, ...reply, ...lost]
+  }
+  const entries = input.messages.flatMap((line): ConversationEntry[] => {
+    const ack = said(line)
     if (isWake(line)) return ack
     const kind = line.kind === null ? 'user' : ENTRY_KINDS[line.kind]
     if (kind === undefined) return []
@@ -1026,11 +1171,31 @@ export function conversationView(input: {
         : []),
     ]
   })
+  const assigned = new Map(input.detail?.delegation.map((row) => [row.taskId, assignment(row)]))
   return {
-    title: input.row ? workRowView(input.row).title : 'Conversation',
+    title: input.repository ?? 'Conversation',
     entries,
-    plan: delivery?.plan ?? null,
+    plan:
+      delivery === null
+        ? null
+        : {
+            ...delivery.plan,
+            tasks: delivery.plan.tasks.map((task) => ({
+              ...task,
+              detail: assigned.get(task.id) ?? task.detail,
+            })),
+          },
     discuss: delivery?.discuss ?? null,
+    open: (input.open ?? []).map((row) => {
+      const view = workRowView(row)
+      return {
+        id: view.id,
+        title: view.title,
+        stageLabel: view.stageLabel,
+        tone: view.tone,
+        reason: view.reason,
+      }
+    }),
   }
 }
 

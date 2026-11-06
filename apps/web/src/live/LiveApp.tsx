@@ -33,6 +33,7 @@ import {
   focusTask,
   inFilter,
   mapRead,
+  metaStatus,
   needCard,
   needsCount,
   needsList,
@@ -46,6 +47,7 @@ import {
   searchRows,
   searchTarget,
   selectionInScope,
+  sentAlready,
   type TaskEvidence,
   taskInspector,
   threadQuestions,
@@ -81,6 +83,10 @@ import {
 } from './workspace'
 
 const RECENT_LIMIT = 5
+/** How soon after a Send to read the thread: the stored message replaces the page's echo. */
+const STORED_READ_MS = 300
+/** How often the live line is read while something is moving. */
+const META_READ_MS = 2_000
 
 const WORK_CUT = 'The server holds more deliveries than this page reads. Search still finds them.'
 const NEEDS_CUT = 'More is waiting than this page reads, so there is no count.'
@@ -97,7 +103,13 @@ function createLive() {
   const drafts = createDrafts(() => window.localStorage)
   const send = async (frozen: Frozen) => {
     const { key, text, ...target } = frozen
-    await api.sendChat(text, target, key)
+    // The server stores the message first and answers when the turn ends, up to minutes later.
+    const shown = setTimeout(() => workspace.refresh(), STORED_READ_MS)
+    try {
+      await api.sendChat(text, target, key)
+    } finally {
+      clearTimeout(shown)
+    }
     workspace.refresh()
   }
   const submissions = createSubmissions({ drafts, newKey: newIdempotencyKey, send })
@@ -174,6 +186,8 @@ export function LiveApp() {
   const activeId = resolved.id
   const readOnly = activeId === UNASSIGNED
   const repoId = activeId !== null && !readOnly ? activeId : null
+
+  const [focusRequest, setFocusRequest] = useState(0)
 
   useEffect(() => {
     if (repositoriesReady || activeId !== null) workspace.setScope(activeId)
@@ -252,6 +266,7 @@ export function LiveApp() {
       bump()
       setNotice(null)
       go({ route: 'chat', repoId: owner, workId: null, taskId: null })
+      setFocusRequest((count) => count + 1)
     },
     [bump, drafts, go],
   )
@@ -302,6 +317,10 @@ export function LiveApp() {
     ...(intentToggle && { intentToggle }),
     ...(unavailable !== undefined && { unavailable }),
     sending,
+    following: intent.kind === 'follow_up',
+    ...(intent.kind === 'follow_up' && {
+      note: `Your next message goes to this work, not a new request.`,
+    }),
     ...(repoId !== null &&
       drafts.heldInMemory(repoId, draftScope(target ?? {})) && {
         note: 'This looks like a key, so it stays in this tab and is not saved. Add keys in Connections.',
@@ -333,6 +352,9 @@ export function LiveApp() {
       : (rows.find((row) => row.id === followedId) ??
         rows.findLast((row) => row.repoId === repoId && workRowView(row).outcome === null) ??
         null)
+  const openHere = rows.filter(
+    (row) => row.repoId === repoId && row.id !== conversationRow?.id && workRowView(row).outcome === null,
+  )
 
   const onChat = address.route === 'chat'
   const deliveryId = onChat ? (conversationRow?.id ?? null) : selectedWorkId
@@ -419,7 +441,28 @@ export function LiveApp() {
     detail: onChat ? deliveryData : null,
     messages: readData(chatRead) ?? [],
     work: rows,
+    repository: repoName,
+    open: openHere,
   })
+
+  const thread = readData(chatRead) ?? []
+  const echo =
+    submission?.state === 'pending' && !sentAlready(thread, submission.frozen.key)
+      ? submission.frozen.text
+      : null
+  const meta = readOnly ? null : metaStatus(inspected.meta, repoId, sending)
+  const metaActive = meta?.active === true
+  useEffect(() => {
+    if (!metaActive) return
+    const timer = setInterval(inspection.refreshMeta, META_READ_MS)
+    return () => clearInterval(timer)
+  }, [metaActive, inspection])
+  // A turn ending changes the thread, and no stream says so when it planned nothing.
+  const wasActive = useRef(false)
+  useEffect(() => {
+    if (wasActive.current && !metaActive) workspace.refresh()
+    wasActive.current = metaActive
+  }, [metaActive, workspace])
 
   /** The served label, which is what a search hit carries. Empty when no repository is active. */
   const activeLabel =
@@ -574,9 +617,12 @@ export function LiveApp() {
         onDiscuss={() => {
           if (conversation.discuss) discuss(conversation.discuss)
         }}
+        onOpenWork={openWork}
+        planWorkId={conversationRow?.id ?? null}
+        meta={meta}
         onAnswer={inspection.answer}
         onRetry={retryRead}
-        sending={submission?.state === 'pending' ? submission.frozen.text : null}
+        sending={echo}
         readOnly={readOnly}
         foundId={foundMessageId}
         follow
@@ -649,6 +695,7 @@ export function LiveApp() {
         approvalInspector={approvalInspector}
         initialInspectorOpen={address.taskId !== null}
         composer={address.route === 'chat' ? composer : null}
+        composerFocusRequest={focusRequest}
         commands={commands}
         search={{ onOpen: () => setSearching(true) }}
       >

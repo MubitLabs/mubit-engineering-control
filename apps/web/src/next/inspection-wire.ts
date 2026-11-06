@@ -30,6 +30,8 @@ export type WorkRow = {
   taskCounts: { total: number; byStatus: Record<string, number> }
   lastActivityAt: string | null
   updatedAt: string
+  /** A turn that ended with no plan and nothing asked. Null on anything else. */
+  turnOutcome: 'answered' | 'no-answer' | null
 }
 
 export type TaskRow = {
@@ -56,13 +58,15 @@ export type DeliveryView = {
 export type WorkDetail = WorkRow & {
   originMessageId: string | null
   goal: string | null
+  /** What an answered question's turn reported. */
+  answer: string | null
   hold: { since: string; reason: string | null } | null
   planRevision: number | null
   tasks: TaskRow[]
   /** Tasks left out of `tasks`. */
   tasksTruncated: number
-  /** Parent and child attempts. Empty until M2 records them; never inferred from dependencies. */
-  delegation: { parentAttemptId: string; childAttemptId: string }[]
+  /** Who holds each task, read from its attempts. Never inferred from dependencies. */
+  delegation: DelegationRow[]
   delivery: DeliveryView
   /** What the owner may ask for again, and why it stopped. */
   retry: { kind: 'integration' | 'push' | 'pr'; reason: string } | null
@@ -83,6 +87,49 @@ export type AttemptView = {
   headSha: string | null
   processOutcome: string | 'unknown'
   lastActivityAt: string | null
+  /** Why this connection: the scheduler's own words. */
+  placement: string | null
+}
+
+/** Who a task went to and why. `latest` is null until placement picks a connection. */
+export type DelegationRow = {
+  taskId: string
+  title: string
+  role: string | null
+  status: string
+  requested: { tier: string | null; model: string | null }
+  attempts: number
+  latest: AttemptView | null
+  /** Why a task with nothing running has not started. */
+  waiting: string | null
+  /** The newest thing the latest attempt recorded. A step shows here once it has finished. */
+  activity: { summary: string; at: string } | null
+}
+
+/** GET /api/inspect/meta, one row per repository. */
+export type MetaActivity = {
+  repoId: string
+  state: string
+  line: string
+  workItemId: string | null
+  /** A planner turn is running now. */
+  running: boolean
+  /** When a running turn began, else the last recorded event. */
+  at: string | null
+}
+
+export type MetaConnection = {
+  slotLabel: string | null
+  engine: string | null
+  /** What the last turn really started on. */
+  model: string | null
+  modelAt: string | null
+}
+
+export type MetaAnswer = {
+  observedAt: string
+  connection: MetaConnection | null
+  repositories: MetaActivity[]
 }
 
 /** One page item of `GET /api/inspect/attempts/:id/activity`. A `tool_call` has finished. */
@@ -199,6 +246,10 @@ export type ChatLine = {
   kind: string | null
   /** The meta agent's acknowledgement, stored on the message it answers. */
   ackText?: string
+  /** What a turn that planned nothing reported: for a question, the answer. */
+  replyText?: string
+  /** The key a send carried, so the page can tell its own message from an echo. */
+  idempotencyKey?: string
   /** The server redacted this message: it looked like a key. */
   secretGuard?: true
 }

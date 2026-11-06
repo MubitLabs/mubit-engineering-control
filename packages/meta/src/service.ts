@@ -142,6 +142,19 @@ export type MetaDecision = {
 /** The wake descriptor: why a turn runs (user message, specialist report, answered question). */
 export type MetaWake = { reason: string; detail?: string }
 
+/** How far a running planner turn has got, from the tools it has called. */
+export type MetaTurnPhase = 'reading' | 'planning' | 'delegating' | 'asking' | 'answering' | 'opening_card'
+
+/** A planner turn running now. `wake` is why a turn no person started began. */
+export type MetaTurn = {
+  messageId: string
+  workItemId: string
+  repoId: string | null
+  wake: string | null
+  startedAt: string
+  phase: MetaTurnPhase
+}
+
 /**
  * The planning brain: sees the message and the live work, returns the acknowledgement
  * text and (for new work) the proposed task graph. Production is the engine-backed
@@ -260,6 +273,8 @@ export class MetaAgentService {
   readonly #escalation = new EscalationCounter()
   /** Turns running in this process: a concurrent retry joins one instead of starting another. */
   readonly #turns = new Map<string, Promise<TurnOutcome>>()
+  /** The planner turns running now. In memory on purpose: a crash leaves no turn claiming to run. */
+  readonly #thinking = new Map<string, { turn: Omit<MetaTurn, 'phase'>; tools: PlannerTools }>()
 
   constructor(deps: {
     store: Store
@@ -342,6 +357,24 @@ export class MetaAgentService {
     // the effects queue coalesces the re-enqueue to the existing rows (CONTRACTS §7).
     if (prior !== undefined && typeof prior.ackText === 'string') return this.#replay(prior)
     return this.#once(input.messageId, () => this.#admit(input, prior, resumed))
+  }
+
+  /** What the planner is doing now, read off the tools it has really called this turn. */
+  turnsInFlight(): MetaTurn[] {
+    return [...this.#thinking.values()].map(({ turn, tools }) => ({
+      ...turn,
+      phase: phaseOf(tools.journal()),
+    }))
+  }
+
+  /** Holds a brain call in `#thinking` for exactly as long as it runs. */
+  async #think<T>(turn: Omit<MetaTurn, 'phase'>, tools: PlannerTools, run: () => Promise<T>): Promise<T> {
+    this.#thinking.set(turn.messageId, { turn, tools })
+    try {
+      return await run()
+    } finally {
+      this.#thinking.delete(turn.messageId)
+    }
   }
 
   /** One turn per message id in this process; the entry leaves when the turn settles. */
@@ -510,21 +543,31 @@ export class MetaAgentService {
     const repo = repoId !== undefined ? { repoId } : {}
     const turn = { messageId, wake: true as const, ...repo }
     let decision: MetaDecision
+    const tools = this.#buildTools({ messageId, workItemId }, repoId)
+    const started = {
+      messageId,
+      workItemId,
+      repoId: repoId ?? null,
+      wake: input.reason,
+      startedAt: this.#now(),
+    }
     try {
-      decision = await this.#brain({
-        messageId,
-        messageText: input.detail ?? input.reason,
-        liveWork: this.#liveForBrain(repoId),
-        workItemId,
-        wake: { reason: input.reason, ...(input.detail !== undefined && { detail: input.detail }) },
-        tools: this.#buildTools({ messageId, workItemId }, repoId),
-        snapshot: this.#buildSnapshot({
+      decision = await this.#think(started, tools, () =>
+        this.#brain({
           messageId,
-          repoId,
+          messageText: input.detail ?? input.reason,
+          liveWork: this.#liveForBrain(repoId),
           workItemId,
-          turn: { wake: input.reason, ...(input.detail !== undefined && { detail: input.detail }) },
+          wake: { reason: input.reason, ...(input.detail !== undefined && { detail: input.detail }) },
+          tools,
+          snapshot: this.#buildSnapshot({
+            messageId,
+            repoId,
+            workItemId,
+            turn: { wake: input.reason, ...(input.detail !== undefined && { detail: input.detail }) },
+          }),
         }),
-      })
+      )
     } catch (error) {
       if (error instanceof Later) throw error
       return this.#failTurn(
@@ -823,21 +866,31 @@ export class MetaAgentService {
     }
 
     let decision: MetaDecision
+    const tools = this.#buildTools({ messageId: input.messageId, workItemId }, input.repoId)
+    const started = {
+      messageId: input.messageId,
+      workItemId,
+      repoId: input.repoId ?? null,
+      wake: null,
+      startedAt: this.#now(),
+    }
     try {
-      decision = await this.#brain({
-        messageId: input.messageId,
-        messageText: input.text,
-        liveWork: this.#liveForBrain(input.repoId),
-        workItemId,
-        wake: { reason: 'user message', detail: input.text.slice(0, 200) },
-        tools: this.#buildTools({ messageId: input.messageId, workItemId }, input.repoId),
-        snapshot: this.#buildSnapshot({
+      decision = await this.#think(started, tools, () =>
+        this.#brain({
           messageId: input.messageId,
-          repoId: input.repoId,
+          messageText: input.text,
+          liveWork: this.#liveForBrain(input.repoId),
           workItemId,
-          turn: { wake: 'user message', detail: input.text.slice(0, 200) },
+          wake: { reason: 'user message', detail: input.text.slice(0, 200) },
+          tools,
+          snapshot: this.#buildSnapshot({
+            messageId: input.messageId,
+            repoId: input.repoId,
+            workItemId,
+            turn: { wake: 'user message', detail: input.text.slice(0, 200) },
+          }),
         }),
-      })
+      )
     } catch (error) {
       // A shutdown cut the turn short (§20): no receipt, so the next start resumes it.
       if (error instanceof Later) throw error
@@ -1548,6 +1601,15 @@ export class MetaAgentService {
 
 /** Two askings of the same words: case and spacing are not a different decision (§12.6). */
 const sameWords = (text: string): string => text.trim().replace(/\s+/g, ' ').toLowerCase()
+
+/** The furthest the planner has got: a card or a question outranks the plan it came with. */
+function phaseOf(journal: PlannerTurnJournal): MetaTurnPhase {
+  if (journal.confirmations.length > 0) return 'opening_card'
+  if (journal.questions.length > 0) return 'asking'
+  if (journal.plan !== undefined) return 'delegating'
+  if (journal.reports.length > 0) return 'answering'
+  return journal.acks.length > 0 ? 'planning' : 'reading'
+}
 
 /** Reads this turn's persisted launch records back off a message doc. */
 function launchRecordsOf(doc: StoreDoc): LaunchRecord[] {

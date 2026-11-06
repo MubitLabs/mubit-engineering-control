@@ -363,8 +363,11 @@ test.describe('the audit defects, wide', () => {
 
   test('the conversation leads with the request and keeps tool activity out', async ({ page }) => {
     await harness(page, 'chat')
-    await expect(page.locator('.conversation h1')).toContainText('search for the console')
+    await expect(page.locator('.conversation h1')).toHaveText('sample-console')
     await expect(page.locator('.conversation')).not.toContainText('tool call')
+    await expect(page.locator('.meta-line')).toContainText('Waiting for implementer on sample-slot')
+    await expect(page.locator('.meta-line')).toContainText('sample-large on sample-slot (claude)')
+    await expect(taskRow(page, 'read the code')).toContainText('asked for fast, ran sample-small')
     await page.getByRole('button', { name: 'Inspect', exact: true }).click()
     await expect(inspector(page).getByRole('heading', { level: 2 })).toContainText('build the index')
   })

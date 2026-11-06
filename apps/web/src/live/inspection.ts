@@ -5,6 +5,7 @@ import type {
   ActivityItem,
   ArtifactPage,
   CardEvidence,
+  MetaAnswer,
   NeedItem,
   Page,
   SearchHit,
@@ -45,6 +46,7 @@ export interface CommandResult {
 export interface InspectionClient {
   work(cursor: string | null, signal?: AbortSignal): Promise<Page<WorkRow>>
   needs(cursor: string | null, signal?: AbortSignal): Promise<Page<NeedItem>>
+  meta(signal?: AbortSignal): Promise<MetaAnswer>
   workDetail(id: string, signal?: AbortSignal): Promise<WorkDetail>
   taskDetail(id: string, signal?: AbortSignal): Promise<TaskDetail>
   evidence(id: string): Promise<CardEvidence>
@@ -72,6 +74,8 @@ export interface CommandNotice {
 export interface InspectionState {
   work: Read<Page<WorkRow>>
   needs: Read<Page<NeedItem>>
+  /** What the meta agent is doing, per repository. */
+  meta: Read<MetaAnswer>
   delivery: Selected<WorkDetail>
   task: Selected<TaskDetail>
   /** The attempt on the Activity tab, read in pages. Null when the task has none to show. */
@@ -191,6 +195,7 @@ export function createInspection(client: InspectionClient) {
   let state: InspectionState = {
     work: { status: 'loading' },
     needs: { status: 'loading' },
+    meta: { status: 'loading' },
     delivery: { id: null, read: { status: 'loading' } },
     task: { id: null, read: { status: 'loading' } },
     activity: NO_ACTIVITY,
@@ -208,6 +213,7 @@ export function createInspection(client: InspectionClient) {
   let readingDelivery: AbortController | null = null
   let readingTask: AbortController | null = null
   let readingActivity: AbortController | null = null
+  let readingMeta: AbortController | null = null
   /** A frame landed during a read: one more read of the last page once that one ends. */
   let activityAgain = false
   /** The owner's choice of attempt. Null follows the latest. */
@@ -361,7 +367,22 @@ export function createInspection(client: InspectionClient) {
       })
   }
 
+  const refreshMeta = () => {
+    readingMeta?.abort()
+    const controller = new AbortController()
+    readingMeta = controller
+    const live = () => readingMeta === controller
+    within((signal) => client.meta(signal), controller.signal)
+      .then((data) => {
+        if (live()) set({ meta: { status: 'ready', data, readAt: now() } })
+      })
+      .catch((error: unknown) => {
+        if (live()) set({ meta: failedRead(state.meta, error) })
+      })
+  }
+
   const refresh = () => {
+    refreshMeta()
     reading?.abort()
     const controller = new AbortController()
     reading = controller
@@ -414,6 +435,7 @@ export function createInspection(client: InspectionClient) {
     },
 
     refresh,
+    refreshMeta,
     readEvidence,
 
     /**

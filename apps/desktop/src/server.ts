@@ -26,7 +26,7 @@ import type {
 } from '@mec/contracts'
 import { matchesSecret } from '@mec/contracts'
 import { WORK_ITEM_TERMINAL, type WorkItemState } from '@mec/domain'
-import type { LiveWork } from '@mec/meta'
+import type { LiveWork, MetaTurn } from '@mec/meta'
 // T7 (review 2026-11-04 §7): the setup agent for Chat's Setup mode — the Settings API's
 // read side plus a safe slot subset, every write a user-applied draft.
 import {
@@ -69,7 +69,7 @@ import { type BackupControl, liveSlot, registerConfigRoutes, repositoryRevision 
 import type { RetryOutcome } from './delivery'
 import { buildDoctorReport } from './doctor'
 import type { HealthSnapshot, PartEntry } from './health'
-import { hostIsLoopback, registerInspectionRoutes, scrub } from './inspection'
+import { hostIsLoopback, registerInspectionRoutes, replyOf, scrub } from './inspection'
 import { type CardEvent, LoginCardManager } from './login-cards'
 import { metaSlotRefusal } from './readiness'
 import {
@@ -152,6 +152,8 @@ export type ServerDeps = {
       launchesEnqueued: string[]
       escalated: boolean
     }>
+    /** The planner turns running now. A meta agent that does not say has none to show. */
+    turnsInFlight?(): readonly MetaTurn[]
     /** T5 wakes: records the answer and queues the planner's wake, in one transaction. */
     onQuestionAnswered?(
       questionId: string,
@@ -843,10 +845,15 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   app.get('/api/chat/messages', async (request) => {
     // §12.7: a wake with nothing new keeps its receipt, for replay, and stays off the chat.
     const messages = rowsInScope(store.messages, store, request).filter((doc) => doc.quiet !== true)
-    return messages.sort(
-      (a, b) =>
-        String(a.createdAt).localeCompare(String(b.createdAt)) || String(a.id).localeCompare(String(b.id)),
-    )
+    return messages
+      .sort(
+        (a, b) =>
+          String(a.createdAt).localeCompare(String(b.createdAt)) || String(a.id).localeCompare(String(b.id)),
+      )
+      .map((doc) => {
+        const replyText = replyOf(store, doc)
+        return replyText === null ? doc : { ...doc, replyText }
+      })
   })
 
   app.get('/api/inbox', async () =>
@@ -2350,7 +2357,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // M3.1 canonical inspection: read-only, bounded, redacted `GET /api/inspect/*`.
   if (deps.inspection !== undefined) {
     const exactsFor = deps.inspectionExacts ?? (() => [])
-    registerInspectionRoutes(app, { store, reads: deps.inspection, now, exactsFor })
+    const metaTurns = () => deps.metaAgent?.turnsInFlight?.() ?? []
+    registerInspectionRoutes(app, { store, reads: deps.inspection, now, exactsFor, metaTurns })
   }
 
   // M3.3 setup and configuration: readiness, connections, policy, repository edits, drafts, backups.

@@ -423,7 +423,10 @@ describe('delivery detail', () => {
       { task: 'SAMPLE-ONLY build the index', on: ['SAMPLE-ONLY read the code'] },
       { task: 'SAMPLE-ONLY run the combined checks', on: ['SAMPLE-ONLY build the index'] },
     ])
-    expect(detail.delegation).toEqual([{ parent: 'attempt_lead', child: 'attempt_child' }])
+    expect(detail.delegation.map((row) => row.why)).toEqual([
+      'Why here: sample-slot had the lowest utilisation of 2 candidates',
+      'Waiting: its dependencies have not finished',
+    ])
 
     const noDelegation = deliveryDetail(
       decodeWorkDetail({ ...workDetails.work_working, delegation: [] }),
@@ -440,7 +443,7 @@ describe('delivery detail', () => {
       null,
     )
     expect(noDependencies.dependencies).toEqual([])
-    expect(noDependencies.delegation).toHaveLength(1)
+    expect(noDependencies.delegation).toHaveLength(2)
   })
 
   it('task rows carry their own id and real progress', () => {
@@ -689,8 +692,10 @@ describe('conversation', () => {
     messages: chatLines,
   })
 
-  it('the request title leads', () => {
-    expect(view.title).toBe('SAMPLE-ONLY search for the console')
+  it('the repository leads: a request title reads wrongly once a newer one arrives', () => {
+    expect(
+      conversationView({ row: null, detail: null, messages: [], repository: 'sample-console' }).title,
+    ).toBe('sample-console')
   })
 
   it('routine tool activity stays out', () => {

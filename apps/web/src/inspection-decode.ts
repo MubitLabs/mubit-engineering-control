@@ -15,6 +15,7 @@ import type {
   CheckView,
   Coverage,
   DeliveryView,
+  MetaAnswer,
   NeedItem,
   Page,
   SearchHit,
@@ -137,6 +138,7 @@ function workRow(path: string, value: unknown, what: string): WorkRow {
     },
     lastActivityAt: strOrNull(path, raw.lastActivityAt, `${what}.lastActivityAt`),
     updatedAt: str(path, raw.updatedAt, `${what}.updatedAt`),
+    turnOutcome: raw.turnOutcome === 'answered' || raw.turnOutcome === 'no-answer' ? raw.turnOutcome : null,
   }
 }
 
@@ -198,6 +200,7 @@ function attempt(path: string, value: unknown, what: string): AttemptView {
     baseSha: strOrNull(path, raw.baseSha, `${what}.baseSha`),
     headSha: strOrNull(path, raw.headSha, `${what}.headSha`),
     processOutcome: str(path, raw.processOutcome, `${what}.processOutcome`),
+    placement: typeof raw.placement === 'string' ? raw.placement : null,
     lastActivityAt: strOrNull(path, raw.lastActivityAt, `${what}.lastActivityAt`),
   }
 }
@@ -276,6 +279,7 @@ export function decodeWorkDetail(raw: unknown): WorkDetail {
     ...workRow(path, body, 'the body'),
     originMessageId: strOrNull(path, body.originMessageId, 'originMessageId'),
     goal: strOrNull(path, body.goal, 'goal'),
+    answer: typeof body.answer === 'string' ? body.answer : null,
     hold:
       hold === null
         ? null
@@ -284,10 +288,28 @@ export function decodeWorkDetail(raw: unknown): WorkDetail {
     tasks: list(path, body.tasks, 'tasks', (entry, label) => taskRow(path, entry, label)),
     tasksTruncated: num(path, body.tasksTruncated, 'tasksTruncated'),
     delegation: list(path, body.delegation, 'delegation', (entry, label) => {
-      const link = obj(path, entry, label)
+      const row = obj(path, entry, label)
+      const requested = obj(path, row.requested, `${label}.requested`)
+      const activity = row.activity === null ? null : obj(path, row.activity, `${label}.activity`)
       return {
-        parentAttemptId: str(path, link.parentAttemptId, `${label}.parentAttemptId`),
-        childAttemptId: str(path, link.childAttemptId, `${label}.childAttemptId`),
+        taskId: str(path, row.taskId, `${label}.taskId`),
+        title: str(path, row.title, `${label}.title`),
+        role: strOrNull(path, row.role, `${label}.role`),
+        status: str(path, row.status, `${label}.status`),
+        requested: {
+          tier: strOrNull(path, requested.tier, `${label}.requested.tier`),
+          model: strOrNull(path, requested.model, `${label}.requested.model`),
+        },
+        attempts: num(path, row.attempts, `${label}.attempts`),
+        latest: row.latest === null ? null : attempt(path, row.latest, `${label}.latest`),
+        waiting: strOrNull(path, row.waiting, `${label}.waiting`),
+        activity:
+          activity === null
+            ? null
+            : {
+                summary: str(path, activity.summary, `${label}.activity.summary`),
+                at: str(path, activity.at, `${label}.activity.at`),
+              },
       }
     }),
     delivery: delivery(path, body.delivery, 'delivery'),
@@ -462,6 +484,36 @@ export function decodeCardEvidence(raw: unknown): CardEvidence {
   }
 }
 
+/** GET /api/inspect/meta */
+export function decodeMeta(raw: unknown): MetaAnswer {
+  const path = '/api/inspect/meta'
+  const body = obj(path, raw, 'the body')
+  const connection = body.connection === null ? null : obj(path, body.connection, 'connection')
+  return {
+    observedAt: str(path, body.observedAt, 'observedAt'),
+    connection:
+      connection === null
+        ? null
+        : {
+            slotLabel: strOrNull(path, connection.slotLabel, 'connection.slotLabel'),
+            engine: strOrNull(path, connection.engine, 'connection.engine'),
+            model: strOrNull(path, connection.model, 'connection.model'),
+            modelAt: strOrNull(path, connection.modelAt, 'connection.modelAt'),
+          },
+    repositories: list(path, body.repositories, 'repositories', (entry, label) => {
+      const row = obj(path, entry, label)
+      return {
+        repoId: str(path, row.repoId, `${label}.repoId`),
+        state: str(path, row.state, `${label}.state`),
+        line: str(path, row.line, `${label}.line`),
+        workItemId: strOrNull(path, row.workItemId, `${label}.workItemId`),
+        running: bool(path, row.running, `${label}.running`),
+        at: strOrNull(path, row.at, `${label}.at`),
+      }
+    }),
+  }
+}
+
 /** GET /api/chat/messages: the fields the conversation shows, and no others. */
 export function decodeChatLines(raw: unknown): ChatLine[] {
   const path = '/api/chat/messages'
@@ -474,6 +526,8 @@ export function decodeChatLines(raw: unknown): ChatLine[] {
       workItemId: typeof line.workItemId === 'string' ? line.workItemId : null,
       kind: typeof line.kind === 'string' ? line.kind : null,
       ...(typeof line.ackText === 'string' && { ackText: line.ackText }),
+      ...(typeof line.replyText === 'string' && { replyText: line.replyText }),
+      ...(typeof line.idempotencyKey === 'string' && { idempotencyKey: line.idempotencyKey }),
       ...(line.secretGuard === true && { secretGuard: true as const }),
     }
   })

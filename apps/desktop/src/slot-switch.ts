@@ -16,9 +16,10 @@ import { basename, join } from 'node:path'
 import type { Effects, Json, Store, StoreDoc } from '@mec/contracts'
 import { type HandoffPlan, type ParkedAttempt, planFailover } from '@mec/failover'
 import { git, worktreeAdminDir } from '@mec/git'
-import { type Continuation, isHeld } from '@mec/meta'
+import { type Continuation, isHeld, revalidateWork } from '@mec/meta'
 import { openConfirmation, type PolicyDoc, policyPreAuthorises } from '@mec/policy'
 import { redact } from '@mec/slots'
+import { mayRun } from './recovery'
 
 const CARD_TTL_MS = 24 * 60 * 60 * 1000
 const PARKED = ['quota_wait', 'auth_required', 'provider_down']
@@ -79,10 +80,15 @@ function plansFor(store: Store, parked: readonly StoreDoc[], toSlot: string, at:
 }
 
 /** Why this work cannot move to this slot, or undefined when it can. */
-function refusal(store: Store, workItemId: string, toSlot: string, at: string): string | undefined {
+function refusal(deps: SwitchDeps, workItemId: string, toSlot: string, at: string): string | undefined {
+  const { store, policy } = deps
   const work = store.workItems.get(workItemId)
   if (work === undefined) return 'unknown_work'
+  // The launch gate's order. Its drop leaves the queued attempt holding the target's capacity.
+  const mandate = revalidateWork(work, at, policy.versionHash)
+  if (!mayRun(work) || (!mandate.ok && mandate.reason !== 'policy_changed')) return 'work_ended'
   if (isHeld(work)) return 'held'
+  if (!mandate.ok) return 'policy_changed'
   const parked = parkedOn(store, workItemId)
   if (parked.length === 0) return 'nothing_parked'
   if (parked.some((doc) => doc.state === 'auth_required')) return 'auth_park_never_switches'
@@ -100,7 +106,7 @@ export async function requestSwitch(
   const { store, policy, now } = deps
   const { workItemId, toSlot, reason } = input
   const at = now()
-  const why = refusal(store, workItemId, toSlot, at)
+  const why = refusal(deps, workItemId, toSlot, at)
   if (why !== undefined) return refused(why)
   const repoId = store.workItems.get(workItemId)?.repoId
   const scope = typeof repoId === 'string' ? { repoId } : {}
@@ -214,7 +220,7 @@ export async function applySwitch(
   }
   const healthy = await probe(toSlot).catch(() => false)
   const start = now()
-  const why = healthy ? refusal(store, workItemId, toSlot, start) : 'target_unhealthy'
+  const why = healthy ? refusal(deps, workItemId, toSlot, start) : 'target_unhealthy'
   if (why !== undefined) return store.atomic(() => refuse(why, start))
   const parked = parkedOn(store, workItemId)
   if (parkedAttempts !== undefined && !sameIds(idsOf(parked), parkedAttempts)) {
@@ -224,7 +230,7 @@ export async function applySwitch(
   const at = now()
   return store.atomic(() => {
     // The awaits above let another switch, a resume or a park in: decide again, here.
-    const late = refusal(store, workItemId, toSlot, at)
+    const late = refusal(deps, workItemId, toSlot, at)
     if (late !== undefined) return refuse(late, at)
     const current = parkedOn(store, workItemId)
     if (!sameIds(idsOf(current), idsOf(parked))) return refuse('stale', at)
@@ -328,7 +334,7 @@ export async function autoFailover(deps: SwitchDeps): Promise<void> {
     const pairs = store.slots.get(String(first?.slotId))?.pairs
     if (!Array.isArray(pairs)) continue
     const at = now()
-    const target = pairs.map(String).find((to) => refusal(store, workItemId, to, at) === undefined)
+    const target = pairs.map(String).find((to) => refusal(deps, workItemId, to, at) === undefined)
     if (target === undefined) continue
     const reason = `paired failover: ${String(first?.state)}`
     store.atomic(() => {

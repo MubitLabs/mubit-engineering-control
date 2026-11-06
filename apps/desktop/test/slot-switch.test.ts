@@ -88,6 +88,13 @@ const patchAttempt = (rig: Rig, fields: Record<string, unknown>, id = 'att_1'): 
   peek(rig, (store) => store.attempts.save({ ...store.attempts.get(id), id, ...(fields as object) }))
 }
 
+const patchWork = (rig: Rig, fields: Record<string, unknown>): void => {
+  peek(rig, (store) => {
+    const work = store.workItems.get(WORK) as Record<string, never>
+    store.workItems.save({ ...work, ...(fields as object) })
+  })
+}
+
 describe('switch slot', { timeout: 40_000 }, () => {
   it('switch needs a confirmation', async () => {
     const rig = scratch(STEPS)
@@ -335,5 +342,34 @@ describe('switch slot', { timeout: 40_000 }, () => {
     })
     const second = await card(server)
     expect(hashOf(second)).not.toBe(hashOf(first))
+  })
+
+  it.each([
+    ['stopped', { state: 'stopped' }, 'work_ended'],
+    ['done', { state: 'done' }, 'work_ended'],
+    ['withdrawn', { mandate: { status: 'withdrawn' } }, 'work_ended'],
+    ['expired', { mandate: { expiresAt: '2020-01-01T00:00:00.000Z' } }, 'work_ended'],
+    ['under an old policy', { mandate: { policyHash: 'an-older-policy' } }, 'policy_changed'],
+  ])('work %s refuses a switch: its queued attempt would never settle', async (_name, work, error) => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    patchWork(rig, work)
+    const server = await serve(rig, QUIET)
+    const asked = await ask(server)
+    expect(asked.status).toBe(409)
+    expect(await asked.json()).toMatchObject({ error })
+    expect(attempts(rig)).toHaveLength(1)
+  })
+
+  it('work stopped after the card moves nothing when it is approved', async () => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    const server = await serve(rig, QUIET)
+    const id = await card(server)
+    patchWork(rig, { state: 'stopped' })
+    await answer(server, id, 'approve')
+    await until(() => eventsOf(rig, `work:${WORK}`).includes('slot_switch_refused'))
+    expect(attempts(rig)).toHaveLength(1)
+    expect(peek(rig, (store) => store.confirmations.get(id)?.applied)).toBe(true)
   })
 })

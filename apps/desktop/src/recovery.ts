@@ -184,7 +184,7 @@ function enqueueResume(store: Store, effects: Effects, doc: StoreDoc, note: stri
   )
 }
 
-const mayRun = (work: StoreDoc | undefined): work is StoreDoc =>
+export const mayRun = (work: StoreDoc | undefined): work is StoreDoc =>
   work !== undefined && !isTerminal(work) && mandateOf(work).status !== 'withdrawn'
 
 function restart(deps: ProcessDeps, doc: StoreDoc, at: string): void {

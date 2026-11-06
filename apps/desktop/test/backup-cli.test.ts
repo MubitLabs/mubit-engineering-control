@@ -74,6 +74,8 @@ function makeDataDir(): string {
   doc.run('s1', 'slot', JSON.stringify({ id: 's1', label: 'one', state: 'healthy' }), at)
   doc.run('s2', 'slot', JSON.stringify({ id: 's2', label: 'two', state: 'retired' }), at)
   doc.run('c1', 'card', JSON.stringify({ id: 'c1', evidence: `saw ${TOOLS_TOKEN} and ${GITHUB_TOKEN}` }), at)
+  // Long enough for overflow pages: the update frees them, and a freed page keeps its old bytes.
+  doc.run('c2', 'card', JSON.stringify({ id: 'c2', evidence: `${GITHUB_TOKEN} `.repeat(1000) }), at)
   db.prepare('INSERT INTO events (stream, seq, at, type, body) VALUES (?, ?, ?, ?, ?)').run(
     'task-1',
     1,

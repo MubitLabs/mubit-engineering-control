@@ -11,7 +11,7 @@ What the router recognises today (`runCli` in `apps/desktop/src/mec.ts`; usage l
 | `mec` | Starts the server and the workbench (the bin entry, `apps/desktop/bin/mec.js`); honours `MEC_DATA_DIR`, refuses to start while an intentional stop stands. |
 | `mec status` | Prints the health snapshot's verdict and exits by the §21.2 contract (below). |
 | `mec stop` | Writes the intentional-stop marker; `mec restart --respect-stop` will honour it. |
-| `mec restart` | Clears the stop marker and starts the server; `--respect-stop` does nothing if an intentional stop stands. |
+| `mec restart` | Clears the stop marker and exits 1 saying no server was started: run `mec` to start one. `--respect-stop` does nothing if an intentional stop stands. |
 | `mec doctor` | Prints a redacted-by-construction diagnostics bundle (engine versions, allowlisted env, health snapshot) safe to paste into a bug report. |
 | `mec slot add <kind> <label>` | Creates a slot home (kinds: `claude-sub`, `claude-api`, `codex-sub`, `opencode-glm`, `opencode-gemini`); local state in the data dir, never a server call — works before any server has started. |
 | `mec slot list` | Lists slots with their state. |

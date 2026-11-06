@@ -18,7 +18,7 @@ import { ClaudeAdapter } from '../../engines/src/claude/adapter'
 import { git } from '../../git/src/exec'
 import { historyTouches } from '../../git/src/repos'
 import { commitAll, headSha, worktreeAdminDir } from '../../git/src/worktrees'
-import { type AttemptFacts, type AttemptPlan, AttemptRunner, NotWiredError } from '../src/attempt-runner'
+import { type AttemptFacts, type AttemptPlan, AttemptRunner } from '../src/attempt-runner'
 import type { CheckOutcome, CheckSpec } from '../src/checks'
 import { ownedSpawn } from '../src/owned-spawn'
 import { writeShimDir } from '../src/shims'
@@ -116,6 +116,11 @@ class Facts implements AttemptFacts {
   attemptFailed(_attempt: AttemptRef, reason: string): void {
     this.state = 'failed'
     this.reason = reason
+  }
+  stopFailed(): void {}
+  attemptStalled(): void {}
+  journalled(): ReadonlySet<string> {
+    return new Set()
   }
 }
 
@@ -614,9 +619,10 @@ describe('AttemptRunner', { timeout: 60_000 }, () => {
     expect(facts.state).toBe('work_complete')
   })
 
-  it('replay names what is not wired', async () => {
-    const { attempt, runner } = await rig([])
-    await expect(runner.replay(attempt)).rejects.toThrow(NotWiredError)
+  it('replay of an attempt with nothing journalled applies nothing', async () => {
+    const { attempt, runner, facts } = await rig([])
+    await runner.replay(attempt)
+    expect(facts.events).toEqual([])
   })
 
   it('a delivery to an attempt with no running engine rejects by name', async () => {

@@ -35,6 +35,9 @@ importers:
       '@mec/engines':
         specifier: workspace:*
         version: link:../../packages/engines
+      '@mec/failover':
+        specifier: workspace:*
+        version: link:../../packages/failover
       '@mec/git':
         specifier: workspace:*
         version: link:../../packages/git

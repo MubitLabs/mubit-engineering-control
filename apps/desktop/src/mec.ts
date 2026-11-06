@@ -32,8 +32,8 @@ export type CliIo = {
    */
   dataDir: string
   stdout: (line: string) => void
-  /** called on 'restart' when allowed; record calls in tests */
-  startServer: () => Promise<void>
+  /** called on 'restart' when allowed; `not_started` says no server came of it */
+  startServer: () => Promise<'not_started' | undefined | void>
   /** `mec update` seams; defaults read the nearest package.json, git and process.env. */
   readVersion?: () => string
   gitRemote?: () => string | null
@@ -74,7 +74,10 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       return 0
     }
     clearStopMarker(io.markerDir)
-    await io.startServer()
+    if ((await io.startServer()) === 'not_started') {
+      io.stdout('stop marker cleared; no server was started: run `mec` to start one')
+      return 1
+    }
     io.stdout('server starting')
     return 0
   }
@@ -175,9 +178,15 @@ function defaultGitRemote(): string | null {
   }
 }
 
+/** The root every command reads, the same one the server was told to use. */
+export function cliHome(env: Record<string, string | undefined>): string {
+  const dir = env.MEC_DATA_DIR
+  return dir === undefined || dir === '' ? join(homedir(), '.mec') : dir
+}
+
 /** §21.1 entry for the `mec <command>` dispatch: exports for bin/mec.js and the bundle. */
 export async function cliMain(): Promise<void> {
-  const home = process.env.MEC_DATA_DIR ?? join(homedir(), '.mec')
+  const home = cliHome(process.env)
   const snapshotPath = join(home, 'health.json')
   process.exitCode = await runCli(process.argv.slice(2), {
     readSnapshotText: () => {
@@ -191,7 +200,8 @@ export async function cliMain(): Promise<void> {
     markerDir: home,
     dataDir: home,
     stdout: (line) => console.log(line),
-    startServer: async () => {},
+    // The server runs in the foreground of `mec`; this command does not own one.
+    startServer: async () => 'not_started',
   })
 }
 

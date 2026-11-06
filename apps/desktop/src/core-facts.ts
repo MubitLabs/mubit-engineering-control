@@ -47,6 +47,14 @@ export type FactsListener = {
   followups?: Pick<FollowUps, 'onReport' | 'inputsRead' | 'openQuestion'>
   /** A fact a scheduler pass should see now, not at the next tick (§11). After the commit. */
   changed?: () => void
+  /** §5.10 Inform: in the park's own transaction. */
+  parked?: (
+    doc: StoreDoc,
+    state: ParkedState,
+    reason: string,
+    resetsAt: string | undefined,
+    at: string,
+  ) => void
 }
 
 export class StoreFacts implements AttemptFacts {
@@ -84,9 +92,11 @@ export class StoreFacts implements AttemptFacts {
   attemptStarted(attempt: AttemptRef, generation: Generation, session_id: string | undefined): void {
     const doc = this.#current(attempt)
     if (doc === undefined || generation !== attempt.generation) return
-    if (this.#move(doc, 'agent_started', { ...(session_id !== undefined && { session_id }) })) {
-      this.#moveTask(doc, 'attempt_started')
-    }
+    const session: StoreDoc = session_id !== undefined ? { session_id } : {}
+    if (this.#move(doc, 'agent_started', session)) this.#moveTask(doc, 'attempt_started')
+    // A resumed attempt is running already, and the session it continues may have a new id.
+    else if (doc.state === 'running')
+      this.#store.attempts.save({ ...doc, ...session, updatedAt: this.#now() })
   }
 
   inputsDelivered(attempt: AttemptRef, input_ids: InputId[]): void {
@@ -155,6 +165,12 @@ export class StoreFacts implements AttemptFacts {
   rateLimitObserved(attempt: AttemptRef, slot: SlotId, reading: UsageReading): void {
     const stream = `slot:${slot}`
     const body = { attemptId: attempt.attempt_id, ...reading } as unknown as Json
+    const doc = this.#store.slots.get(slot)
+    if (doc !== undefined && reading.utilization !== undefined) {
+      // §11: placement reads this against the ceiling. No reading stays no reading.
+      const usage = { usageUtilization: reading.utilization, updatedAt: reading.observed_at }
+      this.#store.slots.save({ ...doc, ...usage })
+    }
     this.#store.events.append(stream, {
       stream,
       seq: (this.#store.events.read(stream).at(-1)?.seq ?? 0) + 1,
@@ -237,10 +253,39 @@ export class StoreFacts implements AttemptFacts {
     this.#note(attempt, 'attempt.checks_skipped', { head_sha: head, reason })
   }
 
-  attemptParked(attempt: AttemptRef, state: ParkedState, reason: string): void {
+  attemptParked(attempt: AttemptRef, state: ParkedState, reason: string, resetsAt?: string): void {
     const doc = this.#current(attempt)
     if (doc === undefined) return
-    this.#move(doc, PARK_EVENT[state], { terminal_reason: reason })
+    const at = this.#now()
+    const parked = { state, reason, at, ...(resetsAt !== undefined && { resets_at: resetsAt }) }
+    if (!this.#move(doc, PARK_EVENT[state], { terminal_reason: reason, parked })) return
+    this.#note(attempt, 'attempt.parked', parked)
+    this.#listener.parked?.(doc, state, reason, resetsAt, at)
+    this.#changed()
+  }
+
+  stopFailed(attempt: AttemptRef, detail: string): void {
+    const doc = this.#store.attempts.get(attempt.attempt_id)
+    if (doc !== undefined) {
+      this.#store.attempts.save({ ...doc, stop_failed: detail, updatedAt: this.#now() })
+    }
+    this.#note(attempt, 'attempt.stop_failed', { detail })
+  }
+
+  attemptStalled(attempt: AttemptRef): void {
+    const doc = this.#current(attempt)
+    if (doc !== undefined && this.#move(doc, 'stall_detected', {})) {
+      this.#note(attempt, 'attempt.stalled', { attemptId: attempt.attempt_id })
+    }
+  }
+
+  journalled(attemptId: string): ReadonlySet<string> {
+    const held = new Set<string>()
+    for (const { body } of this.#store.events.read(`attempt:${attemptId}`)) {
+      const { generation, seq } = (body ?? {}) as { generation?: unknown; seq?: unknown }
+      if (typeof seq === 'number') held.add(`${String(generation)} ${seq}`)
+    }
+    return held
   }
 
   attemptInterrupted(attempt: AttemptRef, reason: string): void {

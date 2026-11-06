@@ -76,6 +76,8 @@ export type RealClaudeBrainOptions = {
   adapter?: BrainEngine
   /** §16.1: the user's prompt store; the default is `~/.mec/prompts`. */
   promptsRoot?: string
+  /** Hears each tmpdir this brain makes: they hold a bearer token, so a boot must find them. */
+  onTempDir?: (dir: string) => void
 }
 
 /** The v0 pseudo-check every proposed task carries (see service.ts's module doc). */
@@ -158,6 +160,7 @@ export class RealClaudeBrain {
   readonly #now: () => Date
   readonly #engine: BrainEngine
   readonly #promptsRoot: string | undefined
+  readonly #onTempDir: ((dir: string) => void) | undefined
   /** The brain-owned tmpdir: cwd, only writable path, and home of the engine config. */
   readonly #root: string
   #retriesUsed = 0
@@ -182,7 +185,9 @@ export class RealClaudeBrain {
     this.#now = opts.now ?? (() => new Date())
     this.#engine = opts.adapter ?? new ClaudeAdapter()
     this.#promptsRoot = opts.promptsRoot
+    this.#onTempDir = opts.onTempDir
     this.#root = mkdtempSync(join(tmpdir(), 'mec-meta-brain-'))
+    this.#onTempDir?.(this.#root)
   }
 
   /** The running tools server's URL (ends in `/mcp`), once a decide has started it. */
@@ -211,6 +216,7 @@ export class RealClaudeBrain {
       now: this.#now,
       adapter: this.#engine,
       ...(this.#promptsRoot !== undefined && { promptsRoot: this.#promptsRoot }),
+      ...(this.#onTempDir !== undefined && { onTempDir: this.#onTempDir }),
     })
     return this.#planner
   }

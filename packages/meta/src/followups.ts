@@ -59,6 +59,7 @@ const isLive = (attempt: StoreDoc | undefined): boolean =>
 const isEnded = (attempt: StoreDoc | undefined): boolean =>
   attempt === undefined ||
   ATTEMPT_TERMINAL.includes(String(attempt.state) as AttemptState) ||
+  attempt.switched_to !== undefined ||
   noVerdict(attempt)
 
 /** Wake keys are their cause, and a turn's message id derives from it (§6). */
@@ -192,6 +193,8 @@ export class FollowUps {
       const attempt = this.#store.attempts.get(String(doc.ownerAttemptId))
       const work = this.#store.workItems.get(String(doc.workItemId))
       const workOver = work === undefined || isTerminal(work)
+      // A restart's new generation takes what was waiting for the old one (§26).
+      if (!workOver && attempt?.resuming === true) continue
       if (!workOver && !isEnded(attempt) && attempt?.state !== 'interrupted') continue
       if (reached(doc, 'handled')) {
         this.#move(doc, 'settled', at, { owned: false })
@@ -249,7 +252,9 @@ export class FollowUps {
     const delivered = message?.delivered_inputs as string[] | undefined
     // A row replayed after a crash: the engine has this copy.
     if (delivered?.includes(input.id) === true) return
-    if (attempt?.state === 'queued') throw new Later(`${attemptId} has not started`)
+    if (attempt?.state === 'queued' || attempt?.resuming === true) {
+      throw new Later(`${attemptId} has not started`)
+    }
     const work = this.#store.workItems.get(String(attempt?.workItemId))
     // Decision #28: a held item's running turn receives no new input.
     if (work !== undefined && isHeld(work)) throw new Later(`${String(work.id)} is held`)
@@ -258,7 +263,7 @@ export class FollowUps {
       this.#failed(attemptId, input, 'no runner can reach this attempt')
       return
     }
-    const ref = { attempt_id: attemptId, generation: Number(fields.generation ?? 1) }
+    const ref = { attempt_id: attemptId, generation: Number(attempt.generation ?? fields.generation ?? 1) }
     try {
       await runtime.deliver(ref, input)
     } catch (error) {

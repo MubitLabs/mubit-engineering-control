@@ -52,7 +52,13 @@ const flag = (name) => {
   const index = argv.indexOf(name)
   return index === -1 ? undefined : argv[index + 1]
 }
-const sessionId = flag('--session-id') ?? '00000000-0000-4000-8000-000000000000'
+const sessionId = flag('--resume') ?? flag('--session-id') ?? '00000000-0000-4000-8000-000000000000'
+
+// `claude auth status`, the §5.8 probe: logged in, and nothing else of a run happens.
+if (argv[0] === 'auth') {
+  process.stdout.write('{"loggedIn":true}\n')
+  process.exit(0)
+}
 
 writeFileSync(
   join(here, 'seen.json'),

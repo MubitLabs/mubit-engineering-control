@@ -1392,7 +1392,7 @@ export class MetaAgentService {
             task_id: launch.taskId,
             work_item_id: workItemId,
             slot_id: launch.slotId,
-            generation: 1,
+            generation: Number(this.#store.attempts.get(launch.attemptId)?.generation ?? 1),
           })
         }
       })

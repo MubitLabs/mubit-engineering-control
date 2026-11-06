@@ -78,6 +78,7 @@ import {
   resolvePush,
   resolveReleaseCard,
 } from './release'
+import type { SwitchAnswer } from './slot-switch'
 
 export type ServerDeps = {
   store: Store
@@ -153,6 +154,11 @@ export type ServerDeps = {
     stopWork?(id: string): StopOutcome
   }
   /** §20 pause: the composition root owns the queue timer; absent, the routes answer 404. */
+  /** §5.10: what the switch and resume routes reach; absent, they answer 404. */
+  parked?: {
+    switchSlot(input: { workItemId: string; toSlot: string; reason: string }): Promise<SwitchAnswer>
+    resumeNow(workItemId: string): string[]
+  }
   pauseControl?: { pause(): void; resume(): void; isPaused(): boolean }
   /** T7: the setup agent for Chat's Setup mode; a store-backed default is built when absent. */
   setupAgent?: SetupAgentSurface
@@ -983,6 +989,25 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   })
 
   app.get('/api/processing', async () => processingOf(store))
+
+  // §5.10: moving parked work, and the owner's own resume. Neither lifts a hold.
+  app.post('/api/work/:id/switch-slot', async (request, reply) => {
+    if (deps.parked === undefined) return reply.code(404).send({ error: 'switching is not available' })
+    const { id } = request.params as { id: string }
+    const { toSlot, reason } = (request.body ?? {}) as { toSlot?: unknown; reason?: unknown }
+    if (typeof toSlot !== 'string' || toSlot === '') {
+      return reply.code(400).send({ error: 'toSlot is required' })
+    }
+    const why = typeof reason === 'string' && reason.trim() !== '' ? reason : 'asked by the owner'
+    const answer = await deps.parked.switchSlot({ workItemId: id, toSlot, reason: why })
+    return reply.code(answer.status).send(answer.body)
+  })
+
+  app.post('/api/work/:id/resume', async (request, reply) => {
+    if (deps.parked === undefined) return reply.code(404).send({ error: 'resume is not available' })
+    const { id } = request.params as { id: string }
+    return { id, resumed: deps.parked.resumeNow(id) }
+  })
 
   app.post('/api/slots/login', async (request, reply) => {
     const body = (request.body ?? {}) as { engine?: unknown; slotHome?: unknown; label?: unknown }

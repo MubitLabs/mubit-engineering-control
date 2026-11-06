@@ -89,6 +89,8 @@ const launchKey = (attempt: StoreDoc): string => `${String(attempt.id)}:${Number
 
 function occupies(deps: SchedulerDeps, attempt: StoreDoc): boolean {
   const state = String(attempt.state) as AttemptState
+  // A resume on its way holds what it held, or a new task would take its place (§20).
+  if (attempt.resuming === true) return true
   if (!OCCUPYING.includes(state)) return false
   if (state === 'queued') return deps.launchRowState?.(launchKey(attempt)) !== 'failed'
   return !noVerdict(attempt)
@@ -119,6 +121,9 @@ function failure(deps: SchedulerDeps, attempt: StoreDoc): string | undefined {
   // The same clock landing during a repo check ends in `checksSkipped`, with no interruption.
   if (noVerdict(attempt) && attempt.checks_stopped === 'wall_clock') {
     return `attempt ${id} ran out of its wall clock`
+  }
+  if (noVerdict(attempt) && attempt.checks_stopped === 'head_moved') {
+    return `attempt ${id} left a worktree that is not on the head it reported`
   }
   if (state === 'queued' && deps.launchRowState?.(launchKey(attempt)) === 'failed') {
     return `attempt ${id} could not launch`

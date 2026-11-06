@@ -27,7 +27,11 @@ export type CheckOutcome = {
 export const LOG_TAIL_BYTES = 8 * 1024
 const DEFAULT_TIMEOUT_MS = 600_000
 
-export async function runCheck(spec: CheckSpec, signal?: AbortSignal): Promise<CheckOutcome> {
+export async function runCheck(
+  spec: CheckSpec,
+  signal?: AbortSignal,
+  onStart?: (pid: number) => void,
+): Promise<CheckOutcome> {
   const started = Date.now()
   const child = spawn(spec.cmd, spec.args, {
     cwd: spec.cwd,
@@ -35,6 +39,8 @@ export async function runCheck(spec: CheckSpec, signal?: AbortSignal): Promise<C
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
+
+  if (child.pid !== undefined) onStart?.(child.pid)
 
   // Rolling capture: keep the last LOG_TAIL_BYTES of stdout+stderr, interleaved.
   let log = Buffer.alloc(0)

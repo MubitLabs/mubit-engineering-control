@@ -10,8 +10,9 @@ import type { Acceptance, Caps } from '@mec/domain'
 
 /** What a queued attempt continues. Stored on the task until a pass places it, then on the attempt. */
 export type Continuation = {
-  kind: 'repair' | 'review'
-  role: 'repair_agent' | 'code_reviewer'
+  /** `handoff` is a slot switch (§5.10): the task's own role, on a slot it did not start on. */
+  kind: 'repair' | 'review' | 'handoff'
+  role: string
   /** Exact evidence for the brief: failing check, log tail, SHA, or the finding. */
   evidence: string
   /** Review round this attempt is, counted across attempts. */

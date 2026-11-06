@@ -128,6 +128,17 @@ export class EffectsQueue implements Effects {
   }
 
   /**
+   * Resume of a pause: rows of these kinds that a `Later` deferred during it are due now. Their 30 s
+   * was the pause's, not a deadline of theirs, so the shift above must not carry them along.
+   */
+  wakeDeferred(kinds: readonly EffectKind[]): void {
+    const places = kinds.map(() => '?').join(', ')
+    this.db
+      .prepare(`UPDATE effects SET next_run_at = ? WHERE state = 'waiting' AND kind IN (${places})`)
+      .run(this.now().toISOString(), ...kinds)
+  }
+
+  /**
    * A crash may have left rows marked running; a restart resumes them (plan §17). Call once at
    * boot, before the first pass: on a live queue it would hand running jobs to the next pass.
    */

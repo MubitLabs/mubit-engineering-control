@@ -57,15 +57,18 @@ import {
   type CheckSpec,
   ModelResolutionError,
   ownedSpawn,
+  processStart,
   type ResolvedModel,
   resolveModel,
   runCheck,
+  type StopReason,
   Supervisor,
   writeAttemptGitconfig,
   writeShimDir,
 } from '@mec/runtime'
 import { redact } from '@mec/slots'
 import { bridgeOf, driftOf, ENGINE_ROWS, type EngineRow, lacksHome, type Prepared } from './engine-registry'
+import { worktreeIsOurs } from './slot-switch'
 
 export { isLaunchableSlot } from './engine-registry'
 
@@ -89,7 +92,14 @@ class LaunchRefused extends Error {}
 /** A refusal or failure with its reason on the attempt, for the row's `last_error`. */
 const refuse = (reason: string): LaunchRefused => new LaunchRefused(reason)
 
-type LaunchPayload = { attemptId: string; taskId: string; workItemId: string; slotId: string }
+type LaunchPayload = {
+  attemptId: string
+  taskId: string
+  workItemId: string
+  slotId: string
+  /** A new generation of a stopped or parked attempt, with what it is told first. */
+  note?: string
+}
 
 function fieldsOf(payload: Json): LaunchPayload {
   const fields = (payload ?? {}) as Record<string, unknown>
@@ -99,7 +109,29 @@ function fieldsOf(payload: Json): LaunchPayload {
     taskId: text('task_id'),
     workItemId: text('work_item_id'),
     slotId: text('slot_id'),
+    ...(fields.resume === true && { note: text('note') }),
   }
+}
+
+/** The environment a repo's command runs in: scrubbed, no shims to trust, no token (decision #25). */
+function repoEnv(
+  attemptId: string,
+  worktree: string,
+  tempDir: string,
+  gitconfig: string,
+): Record<string, string> {
+  return buildAgentEnv({
+    inherited: process.env as Record<string, string | undefined>,
+    home: tempDir,
+    attempt: {
+      MEC_ATTEMPT_ID: attemptId,
+      MEC_WORKTREE: worktree,
+      TMPDIR: tempDir,
+      GIT_CONFIG_GLOBAL: gitconfig,
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_TERMINAL_PROMPT: '0',
+    },
+  })
 }
 
 /** The absolute engine path, found before the attempt's PATH exists: that PATH starts with shims. */
@@ -167,6 +199,12 @@ export type AttemptLauncherDeps = {
   gate: (payload: Json) => LaunchAuthority
   /** Records a dropped launch the gate refused at the last moment. */
   drop: (payload: Json, verdict: Extract<LaunchAuthority, { verdict: 'drop' }>) => void
+  /** A resumed attempt's engine is up. */
+  resumed?: (payload: Json) => void
+  /** A resume ended without an engine, and why. */
+  resumeEnded?: (payload: Json, reason: string) => void
+  /** §20: an attempt the sweep found stalled; its group is gone. */
+  stalled?: (attemptId: string) => void
 }
 
 export class AttemptLauncher {
@@ -182,6 +220,8 @@ export class AttemptLauncher {
   readonly #passing = new Map<string, number>()
   readonly #swept = new Map<string, number>()
   readonly #sweep: NodeJS.Timeout
+  /** Checks being run again after a restart: no monitor owns them, so a stop finds them here. */
+  readonly #rechecks = new Map<string, { abort: AbortController; reason?: StopReason }>()
   #closing = false
 
   constructor(deps: AttemptLauncherDeps) {
@@ -220,6 +260,10 @@ export class AttemptLauncher {
   /** From here on no engine starts. */
   quiesce(): void {
     this.#closing = true
+    for (const entry of this.#rechecks.values()) {
+      entry.reason ??= 'server_closing'
+      entry.abort.abort()
+    }
   }
 
   /** §20: every owned group is confirmed gone before the tools server stops. */
@@ -247,6 +291,7 @@ export class AttemptLauncher {
         throw new Error(`launch will retry: ${reason}`)
       }
       this.#passing.delete(fields.attemptId)
+      if (fields.note !== undefined) this.#deps.resumeEnded?.(payload, reason)
       const attempt = this.#deps.store.attempts.get(fields.attemptId)
       if (attempt !== undefined) {
         const ref = { attempt_id: fields.attemptId, generation: Number(attempt.generation ?? 1) }
@@ -254,6 +299,64 @@ export class AttemptLauncher {
       }
       throw new Error(`launch failed: ${reason}`)
     }
+  }
+
+  /**
+   * §20: a restart's second look at a head whose checks never finished. No engine starts and no
+   * token is minted. The head must still be what the attempt reported, read through a `.git` that
+   * is still the one this attempt's worktree was given.
+   */
+  async recheck(payload: Json): Promise<void> {
+    if (this.#closing) throw new Later('the server is closing')
+    const { facts } = this.#deps
+    const fields = fieldsOf(payload)
+    const { attempt, work, repo } = this.#load(fields)
+    const ref = { attempt_id: fields.attemptId, generation: Number(attempt.generation ?? 1) }
+    const head = String(attempt.head_sha)
+    const worktree = String(attempt.worktree)
+    const ours = worktreeIsOurs(worktree, work.git_dir) && (await headSha(worktree)) === head
+    if (!ours) {
+      const reason = 'after a restart the worktree is not on the reported head'
+      facts.atomic(() => facts.checksSkipped(ref, head, reason, 'head_moved'))
+      return
+    }
+    const tempDir = String(attempt.temp_dir ?? join(this.#deps.dataDir, 'tmp', fields.attemptId))
+    mkdirSync(tempDir, { recursive: true })
+    const env = repoEnv(fields.attemptId, worktree, tempDir, join(worktree, '.mec', 'gitconfig'))
+    const stored = (Array.isArray(repo.checks) ? repo.checks : []) as { name: string; cmd: string }[]
+    const checks = stored.map((check): CheckSpec => {
+      const [cmd = '', ...args] = argvOf(check.cmd)
+      return { name: check.name, cmd, args, cwd: worktree, env }
+    })
+    const entry: { abort: AbortController; reason?: StopReason } = { abort: new AbortController() }
+    this.#rechecks.set(fields.attemptId, entry)
+    try {
+      await this.#runner.recheck(
+        ref,
+        head,
+        {
+          checks,
+          fingerprints: this.fingerprints(),
+          exacts: [],
+          onCheckStart: (pid) => this.#markProcess(fields.attemptId, 'check_process', pid),
+        },
+        entry.abort.signal,
+        () => entry.reason,
+      )
+    } finally {
+      this.#rechecks.delete(fields.attemptId)
+    }
+  }
+
+  /** Stored as soon as the group exists: a boot signals only what this proves is ours (§8.1). */
+  #markProcess(attemptId: string, field: 'process' | 'check_process', pid: number): void {
+    const { store } = this.#deps
+    const started = processStart(pid)
+    if (started === undefined) return
+    store.atomic(() => {
+      const doc = store.attempts.get(attemptId)
+      if (doc !== undefined) store.attempts.save({ ...doc, [field]: { pid, started } })
+    })
   }
 
   async #launch(payload: Json, fields: LaunchPayload): Promise<void> {
@@ -276,6 +379,7 @@ export class AttemptLauncher {
     // A repair or a review is its own role on the task's own record (§15).
     const roleName = String(attempt.role ?? task.role)
     const continuation = attempt.continuation as Continuation | undefined
+    const resuming = fields.note !== undefined
     const role = BUILTIN_ROSTER[roleName as BuiltinRole]
     if (role === undefined) throw refuse(`unknown_role: ${roleName}`)
 
@@ -285,9 +389,11 @@ export class AttemptLauncher {
     const baseSha = this.#baseFor(task, await this.#pinBase(fields.workItemId, gitDir))
 
     // §15: a repair or a review works where the attempt before it did, on what it left.
-    const worktree = continuation?.worktree ?? join(dataDir, 'work', attemptId)
+    const stayed = (field: unknown): string | undefined =>
+      resuming && typeof field === 'string' ? field : undefined
+    const worktree = continuation?.worktree ?? stayed(attempt.worktree) ?? join(dataDir, 'work', attemptId)
     const tempDir = join(dataDir, 'tmp', attemptId)
-    const branch = continuation?.branch ?? branchOf(store, fields, attempt)
+    const branch = continuation?.branch ?? stayed(attempt.branch) ?? branchOf(store, fields, attempt)
     if (continuation?.worktree !== undefined && !existsSync(join(worktree, '.git'))) {
       throw refuse(`worktree_gone: ${worktree}`)
     }
@@ -324,18 +430,7 @@ export class AttemptLauncher {
     })
 
     // The repo's commands run with a scrubbed env, no shims to trust and no token (decision #25).
-    const hostEnv = buildAgentEnv({
-      inherited: process.env as Record<string, string | undefined>,
-      home: tempDir,
-      attempt: {
-        MEC_ATTEMPT_ID: attemptId,
-        MEC_WORKTREE: worktree,
-        TMPDIR: tempDir,
-        GIT_CONFIG_GLOBAL: gitconfig,
-        GIT_CONFIG_NOSYSTEM: '1',
-        GIT_TERMINAL_PROMPT: '0',
-      },
-    })
+    const hostEnv = repoEnv(attemptId, worktree, tempDir, gitconfig)
     const repoCommand = (name: string, command: string): CheckSpec => {
       const [cmd = '', ...args] = argvOf(command)
       return { name, cmd, args, cwd: worktree, env: hostEnv }
@@ -362,6 +457,8 @@ export class AttemptLauncher {
       `Attempt: ${attemptId}`,
       ...row.notes,
     ].join('\n')
+    // §5.10: the same slot's session continues, and it has the brief. Without one it starts over.
+    const session = resuming && typeof attempt.session_id === 'string' ? attempt.session_id : undefined
     const bundle = new PromptStore(join(dataDir, 'prompts')).assemble(roleName, engine, {
       generated: [
         { name: 'original_request', text: `The original request, verbatim:\n${originText}` },
@@ -436,7 +533,12 @@ export class AttemptLauncher {
       base_sha: baseSha,
       branch,
       origin: { messages: [{ id: originId, text: originText }] },
-      objective: bundle.text,
+      // §8.7: a recovery note is the first thing a resumed attempt reads.
+      objective: !resuming
+        ? bundle.text
+        : session !== undefined
+          ? fields.note
+          : `${fields.note}\n\n${bundle.text}`,
       owned_paths: Array.isArray(task.ownedPaths) ? task.ownedPaths : [],
       acceptance_checks: Array.isArray(task.acceptanceChecks) ? task.acceptanceChecks : [],
       budget: {
@@ -475,6 +577,8 @@ export class AttemptLauncher {
       // Derived, not read back: a resumed worktree's `.git` has been in a worker's hands. Git names
       // the admin directory after the path, and a continuation's path is not this attempt's.
       gitAdmin: join(realpathSync(gitDir), 'worktrees', basename(worktree)),
+      onCheckStart: (pid) => this.#markProcess(attemptId, 'check_process', pid),
+      ...(session !== undefined && { resume: { session_id: session } }),
     })
     this.#stderr.set(attemptId, (chunk) => {
       stderr = `${stderr}${chunk}`.slice(-STDERR_TAIL_CHARS)
@@ -507,6 +611,7 @@ export class AttemptLauncher {
     })
 
     await this.#start({ attempt_id: attemptId, generation }, brief, mcpPath)
+    if (resuming) this.#deps.resumed?.(payload)
   }
 
   /**
@@ -541,7 +646,11 @@ export class AttemptLauncher {
       secrets: prepared.secrets,
       onFailure: (detail) => onStderr?.(detail),
       spawn: ({ stdin }) =>
-        ownedSpawn(this.#supervisor, owner, { stdin, ...(onStderr !== undefined && { onStderr }) }),
+        ownedSpawn(this.#supervisor, owner, {
+          stdin,
+          ...(onStderr !== undefined && { onStderr }),
+          onStart: (pid) => this.#markProcess(brief.attempt_id, 'process', pid),
+        }),
     })
   }
 
@@ -653,6 +762,16 @@ export class AttemptLauncher {
   /** `stopWork` and the planner's `stop_agent` record a request; the kill is done here (§8.1). */
   #actOnStops(): void {
     const { store } = this.#deps
+    for (const { attempt_id } of this.#runner.sweep()) this.#deps.stalled?.(attempt_id)
+    for (const [attemptId, entry] of this.#rechecks) {
+      const asked = store.events.read(`attempt:${attemptId}`).some((event) => {
+        return event.type === 'attempt.interrupt_requested'
+      })
+      if (asked) {
+        entry.reason ??= 'stop_requested'
+        entry.abort.abort()
+      }
+    }
     for (const ref of this.#runner.live()) {
       const { attempt_id: attemptId } = ref
       const doc = store.attempts.get(attemptId)
@@ -669,6 +788,7 @@ export class AttemptLauncher {
 /** What a repair or a reviewer is told, beside the evidence (§15). */
 function briefOf(continuation: Continuation): string {
   if (continuation.kind === 'repair') return `Repair this, from this evidence:\n${continuation.evidence}`
+  if (continuation.kind === 'handoff') return continuation.evidence
   return [
     continuation.evidence,
     `This is review round ${continuation.round}: put round {count: ${continuation.round}} on your report.`,

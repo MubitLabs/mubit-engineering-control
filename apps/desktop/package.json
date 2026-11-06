@@ -19,6 +19,7 @@
   "dependencies": {
     "@mec/contracts": "workspace:*",
     "@mec/domain": "workspace:*",
+    "@mec/failover": "workspace:*",
     "@mec/mec-tools": "workspace:*",
     "@mec/meta": "workspace:*",
     "@mec/policy": "workspace:*",

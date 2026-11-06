@@ -86,7 +86,7 @@ describe('pause persists (decision #21, §20)', () => {
     expect(second.isPaused()).toBe(true)
     await sleep(100)
 
-    expect(launchRow(db)?.state).toBe('pending')
+    expect(launchRow(db)?.state).toBe('waiting')
     expect(store.attempts.get('att_1')?.state).toBe('queued')
     await second.close()
     db.close()
@@ -102,7 +102,7 @@ describe('pause persists (decision #21, §20)', () => {
     const handle = await startServer({ dataDir })
     await handle.close()
 
-    expect(launchRow(db)?.state).toBe('pending')
+    expect(launchRow(db)?.state).toBe('waiting')
     expect(store.attempts.get('att_1')?.state).toBe('queued')
     db.close()
   }, 12_000)
@@ -331,14 +331,14 @@ describe('truthful launch (§17, decision #26)', () => {
   it('an effect kind with no handler throws', async () => {
     const dataDir = scratch()
     const { db, store } = openStore(dataDir)
-    for (const kind of ['reply', 'external', 'probe'] as const) {
+    for (const kind of ['reply', 'external'] as const) {
       store.effects.enqueue(kind, 'k1', {})
     }
 
     const handle = await startServer({ dataDir })
     await sleep(100)
 
-    for (const kind of ['reply', 'external', 'probe']) {
+    for (const kind of ['reply', 'external']) {
       expect(effectRow(db, kind, 'k1')).toMatchObject({
         attempts: 1,
         last_error: `unsupported effect: ${kind}`,
@@ -688,7 +688,7 @@ describe('§26 restart reconciliation and capability drift (composition)', () =>
     expect(left.n).toBe(0)
   }, 12_000)
 
-  it('running attempts reconcile to stalled with a recovery event on restart', async () => {
+  it('running attempts reconcile through stalled to interrupted with a recovery event', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mec-recon-'))
     const db = new Database(join(dir, 'mec.db'))
     migrate(db, MIGRATIONS_v1)
@@ -703,7 +703,7 @@ describe('§26 restart reconciliation and capability drift (composition)', () =>
     const { startServer } = await import('../src/composition')
     const server = await startServer({ dataDir: dir })
     const attempt = store.attempts.get('att_stuck')
-    expect(attempt?.state).toBe('stalled')
+    expect(attempt?.state).toBe('interrupted')
     const events = store.events.read('attempt:att_stuck')
     expect(events.some((e) => e.type === 'attempt.reconciled')).toBe(true)
     await server.close()

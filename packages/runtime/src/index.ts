@@ -4,8 +4,9 @@ export type {
   AttemptPlan,
   AttemptRunnerDeps,
   ParkedState,
+  StopReason,
 } from './attempt-runner'
-export { AttemptRunner, NotWiredError } from './attempt-runner'
+export { AttemptRunner, NotWiredError, replayJournal } from './attempt-runner'
 export type { CheckOutcome, CheckSpec } from './checks'
 export { LOG_TAIL_BYTES, runCheck, runChecks } from './checks'
 export type {
@@ -40,11 +41,26 @@ export { OPENCODE_TOKEN_VAR, opencodeAttemptConfig, startOpenCodeClient } from '
 export { opencodeSlotEnv } from './opencode-env'
 export type { OwnedSpawn, OwnedSpawnHooks } from './owned-spawn'
 export { ownedSpawn } from './owned-spawn'
-export type { ParkDecision } from './park'
-export { parkFromEvents } from './park'
+export type { MandateCheck, ParkDecision, ResumeVerdict } from './park'
+export { parkFromEvents, parkReady, resumeVerdict } from './park'
 export { redactEvent } from './redact-events'
 export type { GitconfigOptions, ShimWriteResult } from './shims'
 export { DEFAULT_BLOCKED_COMMANDS, verifyShimDir, writeAttemptGitconfig, writeShimDir } from './shims'
 export * from './subagents'
-export type { OwnedProcess, SpawnSpec, StopOutcome } from './supervisor'
-export { classifyExit, Supervisor, SupervisorError } from './supervisor'
+export type {
+  OwnedProcess,
+  ProcessFacts,
+  ProcessMark,
+  ReapOutcome,
+  SpawnSpec,
+  StopOutcome,
+} from './supervisor'
+export {
+  classifyExit,
+  groupAlive,
+  processStart,
+  readProcess,
+  reapGroup,
+  Supervisor,
+  SupervisorError,
+} from './supervisor'

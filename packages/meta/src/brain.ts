@@ -94,6 +94,8 @@ export const metaSlotEnv = (slot: { slotDir: string; linked?: boolean }): Record
   slot.linked === true ? {} : { CLAUDE_CONFIG_DIR: slot.slotDir }
 
 export type PlannerBrainOptions = {
+  /** Hears the tmpdir this brain makes: it holds a bearer token, so a boot must find it. */
+  onTempDir?: (dir: string) => void
   /** The meta slot's engine home — `CLAUDE_CONFIG_DIR`, unless the slot is linked. */
   slotDir: string
   /** A linked slot: the engine's default home, with the variable absent (`homes.ts`). */
@@ -209,6 +211,7 @@ export class PlannerBrain {
         readMetaProtocol(opts.promptsRoot === undefined ? {} : { promptsRoot: opts.promptsRoot }) ||
         DEFAULT_PLANNER_PROTOCOL)
     this.#root = mkdtempSync(join(tmpdir(), 'mec-planner-'))
+    opts.onTempDir?.(this.#root)
   }
 
   /** The running tools server's URL, once a turn started it. */

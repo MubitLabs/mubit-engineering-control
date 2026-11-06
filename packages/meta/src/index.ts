@@ -19,8 +19,10 @@ export {
   launchAuthority,
   launchFailure,
   mandateOf,
+  noVerdict,
   processingOf,
   refuseLaunch,
+  revalidateWork,
   saveProcessing,
   stopWorkItem,
 } from './authority'

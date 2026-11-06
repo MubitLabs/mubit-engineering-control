@@ -1,0 +1,177 @@
+[
+  {
+    "name": "dispatch before reconcile",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  await reconcileProcesses(processDeps)\n",
+    "replace": "  void store.effects.run().catch(() => {})\n  await reconcileProcesses(processDeps)\n",
+    "tests": ["apps/desktop/test/recovery.test.ts"]
+  },
+  {
+    "name": "replay without dedupe",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "if (!held.has(`${event.generation} ${event.seq}`)) {",
+    "replace": "if (held !== undefined) {",
+    "tests": ["packages/runtime/test/live-park.test.ts"]
+  },
+  {
+    "name": "ack first",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "    const attempt = { attempt_id: attemptId, generation: event.generation }\n",
+    "replace": "    const attempt = { attempt_id: attemptId, generation: event.generation }\n    journal.ack(event.seq)\n",
+    "tests": ["packages/runtime/test/live-park.test.ts"]
+  },
+  {
+    "name": "signal by pid alone",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "  if (leader.started !== mark.started) return 'recycled'\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/recovery.test.ts"]
+  },
+  {
+    "name": "unprovable group signalled",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "    found === 'ours' ? await (deps.reap ?? ((pid: number) => reapGroup(pid)))(mark.pid) : 'unprovable'",
+    "replace": "    await (deps.reap ?? ((pid: number) => reapGroup(pid)))(mark.pid)",
+    "tests": ["apps/desktop/test/recovery.test.ts"]
+  },
+  {
+    "name": "repeat approved push",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "      return { type: 'push_not_sent', fields: {}, outcome: { pushed: false, error: 'push not sent' } }",
+    "replace": "      await deps.git(['push', String(remoteUrl), String(branch)])\n      return { type: 'push_not_sent', fields: {}, outcome: { pushed: false, error: 'push not sent' } }",
+    "tests": ["apps/desktop/test/external-reconcile.test.ts"]
+  },
+  {
+    "name": "any remote head is this push",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "head === undefined || head === '' || head !== card.inputSha",
+    "replace": "head === undefined || head === ''",
+    "tests": ["apps/desktop/test/external-reconcile.test.ts"]
+  },
+  {
+    "name": "pause blocks all kinds",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  const effectsPass = (): void => {\n",
+    "replace": "  const effectsPass = (): void => {\n    if (paused) return\n",
+    "tests": ["apps/desktop/test/pause-attempts.test.ts"]
+  },
+  {
+    "name": "launch while paused",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "const PAUSE_DEFERS = ['deliver', 'launch', 'relay', 'reply'] as const",
+    "replace": "const PAUSE_DEFERS = ['deliver', 'relay', 'reply'] as const",
+    "tests": ["apps/desktop/test/pause-attempts.test.ts"]
+  },
+  {
+    "name": "deferred rows wait out the pause",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "        store.effects.wakeDeferred(PAUSE_DEFERS)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/pause-attempts.test.ts"]
+  },
+  {
+    "name": "resume ignores hold",
+    "file": "packages/runtime/src/park.ts",
+    "find": "  if (held) return { verdict: 'defer', reason: 'held' }\n",
+    "replace": "",
+    "tests": ["packages/runtime/test/live-park.test.ts"]
+  },
+  {
+    "name": "resume ignores mandate",
+    "file": "packages/runtime/src/park.ts",
+    "find": "  if (!mandate.ok && mandate.reason !== 'policy_changed') {\n    return { verdict: 'drop', reason: `mandate_${mandate.reason}` }\n  }\n",
+    "replace": "",
+    "tests": ["packages/runtime/test/live-park.test.ts"]
+  },
+  {
+    "name": "resume twice",
+    "file": "packages/runtime/src/park.ts",
+    "find": "  if (resuming || !slotHealthy) return false\n",
+    "replace": "  if (!slotHealthy) return false\n",
+    "tests": ["packages/runtime/test/live-park.test.ts"]
+  },
+  {
+    "name": "resume with no probe",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "slotHealthy: slot?.state === 'healthy' && probed,",
+    "replace": "slotHealthy: slot !== undefined,",
+    "tests": ["apps/desktop/test/recovery.test.ts"]
+  },
+  {
+    "name": "resume gives up its capacity",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (attempt.resuming === true) return true\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/recovery.test.ts"]
+  },
+  {
+    "name": "switch keeps session",
+    "file": "apps/desktop/src/slot-switch.ts",
+    "find": "        placement: `switched from ${String(doc.slotId)}`,\n",
+    "replace": "        placement: `switched from ${String(doc.slotId)}`,\n        session_id: doc.session_id ?? null,\n",
+    "tests": ["apps/desktop/test/slot-switch.test.ts"]
+  },
+  {
+    "name": "switch without card",
+    "file": "apps/desktop/src/slot-switch.ts",
+    "find": "  if (policyPreAuthorises(policy, 'slot_switch', scope)) {\n",
+    "replace": "  if (scope !== undefined) {\n",
+    "tests": ["apps/desktop/test/slot-switch.test.ts"]
+  },
+  {
+    "name": "auth park switches",
+    "file": "apps/desktop/src/slot-switch.ts",
+    "find": "  if (parked.some((doc) => doc.state === 'auth_required')) return 'auth_park_never_switches'\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/slot-switch.test.ts"]
+  },
+  {
+    "name": "switch skips the re-probe",
+    "file": "apps/desktop/src/slot-switch.ts",
+    "find": "  const healthy = await probe(toSlot).catch(() => false)\n",
+    "replace": "  const healthy = true\n",
+    "tests": ["apps/desktop/test/slot-switch.test.ts"]
+  },
+  {
+    "name": "switched attempt applies twice",
+    "file": "apps/desktop/src/slot-switch.ts",
+    "find": "    .filter((doc) => doc.cls === 'slot_switch' && doc.applied !== true)\n",
+    "replace": "    .filter((doc) => doc.cls === 'slot_switch')\n",
+    "tests": ["apps/desktop/test/slot-switch.test.ts"]
+  },
+  {
+    "name": "interrupted before gone",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "    live.checks.abort()\n    try {\n      await this.#stopGroup(live)\n",
+    "replace": "    live.checks.abort()\n    this.#deps.facts.atomic(() => this.#deps.facts.attemptInterrupted(live.attempt, reason))\n    try {\n      await this.#stopGroup(live)\n",
+    "tests": ["packages/runtime/test/live-park.test.ts"]
+  },
+  {
+    "name": "park waits for exit",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "    this.#parkOn(live, event)\n",
+    "replace": "",
+    "tests": ["packages/runtime/test/live-park.test.ts"]
+  },
+  {
+    "name": "stopped checks run again",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "  if (doc.checks_note !== undefined && doc.checks_stopped !== 'server_closing') return\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/recovery.test.ts"]
+  },
+  {
+    "name": "planner engine not killed",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "          .then(() => planner.kill())\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/recovery.test.ts"]
+  },
+  {
+    "name": "a stranger dir is removed",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "    if (inside && PLANNER_DIR.test(basename(dir))) rmSync(dir, { recursive: true, force: true })\n",
+    "replace": "    if (inside) rmSync(dir, { recursive: true, force: true })\n",
+    "tests": ["apps/desktop/test/recovery.test.ts"]
+  }
+]

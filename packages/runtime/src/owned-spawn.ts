@@ -29,6 +29,8 @@ export type OwnedSpawnHooks = {
   reapAfterMs?: number
   /** Keeps stdin as an open pipe. Without it the engine reads an empty stdin. */
   stdin?: boolean
+  /** Called as soon as the group exists, so its identity is stored before anything else can fail. */
+  onStart?: (pid: number) => void
 }
 
 /** §8.5: what a finished engine left behind ends with it, or it would hold stdout open. */
@@ -63,6 +65,7 @@ export function ownedSpawn(
       })
     }
     supervisor.adopt(owner.attemptId, owner.generation, pid)
+    hooks.onStart?.(pid)
 
     // A write after the engine has gone is the caller's to notice, through `exited`.
     child.stdin?.on('error', () => {})

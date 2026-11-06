@@ -2,6 +2,9 @@
 // log tail, a timeout that SIGKILLs the group, and statuses that keep a failing check
 // (ran, non-zero) distinct from one that produced no verdict (timeout, signal, could not
 // start). Uses the real /bin/echo, /bin/sh and /bin/sleep — these tests run in CI.
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { runCheck, runChecks } from '../src/checks'
 
@@ -47,6 +50,40 @@ describe('runCheck', () => {
     expect(outcome.status).toBe('error')
     expect(outcome.exitCode).toBeNull()
     expect(outcome.durationMs).toBeGreaterThanOrEqual(150)
+    expect(outcome.durationMs).toBeLessThan(10_000)
+  })
+
+  it('a cancelled check loses its whole group at once and gives no verdict', async () => {
+    const controller = new AbortController()
+    const pidFile = join(mkdtempSync(join(tmpdir(), 'mec-check-')), 'child.pid')
+    const running = runCheck(
+      {
+        name: 'hang',
+        cmd: '/bin/sh',
+        args: ['-c', `sleep 30 & echo $! > ${pidFile}; wait`],
+        cwd,
+        timeoutMs: 30_000,
+      },
+      controller.signal,
+    )
+    while (!existsSync(pidFile) || readFileSync(pidFile, 'utf8').trim() === '') {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    const child = Number(readFileSync(pidFile, 'utf8'))
+    controller.abort()
+    const outcome = await running
+    expect(outcome.status).toBe('error')
+    expect(outcome.exitCode).toBeNull()
+    expect(outcome.durationMs).toBeLessThan(10_000)
+    expect(() => process.kill(child, 0)).toThrow()
+  })
+
+  it('a check cancelled before it starts never runs on', async () => {
+    const outcome = await runCheck(
+      { name: 'hang', cmd: '/bin/sleep', args: ['30'], cwd, timeoutMs: 30_000 },
+      AbortSignal.abort(),
+    )
+    expect(outcome.status).toBe('error')
     expect(outcome.durationMs).toBeLessThan(10_000)
   })
 

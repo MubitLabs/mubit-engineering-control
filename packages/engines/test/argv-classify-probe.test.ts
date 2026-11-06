@@ -28,6 +28,8 @@ describe('buildClaudeArgv', () => {
         '--strict-mcp-config',
         '--permission-prompt-tool',
         'mcp__mec__confirm',
+        '--permission-mode',
+        'default',
         '--max-turns',
         '12',
       ]),

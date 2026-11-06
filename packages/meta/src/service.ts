@@ -48,6 +48,7 @@ import { Later } from '@mec/contracts'
 import type { AttemptState, Caps, SchedulableTask, SlotView, WorkItemState } from '@mec/domain'
 import {
   ACTIVE_ATTEMPT_STATES,
+  ATTEMPT_MACHINE,
   BUILTIN_ROLE_NAMES,
   canTransition,
   createMandate,
@@ -263,6 +264,7 @@ export class MetaAgentService {
   readonly #policyText: string
   readonly #marks?: () => Record<string, Record<string, import('@mec/domain').ModelAvailability>>
   readonly #modelsTable?: () => ModelsTableSource | undefined
+  readonly #launchableSlots?: () => ReadonlySet<string>
   readonly #acks = new Acknowledger()
   readonly #escalation = new EscalationCounter()
   /** Turns running in this process: a concurrent retry joins one instead of starting another. */
@@ -280,6 +282,8 @@ export class MetaAgentService {
     marks?: () => Record<string, Record<string, import('@mec/domain').ModelAvailability>>
     /** The capability-table seam (T1's loader); absent means the planner is told so honestly. */
     modelsTable?: () => ModelsTableSource | undefined
+    /** The slots a launch can start on; absent means every slot. Plans and dispatch both obey it. */
+    launchableSlots?: () => ReadonlySet<string>
   }) {
     this.#store = deps.store
     this.#effects = deps.effects
@@ -289,6 +293,7 @@ export class MetaAgentService {
     this.#policyText = deps.policyText ?? '{"preAuthorised":{}}'
     this.#marks = deps.marks
     this.#modelsTable = deps.modelsTable
+    this.#launchableSlots = deps.launchableSlots
   }
 
   async onUserMessage(input: {
@@ -394,6 +399,13 @@ export class MetaAgentService {
 
   // ── Turns ────────────────────────────────────────────────────────────────────────────────
 
+  /** One slot list for tier validation and dispatch: a tier passes only where it can land. */
+  #placementSlots(): ReturnType<typeof slotViewsFromStore> {
+    const views = slotViewsFromStore(this.#store, this.#marks?.())
+    const launchable = this.#launchableSlots?.()
+    return launchable === undefined ? views : views.filter((view) => launchable.has(view.slotId))
+  }
+
   /** The executed tool set for one turn (§5.2): built from the store, single source. */
   #buildTools(turn: { messageId: string; workItemId?: string }, repoId: string | undefined): PlannerTools {
     const modelsTable = this.#modelsTable?.()
@@ -408,7 +420,7 @@ export class MetaAgentService {
       }),
       caps: this.#caps,
       table,
-      slots: slotViewsFromStore(this.#store, this.#marks?.()),
+      slots: this.#placementSlots(),
       frontierPreAuthorised:
         (loadPolicy(this.#policyText).preAuthorised as Record<string, unknown>).frontier_model !== undefined,
       now: () => new Date(this.#now()),
@@ -1184,7 +1196,7 @@ export class MetaAgentService {
       }))
     // Issue #14: the REAL healthy slots feed the dispatch (the fake shim stays for
     // MEC_FAKE_ENGINE). Degraded slots never place; usage is honest-unknown when absent.
-    const slotViews = slotViewsFromStore(this.#store, this.#marks?.())
+    const slotViews = this.#placementSlots()
     const healthySlots: SlotView[] =
       process.env.MEC_FAKE_ENGINE === '1'
         ? [FAKE_SLOT]
@@ -1356,15 +1368,22 @@ export class MetaAgentService {
     }
     for (const stop of decision.stops ?? []) {
       const doc = this.#store.attempts.get(stop.attemptId)
-      if (doc !== undefined) {
-        this.#store.attempts.save({ ...doc, state: 'interrupted', updatedAt: at })
-        this.#appendEvent(
-          `attempt:${stop.attemptId}`,
-          'attempt.interrupt_requested',
-          { attemptId: stop.attemptId, at },
-          at,
-        )
+      if (doc === undefined) continue
+      // A queued attempt has no process to confirm the end of. A running one stays running until
+      // the runner has stopped its group and says so (§8.1).
+      if (doc.state === 'queued') {
+        this.#store.attempts.save({
+          ...doc,
+          state: transition(ATTEMPT_MACHINE, 'queued', 'interrupt_confirmed'),
+          updatedAt: at,
+        })
       }
+      this.#appendEvent(
+        `attempt:${stop.attemptId}`,
+        'attempt.interrupt_requested',
+        { attemptId: stop.attemptId, at },
+        at,
+      )
     }
     for (const cancel of decision.cancels ?? []) {
       const doc = this.#store.tasks.get(cancel.taskId)

@@ -32,3 +32,33 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
   132 ms at 10,000 + 10,000, and 667 ms at 50,000 + 50,000.
 - **One oversized record fails its inspection route.** The route answers 500 `response_too_large`
   until that record is removed.
+
+- **The attempt runner is flag-gated and for scratch repositories (DECISIONS #25).** With
+  `MEC_REAL_RUNNER=1`:
+  - Repo checks run agent-written code on the host, unsandboxed, with a scrubbed environment and
+    no tools token.
+  - The sandbox's network allowlist is the engine's own domains. Repo docs have no registry-domains
+    field (§14), so a bootstrap that needs the network fails.
+  - The sandbox covers the engine's Bash. The Read tool is outside it: a read outside the worktree
+    is answered by the permission rules, not the sandbox.
+  - A linked slot runs under the user's own Claude settings. Allow rules there can answer a Bash ask
+    before `mcp__mec__confirm` hears it, so `git push` and `gh` are also refused by engine deny
+    rules, and the sandbox stays the boundary.
+  - One data dir holds every attempt's worktree, so a sibling attempt's shell can read
+    `.mec/mcp.json` while that attempt runs. The sandbox does not separate attempts from each other.
+  - A specialist's shell cannot write to the shared clone. Claude's own sandbox adds a linked
+    worktree's common git dir to the write list, and a real worker overwrote a sibling's ref there,
+    which stopped the next launch on that repository at `git fetch`. MEC now puts the whole
+    `<dataDir>/repos/*.git` in `sandbox.filesystem.denyWrite`. The cost is deliberate: a worker's
+    `git add`, `git commit`, `git restore`, `git stash` and branch commands all fail, while
+    `git status`, `diff` and `log` work. The brief tells it so. MEC commits the leftover tree from
+    outside the sandbox.
+  - That commit happens only on a completed exit. A run that is stopped, crashes or runs out of
+    turns gets no commit: its files stay uncommitted in `<dataDir>/work/<attempt>`, and no head
+    records them.
+  - The denial covers Claude's Bash on macOS. A real run has not yet proved it, and on Linux it is
+    untested. Repo checks and MEC's own git run outside the sandbox.
+  - `confirm` judges a Write or Edit by the on-disk path: it reads a name in any case, follows a
+    dangling link to its target, and denies a link chain it cannot finish. It judges the path at
+    the moment of the ask. A worker's shell can still swap a file for a link after the answer, and
+    Claude's own behaviour past an `allow` on a link has not been observed.

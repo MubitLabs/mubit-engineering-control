@@ -1,3 +1,11 @@
+export type {
+  AttemptFacts,
+  AttemptGit,
+  AttemptPlan,
+  AttemptRunnerDeps,
+  ParkedState,
+} from './attempt-runner'
+export { AttemptRunner, NotWiredError } from './attempt-runner'
 export type { CheckOutcome, CheckSpec } from './checks'
 export { LOG_TAIL_BYTES, runCheck, runChecks } from './checks'
 export type { DriftCheck } from './drift'
@@ -10,6 +18,8 @@ export type { JournalOpenMode } from './journal'
 export { AttemptJournal, SequenceError } from './journal'
 export * from './model'
 export { opencodeSlotEnv } from './opencode-env'
+export type { OwnedSpawn, OwnedSpawnHooks } from './owned-spawn'
+export { ownedSpawn } from './owned-spawn'
 export type { ParkDecision } from './park'
 export { parkFromEvents } from './park'
 export { redactEvent } from './redact-events'

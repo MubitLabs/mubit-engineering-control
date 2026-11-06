@@ -8,15 +8,25 @@ import type { IsolationProfile } from '@mec/contracts'
  * engine-enforced part.
  */
 
-/** Read-deny defaults every attempt gets (plan §8.4): MEC state, other slots, secrets. */
-export function defaultDenyRead(homeDir: string): string[] {
-  const mecRoot = `${homeDir}/.mec`
+/**
+ * Read-deny defaults every attempt gets (plan §8.4): MEC state, other slots, secrets. The list
+ * names what is in the data dir instead of denying it whole: the worktree sits under
+ * `<dataDir>/work` and its `.git` file points into `<dataDir>/repos`. `~/.claude` and `~/.codex`
+ * bind the attempt's shell, not the engine, which runs outside its own Bash sandbox.
+ */
+export function defaultDenyRead(homeDir: string, dataDir = `${homeDir}/.mec`): string[] {
   return [
-    `${mecRoot}/db`,
-    `${mecRoot}/policy.yaml`,
-    `${mecRoot}/prompts`,
-    `${mecRoot}/journal`,
-    `${mecRoot}/engines`, // other slot homes (and keystores) live here
+    `${dataDir}/mec.db`,
+    `${dataDir}/mec.db-wal`,
+    `${dataDir}/mec.db-shm`,
+    `${dataDir}/mec.db-journal`,
+    `${dataDir}/health.json`,
+    `${dataDir}/policy.yaml`,
+    `${dataDir}/prompts`,
+    `${dataDir}/journal`,
+    `${dataDir}/engines`, // other slot homes (and keystores) live here
+    `${homeDir}/.claude`,
+    `${homeDir}/.codex`,
     `${homeDir}/.ssh`,
     `${homeDir}/.aws`,
     `${homeDir}/.config/gh`,
@@ -32,14 +42,23 @@ export type AttemptSettingsOptions = {
   allowedDomains: readonly string[]
   /** User home, for the deny-list defaults. */
   homeDir: string
+  /** MEC's data dir, when it is not `~/.mec`: a scratch server's state is denied where it is. */
+  dataDir?: string
+  /**
+   * The bare clone behind the worktree, which the engine's sandbox grants by itself (§26). Denied
+   * whole: its `worktrees/` holds every attempt's admin directory, later ones included, and its
+   * `HEAD` picks the next launch's base. MEC commits from outside the sandbox.
+   */
+  sharedClone?: string
 }
 
 export type AttemptSettings = {
   sandbox: {
     enabled: boolean
     allowUnsandboxedCommands: false
+    autoAllowBashIfSandboxed: false
     failIfUnavailable: boolean
-    filesystem: { allowWrite: string[]; denyRead: string[] }
+    filesystem: { allowWrite: string[]; denyWrite: string[]; denyRead: string[] }
     network: { allowedDomains: string[]; strictAllowlist: true }
   }
   disableAllHooks: true
@@ -49,15 +68,19 @@ export function buildAttemptSettings(
   profile: IsolationProfile,
   opts: AttemptSettingsOptions,
 ): AttemptSettings {
-  const denyRead = [...new Set([...defaultDenyRead(opts.homeDir), ...profile.deny_read])]
+  const denyRead = [...new Set([...defaultDenyRead(opts.homeDir, opts.dataDir), ...profile.deny_read])]
   const allowWrite = [...new Set([opts.worktree, opts.tempDir, ...profile.allow_write])]
+  const denyWrite = opts.sharedClone === undefined ? [] : [opts.sharedClone]
   const allowedDomains = [...new Set([...opts.allowedDomains, ...profile.allowed_domains])]
   return {
     sandbox: {
       enabled: profile.sandbox !== 'off',
       allowUnsandboxedCommands: false,
+      // The engine's default skips the permission tool for a sandboxed command, and the
+      // bridge is where `git push` is refused.
+      autoAllowBashIfSandboxed: false,
       failIfUnavailable: profile.sandbox === 'required',
-      filesystem: { allowWrite, denyRead },
+      filesystem: { allowWrite, denyWrite, denyRead },
       network: { allowedDomains, strictAllowlist: true },
     },
     disableAllHooks: true,

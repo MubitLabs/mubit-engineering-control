@@ -14,7 +14,7 @@ import type { EngineEventBody, ErrorClass, RateLimitStatus, TerminalReason, Wind
  * - one `rate_limit_event` fans out per `unifiedWindows` entry; `resetsAt` arrives in
  *   unix seconds; `allowed_warning` maps to `warning`
  * - with no `result` (a crash), the caller supplies the process exit code and the exit
- *   is synthesised as `crashed` (>= 128, i.e. 128+signal)
+ *   is synthesised as `crashed` for anything but 0: no `result` means no finished turn
  */
 
 type AnyRecord = Record<string, unknown>
@@ -40,18 +40,25 @@ export type ParseOptions = {
   exitCode?: number
 }
 
-export function parseClaudeStream(rawLines: readonly string[], opts: ParseOptions = {}): EngineEventBody[] {
-  const events: EngineEventBody[] = []
+/** One stream's parser, fed a line at a time, so an event is out before the process ends. */
+export type ClaudeEventParser = {
+  push(line: string): EngineEventBody[]
+  /** The exit event; with no `result` the process exit code decides it. */
+  finish(exitCode?: number): EngineEventBody[]
+}
+
+export function createClaudeEventParser(): ClaudeEventParser {
   const pendingTools = new Map<string, { tool: string; input: unknown }>()
   let terminalReason: string | undefined
 
-  for (const line of rawLines) {
-    if (line.trim() === '') continue
+  const push = (line: string): EngineEventBody[] => {
+    const events: EngineEventBody[] = []
+    if (line.trim() === '') return events
     let parsed: AnyRecord
     try {
       parsed = JSON.parse(line) as AnyRecord
     } catch {
-      continue // a torn line is skipped; the journal owns durability
+      return events // a torn line is skipped; the journal owns durability
     }
     const type = str(parsed.type)
 
@@ -65,7 +72,7 @@ export function parseClaudeStream(rawLines: readonly string[], opts: ParseOption
           model: str(parsed.model) || undefined,
         })
       }
-      continue
+      return events
     }
 
     if (type === 'assistant' || type === 'user') {
@@ -106,7 +113,7 @@ export function parseClaudeStream(rawLines: readonly string[], opts: ParseOption
           raw: { error: errorField || null, is_api_error_message: parsed.is_api_error_message === true },
         })
       }
-      continue
+      return events
     }
 
     if (type === 'rate_limit_event') {
@@ -129,11 +136,11 @@ export function parseClaudeStream(rawLines: readonly string[], opts: ParseOption
           ) as never,
         })
       }
-      continue
+      return events
     }
 
     if (type === 'result') {
-      terminalReason = str(parsed.terminal_reason)
+      terminalReason = str(parsed.terminal_reason) || undefined
       const usage = (parsed.usage ?? {}) as AnyRecord
       events.push({
         type: 'usage',
@@ -144,11 +151,22 @@ export function parseClaudeStream(rawLines: readonly string[], opts: ParseOption
         cost_usd: num(parsed.total_cost_usd),
       })
     }
+    return events
   }
 
-  const code = opts.exitCode ?? 0
-  const reason = terminalReason ?? (code >= 128 ? 'crashed' : 'completed')
-  events.push({ type: 'exit', code, terminal_reason: reason as TerminalReason })
+  return {
+    push,
+    finish(exitCode = 0) {
+      const reason = terminalReason ?? (exitCode === 0 ? 'completed' : 'crashed')
+      return [{ type: 'exit', code: exitCode, terminal_reason: reason as TerminalReason }]
+    },
+  }
+}
+
+export function parseClaudeStream(rawLines: readonly string[], opts: ParseOptions = {}): EngineEventBody[] {
+  const parser = createClaudeEventParser()
+  const events = rawLines.flatMap((line) => parser.push(line))
+  events.push(...parser.finish(opts.exitCode))
   return events
 }
 

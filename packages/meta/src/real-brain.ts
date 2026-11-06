@@ -48,7 +48,7 @@ import type { ToolName } from '../../mec-tools/src/tools'
 import { type CompiledBundle, compileBundle, componentHash } from '../../prompts/src/bundles'
 import { buildAgentEnv } from '../../runtime/src/env'
 import { buildAttemptSettings, serialiseAttemptSettings } from '../../runtime/src/isolation'
-import { PlannerBrain, turnCutShort } from './brain'
+import { metaSlotEnv, PlannerBrain, turnCutShort } from './brain'
 import type { MetaBrain, MetaDecision } from './service'
 
 /** The engine surface the brain uses; `ClaudeAdapter` satisfies it structurally. */
@@ -64,6 +64,8 @@ export type RecordedToolCall = { tool: string; args: unknown; at: string; result
 export type RealClaudeBrainOptions = {
   /** The meta slot's engine home (a logged-in `claude` config dir) — `CLAUDE_CONFIG_DIR`. */
   slotDir: string
+  /** A linked slot: the engine's default home, with the variable absent (`homes.ts`). */
+  linked?: boolean
   /** User home for the read-deny defaults; defaults to `$HOME` (the H1 pattern). */
   homeDir?: string
   /** The HMAC secret mec-tools tokens are signed with. */
@@ -141,6 +143,7 @@ export class RealClaudeBrain {
   readonly calls: RecordedToolCall[] = []
 
   readonly #slotDir: string
+  readonly #linked: boolean
   readonly #home: string
   readonly #secret: string
   readonly #now: () => Date
@@ -164,6 +167,7 @@ export class RealClaudeBrain {
 
   constructor(opts: RealClaudeBrainOptions) {
     this.#slotDir = opts.slotDir
+    this.#linked = opts.linked === true
     this.#home = opts.homeDir ?? process.env.HOME ?? '/tmp'
     this.#secret = opts.toolsSecret
     this.#now = opts.now ?? (() => new Date())
@@ -192,6 +196,7 @@ export class RealClaudeBrain {
   #plannerBrain(): PlannerBrain {
     this.#planner ??= new PlannerBrain({
       slotDir: this.#slotDir,
+      linked: this.#linked,
       homeDir: this.#home,
       toolsSecret: this.#secret,
       now: this.#now,
@@ -289,7 +294,7 @@ export class RealClaudeBrain {
       env: buildAgentEnv({
         inherited: process.env as Record<string, string | undefined>,
         home: this.#home,
-        slot: { CLAUDE_CONFIG_DIR: this.#slotDir },
+        slot: metaSlotEnv({ slotDir: this.#slotDir, linked: this.#linked }),
         attempt: {
           MEC_ATTEMPT_ID: META_ATTEMPT_ID,
           MEC_WORKTREE: this.#root,
@@ -349,7 +354,7 @@ export class RealClaudeBrain {
         env: buildAgentEnv({
           inherited: process.env as Record<string, string | undefined>,
           home: this.#home,
-          slot: { CLAUDE_CONFIG_DIR: this.#slotDir },
+          slot: metaSlotEnv({ slotDir: this.#slotDir, linked: this.#linked }),
           attempt: {
             MEC_ATTEMPT_ID: META_ATTEMPT_ID,
             MEC_WORKTREE: this.#root,

@@ -80,7 +80,7 @@ describe('RepoCache', () => {
 
     const refreshed = await cache.ensure(refreshUrl)
     expect(refreshed.gitDir).toBe(gitDir)
-    expect((await git(['rev-parse', 'refs/heads/main'], { cwd: gitDir })).stdout.trim()).toBe(after)
+    expect((await git(['rev-parse', 'refs/remotes/origin/main'], { cwd: gitDir })).stdout.trim()).toBe(after)
   })
 
   it('prunes branches the remote deleted', async () => {
@@ -91,7 +91,7 @@ describe('RepoCache', () => {
 
     await git(['branch', 'feature'], { cwd: src })
     await cache.ensure(pruneUrl)
-    const present = await git(['rev-parse', '--verify', 'refs/heads/feature'], {
+    const present = await git(['rev-parse', '--verify', 'refs/remotes/origin/feature'], {
       cwd: gitDir,
       allowFailure: true,
     })
@@ -99,7 +99,7 @@ describe('RepoCache', () => {
 
     await git(['branch', '-D', 'feature'], { cwd: src })
     await cache.ensure(pruneUrl)
-    const gone = await git(['rev-parse', '--verify', 'refs/heads/feature'], {
+    const gone = await git(['rev-parse', '--verify', 'refs/remotes/origin/feature'], {
       cwd: gitDir,
       allowFailure: true,
     })

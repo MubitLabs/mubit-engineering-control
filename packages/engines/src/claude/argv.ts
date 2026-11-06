@@ -54,7 +54,9 @@ export function buildClaudeArgv(input: ClaudeArgvInput): string[] {
     String(input.maxTurns),
   )
   if (input.permissionMode === 'bridge') {
-    argv.push('--permission-prompt-tool', 'mcp__mec__confirm')
+    // Explicit: a linked slot's own settings may name another mode, and the prompt tool hears
+    // nothing in a mode that does not ask.
+    argv.push('--permission-prompt-tool', 'mcp__mec__confirm', '--permission-mode', 'default')
   }
   if (input.readOnly) {
     argv.push('--restricted', '--permission-prompts', 'none')

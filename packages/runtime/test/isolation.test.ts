@@ -30,10 +30,52 @@ describe('defaultDenyRead', () => {
   it('covers MEC state, other slot homes and secret directories', () => {
     const deny = defaultDenyRead(home)
     expect(deny).toContain(`${home}/.mec/engines`)
-    expect(deny).toContain(`${home}/.mec/db`)
+    expect(deny).toContain(`${home}/.mec/mec.db`)
     expect(deny).toContain(`${home}/.ssh`)
     expect(deny).toContain(`${home}/.aws`)
     expect(deny).toContain(`${home}/.config/gh`)
+  })
+})
+
+describe('the shared clone', () => {
+  it('is write-denied for a specialist, whole, so siblings and later attempts are covered', () => {
+    const s = buildAttemptSettings(profile(), { ...opts, sharedClone: '/data/repos/abc.git' })
+    expect(s.sandbox.filesystem.denyWrite).toEqual(['/data/repos/abc.git'])
+  })
+
+  it('leaves the list empty when a run has no shared clone', () => {
+    expect(buildAttemptSettings(profile(), opts).sandbox.filesystem.denyWrite).toEqual([])
+  })
+})
+
+describe('defaultDenyRead under a data dir of its own', () => {
+  const dataDir = '/private/tmp/scratch/state'
+
+  it('deny list covers the real database under any data dir', () => {
+    const deny = defaultDenyRead(home, dataDir)
+    for (const name of ['mec.db', 'mec.db-wal', 'mec.db-shm', 'health.json', 'policy.yaml']) {
+      expect(deny).toContain(`${dataDir}/${name}`)
+    }
+    for (const name of ['prompts', 'journal', 'engines']) expect(deny).toContain(`${dataDir}/${name}`)
+    expect(deny).toContain(`${home}/.claude`)
+    expect(deny).toContain(`${home}/.codex`)
+    expect(deny.filter((path) => path.startsWith(`${home}/.mec`))).toEqual([])
+  })
+
+  it('never denies the data dir whole: the worktree sits under it', () => {
+    const deny = defaultDenyRead(home, dataDir)
+    expect(deny).not.toContain(dataDir)
+    expect(deny).not.toContain(`${dataDir}/repos`)
+    expect(deny).not.toContain(`${dataDir}/work`)
+  })
+
+  it('reaches the settings through the options', () => {
+    const settings = buildAttemptSettings(profile(), { ...opts, dataDir })
+    expect(settings.sandbox.filesystem.denyRead).toContain(`${dataDir}/mec.db`)
+  })
+
+  it('a sandboxed Bash command still asks, because the bridge is what refuses a push', () => {
+    expect(buildAttemptSettings(profile(), opts).sandbox.autoAllowBashIfSandboxed).toBe(false)
   })
 })
 

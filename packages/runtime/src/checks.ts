@@ -1,7 +1,7 @@
 /**
  * Check runner (plan §15, ported from the v1 runner): each check is an argv-only child in
- * its own process group, output is streamed into a capped 8 KiB tail, and a timeout
- * SIGKILLs the whole group. status keeps a failing check distinct from one that produced
+ * its own process group, output is streamed into a capped 8 KiB tail, and a timeout or a
+ * cancelled `signal` SIGKILLs the whole group. status keeps a failing check distinct from one that produced
  * no verdict: passed (exit 0) · failed (ran, non-zero) · error (could not start, was
  * signalled, or timed out). exitCode is null only when the process reported none.
  */
@@ -27,7 +27,7 @@ export type CheckOutcome = {
 export const LOG_TAIL_BYTES = 8 * 1024
 const DEFAULT_TIMEOUT_MS = 600_000
 
-export async function runCheck(spec: CheckSpec): Promise<CheckOutcome> {
+export async function runCheck(spec: CheckSpec, signal?: AbortSignal): Promise<CheckOutcome> {
   const started = Date.now()
   const child = spawn(spec.cmd, spec.args, {
     cwd: spec.cwd,
@@ -44,19 +44,23 @@ export async function runCheck(spec: CheckSpec): Promise<CheckOutcome> {
   child.stdout?.on('data', collect)
   child.stderr?.on('data', collect)
 
+  // Own process group (detached): -pid signals the group, so children the check spawned die
+  // with it. ESRCH just means it exited between flag and kill — close settles it.
+  const killGroup = (): void => {
+    if (child.pid === undefined) return
+    try {
+      process.kill(-child.pid, 'SIGKILL')
+    } catch {
+      // already gone
+    }
+  }
   let timedOut = false
   const timer = setTimeout(() => {
     timedOut = true
-    // Own process group (detached): -pid signals the group, so children the check spawned
-    // die with it. ESRCH just means it exited between flag and kill — close settles it.
-    if (child.pid !== undefined) {
-      try {
-        process.kill(-child.pid, 'SIGKILL')
-      } catch {
-        // already gone
-      }
-    }
+    killGroup()
   }, spec.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+  if (signal?.aborted) killGroup()
+  else signal?.addEventListener('abort', killGroup, { once: true })
 
   // spawn() reports failures such as ENOENT through an async 'error' event, not a throw.
   let spawnError: string | null = null
@@ -68,6 +72,7 @@ export async function runCheck(spec: CheckSpec): Promise<CheckOutcome> {
     child.once('close', (code, signal) => resolve({ code, signal }))
   })
   clearTimeout(timer)
+  signal?.removeEventListener('abort', killGroup)
 
   const durationMs = Date.now() - started
   const logTail = log.toString('utf8')

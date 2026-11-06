@@ -86,9 +86,18 @@ export type PlannerDecision = {
   protocolIncomplete?: boolean
 }
 
+/**
+ * The meta slot's layer. A linked slot sets nothing: naming `~/.claude` explicitly selects a
+ * different macOS Keychain item than leaving the variable unset (`homes.ts`, issue #92252).
+ */
+export const metaSlotEnv = (slot: { slotDir: string; linked?: boolean }): Record<string, string> =>
+  slot.linked === true ? {} : { CLAUDE_CONFIG_DIR: slot.slotDir }
+
 export type PlannerBrainOptions = {
-  /** The meta slot's engine home — `CLAUDE_CONFIG_DIR`. */
+  /** The meta slot's engine home — `CLAUDE_CONFIG_DIR`, unless the slot is linked. */
   slotDir: string
+  /** A linked slot: the engine's default home, with the variable absent (`homes.ts`). */
+  linked?: boolean
   /** User home for the read-deny defaults; defaults to `$HOME`. */
   homeDir?: string
   /** The HMAC secret mec-tools tokens are signed with. */
@@ -370,7 +379,7 @@ export class PlannerBrain {
       env: buildAgentEnv({
         inherited: process.env as Record<string, string | undefined>,
         home: this.#opts.homeDir ?? process.env.HOME ?? '/tmp',
-        slot: { CLAUDE_CONFIG_DIR: this.#opts.slotDir },
+        slot: metaSlotEnv(this.#opts),
         attempt: {
           MEC_ATTEMPT_ID: META_ATTEMPT_ID,
           MEC_WORKTREE: this.#root,

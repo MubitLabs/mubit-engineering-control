@@ -150,6 +150,21 @@ describe('RealClaudeBrain over a fake adapter', () => {
     expect(existsSync(settingsPath)).toBe(false)
   })
 
+  it('a linked slot leaves CLAUDE_CONFIG_DIR unset on the turn and on its retry', async () => {
+    const { engine, specs } = fakeEngine([started(), exited()])
+    const brain = new RealClaudeBrain({
+      slotDir: '/home/someone/.claude',
+      linked: true,
+      toolsSecret: 'unit-secret',
+      now: NOW,
+      adapter: engine,
+    })
+    await brain.decide({ messageText: 'hello', liveWork: [] }).catch(() => undefined)
+    await brain.close()
+    expect(specs).toHaveLength(2)
+    for (const spec of specs) expect(spec.env).not.toHaveProperty('CLAUDE_CONFIG_DIR')
+  })
+
   it('uses the LAST valid plan when an invalid one comes first', async () => {
     const { engine } = fakeEngine([
       started(),

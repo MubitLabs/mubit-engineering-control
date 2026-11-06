@@ -4,108 +4,84 @@
     "file": "apps/web/scripts/lighthouse.mjs",
     "find": "if (score < threshold) return",
     "replace": "if (score < 0) return",
-    "tests": [
-      "apps/web/test/a11y-gate.test.ts"
-    ]
+    "tests": ["apps/web/test/a11y-gate.test.ts"]
   },
   {
     "name": "unreadable report counts as a pass",
     "file": "apps/web/scripts/lighthouse.mjs",
     "find": "    return { ok: false, score: null, reason: `unreadable report: ${error.message}` }",
     "replace": "    return { ok: true, score: null, reason: `unreadable report: ${error.message}` }",
-    "tests": [
-      "apps/web/test/a11y-gate.test.ts"
-    ]
+    "tests": ["apps/web/test/a11y-gate.test.ts"]
   },
   {
     "name": "missing score counts as a pass",
     "file": "apps/web/scripts/lighthouse.mjs",
     "find": "    return { ok: false, score: null, reason: 'no accessibility score in the report' }",
     "replace": "    return { ok: true, score: null, reason: 'no accessibility score in the report' }",
-    "tests": [
-      "apps/web/test/a11y-gate.test.ts"
-    ]
+    "tests": ["apps/web/test/a11y-gate.test.ts"]
   },
   {
     "name": "one passing route hides a failing one",
     "file": "apps/web/scripts/lighthouse.mjs",
     "find": "verdicts.every((verdict) => verdict.ok)",
     "replace": "verdicts.some((verdict) => verdict.ok)",
-    "tests": [
-      "apps/web/test/a11y-gate.test.ts"
-    ]
+    "tests": ["apps/web/test/a11y-gate.test.ts"]
   },
   {
     "name": "a deleted module still imported",
     "file": "apps/web/src/live/entry.tsx",
     "find": "import { StrictMode } from 'react'",
     "replace": "import '../ui-flag'\nimport { StrictMode } from 'react'",
-    "tests": [
-      "apps/web/test/next-only.test.ts"
-    ]
+    "tests": ["apps/web/test/next-only.test.ts"]
   },
   {
     "name": "a deleted module imported dynamically",
     "file": "apps/web/src/main.tsx",
     "find": "import('./live/entry')",
     "replace": "import('./classic-entry').then(() => import('./live/entry'))",
-    "tests": [
-      "apps/web/test/next-only.test.ts"
-    ]
+    "tests": ["apps/web/test/next-only.test.ts"]
   },
   {
     "name": "a web font comes back",
     "file": "apps/web/src/next/base.css",
     "find": "*,\n*::before",
     "replace": "@font-face { font-family: \"Instrument Sans\"; src: url(x.woff2); }\n*,\n*::before",
-    "tests": [
-      "apps/web/test/next-only.test.ts"
-    ]
+    "tests": ["apps/web/test/next-only.test.ts"]
   },
   {
     "name": "a classic class name comes back",
     "file": "apps/web/src/next/states.tsx",
     "find": "<div className=\"empty\">",
     "replace": "<div className=\"empty rail-item\">",
-    "tests": [
-      "apps/web/test/next-only.test.ts"
-    ]
+    "tests": ["apps/web/test/next-only.test.ts"]
   },
   {
     "name": "the shell choice is read again",
     "file": "apps/web/src/main.tsx",
     "find": "const container = document.getElementById('root')",
     "replace": "localStorage.getItem('mec-ui-shell')\nconst container = document.getElementById('root')",
-    "tests": [
-      "apps/web/test/next-only.test.ts"
-    ]
+    "tests": ["apps/web/test/next-only.test.ts"]
   },
   {
     "name": "the inbox deep link stops routing",
     "file": "apps/web/src/router.ts",
     "find": "{ inbox: 'needs', wizard: 'setup' }",
     "replace": "{ wizard: 'setup' }",
-    "tests": [
-      "apps/web/test/next-only.test.ts"
-    ]
+    "tests": ["apps/web/test/next-only.test.ts"]
   },
   {
     "name": "the wizard deep link stops routing",
     "file": "apps/web/src/router.ts",
     "find": "{ inbox: 'needs', wizard: 'setup' }",
     "replace": "{ inbox: 'needs' }",
-    "tests": [
-      "apps/web/test/next-only.test.ts"
-    ]
+    "tests": ["apps/web/test/next-only.test.ts"]
   },
   {
     "name": "the shell stylesheet is not loaded",
     "file": "apps/web/src/live/entry.tsx",
     "find": "import '../next/styles'\n",
     "replace": "",
-    "tests": [
-      "apps/web/test/shell-split.test.ts"
-    ]
+    "tests": ["apps/web/test/shell-split.test.ts"]
   },
   {
     "name": "an unknown lighthouse theme is scored anyway",

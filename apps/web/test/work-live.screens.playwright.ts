@@ -571,7 +571,10 @@ test.describe('the old shell’s journeys, on this one', () => {
     await expect(page.locator('.inspector')).toContainText('build the index')
 
     // The decision names its effect at both steps, and its evidence carries checks and diff.
-    await page.locator('.rail').getByRole('button', { name: /Needs you/ }).click()
+    await page
+      .locator('.rail')
+      .getByRole('button', { name: /Needs you/ })
+      .click()
     const card = page.locator('article.decision', { hasText: 'push search to sample-console' })
     await expect(page.getByText('SAMPLE-ONLY include archived rows?').first()).toBeVisible()
     await expect(card).toContainText('SAMPLE-ONLY this leaves the machine, so it asks you.')
@@ -692,7 +695,10 @@ test.describe('the old shell’s journeys, on this one', () => {
     await expect(missing).toContainText('cannot be approved yet')
 
     down = false
-    await missing.getByRole('button', { name: 'Retry' }).click({ timeout: 2_000 }).catch(() => {})
+    await missing
+      .getByRole('button', { name: 'Retry' })
+      .click({ timeout: 2_000 })
+      .catch(() => {})
     const card = page.locator('article.decision', { hasText: 'push search to sample-console' })
     await expect(card.getByRole('button', { name: 'Approve' })).toBeEnabled()
     expect(posts).toEqual([])

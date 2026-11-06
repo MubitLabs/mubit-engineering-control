@@ -144,10 +144,13 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
 - **Open for 31 C (the combined PR #47 is merged; not re-checked since):** a held row shows a raw ISO time
   (`inspection.ts:597`); wake rows appear in search (`inspection.ts:895-905`); the second-tab 409
   message says "was not sent" though the message was sent and refused.
-- **A process group that refuses to die (DECISIONS #45).** In 0.3.0 the attempt is failed, the
-  failed stop is recorded and its capacity is freed, even though the group is still alive. 0.3.1
-  keeps the capacity held until the group is gone (`reconcileProcesses` must track failed attempts
-  with a live group).
+- **A process group that refuses to die (DECISIONS #45).** The attempt is failed, the failed stop
+  is recorded and its capacity stays held until the group is gone: what the stop left is saved as
+  `held_groups` on the attempt, counts against the slot, and is released at boot or on the 2 s pass
+  once proven gone. 0.3.0 freed the capacity here; 0.3.1 does not.
+- **A group that never goes holds its slot indefinitely, with no alert.** Nothing times the hold
+  out and nothing tells the owner the slot unit is taken, beyond `processOutcome` on the inspection
+  read and `attempt.stop_failed` in the attempt's event stream. Ending the group by hand releases it.
 - **A late wake after a pause is assigned to handoff 21** with the card resolve gaps above.
 - **`next/work-model` `canApprove` must map absent to null when it is wired (31 B).**
 - **A Work row can lag its delivery by up to 10 seconds.** `pr_ready` lands on the release and inbox streams, and the page follows neither, so the row keeps saying Working until the next refetch. The work detail read says `pr-ready` at once.

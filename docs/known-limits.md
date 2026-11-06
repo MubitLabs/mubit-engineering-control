@@ -62,3 +62,19 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
     dangling link to its target, and denies a link chain it cannot finish. It judges the path at
     the moment of the ask. A worker's shell can still swap a file for a link after the answer, and
     Claude's own behaviour past an `allow` on a link has not been observed.
+
+- **`mec backup` and restore do not exist, though the spec promises them (spec line 722).** A backup
+  would also carry `work/` and the repo clones, so it can be large. Dedicated-slot workers write
+  engine transcripts under `engines/claude/<slot>/`, which a backup includes. Whether a transcript
+  can hold `MEC_TOOLS_TOKEN` (spec line 558, §5.7) has not been checked with a real run; it is a
+  planned check in handoff 33 B.
+- **Card resolve gaps on `main` (open, assigned to handoff 21).**
+  - A direct `POST /api/inbox/:id/resolve` still settles a no-evidence non-release card.
+  - `#persistExtras` stores a planner card's operation and evidence unredacted (spec §13
+    invariant 3), and `cardDetail` does not redact field names or class.
+  - A `{class}`-only `request_confirmation` is deny-only.
+  - The toast says "agent was told to continue" on a planner card that runs nothing.
+- **An open tab goes stale if the server restarts on a new port.** An owner ruling is needed.
+  A repository edit stops admitted work at its next launch (`repo_profile_changed`); that
+  behaviour is kept and the Settings text now says so.
+- **`bundle.test.ts` waits 6 seconds for health and can flake under load.**

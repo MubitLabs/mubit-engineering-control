@@ -50,6 +50,13 @@ The first run, 37 mutants: 36 killed, and `error reads as failed` survived. With
 - `gh` is read once per 30 s per open PR, so step 5 takes up to that long to move.
 - Delivery follows `MEC_REAL_RUNNER=1`, so check that nothing else on the scratch server has a real origin.
 
+## Stops, holds and foreign cards
+
+- An approve reads `cardBlocked` with no await before the settle. Stopped or withdrawn work settles a push, PR or merge card `stale` by policy, reason `mandate_withdrawn`, with `card_withdrawn` on the release stream. Held work leaves it pending, reason `held`. A deny settles as given.
+- The card still shows as pending until someone answers it. Nothing at stop time settles it, and it carries no `mandateId`.
+- A merge card reaches its work by repository and PR number, so a PR that is not the delivery's own is neither blocked nor recorded as this delivery.
+- `onCardSettled` needs `pushCardId`, `prCardId` or `prNumber` to match. A card opened by hand moves no stage.
+
 ## What remains for the real `mec-sandbox` pass
 
 - A real `gh pr checks --required` on a repository with required checks, and with none.

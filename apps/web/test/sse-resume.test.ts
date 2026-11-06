@@ -178,6 +178,7 @@ describe('compact frames', () => {
       subscribe: subscribeResumable,
     }
     const reader = {
+      meta: async () => ({ observedAt: '', connection: null, repositories: [] }),
       work: async () => {
         reads.inspectWork += 1
         return { items: [], nextCursor: null, observedAt: '' }

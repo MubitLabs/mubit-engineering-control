@@ -223,6 +223,8 @@ export function registerConfigRoutes(
         kind: spec.kind,
         provider: spec.provider,
         home: home.homeDir,
+        // A launch reads this layer: without it a worker runs on the default login (§5.3).
+        env: home.env,
         state: 'home_ready',
         createdAt: at,
         updatedAt: at,

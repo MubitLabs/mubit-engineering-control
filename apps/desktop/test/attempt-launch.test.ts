@@ -463,6 +463,30 @@ describe('the launch path', { timeout: 60_000 }, () => {
     expect(existsSync(join(dataDir, 'journal', 'att_1', 'events.jsonl'))).toBe(true)
   })
 
+  // §5.3 and the slot isolation row of §26: a slot added in Connections runs under its own home.
+  it('a slot from Add connection launches under its own home, not the default login', async () => {
+    const { dataDir, repo, seen } = scratch({ steps: SUCCESS })
+    const adding = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 4000 })
+    const added = await fetch(`${adding.url}/api/slots/dedicated`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ engine: 'claude', label: 'max-2' }),
+    })
+    expect(added.status).toBe(200)
+    await adding.close()
+    const slot = peek(dataDir, (store) => store.slots.get('slot_max-2'))
+    expect(typeof slot?.home).toBe('string')
+
+    process.env.MEC_REAL_RUNNER = '1'
+    seedStore(dataDir, repo, {
+      checks: [{ name: 'made', cmd: 'test -f made.txt' }],
+      slot: { ...slot, id: 'slot_linked', state: 'healthy' },
+    })
+    await serve(dataDir)
+    await reaches(dataDir, 'succeeded')
+    expect(seen().config_dir).toBe(slot?.home)
+  })
+
   // Composition reads a saved policy first (M3.3), so the launcher has to hold that text too.
   it('a launch reads the saved policy, not the text it replaced at boot', async () => {
     const { dataDir, repo } = scratch({ steps: SUCCESS })

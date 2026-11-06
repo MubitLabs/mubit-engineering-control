@@ -96,6 +96,7 @@ describe('mec slot add', () => {
         kind: 'claude-sub',
         state: 'home_ready',
         home,
+        env: { CLAUDE_CONFIG_DIR: home },
       }),
     ])
   })

@@ -56,6 +56,7 @@ type SlotDoc = {
   engine: Engine
   kind: SlotKind
   home: string
+  env?: Record<string, string>
   state: string
   state_reason?: Degraded
   engine_version?: string
@@ -175,6 +176,7 @@ function cmdAdd(
       engine: spec.engine,
       kind,
       home: home.homeDir,
+      env: home.env,
       state: 'home_ready',
       createdAt: at,
       updatedAt: at,

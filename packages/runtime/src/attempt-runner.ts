@@ -65,6 +65,8 @@ export interface AttemptGit {
   commitAll(path: string, message: string, opts: { name: string; email: string }): Promise<string | null>
   headSha(path: string): Promise<string>
   historyTouches(worktree: string, base: string, head: string, path: string): Promise<boolean>
+  /** Where the worktree's `.git` file points now; undefined when it is no plain pointer. */
+  adminDirOf(path: string): string | undefined
 }
 
 /** What a brief cannot carry: everything secret, host-side or not persisted (§5.12, §17). */
@@ -82,6 +84,8 @@ export type AttemptPlan = {
   seal: () => void
   /** The tail of the engine's stderr, for the reason a crash gives; redacted before it is stored. */
   stderrTail?: () => string
+  /** This attempt's own admin directory, as the launch knows it, not as the worktree says it. */
+  gitAdmin?: string
 }
 
 export type AttemptRunnerDeps = {
@@ -307,6 +311,10 @@ export class AttemptRunner {
   async #settle(live: Live): Promise<void> {
     const { facts, git } = this.#deps
     const { attempt, brief, plan } = live
+    // MEC's git runs outside the sandbox, and a `.git` the worker repointed brings its own config.
+    if (plan.gitAdmin !== undefined && git.adminDirOf(brief.worktree) !== plan.gitAdmin) {
+      return this.#fail(live, `git_pointer_moved: .git no longer names ${plan.gitAdmin}`)
+    }
     const message = `mec: ${brief.task_id} attempt ${attempt.attempt_id}`
     let head: string
     try {

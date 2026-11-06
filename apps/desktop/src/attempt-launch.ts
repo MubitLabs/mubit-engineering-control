@@ -39,6 +39,7 @@ import {
   historyTouches,
   RepoCache,
   Worktrees,
+  worktreeAdminDir,
 } from '@mec/git'
 import { issueToken } from '@mec/mec-tools'
 import { type LaunchAuthority, mandateOf, repoFields } from '@mec/meta'
@@ -199,7 +200,7 @@ export class AttemptLauncher {
       journalRoot: join(deps.dataDir, 'journal'),
       supervisor: this.#supervisor,
       facts: deps.facts,
-      git: { commitAll, headSha, historyTouches },
+      git: { commitAll, headSha, historyTouches, adminDirOf: worktreeAdminDir },
       adapterFor: (brief) => this.#adapterFor(brief),
       planFor: (brief) => this.#planOf(brief),
     })
@@ -466,6 +467,8 @@ export class AttemptLauncher {
       exacts: [token],
       seal: () => rmSync(mcpPath, { force: true }),
       stderrTail: () => stderr,
+      // Derived, not read back: a resumed worktree's `.git` has been in a worker's hands.
+      gitAdmin: join(realpathSync(gitDir), 'worktrees', attemptId),
     })
     this.#stderr.set(attemptId, (chunk) => {
       stderr = `${stderr}${chunk}`.slice(-STDERR_TAIL_CHARS)

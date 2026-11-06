@@ -177,8 +177,8 @@
   {
     "name": "a stopped check still gets a verdict",
     "file": "packages/runtime/src/attempt-runner.ts",
-    "find": "      if (live.stopReason !== undefined) {\n        const skipped = `stopped during check",
-    "replace": "      if (live.stopReason === 'never') {\n        const skipped = `stopped during check",
+    "find": "if (live.stopReason !== undefined) return this.#checksStopped(live, head, `during check ${spec.name}`)",
+    "replace": "if (live.stopReason === 'never') return this.#checksStopped(live, head, `during check ${spec.name}`)",
     "tests": ["packages/runtime/test/attempt-runner.test.ts"]
   },
   {

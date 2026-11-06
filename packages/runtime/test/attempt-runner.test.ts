@@ -17,7 +17,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 import { ClaudeAdapter } from '../../engines/src/claude/adapter'
 import { git } from '../../git/src/exec'
 import { historyTouches } from '../../git/src/repos'
-import { commitAll, headSha } from '../../git/src/worktrees'
+import { commitAll, headSha, worktreeAdminDir } from '../../git/src/worktrees'
 import { type AttemptFacts, type AttemptPlan, AttemptRunner, NotWiredError } from '../src/attempt-runner'
 import type { CheckOutcome, CheckSpec } from '../src/checks'
 import { ownedSpawn } from '../src/owned-spawn'
@@ -203,7 +203,7 @@ async function rig(
     journalRoot,
     supervisor,
     facts,
-    git: { commitAll, headSha, historyTouches },
+    git: { commitAll, headSha, historyTouches, adminDirOf: worktreeAdminDir },
     adapterFor: () =>
       new ClaudeAdapter({
         ...(binary !== undefined && { binary }),
@@ -552,6 +552,15 @@ describe('AttemptRunner', { timeout: 60_000 }, () => {
       expect(facts.note).toContain('stopped during check unit: wall_clock')
       expect(facts.stopped).toBe('wall_clock')
     })
+  })
+
+  it('a .git that no longer names this attempt commits nothing and fails with the reason', async () => {
+    const { attempt, brief, runner, facts, worktree } = await rig(MADE, { gitAdmin: '/not/this/one' })
+    await runner.launchAttempt(attempt, brief)
+    await runner.settled()
+    expect(facts.state).toBe('failed')
+    expect(facts.reason).toContain('git_pointer_moved')
+    expect(await headSha(worktree)).toBe(brief.base_sha)
   })
 
   it('a crash fails the attempt with the reason', async () => {

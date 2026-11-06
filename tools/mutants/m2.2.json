@@ -495,5 +495,33 @@
     "find": "  if (slot.state === 'retired') {\n",
     "replace": "  if (slot.state === 'retired' || slot.state === 'degraded') {\n",
     "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "commit without looking at .git",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "if (plan.gitAdmin !== undefined && git.adminDirOf(brief.worktree) !== plan.gitAdmin) {",
+    "replace": "if (plan.gitAdmin === 'never' && git.adminDirOf(brief.worktree) !== plan.gitAdmin) {",
+    "tests": ["packages/runtime/test/attempt-runner.test.ts"]
+  },
+  {
+    "name": "launch names no admin directory",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "      gitAdmin: join(realpathSync(gitDir), 'worktrees', attemptId),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "a .git that is no file counts as a pointer",
+    "file": "packages/git/src/worktrees.ts",
+    "find": "if (lstatSync(pointer, { throwIfNoEntry: false })?.isFile() !== true) return undefined",
+    "replace": "if (lstatSync(pointer, { throwIfNoEntry: false }) === undefined) return undefined",
+    "tests": ["packages/git/test/repos-worktrees.test.ts"]
+  },
+  {
+    "name": "pointer target not resolved",
+    "file": "packages/git/src/worktrees.ts",
+    "find": "return realpathSync(resolve(path, target))",
+    "replace": "return target",
+    "tests": ["packages/git/test/repos-worktrees.test.ts"]
   }
 ]

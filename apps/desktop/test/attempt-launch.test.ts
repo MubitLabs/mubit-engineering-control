@@ -235,6 +235,38 @@ const LINKED = {
 const onlyAttempt = (dataDir: string): string =>
   peek(dataDir, (store) => String(store.attempts.list()[0]?.id))
 
+describe('the commit outside the sandbox', { timeout: 60_000 }, () => {
+  const tampered = async (sh: string) => {
+    const { dataDir, repo } = scratch({
+      steps: [
+        { init: true },
+        { write: { path: 'made.txt', text: 'made\n' } },
+        { sh },
+        { result: 'completed' },
+      ],
+    })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedStore(dataDir, repo)
+    await serve(dataDir)
+    await reaches(dataDir, 'failed')
+    const attempt = peek(dataDir, (store) => store.attempts.get('att_1'))
+    return { attempt, work: join(dataDir, 'work', 'att_1') }
+  }
+
+  it('a repointed .git ends the attempt failed, with its reason, and commits nothing', async () => {
+    const { attempt } = await tampered(`printf 'gitdir: /tmp/mec-elsewhere\\n' > .git`)
+    expect(String(attempt?.terminal_reason)).toContain('git_pointer_moved')
+    expect(attempt?.head_sha).toBeUndefined()
+  })
+
+  it('a .git swapped for a repository of the worker commits nothing there', async () => {
+    const swap = '/usr/bin/git init -q "$TMPDIR/swapped" && rm .git && mv "$TMPDIR/swapped/.git" .git'
+    const { attempt, work } = await tampered(swap)
+    expect(String(attempt?.terminal_reason)).toContain('git_pointer_moved')
+    expect(() => gitIn(work, 'rev-parse', 'HEAD')).toThrow()
+  })
+})
+
 describe('a chat request', { timeout: 60_000 }, () => {
   const request = async (dataDir: string, tier = 'fast') => {
     const server = await startServer({

@@ -4,8 +4,8 @@
  * 40-hex commits and branch names against a conservative allowlist, so neither can be
  * read as an option once it reaches argv.
  */
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { git } from './exec'
 
 export type WorktreeAddOptions = {
@@ -59,6 +59,23 @@ export class Worktrees {
     await git(['worktree', 'remove', ...(force ? ['--force'] : []), '--', path], { cwd: this.gitDir }).catch(
       () => undefined,
     )
+  }
+}
+
+/**
+ * The admin directory a linked worktree's `.git` file names, real path. Undefined for anything but
+ * one plain pointer to a directory that exists. A worker can rewrite this file, and git follows
+ * it, config and hooks included, so a host-side git call asks here first.
+ */
+export function worktreeAdminDir(path: string): string | undefined {
+  const pointer = join(path, '.git')
+  if (lstatSync(pointer, { throwIfNoEntry: false })?.isFile() !== true) return undefined
+  const target = /^gitdir: (.+)\n?$/.exec(readFileSync(pointer, 'utf8'))?.[1]
+  if (target === undefined) return undefined
+  try {
+    return realpathSync(resolve(path, target))
+  } catch {
+    return undefined
   }
 }
 

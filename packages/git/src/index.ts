@@ -12,4 +12,12 @@ export { isMidMerge, mergeIntoIntegration } from './merge'
 export type { EnsureResult } from './repos'
 export { cachedDefaultTip, excludeFromWorktree, historyTouches, RepoCache } from './repos'
 export type { DiffSummary, WorktreeAddOptions } from './worktrees'
-export { assertSafeRef, assertSha, commitAll, diffSummary, headSha, Worktrees } from './worktrees'
+export {
+  assertSafeRef,
+  assertSha,
+  commitAll,
+  diffSummary,
+  headSha,
+  Worktrees,
+  worktreeAdminDir,
+} from './worktrees'

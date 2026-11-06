@@ -146,13 +146,15 @@ const UNRUNNABLE: readonly LaunchDropReason[] = [
  * Records a dropped launch. The mandates module lets work continue after a policy change only
  * once it revalidates clean, so that reason also blocks the work, whatever the attempt's state.
  * The row is about to drain, so an attempt still queued would hold its capacity with nothing left
- * to start it: it fails (§10). A resume's attempt is parked and keeps its state.
+ * to start it: it fails (§10). A resume's attempt is parked and keeps its state. So does one whose
+ * group a boot could not prove gone (§8.1): boot keeps retrying it, and its capacity stays held.
  */
 export function refuseLaunch(store: Store, payload: Json, reason: LaunchDropReason, at: string): void {
   const { work_item_id: workItemId, attempt_id: attemptId } = launchFields(payload)
   appendEvent(store, `work:${workItemId}`, 'launch_refused', { workItemId, attemptId, reason, at }, at)
   if (reason === 'policy_changed') blockWork(store, workItemId, reason, at)
-  if (UNRUNNABLE.includes(reason) && store.attempts.get(attemptId)?.state === 'queued') {
+  const attempt = store.attempts.get(attemptId)
+  if (UNRUNNABLE.includes(reason) && attempt?.state === 'queued' && attempt.reconcile_refused === undefined) {
     failLaunch(store, payload, reason, at)
   }
 }

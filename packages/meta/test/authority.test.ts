@@ -722,6 +722,24 @@ describe('authority fence', () => {
       expect(store.events.read('attempt:att_checks')).toEqual([])
     })
 
+    it.each(['mandate_expired', 'mandate_withdrawn', 'policy_changed', 'repo_mismatch'] as const)(
+      'a queued attempt whose group is not proven gone keeps its capacity on %s (§8.1)',
+      async (why) => {
+        const { store, payload } = await planned()
+        const attempt = store.attempts.get(payload.attempt_id)!
+        store.atomic(() => {
+          store.attempts.save({ ...attempt, reconcile_refused: 'unprovable' })
+          refuseLaunch(store, payload, why, NOW)
+        })
+        expect(store.attempts.get(payload.attempt_id)).toMatchObject({
+          state: 'queued',
+          reconcile_refused: 'unprovable',
+        })
+        const types = store.events.read(`attempt:${payload.attempt_id}`).map((event) => event.type)
+        expect(types).not.toContain('attempt.failed')
+      },
+    )
+
     it('a stale row for an attempt queued again leaves that attempt alone', async () => {
       const { store, id, payload } = await planned()
       store.atomic(() => refuseLaunch(store, payload, 'attempt_not_queued', NOW))

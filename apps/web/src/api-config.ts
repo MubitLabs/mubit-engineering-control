@@ -19,6 +19,7 @@ import {
   decodePromptsConfig,
   decodeReadiness,
   decodeRepositories,
+  decodeSetupAnswer,
 } from './config-decode'
 import type {
   Capabilities,
@@ -31,6 +32,7 @@ import type {
   PromptsConfig,
   Readiness,
   RepositoryView,
+  SetupAnswer,
   SlotImpact,
 } from './next/config-model'
 
@@ -194,6 +196,11 @@ export const configApi = {
         ...patch,
       }),
     )
+  },
+
+  /** Setup mode (§6): the setup agent answers, and no repository is named. */
+  async setupMessage(text: string): Promise<SetupAnswer> {
+    return decodeSetupAnswer(await send<unknown>('/api/chat/messages', 'POST', { text, setup: true }))
   },
 
   async drafts(): Promise<DraftView[]> {

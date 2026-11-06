@@ -58,6 +58,11 @@ export interface ConnectionRow {
   pin: null
   pair: null
 }
+/** One answer in the setup chat. `drafts` proposals wait in Settings. */
+export interface SetupAnswer {
+  reply: string
+  drafts: number
+}
 export type ConnectionPath = 'link' | 'sign_in' | 'api_key'
 export interface ConnectionOption {
   engine: string

@@ -461,6 +461,9 @@ function SetupSurface({
         onNavigate(route)
       }}
       onRecheck={refresh}
+      onAsk={(text) =>
+        configApi.setupMessage(text).catch((error: unknown) => ({ failure: failureText(error) }))
+      }
     />
   )
 }

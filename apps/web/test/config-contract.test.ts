@@ -71,6 +71,14 @@ describe('the configuration client against the real routes', () => {
     expect(readiness.completion).toBeNull()
   })
 
+  it('reaches the setup agent with no repository, and a key-shaped paste stays out of its reply', async () => {
+    const answer = await configApi.setupMessage('check my slots')
+    expect(answer.reply).toContain('Setup mode ready')
+    expect(answer.drafts).toBe(0)
+    const guarded = await configApi.setupMessage(`sk-ant-${'x'.repeat(40)}`)
+    expect(guarded.reply).toContain('redacted before storage')
+  })
+
   it('walks a repository and a dedicated connection end to end', async () => {
     const path = join(root, 'repo')
     mkdirSync(path)

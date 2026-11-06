@@ -184,6 +184,34 @@ test('a refused proposal shows the reason the server gave', async ({ page }) => 
   await expect(page.getByRole('alert')).toContainText("invalid_policy: class 'pr_merge' is always-confirm")
 })
 
+test('Setup talks to the setup agent, keeps a failed message and points at a proposal', async ({ page }) => {
+  await open(page, 'setup')
+  const chat = page.getByRole('region', { name: 'Setup chat' })
+  const box = chat.getByLabel('Ask about setup')
+  const sent = chat.getByRole('button', { name: 'Send' })
+
+  await expect(sent).toBeDisabled()
+  await box.fill('check my slots')
+  await sent.click()
+  await expect(chat.getByRole('status')).toContainText('Sample setup reply to: check my slots')
+  await expect(box).toHaveValue('')
+  await expect(chat.getByRole('button', { name: 'Open Settings' })).toHaveCount(0)
+
+  await box.fill('propose a change')
+  await sent.click()
+  await chat.getByRole('button', { name: 'Open Settings' }).click()
+  await expect(page.getByText('Sample proposal from setup chat')).toBeVisible()
+})
+
+test('a setup message the server refuses stays in the box', async ({ page }) => {
+  await open(page, 'setup', 'fail=/api/chat/messages')
+  const chat = page.getByRole('region', { name: 'Setup chat' })
+  await chat.getByLabel('Ask about setup').fill('check my slots')
+  await chat.getByRole('button', { name: 'Send' }).click()
+  await expect(chat.getByRole('alert')).toBeVisible()
+  await expect(chat.getByLabel('Ask about setup')).toHaveValue('check my slots')
+})
+
 test('a proposal changes nothing until Apply', async ({ page }) => {
   await open(page, 'settings')
   await expect(page.getByText('Sample proposal from setup chat')).toBeVisible()

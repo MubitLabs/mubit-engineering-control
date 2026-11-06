@@ -27,7 +27,7 @@ async function runAxe(page: Page, surface: string): Promise<AxeOutcome> {
 /** Fails on any violation, listing each rule with its first target. */
 async function expectNoViolations(page: Page, surface: string): Promise<void> {
   const { violations } = await runAxe(page, surface)
-  const lines = violations.map((v) => `${v.id} (${v.impact}): ${v.nodes[0]?.target.join(' ')}`)
+  const lines = violations.flatMap((v) => v.nodes.map((n) => `${v.id} (${v.impact}): ${n.target.join(' ')}`))
   expect(lines, 'axe violations').toEqual([])
 }
 
@@ -50,6 +50,11 @@ test('an absent surface fails rather than passes', async ({ page }) => {
 test('an empty page fails rather than passes', async ({ page }) => {
   await page.goto('about:blank')
   await expect(runAxe(page, '.shell')).rejects.toThrow(/not on the page/)
+})
+
+test('the conversation shell has no violations', async ({ page }) => {
+  await page.goto('/test/fixtures/next-harness.html?state=working#chat')
+  await expectNoViolations(page, '.shell')
 })
 
 test('the lighthouse script exits non-zero on the broken page', async ({ baseURL }) => {

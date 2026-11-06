@@ -165,10 +165,11 @@ export function Sidebar(props: SidebarProps) {
           className="repo-switch"
           aria-haspopup="dialog"
           aria-expanded={choosing}
-          aria-label={repository ? `Repository: ${repository.name}. Switch repository` : repoLabel.name}
           onClick={() => setChoosing(true)}
         >
+          {repository && <span className="sr-only">Repository: </span>}
           <RepositoryLabel name={repoLabel.name} detail={repoLabel.detail} />
+          {repository && <span className="sr-only">. Switch repository</span>}
           <UpDownIcon />
         </button>
       ) : (

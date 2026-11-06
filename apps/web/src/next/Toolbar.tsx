@@ -52,13 +52,8 @@ export function Toolbar({
             <CommandIcon />
           </IconButton>
         ) : (
-          <Button
-            ref={paletteRef}
-            variant="quiet"
-            aria-label="Open commands"
-            aria-haspopup="dialog"
-            onClick={onOpenPalette}
-          >
+          <Button ref={paletteRef} variant="quiet" aria-haspopup="dialog" onClick={onOpenPalette}>
+            <span className="sr-only">Open commands </span>
             <kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ K' : 'Ctrl K'}</kbd>
           </Button>
         )}

@@ -40,8 +40,8 @@ pnpm test:b         # engine/runtime-side suite
 pnpm -s exec vitest run <file>   # one file while iterating
 python3 tools/mutants/run.py tools/mutants/<pr>.json   # a PR's mutants; commit first, it refuses dirty files
 python3 tools/mutants/run.py --self-check tools/mutants/<pr>.json   # proves the runner's own verdicts
-pnpm test:screens                 # screenshots + axe (apps/web); not in CI or check; hold /tmp/mec-screens.lock
-pnpm --dir apps/web test:lighthouse <baseUrl> <#route>...   # Lighthouse accessibility, 95 per route; see docs/agent-workflow/commands.md
+pnpm test:screens                 # screenshots, axe, measured limits, keyboard journeys (apps/web); not in CI or check; hold /tmp/mec-screens.lock
+pnpm --dir apps/web test:lighthouse [--theme light|dark] <baseUrl> <#route>...   # Lighthouse accessibility, 95 per route; see docs/agent-workflow/commands.md
 ```
 
 **Commit hygiene:** subject ≤ 72 characters, the narrative in the body — long-form detail

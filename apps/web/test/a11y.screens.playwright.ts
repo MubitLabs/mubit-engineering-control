@@ -69,6 +69,17 @@ test('the lighthouse script exits non-zero on the broken page', async ({ baseURL
   expect(result.status).not.toBe(0)
 })
 
+test('the lighthouse script refuses a theme the page did not take', async ({ baseURL }) => {
+  test.setTimeout(120_000)
+  const script = fileURLToPath(new URL('../scripts/lighthouse.mjs', import.meta.url))
+  const result = spawnSync(process.execPath, [script, '--theme', 'dark', `${baseURL}${BROKEN}`, '#broken'], {
+    encoding: 'utf8',
+    env: { ...process.env, TMPDIR: tmpdir() },
+  })
+  expect(result.stderr).toContain('did not take')
+  expect(result.status).not.toBe(0)
+})
+
 // ── The matrix of matrix-cells.ts: surfaces, states and sheets, three widths, two themes ──────
 
 for (const viewport of VIEWPORTS) {

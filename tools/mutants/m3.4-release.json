@@ -61,5 +61,12 @@
     "find": "return { shell: readStored(storage), search }",
     "replace": "return { shell: asked === null ? readStored(storage) : 'next', search }",
     "tests": ["apps/web/test/ui-flag.test.ts"]
+  },
+  {
+    "name": "an unknown lighthouse theme is scored anyway",
+    "file": "apps/web/scripts/lighthouse.mjs",
+    "find": "if (!THEMES.includes(theme)) throw",
+    "replace": "if (theme === undefined) throw",
+    "tests": ["apps/web/test/a11y-gate.test.ts"]
   }
 ]

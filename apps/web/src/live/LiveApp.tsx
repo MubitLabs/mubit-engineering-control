@@ -644,7 +644,7 @@ export function LiveApp() {
           current: row.id === address.workId,
         }))}
         onOpenRecent={openWork}
-        footnote="Conversation, Work and Needs you are live"
+        footnote="Local workspace"
         taskInspector={taskView}
         approvalInspector={approvalInspector}
         initialInspectorOpen={address.taskId !== null}

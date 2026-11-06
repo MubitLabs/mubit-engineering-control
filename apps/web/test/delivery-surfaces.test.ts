@@ -100,6 +100,16 @@ describe('merge is offered on a ready pull request, through its card (§14)', ()
     expect(merge(detail({}, { hold: { since: READ_AT, reason: null } }))).toBeUndefined()
   })
 
+  it('the detail offers both of the slot beside Hold: a retry from the store, and merge', () => {
+    const work = detail({}, { retry: { kind: 'push', reason: 'The push failed' } })
+    expect(deliveryDetail(work, ALL).actions.map((action) => action.kind)).toEqual([
+      'retry',
+      'merge',
+      'hold',
+      'stop',
+    ])
+  })
+
   it('leaves Hold and Stop where they were, with merge first', () => {
     const work = detail({})
     expect(workActions(work, ALL, work.hold, null, work.delivery).map((action) => action.kind)).toEqual([

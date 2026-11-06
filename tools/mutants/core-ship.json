@@ -1,0 +1,114 @@
+[
+  {
+    "name": "a: unassigned blocked work is counted again on the server",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    return this.openNeeds().filter((item) => item.kind !== 'work' || !item.readOnly)\n",
+    "replace": "    return this.openNeeds()\n",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "a: unassigned blocked work is counted again on the page",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  const counted = waiting.filter((item) => item.kind !== 'work' || !item.readOnly).length\n",
+    "replace": "  const counted = waiting.length\n",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "an answered question reads as Done, not Answered",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    if (str(doc.state) === 'done') return 'answered'\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "a turn still on its way reads as ended",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    if (str(doc.state) !== 'planning' || !turnEnded) return null\n",
+    "replace": "    if (str(doc.state) !== 'planning') return null\n",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "delivery work reads as answered",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    if (tasks > 0 || waitingOnPerson || isHeld(doc)) return null\n",
+    "replace": "    if (waitingOnPerson || isHeld(doc)) return null\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "held work reads as ended, so its hold cannot be lifted",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    if (tasks > 0 || waitingOnPerson || isHeld(doc)) return null\n",
+    "replace": "    if (tasks > 0 || waitingOnPerson) return null\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the answer on done work is lost",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      const summary = str(obj(reports.at(-1)?.body ?? undefined)?.summary)\n      return summary === null ? null : cutText(summary, ANSWER_CAP)\n",
+    "replace": "      return null\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the live line reads a blocked row as a card",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    const needs = this.openDecisions()\n    const docs = this.#collect('work_item', {}).map((row) => row.doc)\n",
+    "replace": "    const needs = this.openNeeds()\n    const docs = this.#collect('work_item', {}).map((row) => row.doc)\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "a 500-character title reaches the live line",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    const titled = (row: WorkRow | undefined): string => cutText(row?.title ?? 'this request', LABEL_CAP)\n",
+    "replace": "    const titled = (row: WorkRow | undefined): string => row?.title ?? 'this request'\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the chat route carries a second copy of the answer",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    const messages = rowsInScope(store.messages, store, request).filter((doc) => doc.quiet !== true)\n    return messages.sort(\n",
+    "replace": "    const messages = rowsInScope(store.messages, store, request).filter((doc) => doc.quiet !== true).map((doc) => ({ ...doc, replyText: doc.ackText }))\n    return messages.sort(\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "a retry block is no delivery failure",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "|repo_profile_changed|checks failed on |could not run )/",
+    "replace": "|repo_profile_changed)/",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "the retry slot and merge do not meet in the detail",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "    actions: workActions(detail, filter ?? { kind: 'all' }, detail.hold, detail.retry, detail.delivery),\n",
+    "replace": "    actions: workActions(detail, filter ?? { kind: 'all' }, detail.hold, detail.retry),\n",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "merge drops the retry offer",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "    actions: workActions(detail, filter ?? { kind: 'all' }, detail.hold, detail.retry, detail.delivery),\n",
+    "replace": "    actions: workActions(detail, filter ?? { kind: 'all' }, detail.hold, null, detail.delivery),\n",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "c: a repair runs on held work",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    if (isHeld(work)) {\n      const held = { reason: 'held', releases: 'the owner lifts the hold' }\n",
+    "replace": "    if (false as boolean) {\n      const held = { reason: 'held', releases: 'the owner lifts the hold' }\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "c: a repair runs on stopped work",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    if (isTerminal(listed) || mandateOf(listed).status === 'withdrawn') continue\n    if (store.tasks.list({ workItemId }).length === 0) continue\n",
+    "replace": "    if (store.tasks.list({ workItemId }).length === 0) continue\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "a merged delivery reads as an answer",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "        delivery === 'merged' ? null : this.#turnOutcome(doc, total, mine.length > 0, turnEnded)\n",
+    "replace": "        this.#turnOutcome(doc, total, mine.length > 0, turnEnded)\n",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  }
+]

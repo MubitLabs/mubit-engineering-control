@@ -254,6 +254,16 @@ describe('a turn that ended with no plan is not work in progress', () => {
     expect(row.answer).toBeNull()
   })
 
+  it('held work stays held, so its hold can be lifted, whatever its turn said', async () => {
+    seedQuestion('wi_held', 'It exports wave(name).')
+    store.atomic(() =>
+      store.workItems.save({ ...store.workItems.get('wi_held')!, hold: { at: AT, reason: 'wait' } }),
+    )
+    const row = await get('/api/inspect/work/wi_held')
+    expect(row.turnOutcome).toBeNull()
+    expect(row.stage.key).toBe('held')
+  })
+
   it('a planning item with a question open stays waiting for the person', async () => {
     seedQuestion('wi_ask')
     openQuestion('wi_ask')

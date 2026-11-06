@@ -65,8 +65,8 @@
   {
     "name": "count skipped as done",
     "file": "apps/desktop/src/readiness.ts",
-    "find": "    facts[id] ? 'done' : skipped.includes(id) ? 'skipped' : 'missing'",
-    "replace": "    facts[id] || skipped.includes(id) ? 'done' : 'missing'",
+    "find": "    return skipped.includes(id) ? 'skipped' : 'missing'\n",
+    "replace": "    return skipped.includes(id) ? 'done' : 'missing'\n",
     "tests": ["apps/desktop/test/readiness.test.ts"]
   },
   {

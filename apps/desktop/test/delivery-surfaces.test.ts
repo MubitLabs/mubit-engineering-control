@@ -319,6 +319,14 @@ describe('delivery says what happened (§14)', () => {
     expect(detail.delivery.failure).toBe('bootstrap_failed: pnpm install: no lockfile')
   })
 
+  it.each(['checks failed on abc1234: unit', 'could not run pnpm test'])(
+    'every reason a retry answers is a delivery failure too: %s',
+    async (blockedReason) => {
+      seedWork('wi_int', { state: 'blocked', blockedReason })
+      expect((await get('/api/inspect/work/wi_int')).delivery.failure).toBe(blockedReason)
+    },
+  )
+
   it('an integration with no failure is a record: it is not "not recorded"', async () => {
     seedWork('wi_quiet')
     store.atomic(() => {

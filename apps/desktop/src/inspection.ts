@@ -26,7 +26,14 @@ import { isAbsolute, join, relative, sep } from 'node:path'
 import type { EngineEvent, Json, KeyFingerprint, Store, StoreDoc } from '@mec/contracts'
 import { plannerTurnEnded, type Stage, stageOf, workViewOf } from '@mec/domain'
 import { git } from '@mec/git'
-import { assertRepoAdmission, holdsGroup, integrationDocId, type MetaTurn, processingOf } from '@mec/meta'
+import {
+  assertRepoAdmission,
+  holdsGroup,
+  integrationDocId,
+  isHeld,
+  type MetaTurn,
+  processingOf,
+} from '@mec/meta'
 import { type AttemptOutcome, type CheckRecord, projectAttempt } from '@mec/scorecards'
 import { redact, type SecretSpan, secretSpans } from '@mec/slots'
 import {
@@ -594,7 +601,8 @@ const CI_READINGS: Readonly<Record<string, NonNullable<DeliveryView['ci']>>> = {
   ci_unreadable: 'unreadable',
 }
 /** What the integration step writes into a blocked item's reason (`Delivery.#work`, `#integrationDoc`). */
-const INTEGRATION_BLOCK = /^(integration: |bootstrap_failed|repo_profile_changed|checks failed on |could not run )/
+const INTEGRATION_BLOCK =
+  /^(integration: |bootstrap_failed|repo_profile_changed|checks failed on |could not run )/
 /** A commit id, the only thing a stored ref may be before it reaches `git`. */
 const SHA = /^[0-9a-f]{7,64}$/
 const FAILURE_CAP = 500
@@ -1104,7 +1112,7 @@ class Inspector {
     waitingOnPerson: boolean,
     turnEnded: boolean,
   ): WorkRow['turnOutcome'] {
-    if (tasks > 0 || waitingOnPerson) return null
+    if (tasks > 0 || waitingOnPerson || isHeld(doc)) return null
     // The service ends a turn that answered, so only a request that had no delivery ends with no task.
     if (str(doc.state) === 'done') return 'answered'
     if (str(doc.state) !== 'planning' || !turnEnded) return null
@@ -1139,7 +1147,8 @@ class Inspector {
       const byStatus = counts[id] ?? {}
       const total = Object.values(byStatus).reduce((sum, n) => sum + n, 0)
       const turnEnded = plannerTurnEnded(messages.get(id) ?? [], questions.get(id) ?? [])
-      const turnOutcome = this.#turnOutcome(doc, total, mine.length > 0, turnEnded)
+      const turnOutcome =
+        delivery === 'merged' ? null : this.#turnOutcome(doc, total, mine.length > 0, turnEnded)
       const stage =
         turnOutcome !== null
           ? TURN_STAGES[turnOutcome]

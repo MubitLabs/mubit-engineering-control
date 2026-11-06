@@ -200,6 +200,32 @@ describe('a report on a red head (§10)', () => {
     pass()
     expect(attemptsOf(store, 'task_a')).toHaveLength(3)
   })
+
+  it('a repair earned on held work starts nothing until the lift', () => {
+    const { store, pass } = rig()
+    repairRanRed(store)
+    saveReport(store, 1, { kind: 'progress', summary: 'tried' })
+    store.atomic(() => holdWorkItem(store, 'wi_1', { reason: 'wait', at: AT }))
+
+    expect(pass()).toEqual([])
+    expect(attemptsOf(store, 'task_a')).toHaveLength(2)
+    store.atomic(() => {
+      const doc = store.workItems.get('wi_1') as StoreDoc
+      store.workItems.save({ ...doc, hold: { ...(doc.hold as object), liftedAt: AT } })
+    })
+    pass()
+    expect(attemptsOf(store, 'task_a')).toHaveLength(3)
+  })
+
+  it('a red head on stopped work earns no repair', () => {
+    const { store, pass } = rig()
+    repairRanRed(store)
+    saveReport(store, 1, { kind: 'progress', summary: 'tried' })
+    store.atomic(() => stopWorkItem(store, 'wi_1', { reason: 'stop', at: AT }))
+
+    expect(pass()).toEqual([])
+    expect(attemptsOf(store, 'task_a')).toHaveLength(2)
+  })
 })
 
 describe('used-up repairs wake the planner once (§6)', () => {

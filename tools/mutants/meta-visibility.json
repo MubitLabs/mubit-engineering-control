@@ -30,8 +30,8 @@
   {
     "name": "an open question stops holding the item open",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "if (str(doc.state) !== 'planning' || tasks > 0 || waitingOnPerson) return null",
-    "replace": "if (str(doc.state) !== 'planning' || tasks > 0) return null",
+    "find": "    if (tasks > 0 || waitingOnPerson || isHeld(doc)) return null\n",
+    "replace": "    if (tasks > 0 || isHeld(doc)) return null\n",
     "tests": ["apps/desktop/test/meta-visibility.test.ts"]
   },
   {
@@ -51,8 +51,8 @@
   {
     "name": "a reply leaves unredacted",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "return summary === null ? null : cutText(summary, ANSWER_CAP)",
-    "replace": "return summary",
+    "find": "\n  return summary === null ? null : cutText(summary, ANSWER_CAP)",
+    "replace": "\n  return summary",
     "tests": ["apps/desktop/test/meta-visibility.test.ts"]
   },
   {
@@ -105,17 +105,17 @@
     "tests": ["apps/web/test/meta-visibility.test.ts"]
   },
   {
-    "name": "the answer is left out of the thread",
+    "name": "the answer is said twice",
     "file": "apps/web/src/next/work-model.ts",
-    "find": "    return [...ack, ...reply, ...lost]",
-    "replace": "    return [...ack, ...lost]",
+    "find": "    return [...ack, ...lost]",
+    "replace": "    return [...ack, ...ack, ...lost]",
     "tests": ["apps/web/test/meta-visibility.test.ts"]
   },
   {
     "name": "a lost answer goes unsaid",
     "file": "apps/web/src/next/work-model.ts",
-    "find": "      replyText === undefined && ackText !== undefined && owner?.turnOutcome === 'no-answer'",
-    "replace": "      replyText === undefined && ackText !== undefined && owner?.turnOutcome === 'answered'",
+    "find": "      ackText !== undefined && owner?.turnOutcome === 'no-answer'",
+    "replace": "      ackText !== undefined && owner?.turnOutcome === 'answered'",
     "tests": ["apps/web/test/meta-visibility.test.ts"]
   },
   {

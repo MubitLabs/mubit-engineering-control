@@ -126,9 +126,7 @@ export function ConversationView(props: ConversationViewProps) {
                   openInspector()
                 },
               },
-              ...(planWorkId
-                ? [{ label: 'Open in Work', onClick: () => onOpenWork(planWorkId) }]
-                : []),
+              ...(planWorkId ? [{ label: 'Open in Work', onClick: () => onOpenWork(planWorkId) }] : []),
             ]}
           />
         </>

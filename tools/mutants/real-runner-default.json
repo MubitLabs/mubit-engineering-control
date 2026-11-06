@@ -2,22 +2,22 @@
   {
     "name": "the default is off again",
     "file": "apps/desktop/src/attempt-launch.ts",
-    "find": "env.MEC_REAL_RUNNER !== '0' && env.MEC_FAKE_ENGINE !== '1'",
-    "replace": "env.MEC_REAL_RUNNER === '1' && env.MEC_FAKE_ENGINE !== '1'",
+    "find": "  !['0', 'false'].includes(env.MEC_REAL_RUNNER?.toLowerCase() ?? '') && env.MEC_FAKE_ENGINE !== '1'",
+    "replace": "  env.MEC_REAL_RUNNER === '1' && env.MEC_FAKE_ENGINE !== '1'",
     "tests": ["apps/desktop/test/real-runner.test.ts"]
   },
   {
     "name": "zero no longer turns it off",
     "file": "apps/desktop/src/attempt-launch.ts",
-    "find": "env.MEC_REAL_RUNNER !== '0' && env.MEC_FAKE_ENGINE !== '1'",
-    "replace": "env.MEC_FAKE_ENGINE !== '1'",
+    "find": "  !['0', 'false'].includes(env.MEC_REAL_RUNNER?.toLowerCase() ?? '') && env.MEC_FAKE_ENGINE !== '1'",
+    "replace": "  env.MEC_FAKE_ENGINE !== '1'",
     "tests": ["apps/desktop/test/real-runner.test.ts"]
   },
   {
     "name": "the fake flag no longer wins",
     "file": "apps/desktop/src/attempt-launch.ts",
-    "find": "env.MEC_REAL_RUNNER !== '0' && env.MEC_FAKE_ENGINE !== '1'",
-    "replace": "env.MEC_REAL_RUNNER !== '0'",
+    "find": "  !['0', 'false'].includes(env.MEC_REAL_RUNNER?.toLowerCase() ?? '') && env.MEC_FAKE_ENGINE !== '1'",
+    "replace": "  !['0', 'false'].includes(env.MEC_REAL_RUNNER?.toLowerCase() ?? '')",
     "tests": ["apps/desktop/test/real-runner.test.ts"]
   },
   {
@@ -51,8 +51,8 @@
   {
     "name": "the page is told before the stage moves",
     "file": "apps/desktop/src/delivery.ts",
-    "find": "      this.#patch(id, { stage: 'ready', limit: verdict === 'green' ? undefined : verdict })\n      // After the patch: this frame makes the page read the stage back.\n      if (doc.stage !== 'ready') workEvent(this.release, id, 'pr_ready', { prNumber, verdict })\n",
-    "replace": "      if (doc.stage !== 'ready') workEvent(this.release, id, 'pr_ready', { prNumber, verdict })\n      this.#patch(id, { stage: 'ready', limit: verdict === 'green' ? undefined : verdict })\n",
+    "find": "      this.#patch(id, { stage: 'ready', limit: verdict === 'green' ? undefined : verdict, ...seen })\n      // After the patch: this frame makes the page read the stage back.\n      if (doc.stage !== 'ready') workEvent(this.release, id, 'pr_ready', { prNumber, verdict })\n",
+    "replace": "      if (doc.stage !== 'ready') workEvent(this.release, id, 'pr_ready', { prNumber, verdict })\n      this.#patch(id, { stage: 'ready', limit: verdict === 'green' ? undefined : verdict, ...seen })\n",
     "tests": ["apps/desktop/test/delivery.test.ts"]
   },
   {

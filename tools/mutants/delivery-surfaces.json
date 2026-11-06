@@ -23,8 +23,8 @@
   {
     "name": "work row: the turn fact is not read",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "          turnEnded: plannerTurnEnded(messages.get(id) ?? [], questions.get(id) ?? []),\n",
-    "replace": "",
+    "find": "this.#turnOutcome(doc, total, mine.length > 0, turnEnded)",
+    "replace": "this.#turnOutcome(doc, total, mine.length > 0, false)",
     "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
   },
   {
@@ -65,8 +65,8 @@
   {
     "name": "merge card: not stored against its work",
     "file": "apps/desktop/src/release.ts",
-    "find": "      ...(input.workItemId !== undefined && { workItemId: input.workItemId }),\n",
-    "replace": "",
+    "find": "      ...(input.workItemId !== undefined && { workItemId: input.workItemId }),\n    })\n    appendEvent(\n      deps.store,\n      `release:${input.repo}:pr-${input.prNumber}`,",
+    "replace": "    })\n    appendEvent(\n      deps.store,\n      `release:${input.repo}:pr-${input.prNumber}`,",
     "tests": ["apps/desktop/test/release-cards.test.ts"]
   },
   {
@@ -96,27 +96,6 @@
     "find": "        card.cls === 'pr_merge' && card.operationHash === operationHash && String(card.expiresAt) > at,",
     "replace": "        card.cls === 'pr_merge' && card.operationHash === operationHash,",
     "tests": ["apps/desktop/test/release-cards.test.ts"]
-  },
-  {
-    "name": "chat: a wake is narrated",
-    "file": "packages/meta/src/service.ts",
-    "find": "      const replyText = input.wake === true ? undefined : answerOf(scoped)",
-    "replace": "      const replyText = answerOf(scoped)",
-    "tests": ["packages/meta/test/service.test.ts"]
-  },
-  {
-    "name": "chat: the answer is not redacted",
-    "file": "packages/meta/src/service.ts",
-    "find": "  return redact(summary, [], [])\n}\n\n/** Reads this turn's persisted launch records back off a message doc. */",
-    "replace": "  return summary\n}\n\n/** Reads this turn's persisted launch records back off a message doc. */",
-    "tests": ["packages/meta/test/service.test.ts"]
-  },
-  {
-    "name": "chat: a question's report is shown as an answer",
-    "file": "packages/meta/src/service.ts",
-    "find": "  if ((decision.questions?.length ?? 0) > 0 || (decision.confirmations?.length ?? 0) > 0) return undefined\n",
-    "replace": "",
-    "tests": ["packages/meta/test/service.test.ts"]
   },
   {
     "name": "chat: the paused acknowledgement is not stored",
@@ -226,8 +205,8 @@
   {
     "name": "web: the held acknowledgement outlives the pause",
     "file": "apps/web/src/next/work-model.ts",
-    "find": "    const said = line.ackText ?? (input.paused === true ? line.pausedAck : undefined)",
-    "replace": "    const said = line.ackText ?? line.pausedAck",
+    "find": "    const text = ackText ?? (input.paused === true ? line.pausedAck : undefined)",
+    "replace": "    const text = ackText ?? line.pausedAck",
     "tests": ["apps/web/test/delivery-surfaces.test.ts"]
   },
   {

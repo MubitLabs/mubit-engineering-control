@@ -238,7 +238,7 @@ export async function startServer(opts: {
     launcher = new AttemptLauncher({
       store,
       dataDir: opts.dataDir,
-      policyText: opts.policyText ?? DEFAULT_POLICY_TEXT,
+      policyText,
       facts,
       tools: {
         url: toolsUrl,

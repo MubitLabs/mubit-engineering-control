@@ -463,6 +463,17 @@ describe('the launch path', { timeout: 60_000 }, () => {
     expect(existsSync(join(dataDir, 'journal', 'att_1', 'events.jsonl'))).toBe(true)
   })
 
+  // Composition reads a saved policy first (M3.3), so the launcher has to hold that text too.
+  it('a launch reads the saved policy, not the text it replaced at boot', async () => {
+    const { dataDir, repo } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedStore(dataDir, repo, { checks: [{ name: 'made', cmd: 'test -f made.txt' }] })
+    peek(dataDir, (store) => store.engines.save({ id: 'settings/policy', text: POLICY, revision: 1 }))
+    const server = await startServer({ dataDir, policyText: 'not a policy', closeBoundMs: 4000 })
+    closers.push(server.close)
+    await reaches(dataDir, 'succeeded')
+  })
+
   it('token is absent from effects, docs and events', async () => {
     const { dataDir, repo, bin } = scratch({
       steps: [

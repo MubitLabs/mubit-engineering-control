@@ -75,7 +75,21 @@ describe('runCheck', () => {
     expect(outcome.status).toBe('error')
     expect(outcome.exitCode).toBeNull()
     expect(outcome.durationMs).toBeLessThan(10_000)
-    expect(() => process.kill(child, 0)).toThrow()
+    // SIGKILL is sent to the group before the check resolves, but delivery and reaping of the
+    // grandchild can lag the leader's close, so allow a short bound — far below the 30 s sleep.
+    const gone = (): boolean => {
+      try {
+        process.kill(child, 0)
+        return false
+      } catch {
+        return true
+      }
+    }
+    const deadline = Date.now() + 2_000
+    while (!gone() && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    expect(gone()).toBe(true)
   })
 
   it('a check cancelled before it starts never runs on', async () => {

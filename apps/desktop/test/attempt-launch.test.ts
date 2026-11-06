@@ -158,10 +158,11 @@ function peek<T>(dataDir: string, read: (store: SqliteStore, db: Database.Databa
   }
 }
 
-async function until(test: () => boolean, ms = 45_000): Promise<void> {
+async function until(test: () => boolean, ms = 45_000, seen?: () => string): Promise<void> {
   const deadline = Date.now() + ms
   while (!test()) {
-    if (Date.now() > deadline) throw new Error('condition never held')
+    if (Date.now() > deadline)
+      throw new Error(`condition never held${seen === undefined ? '' : ` (last seen: ${seen()})`}`)
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
 }
@@ -922,7 +923,20 @@ describe('what a launch refuses, before any spend', { timeout: 60_000 }, () => {
       steps: [{ init: true }, { result: 'completed' }],
     })
     await launcher.launch(payload)
-    await until(() => store.attempts.get('att_1')?.state === 'work_complete')
+    // `work_complete` moves on to `succeeded` once checks pass, so a poll can miss it: accept both, and
+    // fail at once with the reason when the attempt settled any other way (not 45 s later, blind).
+    await until(
+      () => {
+        const now = String(store.attempts.get('att_1')?.state)
+        if (now === 'work_complete' || now === 'succeeded') return true
+        if (SETTLED.includes(now)) {
+          throw new Error(`attempt settled ${now}: ${String(store.attempts.get('att_1')?.terminal_reason)}`)
+        }
+        return false
+      },
+      undefined,
+      () => String(store.attempts.get('att_1')?.state),
+    )
     expect(tools.currentGeneration('att_1')).toBe(1)
 
     const before = issueToken({ attemptId: 'att_1', generation: 1, role: 'specialist', secret })

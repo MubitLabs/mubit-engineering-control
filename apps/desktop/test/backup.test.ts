@@ -116,7 +116,7 @@ describe('backup', () => {
   })
 
   // §12: a running attempt's bearer token sits in its worktree, and Settings backs up a live server.
-  it('leaves out a running attempt\'s .mec files and keeps its work', () => {
+  it("leaves out a running attempt's .mec files and keeps its work", () => {
     const { stateDir, dbPath } = makeStateDir()
     const worktree = join(stateDir, 'work/att_1')
     mkdirSync(join(worktree, '.mec'), { recursive: true })

@@ -53,7 +53,9 @@ function redactDbCopy(path: string): void {
         for (const { name } of columns) {
           const column = quoted(name)
           const rows = copy
-            .prepare(`SELECT rowid AS id, ${column} AS value FROM ${quoted(table)} WHERE typeof(${column}) = 'text'`)
+            .prepare(
+              `SELECT rowid AS id, ${column} AS value FROM ${quoted(table)} WHERE typeof(${column}) = 'text'`,
+            )
             .all() as { id: number; value: string }[]
           const save = copy.prepare(`UPDATE ${quoted(table)} SET ${column} = ? WHERE rowid = ?`)
           for (const { id, value } of rows) {

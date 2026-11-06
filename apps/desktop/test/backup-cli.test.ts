@@ -412,14 +412,16 @@ describe('mec restore', () => {
     expect(out(lines)).toContain('drill failed')
   })
 
-  it.each([[['restore']], [['restore', '--target', 'x']], [['restore', 'a', 'b']], [['restore', 'a', '--wat']]])(
-    'prints usage for %j',
-    async (argv) => {
-      const { io, lines } = cliIo(fresh())
-      expect(await runCli(argv, io)).toBe(1)
-      expect(out(lines)).toContain('usage: mec restore')
-    },
-  )
+  it.each([
+    [['restore']],
+    [['restore', '--target', 'x']],
+    [['restore', 'a', 'b']],
+    [['restore', 'a', '--wat']],
+  ])('prints usage for %j', async (argv) => {
+    const { io, lines } = cliIo(fresh())
+    expect(await runCli(argv, io)).toBe(1)
+    expect(out(lines)).toContain('usage: mec restore')
+  })
 
   it('a missing archive is a plain failure, not a stack', async () => {
     const { io, lines } = cliIo(fresh())

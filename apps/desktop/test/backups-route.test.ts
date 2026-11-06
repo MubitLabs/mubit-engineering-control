@@ -30,7 +30,12 @@ describe('the backups route on a composed server', () => {
   it('no token reaches the archive from the database or a transcript', async () => {
     vi.stubEnv('MEC_FAKE_ENGINE', '1')
     const dataDir = fresh()
-    const token = issueToken({ attemptId: 'att_route', generation: 1, role: 'specialist', secret: 'synthetic' })
+    const token = issueToken({
+      attemptId: 'att_route',
+      generation: 1,
+      role: 'specialist',
+      secret: 'synthetic',
+    })
     const transcript = join(dataDir, 'engines', 'claude', 'max-1', 'session.jsonl')
     mkdirSync(dirname(transcript), { recursive: true })
     writeFileSync(transcript, `{"env":"MEC_TOOLS_TOKEN=${token}"}\n`)

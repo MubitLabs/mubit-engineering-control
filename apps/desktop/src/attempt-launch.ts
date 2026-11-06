@@ -271,7 +271,7 @@ export class AttemptLauncher {
     const binary = resolveBinary(engine, process.env.PATH)
     if (binary === undefined) throw refuse(`engine_missing: ${engine} is not on PATH`)
     const home = process.env.HOME ?? '/tmp'
-    const probeEnv = { PATH: process.env.PATH ?? '', HOME: home, ...slotEnv(slot) }
+    const probeEnv = { PATH: process.env.PATH ?? '', HOME: home, ...slotEnv(slot, row) }
     await this.#probe(row, slot, binary, probeEnv)
     // A repair or a review is its own role on the task's own record (§15).
     const roleName = String(attempt.role ?? task.role)
@@ -402,7 +402,7 @@ export class AttemptLauncher {
       inherited: process.env as Record<string, string | undefined>,
       home,
       shimPath: binDir,
-      slot: { ...row.hygiene(attemptId), ...slotEnv(slot) },
+      slot: { ...row.hygiene(attemptId), ...slotEnv(slot, row) },
       attempt: {
         MEC_ATTEMPT_ID: attemptId,
         MEC_WORKTREE: worktree,
@@ -678,18 +678,18 @@ function briefOf(continuation: Continuation): string {
 }
 
 /**
- * The slot layer: what the slot stores, with the home variable by the probe's rule. A linked slot
- * runs as `claude` does. A slot saved before its env was recorded has only its home, and that is enough.
+ * The slot layer: what the slot stores, with the home variables by the probe's rule. A linked slot
+ * runs as the engine's own command does. A slot saved before its env was recorded has only its
+ * home, and that is enough.
  */
-function slotEnv(slot: StoreDoc): Record<string, string> {
+function slotEnv(slot: StoreDoc, row: EngineRow): Record<string, string> {
   const env = slot.env
   const stored = typeof env !== 'object' || env === null || Array.isArray(env) ? {} : env
+  const homeEnv = row.homeEnv(String(slot.home))
   const kept = Object.fromEntries(
-    Object.entries(stored).filter(
-      ([name, value]) => name !== 'CLAUDE_CONFIG_DIR' && typeof value === 'string',
-    ),
+    Object.entries(stored).filter(([name, value]) => !(name in homeEnv) && typeof value === 'string'),
   ) as Record<string, string>
-  return slot.linkedDefault === true ? kept : { ...kept, CLAUDE_CONFIG_DIR: String(slot.home) }
+  return slot.linkedDefault === true ? kept : { ...kept, ...homeEnv }
 }
 
 /** `mec/<work-item8>/<task>/a<n>` (§14); n is this attempt's place among the task's attempts. */

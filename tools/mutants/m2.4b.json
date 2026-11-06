@@ -44,8 +44,8 @@
   {
     "name": "token file for codex",
     "file": "apps/desktop/src/engine-registry.ts",
-    "find": "  hygiene: () => ({}),\n  tokenFile: false,\n",
-    "replace": "  hygiene: () => ({}),\n  tokenFile: true,\n",
+    "find": "  hygiene: () => ({}),\n  homeEnv: (home) => engineHomeEnv('codex', home),\n  tokenFile: false,\n",
+    "replace": "  hygiene: () => ({}),\n  homeEnv: (home) => engineHomeEnv('codex', home),\n  tokenFile: true,\n",
     "tests": ["apps/desktop/test/engine-registry.test.ts"]
   },
   {

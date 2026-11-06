@@ -197,11 +197,14 @@ describe('the registry', () => {
   })
 
   it('the planner sees exactly what a launch would accept', () => {
-    expect(isLaunchableSlot({ id: 's', engine: 'codex', kind: 'codex-sub' })).toBe(true)
-    expect(isLaunchableSlot({ id: 's', engine: 'opencode', kind: 'opencode-glm' })).toBe(true)
-    expect(isLaunchableSlot({ id: 's', engine: 'opencode', kind: 'opencode-gemini' })).toBe(false)
-    expect(isLaunchableSlot({ id: 's', engine: 'codex', kind: 'codex-api' })).toBe(false)
-    expect(isLaunchableSlot({ id: 's', engine: 'gemini', kind: 'codex-sub' })).toBe(false)
+    const home = '/slots/one'
+    expect(isLaunchableSlot({ id: 's', engine: 'codex', kind: 'codex-sub', home })).toBe(true)
+    expect(isLaunchableSlot({ id: 's', engine: 'opencode', kind: 'opencode-glm', home })).toBe(true)
+    expect(isLaunchableSlot({ id: 's', engine: 'opencode', kind: 'opencode-gemini', home })).toBe(false)
+    expect(isLaunchableSlot({ id: 's', engine: 'codex', kind: 'codex-api', home })).toBe(false)
+    expect(isLaunchableSlot({ id: 's', engine: 'gemini', kind: 'codex-sub', home })).toBe(false)
+    expect(isLaunchableSlot({ id: 's', engine: 'codex', kind: 'codex-sub' })).toBe(false)
+    expect(isLaunchableSlot({ id: 's', engine: 'codex', kind: 'codex-sub', linkedDefault: true })).toBe(true)
   })
 })
 
@@ -267,13 +270,53 @@ describe('Codex through the runner', { timeout: 180_000 }, () => {
     expect(existsSync(join(String(end.worktree), '.mec', 'mcp.json'))).toBe(false)
   })
 
-  it('the slot layer reaches the engine, and a linked slot sets no home', async () => {
+  it('the slot layer reaches the engine', async () => {
     const dedicated = scratch('codex', { steps: [{ complete: 'completed' }] })
     seed(dedicated.dataDir, dedicated.repo, {
-      slot: { ...CODEX_SLOT, env: { CODEX_HOME: '/slots/codex/one' } },
+      slot: { ...CODEX_SLOT, home: '/slots/codex/one', env: { CODEX_HOME: '/slots/codex/one' } },
     })
     await launched(dedicated.dataDir)
     expect(dedicated.seen().codex_home).toBe('/slots/codex/one')
+  })
+
+  // §5.3's probe rule, by the engine's own variable: only `linkedDefault` means "unset".
+  it('a slot saved with no env runs under its home, by the Codex variable', async () => {
+    const { dataDir, repo, seen } = scratch('codex', { steps: [{ complete: 'completed' }] })
+    seed(dataDir, repo, { slot: { ...CODEX_SLOT, home: '/slots/codex/old', env: undefined } })
+    await launched(dataDir)
+    expect(seen().codex_home).toBe('/slots/codex/old')
+    expect(seen().env_names).not.toContain('CLAUDE_CONFIG_DIR')
+  })
+
+  it('a slot of its own runs under its home, whatever its stored env says', async () => {
+    const { dataDir, repo, seen } = scratch('codex', { steps: [{ complete: 'completed' }] })
+    seed(dataDir, repo, {
+      slot: { ...CODEX_SLOT, home: '/slots/codex/own', env: { CODEX_HOME: '/home/someone/.codex' } },
+    })
+    await launched(dataDir)
+    expect(seen().codex_home).toBe('/slots/codex/own')
+  })
+
+  it('a linked slot keeps the variable unset, whatever its stored env says', async () => {
+    const { dataDir, repo, seen } = scratch('codex', { steps: [{ complete: 'completed' }] })
+    seed(dataDir, repo, {
+      slot: {
+        ...CODEX_SLOT,
+        linkedDefault: true,
+        home: '/home/someone/.codex',
+        env: { CODEX_HOME: '/home/someone/.codex' },
+      },
+    })
+    await launched(dataDir)
+    expect(seen().codex_home).toBeNull()
+  })
+
+  it('a slot of its own with no home is refused with no spend', async () => {
+    const { dataDir, repo, bin } = scratch('codex', { steps: [] })
+    seed(dataDir, repo, { slot: { ...CODEX_SLOT, home: undefined } })
+    const end = await launched(dataDir)
+    expect(String(end.terminal_reason)).toContain('slot_home_missing: slot_x')
+    expect(existsSync(join(bin, 'seen.json'))).toBe(false)
   })
 
   it('every ask is refused, because an allowed command would leave the sandbox', async () => {
@@ -643,6 +686,17 @@ describe('OpenCode through the runner', { timeout: 180_000 }, () => {
     ).finally(() => writeFileSync(join(bin, 'go'), ''))
     await until(() => SETTLED.includes(String(attempt(dataDir)?.state)))
     expect(attempt(dataDir)?.state).not.toBe('failed')
+  })
+
+  // §5.3's probe rule, by the engine's own variables: the slot's XDG dirs, not the user's.
+  it('a slot saved with no env runs under its home, by the XDG variables', async () => {
+    const { dataDir, repo, seen } = scratch('opencode', { steps: [{ verdict: 'succeeded' }] })
+    seed(dataDir, repo, { ...WITH_TASK, slot: { ...GLM_SLOT, home: '/slots/opencode/old', env: undefined } })
+    await launched(dataDir)
+    expect(seen().xdg_config_home).toBe('/slots/opencode/old/config')
+    expect(seen().opencode_config_dir).toBe('/slots/opencode/old/config')
+    expect(seen().xdg_data_home).toBe('/slots/opencode/old/data')
+    expect(seen().env_names).not.toContain('CLAUDE_CONFIG_DIR')
   })
 
   describe('a committed link', () => {

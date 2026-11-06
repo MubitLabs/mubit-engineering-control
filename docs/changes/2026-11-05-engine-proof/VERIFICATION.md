@@ -24,6 +24,14 @@ Base `feat/m2.1-specialist-slice` at `8b20e97`. Real verifier runs on `40a2426` 
 - **`pnpm check`** on `ecfc5d4`. Typecheck and lint pass. 2408 passed, 15 skipped, 1 failed, and that one is the baseline `login-cards` node-pty test. Later commits change only a mutant spec and these records.
 - **Mutants.** `tools/mutants/m2.4b.json`, 63 mutants, 4 of them new. On `46e62be` 57 were killed and 6 were INVALID, the first run after the file's baseline. Rerun alone with `--only`, all 6 were killed, so 63 of 63 have a kill. The likely cause is the runner's 300 s limit, as the registry suite ran between 97 s and 342 s here, but the runner does not say so and it was not confirmed. A first attempt stopped on a red baseline because the supervisor and registry set ran past that limit: the set passed twice alone, and the three stop mutants that used it now run with `-t`, by test name.
 
+## The rebase onto main, and the slot's home
+
+- **The clash.** `main` made a launch follow the probe's rule for `CLAUDE_CONFIG_DIR` (M3.3): a slot of its own runs under its home, whatever it stored, and a linked slot leaves the variable unset. Rebased as it stood, that gave a Codex or OpenCode slot Claude's variable and left its own to the stored env, so a slot saved with no env ran on the default login.
+- **The change.** Each row names its home variables through `engineHomeEnv` (`packages/slots/src/homes.ts`), and `slotEnv` applies the same rule to them. `lacksHome` moved to the registry, so `isLaunchableSlot` and the launch refuse the same slots on every engine.
+- **Failing first.** 3 Codex tests failed on the variable and `isLaunchableSlot` had no home case; the OpenCode test was not seen red on the variable, because its first scenario was wrong and it timed out.
+- **Mutants.** Not run on the rebase. The `find` text of 8 mutants in `m2.1.json` and `m3.3-config.json` and 1 in `m2.4b.json` was repointed at the moved code, each checked to match once.
+- **What this means for a real rerun.** Part B's real runs used the default home. A slot seeded for such a rerun now needs `linkedDefault: true`, or it runs under `home`.
+
 ## Not proven
 
 - No real binary ran on these fixes. The trust override and the Codex read denies rest on the verifier's zero-turn checks; the stop, the 404 path, the live journal and the link refusal rest on the fakes. The deny entries for OpenCode's default home were tested on neither.

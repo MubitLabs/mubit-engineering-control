@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { claudeHome, codexHome, linkedDefault, opencodeHome } from '../src/homes'
+import { claudeHome, codexHome, engineHomeEnv, linkedDefault, opencodeHome } from '../src/homes'
 
 let root: string
 
@@ -53,6 +53,12 @@ describe('credential homes', () => {
     expect(() => claudeHome(root, 'a/b')).toThrow(/invalid slot name/)
     expect(() => codexHome(root, '')).toThrow(/invalid slot name/)
     expect(() => opencodeHome(root, '.hidden')).toThrow(/invalid slot name/)
+  })
+
+  it('engineHomeEnv gives a saved home the variables its slot was made with', () => {
+    for (const made of [claudeHome(root, 'one'), codexHome(root, 'one'), opencodeHome(root, 'one')]) {
+      expect(engineHomeEnv(made.engine, made.homeDir)).toEqual(made.env)
+    }
   })
 
   it('linkedDefault: claude runs with the env absent (issue #92252); codex/opencode have none in v0', () => {

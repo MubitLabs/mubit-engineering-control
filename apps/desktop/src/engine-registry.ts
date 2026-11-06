@@ -45,7 +45,7 @@ import {
   startCodexClient,
   startOpenCodeClient,
 } from '@mec/runtime'
-import { SlotKeystore } from '@mec/slots'
+import { engineHomeEnv, SlotKeystore } from '@mec/slots'
 
 /** §13's always-confirm commands, refused by the engine itself: see the Claude row. */
 const CLAUDE_DENIED_TOOLS = 'Bash(git push:*),Bash(gh:*)'
@@ -121,6 +121,8 @@ export type EngineRow = {
   modelRequired: boolean
   /** §5.12's slot layer. */
   hygiene: (attemptId: string) => Record<string, string>
+  /** The variables that put a process under a slot's home (§5.3). */
+  homeEnv: (home: string) => Record<string, string>
   /** Whether the token also lands in `.mec/mcp.json`; other engines read it from the env. */
   tokenFile: boolean
   /** The lines of the worker's brief that say what its shell can do. */
@@ -183,6 +185,7 @@ const claudeRow: EngineRow = {
     CLAUDE_CODE_PROJECT_DIR_NAME: attemptId,
     CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
   }),
+  homeEnv: (home) => engineHomeEnv('claude', home),
   tokenFile: true,
   notes: [...DENIED_WRITES_NOTE, ...COMMIT_NOTE],
   asksLeaveSandbox: false,
@@ -275,6 +278,7 @@ const opencodeRow: EngineRow = {
   modelRequired: true,
   // Project config stays off for a trusted repository too: nothing else stands in for a sandbox.
   hygiene: () => opencodeSlotEnv(false),
+  homeEnv: (home) => engineHomeEnv('opencode', home),
   tokenFile: false,
   notes: [
     'You have no shell here: this engine has no sandbox behind it, so MEC refuses every shell command, git',
@@ -321,6 +325,7 @@ const codexRow: EngineRow = {
   capabilities: CODEX_CAPABILITIES,
   modelRequired: false,
   hygiene: () => ({}),
+  homeEnv: (home) => engineHomeEnv('codex', home),
   tokenFile: false,
   notes: [
     ...DENIED_WRITES_NOTE,

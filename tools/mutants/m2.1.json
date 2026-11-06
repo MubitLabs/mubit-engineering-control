@@ -9,7 +9,7 @@
   {
     "name": "shim first",
     "file": "apps/desktop/src/attempt-launch.ts",
-    "find": "      binary: resolveBinary('claude', process.env.PATH),\n",
+    "find": "      binary: prepared.binary,\n",
     "replace": "",
     "tests": ["apps/desktop/test/attempt-launch.test.ts"]
   },
@@ -99,8 +99,8 @@
   },
   {
     "name": "push reaches the engine unrefused",
-    "file": "apps/desktop/src/attempt-launch.ts",
-    "find": "        MEC_DISALLOWED_TOOLS: ENGINE_DENIED_TOOLS,\n",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "        MEC_DISALLOWED_TOOLS: CLAUDE_DENIED_TOOLS,\n",
     "replace": "",
     "tests": ["apps/desktop/test/attempt-launch.test.ts"]
   },
@@ -218,9 +218,9 @@
   },
   {
     "name": "any Claude kind counts as launchable",
-    "file": "apps/desktop/src/attempt-launch.ts",
-    "find": "  return LAUNCHABLE_ENGINES.includes(String(slot.engine)) && LAUNCHABLE_KINDS.includes(String(slot.kind))\n",
-    "replace": "  return LAUNCHABLE_ENGINES.includes(String(slot.engine))\n",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "  return ENGINE_ROWS[String(slot.engine)]?.kinds.includes(String(slot.kind)) === true && !lacksHome(slot)\n",
+    "replace": "  return ENGINE_ROWS[String(slot.engine)] !== undefined && !lacksHome(slot)\n",
     "tests": ["apps/desktop/test/attempt-launch.test.ts"]
   },
   {
@@ -246,7 +246,7 @@
   },
   {
     "name": "brief calls the clone writable",
-    "file": "apps/desktop/src/attempt-launch.ts",
+    "file": "apps/desktop/src/engine-registry.ts",
     "find": "'is read-only to your shell, so anything that writes to git fails there, and that is expected.',\n",
     "replace": "'is writable by git, so leave its refs alone.',\n",
     "tests": ["apps/desktop/test/attempt-launch.test.ts"]
@@ -281,8 +281,8 @@
   },
   {
     "name": "brief invites a commit",
-    "file": "apps/desktop/src/attempt-launch.ts",
-    "find": "      'Do not run git add or git commit: reading with git status, diff and log works.',\n",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "  'Do not run git add or git commit: reading with git status, diff and log works.',\n",
     "replace": "",
     "tests": ["apps/desktop/test/attempt-launch.test.ts"]
   },

@@ -681,6 +681,19 @@ describe('authority fence', () => {
       expect(store.workItems.get(id)).toMatchObject({ state: 'blocked', blockedReason: 'mandate_expired' })
     })
 
+    it.each(['mandate_withdrawn', 'repo_mismatch'] as const)(
+      'a row drained on %s settles too',
+      async (why) => {
+        const { store, id, payload } = await planned()
+        store.atomic(() => refuseLaunch(store, payload, why, NOW))
+        expect(store.attempts.get(payload.attempt_id)).toMatchObject({
+          state: 'failed',
+          terminal_reason: why,
+        })
+        expect(store.workItems.get(id)).toMatchObject({ state: 'blocked', blockedReason: why })
+      },
+    )
+
     it('a policy change cancels nothing (§13): the work blocks and the attempt stays', async () => {
       const { store, id, payload } = await planned()
       store.atomic(() => refuseLaunch(store, payload, 'policy_changed', NOW))

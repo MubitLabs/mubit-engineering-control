@@ -1,0 +1,142 @@
+[
+  {
+    "name": "a pre-authorised confirm leaves no record",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "    store.atomic(() =>\n      cards.followups.recordPreAuthorised(attempt, verdict.card as string, cleaned, now().toISOString()),\n    )\n",
+    "replace": "",
+    "tests": [
+      "apps/desktop/test/specialist-cards.test.ts",
+      "-t",
+      "each use of a pre-authorisation leaves its own redacted record"
+    ]
+  },
+  {
+    "name": "a pre-authorised request leaves no record",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "    store.atomic(() => cards.followups.recordPreAuthorised(attempt, usedCls, cleaned, now().toISOString()))\n",
+    "replace": "",
+    "tests": [
+      "apps/desktop/test/specialist-cards.test.ts",
+      "-t",
+      "a pre-authorised request leaves a redacted record"
+    ]
+  },
+  {
+    "name": "a confirm record stays raw",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "recordPreAuthorised(attempt, verdict.card as string, cleaned, now().toISOString())",
+    "replace": "recordPreAuthorised(attempt, verdict.card as string, raw as never, now().toISOString())",
+    "tests": [
+      "apps/desktop/test/specialist-cards.test.ts",
+      "-t",
+      "each use of a pre-authorisation leaves its own redacted record"
+    ]
+  },
+  {
+    "name": "a request record stays raw",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "recordPreAuthorised(attempt, usedCls, cleaned, now().toISOString())",
+    "replace": "recordPreAuthorised(attempt, usedCls, operation as never, now().toISOString())",
+    "tests": [
+      "apps/desktop/test/specialist-cards.test.ts",
+      "-t",
+      "a pre-authorised request leaves a redacted record"
+    ]
+  },
+  {
+    "name": "a use is recorded on the wrong event",
+    "file": "packages/meta/src/followups.ts",
+    "find": "    this.#event(`work:${workItemId}`, 'preauthorised_use', { cls, operation, workItemId, attemptId, at })\n",
+    "replace": "    this.#event(`work:${workItemId}`, 'preauthorised_use', { workItemId, attemptId, at })\n",
+    "tests": [
+      "apps/desktop/test/specialist-cards.test.ts",
+      "-t",
+      "each use of a pre-authorisation leaves its own redacted record"
+    ]
+  },
+  {
+    "name": "the hash ignores what redaction took out",
+    "file": "packages/meta/src/followups.ts",
+    "find": "const identity = card.rawDigest === undefined ? card.operation : [card.operation, card.rawDigest]",
+    "replace": "const identity = card.operation",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts", "-t", "a redacted key are two cards"]
+  },
+  {
+    "name": "confirm passes no digest",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "        ...(digest !== undefined && { rawDigest: digest }),\n        evidence: cleanFields(cards, attemptId, { why: verdict.reason, attempt: attemptId }),\n",
+    "replace": "        evidence: cleanFields(cards, attemptId, { why: verdict.reason, attempt: attemptId }),\n",
+    "tests": [
+      "apps/desktop/test/specialist-cards.test.ts",
+      "-t",
+      "two commands that differ only in a redacted token"
+    ]
+  },
+  {
+    "name": "request passes no digest",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "        ...(digest !== undefined && { rawDigest: digest }),\n        evidence: cleanFields(cards, attemptId, evidence),\n",
+    "replace": "        evidence: cleanFields(cards, attemptId, evidence),\n",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts", "-t", "a redacted key are two cards"]
+  },
+  {
+    "name": "the digest has no key",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "createHmac('sha256', RAW_DIGEST_KEY)",
+    "replace": "createHash('sha256')",
+    "tests": [
+      "apps/desktop/test/specialist-cards.test.ts",
+      "-t",
+      "a stored hash cannot be tested against a guess"
+    ]
+  },
+  {
+    "name": "every card takes a digest",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "  if (text === JSON.stringify(cleaned)) return undefined\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts", "-t", "hashes as it always did"]
+  },
+  {
+    "name": "a drained row leaves an expired attempt queued",
+    "file": "packages/meta/src/authority.ts",
+    "find": "const UNRUNNABLE: readonly LaunchDropReason[] = ['mandate_expired', 'mandate_withdrawn', 'repo_mismatch']\n",
+    "replace": "const UNRUNNABLE: readonly LaunchDropReason[] = ['mandate_withdrawn', 'repo_mismatch']\n",
+    "tests": ["packages/meta/test/authority.test.ts", "-t", "drains on an expired mandate settles"]
+  },
+  {
+    "name": "a drained row leaves a withdrawn attempt queued",
+    "file": "packages/meta/src/authority.ts",
+    "find": "const UNRUNNABLE: readonly LaunchDropReason[] = ['mandate_expired', 'mandate_withdrawn', 'repo_mismatch']\n",
+    "replace": "const UNRUNNABLE: readonly LaunchDropReason[] = ['mandate_expired', 'repo_mismatch']\n",
+    "tests": ["packages/meta/test/authority.test.ts", "-t", "settles too"]
+  },
+  {
+    "name": "a drained row leaves a mismatched attempt queued",
+    "file": "packages/meta/src/authority.ts",
+    "find": "const UNRUNNABLE: readonly LaunchDropReason[] = ['mandate_expired', 'mandate_withdrawn', 'repo_mismatch']\n",
+    "replace": "const UNRUNNABLE: readonly LaunchDropReason[] = ['mandate_expired', 'mandate_withdrawn']\n",
+    "tests": ["packages/meta/test/authority.test.ts", "-t", "settles too"]
+  },
+  {
+    "name": "a policy change fails the attempt",
+    "file": "packages/meta/src/authority.ts",
+    "find": "const UNRUNNABLE: readonly LaunchDropReason[] = ['mandate_expired', 'mandate_withdrawn', 'repo_mismatch']\n",
+    "replace": "const UNRUNNABLE: readonly LaunchDropReason[] = ['mandate_expired', 'mandate_withdrawn', 'repo_mismatch', 'policy_changed']\n",
+    "tests": ["packages/meta/test/authority.test.ts", "-t", "a policy change cancels nothing"]
+  },
+  {
+    "name": "a stale row fails an attempt queued again",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (UNRUNNABLE.includes(reason) && store.attempts.get(attemptId)?.state === 'queued') {\n",
+    "replace": "  if (store.attempts.get(attemptId)?.state === 'queued') {\n",
+    "tests": ["packages/meta/test/authority.test.ts", "-t", "a stale row for an attempt queued again"]
+  },
+  {
+    "name": "a refused resume blocks the work",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (UNRUNNABLE.includes(reason) && store.attempts.get(attemptId)?.state === 'queued') {\n",
+    "replace": "  if (UNRUNNABLE.includes(reason)) {\n",
+    "tests": ["packages/meta/test/authority.test.ts", "-t", "a refused resume blocks nothing"]
+  }
+]

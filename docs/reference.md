@@ -9,7 +9,7 @@ What the router recognises today (`runCli` in `apps/desktop/src/mec.ts`; usage l
 | Command | What it does |
 | --- | --- |
 | `mec` | Starts the server and the workbench (the bin entry, `apps/desktop/bin/mec.js`); honours `MEC_DATA_DIR`, refuses to start while an intentional stop stands. |
-| `mec status` | Prints the health snapshot's verdict and exits by the §21.2 contract (below). |
+| `mec status` | Prints the health snapshot's verdict and exits by the §21.2 contract (below). A start that lost its last port adds a line naming the new one. |
 | `mec stop` | Writes the intentional-stop marker; `mec restart --respect-stop` will honour it. |
 | `mec restart` | Clears the stop marker and exits 1 saying no server was started: run `mec` to start one. `--respect-stop` does nothing if an intentional stop stands. |
 | `mec doctor` | Prints a redacted-by-construction diagnostics bundle (engine versions, allowlisted env, health snapshot) safe to paste into a bug report. |

@@ -242,8 +242,10 @@ describe('confirm with a card (§13)', () => {
     const raw = { summary: operation.summary, command: operation.command }
     const guess = createHash('sha256').update(JSON.stringify(raw), 'utf8').digest('hex')
     const [card] = h.store.confirmations.list()
-    const cleaned = (card?.payload as { operation: unknown }).operation
-    const unkeyed = createHash('sha256').update(JSON.stringify([cleaned, guess]), 'utf8').digest('hex')
+    const cleaned = (card as StoreDoc).payload as { operation: unknown }
+    const unkeyed = createHash('sha256')
+      .update(JSON.stringify([cleaned.operation, guess]), 'utf8')
+      .digest('hex')
     const stored = JSON.stringify(h.store.snapshot())
     expect(stored).not.toContain(guess)
     expect(stored).not.toContain(unkeyed)

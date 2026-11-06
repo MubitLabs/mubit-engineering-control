@@ -188,7 +188,9 @@ test('a delivery ready for review says so on its Work row', async ({ page }) => 
   await approve(page, /pull request/i)
   await expect.poll(deliveryStage, QUIET_TIME).toBe('pr-ready')
   await open(page, 'Work')
-  await expect(page.locator('.work-row').first()).toContainText('Ready for review')
+  // `pr_ready` lands on the release and inbox streams, which the page does not follow, so the row
+  // moves on the 10 s refetch. Five seconds, the default, made this a race.
+  await expect(page.locator('.work-row').first()).toContainText('Ready for review', { timeout: 15_000 })
 })
 
 test('declining keeps the local result', async ({ page }) => {

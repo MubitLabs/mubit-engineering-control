@@ -112,7 +112,7 @@ By hand, each one edit, the named tests, then restored. All killed:
 
 ## Not proven
 
-- Lighthouse and axe on the real packaged server. Tried again: the worktree guard refused a command that sets `HOME`. Exact text: "this command sets HOME, injecting git configuration whose effect on where git writes can't be verified. Refusing to run it". Stopped there. Nothing was run with the real `HOME`, and the guard was not worked around.
+- Lighthouse and axe on the real packaged server, while this ran in an isolated worktree: the guard refused a command that sets `HOME`. Done since, below.
 - The harness states on a real server. All of the above is the harness or `page.route`.
 - Assistive technology beyond axe, Lighthouse and keyboard: not claimed.
 - The Lighthouse and axe gates are not in `pnpm check` or CI.
@@ -126,3 +126,24 @@ Typecheck and lint pass. Tests: 2535 passed, 8 failed, 15 skipped, on a machine 
 - The other 7 are not baseline, and not explained. A rerun of the five files alone also failed 8, but a different mix of tests, with `condition never held` timeouts and a missing pid file.
 - This change touches none of those packages, and none of those test files names `apps/web`.
 - A comparison run on the base did not finish in 500 s and was stopped, so there is no base result. Treat these as unresolved until `pnpm check` runs on a quiet machine.
+
+## The replay, and B3 on the packaged server
+
+6 November 2026, on `feat/next-final`: the seven commits of `feat/next-default` and `feat/next-default-checks` replayed on `feat/m2-ship` 20b6244. Three conflicts, all additive: `Toolbar.tsx`, `known-limits.md`, `ConnectionsView.tsx`, where the parked notices and the focus return now sit together. No separate verifier, by the coordinator's brief. Machine under load, 7 to 16.
+
+**Packaged server.** `pnpm pack:internal`, extracted to a scratch directory, `npm install --omit=dev`, scratch `HOME` and `MEC_DATA_DIR`, `MEC_FAKE_ENGINE=1`. Seeded through real routes: one repository, one linked slot, one chat message (two tasks, work row `executing`). A launch cannot run from a package, as `known-limits.md` says, so Needs you has no card here. The tarball is still `0.2.1`: the version bump is Stage D's.
+
+Nine routes: `#chat`, `#work`, `#needs`, `#slots`, `#setup`, `#settings` and the three `#repo/<id>/…` forms, with no `?ui=` so the default shell is what was read. Each was seen on screen with its own heading and content on the new shell.
+
+| Check | Light | Dark |
+| --- | --- | --- |
+| Axe, `apps/web/scripts/axe-server.mjs`, 9 routes at 1440, 1024, 390 | 27 of 27, 0 violations | 27 of 27, 0 violations |
+| Lighthouse, `apps/web/scripts/lighthouse.mjs --theme`, 9 routes | 100 on all 9 | 100 on all 9 |
+
+A JSON route instead of the app, no shell on the page, exits 1. An unknown path is served the app, so it is not such a page.
+
+**Screens.** The first run after the replay: 929 passed, 2 failed, both in `work-live.screens.playwright.ts`. Both are stale since M3.2 Stage C put `&compact=1` on the events URL, and both matched the URL's end. Each test now matches the same last cursor with that parameter behind it: no behaviour changed, and both then passed 16 of 16 with `--repeat-each=8`. Second run: 931 of 931.
+
+**Journey on the fake CLI.** 6 passed, 1 failed: `a delivery ready for review says so on its Work row`, 4 of 4 alone, on `Received: ...scratchWorking`. `pr_ready` lands on the release and inbox streams, which the page does not follow, so the row moves on the 10 s refetch, past the 5 s default. No replayed file touches this. The bound is now 15 s, and it passed 3 of 3 alone. The lag is in `known-limits.md`. The whole suite has not been repeated since that one bound.
+
+**Focused tests.** Web unit tests 481 of 481; web typecheck clean. Alone, one file at a time at load 10 to 13: `attempt-launch` 52 of 52, `bundle` 2 of 2, `login-cards` 14 of 14, `attempt-runner` 28 of 28, `shims` 10 of 10. That points at load for the 7 in the record above, and proves nothing about a quiet `pnpm check`, which has not run on this tree. `loopback-probe` 11 of 11. One run of `ui-flag`, `a11y-gate` and `shell-split` together had 1 failure of 23, not named by the output kept; the same three passed 23 of 23 straight after, and the full web run is green.

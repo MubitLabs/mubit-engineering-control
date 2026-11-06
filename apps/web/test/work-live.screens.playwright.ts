@@ -690,6 +690,9 @@ test.describe('a settled card', () => {
   })
 })
 
+/** The last cursor of `after`, the repositories stream's, with `&compact=1` or nothing behind it. */
+const LAST_CURSOR_ONE = /after=(?:[\d,]*,)?1(?:&|$)/
+
 test('the reset notice does not outlast a failure it would contradict', async ({ page }) => {
   let down = false
   let historyMoved = false
@@ -701,7 +704,7 @@ test('the reset notice does not outlast a failure it would contradict', async ({
     // open, so no reconnect refreshes the page between recovering and the click on Retry.
     events: (search) => {
       if (!historyMoved) return ''
-      return search.endsWith(',1') || search.endsWith('=1') ? 'event: reset\ndata: {}\n\n' : null
+      return LAST_CURSOR_ONE.test(search) ? 'event: reset\ndata: {}\n\n' : null
     },
   })
   await open(page, 'repo/repo_a/work')
@@ -727,7 +730,7 @@ test('the events connection starts from the snapshot’s cursors', async ({ page
   await expect(page.getByRole('region', { name: 'Ended' })).toBeVisible()
   await expect.poll(() => streams.length).toBeGreaterThan(0)
   expect(streams.at(-1)).toContain('repositories')
-  expect(streams.at(-1)).toMatch(/after=(?:[\d,]*,)?1$/)
+  expect(streams.at(-1)).toMatch(LAST_CURSOR_ONE)
 })
 
 for (const [width, height] of [

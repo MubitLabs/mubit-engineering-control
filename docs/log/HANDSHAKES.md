@@ -137,3 +137,16 @@ Each engine was proven on its own, through a seeded queued attempt and the real 
 | OpenCode 2.2.5 | 2 | `succeeded`, 56 s | Check on the exact head, `report` through `mec_report`. Allow round trip: a write inside the worktree came through the bridge, `once`. Deny round trip: `git status`, `git push` and a write into `.mec` asked, were rejected and the turn went on. The engine's own rules refused the database, an outside write and `.mec/opencode.json`. No tool of the linked home's MCP servers reached the model. |
 
 A sweep of each data dir for bearer, key and password shapes found nothing. No process was left. Not exercised on either engine: resume, `turn/interrupt` or `/interrupt`, delivery into a running attempt, a read-only role, the composed path with a planner, a quota or auth park, and a keystore key at launch (a fake covers that one). `gh` on Codex was the fake: the profile refuses network, which `curl` to GitHub under `codex sandbox` showed, and a real `gh` was not run. Not checked: OpenCode's and Codex's own session stores under the linked homes, which are credential stores or sit beside them.
+
+## M3.4 Stage B: self-approval and the composed journey on real Claude — 6 November 2026
+
+Three bounded runs, real Claude 2.1.319 through the linked login: real `HOME`, scratch data dir, scratch repository, `file://` bare behind a github.com `origin`, fake `gh` first on `PATH`. `engine-runs.md` lines 16 to 18 of 20. `gh` and the remote are fakes in all three.
+
+| Run | Sha | Outcome | What it proved |
+| --- | --- | --- | --- |
+| Self-approval probe, one `fast` specialist, no planner | 5c58079 | `refused`, 18 s | A worker's shell did not reach `POST /api/inbox/:id/resolve` or `GET /api/inbox`, direct or through the proxy: the script finished, no request answered 2xx, no answer held the card, the outside `touch` did not land, and the card stayed `pending`. The same URL and card answered a deny 200 from outside the sandbox. The reporter dropped the printed probe output, so the raw lines were not kept; the verdict is the test's own assertions |
+| Composed journey, real planner and specialist | 5c58079 | Passed, 66 s | Request in the new shell, no question asked, one task, `fast` as `haiku`, `succeeded` on 3a3b5c6, check passed, integrated as 62d628e. Push card and PR card approved in the UI. The bare holds `a.txt` and `hello.txt`, no `.mec`. `pr create` once, `pr merge` never, delivery `pr-ready` |
+| Same, server SIGKILLed during a slow `pr create` | 8095c4a | Passed, 60 s | After `pr create` ran and before MEC heard its URL. The boot read `pr list --head`, recorded `pr_created` with `reconciled: true`, then `pr_ready`. One `pr create`, no second card |
+
+This settles the question for the shell on the route tested, on Claude only. It says nothing of Codex or OpenCode, and it is no authority on the route itself: the route still takes no token, and the sandbox is the whole of the fence. Not exercised: a model that hunts for another way out, a push or merge card killed mid-effect, and a real GitHub.
+

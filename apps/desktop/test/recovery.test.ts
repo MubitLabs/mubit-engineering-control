@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AttemptJournal, processStart } from '@mec/runtime'
 import { afterEach, describe, expect, it } from 'vitest'
-import { identifyGroup, reconcileProcesses } from '../src/recovery'
+import { identifyGroup, reconcilePlanner, reconcileProcesses } from '../src/recovery'
 import {
   alive,
   attemptOf,
@@ -710,6 +710,63 @@ describe('the planner engine', { timeout: 40_000 }, () => {
     await serve(rig, { brain: brainThatNeverRuns, probeRun: PROBE_OK })
     expect(existsSync(dir)).toBe(true)
     rmSync(dir, { recursive: true, force: true })
+  })
+
+  it.each([
+    ['unprovable', 'unprovable' as const],
+    ['refused', 'ours' as const],
+  ])('a group that stays %s keeps its mark and dirs, and says so', async (reason, found) => {
+    const rig = scratch(STEPS)
+    const mark = { pid: 4242, started: 'then' }
+    const dir = mkdtempSync(join(tmpdir(), 'mec-planner-'))
+    seedStore(rig, { noRow: true, attempt: { state: 'succeeded' } })
+    peek(rig, (store) => store.engines.save({ id: 'runtime/planner', process: mark, tempDirs: [dir] }))
+    const seams = {
+      identify: () => found,
+      reap: async () => {
+        if (found === 'ours') return 'refused'
+        throw new Error('an unprovable group is never signalled')
+      },
+    }
+    await peekAsync(rig, (store) => reconcilePlanner(store, seams))
+    const doc = peek(rig, (store) => store.engines.get('runtime/planner'))
+    expect(doc?.refused).toEqual([{ process: mark, reason }])
+    expect(doc?.tempDirs).toEqual([dir])
+    expect(existsSync(dir)).toBe(true)
+    expect(eventsOf(rig, 'runtime:planner')).toEqual(['planner.reconcile_refused'])
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('a mark a boot refused survives a new engine, and goes when a later boot proves it gone', async () => {
+    const rig = scratch(STEPS)
+    const mark = { pid: 4242, started: 'then' }
+    const dir = mkdtempSync(join(tmpdir(), 'mec-planner-'))
+    seedStore(rig, { noRow: true, attempt: { state: 'succeeded' } })
+    peek(rig, (store) => store.engines.save({ id: 'runtime/planner', process: mark, tempDirs: [dir] }))
+    await peekAsync(rig, (store) => reconcilePlanner(store, { identify: () => 'unprovable' }))
+    // What a new server's next planner turn writes.
+    peek(rig, (store) => {
+      const doc = store.engines.get('runtime/planner')
+      store.engines.save({ ...doc, id: 'runtime/planner', process: { pid: 4343, started: 'now' } })
+    })
+    await peekAsync(rig, (store) => reconcilePlanner(store, { identify: () => 'gone' }))
+    const doc = peek(rig, (store) => store.engines.get('runtime/planner'))
+    expect(doc?.refused).toBeUndefined()
+    expect(doc?.process).toBeUndefined()
+    expect(existsSync(dir)).toBe(false)
+  })
+
+  it('a mark a boot refused survives the server closing', async () => {
+    const rig = scratch(STEPS)
+    const { mark } = await member()
+    seedStore(rig, { noRow: true, attempt: { state: 'succeeded' } })
+    peek(rig, (store) => store.engines.save({ id: 'runtime/planner', process: mark, tempDirs: [] }))
+    const slot = join(rig.root, 'meta-slot')
+    mkdirSync(slot)
+    const server = await serve(rig, { metaSlotDir: slot, real: false })
+    await server.close()
+    const doc = peek(rig, (store) => store.engines.get('runtime/planner'))
+    expect(doc?.refused).toEqual([{ process: mark, reason: 'unprovable' }])
   })
 
   it('an engine ignoring SIGTERM does not outlive close, and leaves no token dir', async () => {

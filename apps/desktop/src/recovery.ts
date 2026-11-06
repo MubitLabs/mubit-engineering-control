@@ -283,19 +283,51 @@ export async function reconcileProcesses(deps: ProcessDeps): Promise<void> {
   }
 }
 
-/** The planner's engine and token dirs from a server that died without closing (M1.4b's open item). */
-export async function reconcilePlanner(store: Store): Promise<void> {
+type PlannerSeams = Pick<ProcessDeps, 'identify' | 'reap'>
+
+/** Why this group may still be there, or undefined once it provably is not. */
+async function plannerGroupLeft(mark: ProcessMark, seams: PlannerSeams): Promise<string | undefined> {
+  const found = (seams.identify ?? identifyGroup)(mark)
+  if (found === 'gone' || found === 'recycled') return undefined
+  if (found === 'unprovable') return found
+  const outcome = await (seams.reap ?? ((pid: number) => reapGroup(pid)))(mark.pid)
+  return outcome === 'terminated' || outcome === 'escalated' ? undefined : outcome
+}
+
+/**
+ * The planner's engine and token dirs from a server that died without closing (M1.4b's open item).
+ * A group that may still be there is reported every boot. Its mark moves to `refused`, where the
+ * next planner turn cannot overwrite it, and the dirs it may be using stay until it is proven gone.
+ */
+export async function reconcilePlanner(store: Store, seams: PlannerSeams = {}): Promise<void> {
   const doc = store.engines.get(PLANNER_DOC)
   if (doc === undefined) return
-  const mark = markOf(doc.process)
-  if (mark !== undefined && identifyGroup(mark) === 'ours') await reapGroup(mark.pid)
+  const held = Array.isArray(doc.refused) ? (doc.refused as { process?: Json }[]) : []
+  const marks = [...held.map((entry) => markOf(entry.process)), markOf(doc.process)]
+  const refused: { process: ProcessMark; reason: string }[] = []
+  for (const mark of marks) {
+    const reason = mark === undefined ? undefined : await plannerGroupLeft(mark, seams)
+    if (mark !== undefined && reason !== undefined) refused.push({ process: mark, reason })
+  }
+  const { process: _process, refused: _refused, ...rest } = doc
+  if (refused.length > 0) {
+    const at = new Date().toISOString()
+    store.atomic(() => {
+      store.engines.save({ ...rest, refused: refused as unknown as Json, updatedAt: at })
+      for (const { process: mark, reason } of refused) {
+        const body = { pid: mark.pid, reason, at }
+        appendEvent(store, 'runtime:planner', 'planner.reconcile_refused', body, at)
+      }
+    })
+    return
+  }
   const root = realpathSync(tmpdir())
   const dirs = Array.isArray(doc.tempDirs) ? doc.tempDirs.map(String) : []
   for (const dir of dirs) {
     const inside = existsSync(dir) && realpathSync(dirname(dir)) === root
     if (inside && PLANNER_DIR.test(basename(dir))) rmSync(dir, { recursive: true, force: true })
   }
-  store.engines.save({ id: PLANNER_DOC, tempDirs: [], updatedAt: new Date().toISOString() })
+  store.engines.save({ ...rest, tempDirs: [], updatedAt: new Date().toISOString() })
 }
 
 // ── External effects ─────────────────────────────────────────────────────────────────────────

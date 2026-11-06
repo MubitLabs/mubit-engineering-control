@@ -480,9 +480,10 @@ export async function startServer(opts: {
           .then(() => planner.kill())
           .then(() => planner.close()),
       )
-      const dirs = store.engines.get(PLANNER_DOC)?.tempDirs
+      const { process: _ended, ...doc } = store.engines.get(PLANNER_DOC) ?? {}
+      const dirs = doc.tempDirs
       const left = (Array.isArray(dirs) ? dirs.map(String) : []).filter((dir) => existsSync(dir))
-      store.engines.save({ id: PLANNER_DOC, tempDirs: left, updatedAt: iso() })
+      store.engines.save({ ...doc, id: PLANNER_DOC, tempDirs: left, updatedAt: iso() })
     }
     db.close()
     lock.release()

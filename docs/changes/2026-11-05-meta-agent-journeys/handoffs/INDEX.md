@@ -1,6 +1,6 @@
 # Overhaul handoff index
 
-**Decisions #24-36 in `docs/DECISIONS.md` answer the open questions in these handoffs. Follow them, and treat each handoff's recommendation as decided unless a decision says otherwise. Update the spec line the decision names.**
+**Decisions #24-40 in `docs/DECISIONS.md` answer the open questions in these handoffs. Follow them (#37 Claude cap, #38 no index, #39 land and release as soon as verified, #40 shared clone denied), and treat each handoff's recommendation as decided unless a decision says otherwise. Update the spec line the decision names.**
 
 Give an agent one row. Every row assumes `00-README.md`. Base gates: **R** `fix/release-cards`, **H** `fix/http-recovery`, **V** `feat/visual-foundation`, **I** `feat/repo-identity`, **E** `fix/effects-double-run`. These five are the coordinator's and are not handoffs. M1.1 is H, M1.2 is I, VF0 is V.
 
@@ -30,11 +30,12 @@ Give an agent one row. Every row assumes `00-README.md`. Base gates: **R** `fix/
 
 ## What can start now
 
-`origin/main` is `1ff5a84`. Merged: R (#24), E (#25), V (#26), H (#27), I (#29), 10 (#32), 12 (#34), 30 S1 (#35), 31 A (#31), 33 A (#30). Decision #37 sets Claude's cap at 20 runs.
+`origin/main` is `c842f4f`. Merged: R (#24), E (#25), V (#26), H (#27), I (#29), 10 (#32), 12 (#34), 30 S1 (#35), 31 A (#31), 33 A (#30), 11 (#37), 31 B (#38), 20 (#39), 32 (#40). The test diagnostics PR is not on main. Decisions run through #40.
 
-- **In progress:** 11 (`feat/durable-commands`), in its fix round for shutdown blockers.
-- **Next, at once:** 20, 31 B, 32.
-- **Waiting:** everything else, per the table above and the sequences below.
+- **In progress:** 21, 22, 23 Part B, 23 Part A, 30 S2.
+- **Next, when its prerequisites merge:** 31 C (after 31 B and 30 S2), 32 Stage B (after 32, 31 B and 23 A).
+- **Waiting:** 33 B (all enabled), then release 0.3.0, install and verify, 33 C, 33 D, 0.3.1.
+- Real-engine runs spent: Claude 15 of 20, Codex 4 of 10, OpenCode 4 of 10.
 
 ## After M1 merges
 

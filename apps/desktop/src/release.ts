@@ -1159,6 +1159,21 @@ export function releaseEvent(
   deps.store.atomic(() => appendEvent(deps.store, `release:${repo}:${branch}`, type, { ...body, at }, at))
 }
 
+/** The page follows a work item's own stream, not the release one, so what a row shows lands here. */
+export function workEvent(
+  deps: ReleaseDeps,
+  workItemId: string,
+  type: string,
+  body: Record<string, Json>,
+): void {
+  const at = deps.now().toISOString()
+  const stream = `work:${workItemId}`
+  deps.store.atomic(() => {
+    const seq = (deps.store.events.read(stream).at(-1)?.seq ?? 0) + 1
+    deps.store.events.append(stream, { stream, seq, at, type, body: { workItemId, ...body, at } })
+  })
+}
+
 export async function resolveReleaseCard(
   deps: ReleaseDeps,
   id: string,

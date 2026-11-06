@@ -35,10 +35,31 @@
     "tests": ["apps/desktop/test/attempt-launch.test.ts"]
   },
   {
-    "name": "the server ignores the fake flag",
-    "file": "apps/desktop/src/composition.ts",
-    "find": "  if (realRunnerOn()) {\n",
-    "replace": "  if (process.env.MEC_REAL_RUNNER !== '0') {\n",
-    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+    "name": "going ready does not reach the work stream",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      if (doc.stage !== 'ready') workEvent(this.release, id, 'pr_ready', { prNumber, verdict })\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "every ready pass tells the page again",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      if (doc.stage !== 'ready') workEvent(this.release, id, 'pr_ready', { prNumber, verdict })\n",
+    "replace": "      workEvent(this.release, id, 'pr_ready', { prNumber, verdict })\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "the page is told before the stage moves",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      this.#patch(id, { stage: 'ready', limit: verdict === 'green' ? undefined : verdict })\n      // After the patch: this frame makes the page read the stage back.\n      if (doc.stage !== 'ready') workEvent(this.release, id, 'pr_ready', { prNumber, verdict })\n",
+    "replace": "      if (doc.stage !== 'ready') workEvent(this.release, id, 'pr_ready', { prNumber, verdict })\n      this.#patch(id, { stage: 'ready', limit: verdict === 'green' ? undefined : verdict })\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "the event lands on the wrong stream",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  const stream = `work:${workItemId}`\n  deps.store.atomic(() => {\n",
+    "replace": "  const stream = `release:${workItemId}`\n  deps.store.atomic(() => {\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
   }
 ]

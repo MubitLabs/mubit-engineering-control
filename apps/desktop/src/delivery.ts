@@ -80,6 +80,7 @@ import {
   releaseEvent,
   remoteHead,
   staleCard,
+  workEvent,
   yieldCheck,
 } from './release'
 
@@ -780,6 +781,8 @@ export class Delivery {
       if (doc.stage !== 'ready') releaseEvent(this.release, repo, branch, 'pr_ready', { prNumber, verdict })
       // Decision #34: ready on local checks, with the limit stated. The merge card still holds.
       this.#patch(id, { stage: 'ready', limit: verdict === 'green' ? undefined : verdict })
+      // After the patch: this frame makes the page read the stage back.
+      if (doc.stage !== 'ready') workEvent(this.release, id, 'pr_ready', { prNumber, verdict })
       return
     }
     if (verdict === 'ci_failed') movePrFlow(this.release, repo, branch, 'ci_failed')

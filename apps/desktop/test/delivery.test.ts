@@ -499,6 +499,29 @@ describe('the result path (§14, #11, #12)', () => {
     expect(merges(r.calls)).toEqual([])
   })
 
+  it('going ready reaches the stream the page follows, once, after the stage moved', async () => {
+    const r = await openPr({ world: { checks: ok('[{"name":"ci","state":"PENDING"}]') } })
+    await r.passes(1)
+    const stream = `work:${WORK}`
+    const told = () => r.store.events.read(stream).filter((event) => event.type === 'pr_ready')
+    expect(told()).toEqual([])
+
+    const { events } = r.store
+    const append = events.append.bind(events)
+    const stageWhenTold: unknown[] = []
+    events.append = (name, event) => {
+      if (name === stream && event.type === 'pr_ready') stageWhenTold.push(r.doc().stage)
+      append(name, event)
+    }
+    r.world.checks = ok('[{"name":"ci","state":"SUCCESS"}]')
+    await r.passes(1)
+    expect(stageWhenTold).toEqual(['ready'])
+    expect(told()[0]?.body).toMatchObject({ workItemId: WORK, prNumber: PR, verdict: 'green' })
+
+    await r.passes(1)
+    expect(told()).toHaveLength(1)
+  })
+
   it('a repository with no required checks is ready with that limit stated (#34)', async () => {
     const r = await openPr({
       world: { checks: { code: 1, stdout: '', stderr: 'no required checks reported' } },

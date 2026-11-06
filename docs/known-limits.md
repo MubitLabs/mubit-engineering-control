@@ -154,5 +154,5 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
   read and `attempt.stop_failed` in the attempt's event stream. Ending the group by hand releases it.
 - **A late wake after a pause is assigned to handoff 21** with the card resolve gaps above.
 - **`next/work-model` `canApprove` must map absent to null when it is wired (31 B).**
-- **A Work row can lag its delivery by up to 10 seconds.** `pr_ready` lands on the release and inbox streams, and the page follows neither, so the row keeps saying Working until the next refetch. The work detail read says `pr-ready` at once.
+- **A Work row can lag a delivery that falls back by up to 10 seconds.** Going ready reaches the page on the `work:` stream it follows. A ready PR that falls back (`target_moved`, `ci_failed`, `pr_closed`) lands on the release and inbox streams, and the page follows neither, so the row moves on the next refetch.
 - **`?ui=classic` needs working browser storage.** Where `localStorage` throws, the shell choice cannot be kept, so the page stays on the new shell, and the "Return to the classic workbench" link appears to do nothing. Classic goes in the next release (decision #35).

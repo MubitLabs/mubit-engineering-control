@@ -585,6 +585,13 @@ export class FollowUps {
     return doc
   }
 
+  /** §13: policy answered, so no card holds this use. One record per use, redacted by the caller. */
+  recordPreAuthorised(attempt: StoreDoc, cls: string, operation: Record<string, Json>, at: string): void {
+    const workItemId = String(attempt.workItemId)
+    const attemptId = String(attempt.id)
+    this.#event(`work:${workItemId}`, 'preauthorised_use', { cls, operation, workItemId, attemptId, at })
+  }
+
   #event(stream: string, type: string, body: Record<string, Json | undefined>): void {
     const seq = (this.#store.events.read(stream).at(-1)?.seq ?? 0) + 1
     const at = String(body.at ?? this.#now())

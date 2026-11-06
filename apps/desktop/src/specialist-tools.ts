@@ -219,7 +219,7 @@ function scopeOf(attempt: StoreDoc): AttemptScope | undefined {
 
 /** Cards from a worker: what `decide` needs beyond the rule. Absent, a card-class ask is denied. */
 export type CardDeps = {
-  followups: Pick<FollowUps, 'openCard' | 'handback'>
+  followups: Pick<FollowUps, 'openCard' | 'handback' | 'recordPreAuthorised'>
   policy: PolicyDoc
   /** The attempt's redaction, the one the facts use: its token, every key's last four, the patterns. */
   clean: Cleaner
@@ -245,12 +245,19 @@ export async function decideOperation(
   const verdict = judgeOperation(operation, scope)
   if (verdict.card === undefined || cards === undefined) return verdict
   const repoId = typeof attempt.repoId === 'string' ? attempt.repoId : workRepo(store, attempt)
+  const now = cards.now ?? (() => new Date())
+  const attemptId = String(attempt.id)
   if (policyPreAuthorises(cards.policy, verdict.card, { ...(repoId !== undefined && { repoId }) })) {
+    const used = cleanFields(cards, attemptId, {
+      summary: operation.summary,
+      command: operation.command ?? [],
+    })
+    store.atomic(() =>
+      cards.followups.recordPreAuthorised(attempt, verdict.card as string, used, now().toISOString()),
+    )
     return { allow: true, reason: `${verdict.card} is pre-authorised by policy` }
   }
-  const now = cards.now ?? (() => new Date())
   const waitMs = cards.waitMs ?? CARD_WAIT_MS
-  const attemptId = String(attempt.id)
   const card = store.atomic(() =>
     cards.followups.openCard(
       attempt,
@@ -468,13 +475,16 @@ function requestConfirmation(
     throw new Error('mec-tools: request_confirmation needs evidence')
   }
   const repoId = workRepo(store, attempt)
+  const now = cards.now ?? (() => new Date())
+  const attemptId = String(attempt.id)
   if (
     policyPreAuthorises(cards.policy, cls as ConfirmationClass, { ...(repoId !== undefined && { repoId }) })
   ) {
+    const used = cleanFields(cards, attemptId, operation as Record<string, unknown>)
+    const usedCls = cards.clean(attemptId, cls)
+    store.atomic(() => cards.followups.recordPreAuthorised(attempt, usedCls, used, now().toISOString()))
     return { ok: true, status: 'approved', pre_authorised: true }
   }
-  const now = cards.now ?? (() => new Date())
-  const attemptId = String(attempt.id)
   const card = store.atomic(() =>
     cards.followups.openCard(
       attempt,

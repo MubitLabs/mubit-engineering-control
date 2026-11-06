@@ -126,6 +126,26 @@ describe('confirm with a card (§13)', () => {
     expect(denied.allow).toBe(false)
   })
 
+  it('each use of a pre-authorisation leaves its own redacted record (§13)', async () => {
+    const policy = loadPolicy('{"preAuthorised":{"install":[{"scope":"repo","repoId":"repo_a"}]}}')
+    const h = rig(policy)
+    for (const _use of [1, 2]) {
+      const verdict = await decideOperation(h.store, h.cards, h.attempt(), shell(`pnpm add ${KEY}`))
+      expect(verdict.allow).toBe(true)
+    }
+    const uses = h.store.events.read('work:wi_1').filter((event) => event.type === 'preauthorised_use')
+    expect(uses).toHaveLength(2)
+    expect(uses[0]?.body).toMatchObject({ cls: 'install', attemptId: 'att_1', workItemId: 'wi_1' })
+    expect(JSON.stringify(uses)).toContain('pnpm add')
+    expect(JSON.stringify(h.store.snapshot())).not.toContain(KEY)
+  })
+
+  it('an ask policy does not cover records no use', async () => {
+    const h = rig(NO_POLICY, { waitMs: 5 })
+    await decideOperation(h.store, h.cards, h.attempt(), shell('pnpm add x'))
+    expect(h.store.events.read('work:wi_1').map((event) => event.type)).not.toContain('preauthorised_use')
+  })
+
   it('a re-ask of the same operation reuses the card, and a settled answer stands', async () => {
     const h = rig()
     const first = decideOperation(h.store, h.cards, h.attempt(), shell('pnpm add x'))
@@ -362,6 +382,20 @@ describe('the tools (§6)', () => {
     const rpc = await allowed.call('request_confirmation', { operation, evidence: { reason: 'r' } })
     expect(rpc.result).toBeUndefined()
     expect(rpc.error?.message).toContain('a worker cannot request it')
+  })
+
+  it('a pre-authorised request leaves a redacted record of the use (§13)', async () => {
+    const h = await tools(loadPolicy('{"preAuthorised":{"install":[{"scope":"repo","repoId":"repo_a"}]}}'))
+    const operation = { class: 'install', command: `pnpm add ${h.token}`, args: [UNPATTERNED_KEY] }
+    const rpc = await h.call('request_confirmation', { operation, evidence: { reason: 'r' } })
+    expect(h.answer(rpc)).toMatchObject({ ok: true, status: 'approved', pre_authorised: true })
+    const uses = h.store.events.read('work:wi_1').filter((event) => event.type === 'preauthorised_use')
+    expect(uses).toHaveLength(1)
+    expect(uses[0]?.body).toMatchObject({ cls: 'install', attemptId: 'att_1' })
+    const stored = JSON.stringify(h.store.snapshot())
+    expect(stored).toContain('pnpm add')
+    expect(stored).not.toContain(h.token)
+    expect(stored).not.toContain(UNPATTERNED_KEY)
   })
 
   it('a card with no evidence is refused', async () => {

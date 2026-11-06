@@ -17,6 +17,8 @@ const server = sampleServer({
   noChecks: params.has('nochecks'),
   longProposals: params.has('longproposals'),
   parked: params.has('parked'),
+  checkingReads: Number(params.get('checking') ?? 0),
+  setupComplete: params.has('complete'),
 })
 
 declare global {

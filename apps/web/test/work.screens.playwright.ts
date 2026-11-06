@@ -96,6 +96,16 @@ test.describe('the audit defects, wide', () => {
     await expect(inspector(page)).not.toContainText('stale check')
   })
 
+  test('the walkthrough: check output keeps its lines in monospace', async ({ page }) => {
+    await harness(page)
+    await openDelivery(page)
+    await taskRow(page, 'read the code').click()
+    await page.getByRole('tab', { name: 'Checks' }).click()
+    const output = inspector(page).locator('.check-output')
+    await expect(output).toHaveText('clean\n0 errors', { useInnerText: true })
+    expect(await output.evaluate((node) => getComputedStyle(node).fontFamily)).toContain('monospace')
+  })
+
   test('8 each row opens its own task and stays selected', async ({ page }) => {
     await harness(page)
     await openDelivery(page)

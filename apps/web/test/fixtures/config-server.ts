@@ -21,8 +21,14 @@ export function sampleServer({
   parked = false,
   noChecks = false,
   longProposals = false,
+  checkingReads = 0,
+  setupComplete = false,
 }: {
   fail: string[]
+  /** Readiness reads that answer before the engine look has finished. */
+  checkingReads?: number
+  /** Every stage holds and a first request has run. */
+  setupComplete?: boolean
   parked?: boolean
   empty: boolean
   noChecks?: boolean
@@ -152,7 +158,27 @@ export function sampleServer({
   const json = (body: unknown, status = 200): Response =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
+  let checksLeft = checkingReads
   const readiness = () => {
+    if (setupComplete) {
+      return {
+        steps: ['engines', 'connection', 'repository', 'meta_slot', 'first_request'].map((id) => ({
+          id,
+          title: id,
+          status: 'done',
+          detail: 'Done.',
+          next: null,
+        })),
+        engines: [{ engine: 'claude', installed: true, version: '2.1.317' }],
+        metaCandidates: [],
+        metaSlotId: 'slot_sample-max',
+        finish: { enabled: true },
+        completion: {
+          repository: { id: 'repo_sample', url: 'https://example.test/sample' },
+          metaSlot: { id: 'slot_sample-max', label: 'sample-max' },
+        },
+      }
+    }
     const usable = slots.some((slot) => slot.state === 'healthy' && slot.kind === 'claude-sub')
     const repositoryReady = repositories.some((repository) => repository.checks.length > 0)
     return {
@@ -300,7 +326,20 @@ export function sampleServer({
         })
       }
       if (route === 'GET /api/repositories') return json(repositories)
-      if (route === 'GET /api/setup/readiness') return json(readiness())
+      if (route === 'GET /api/setup/readiness') {
+        const answer = readiness() as { steps: Record<string, unknown>[]; finish: unknown }
+        if (checksLeft <= 0) return json(answer)
+        checksLeft -= 1
+        const [engines, ...rest] = answer.steps
+        return json({
+          ...answer,
+          steps: [
+            { ...engines, status: 'checking', detail: 'Checking which engines are installed.' },
+            ...rest,
+          ],
+          finish: { enabled: false, reason: 'Still checking which engines are installed.' },
+        })
+      }
       if (route === 'GET /api/connections') return json({ rows: slots, options })
       if (route === 'GET /api/parked') {
         return json({
@@ -370,7 +409,15 @@ export function sampleServer({
         return json({ sha256: hash(policyText), revision: policyRevision })
       }
       if (route === 'GET /api/models/text') {
-        return json({ yaml: modelsYaml, sha256: hash(modelsYaml), source: 'default' })
+        return json({
+          yaml: modelsYaml,
+          sha256: hash(modelsYaml),
+          source: 'default',
+          summary: {
+            tiers: ['fast', 'balanced'],
+            engines: [{ engine: 'claude', models: [{ id: 'sample-fast', tier: 'fast' }] }],
+          },
+        })
       }
       if (route === 'PUT /api/models') {
         if (body.base_sha256 !== hash(modelsYaml)) return json({ error: 'stale_base' }, 409)

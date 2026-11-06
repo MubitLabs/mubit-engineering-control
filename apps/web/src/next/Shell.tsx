@@ -131,7 +131,8 @@ export interface ShellProps
   /** Goes up each time something hands the owner to the composer: focus lands there. */
   composerFocusRequest?: number
   commands?: readonly Command[]
-  search?: { onOpen: () => void }
+  /** `query` carries words typed elsewhere, such as in the palette. */
+  search?: { onOpen: (query?: string) => void }
   children: ReactNode
 }
 
@@ -421,7 +422,13 @@ export function Shell({
         />
       )}
 
-      {paletteOpen && <CommandPalette commands={allCommands} onClose={closePalette} />}
+      {paletteOpen && (
+        <CommandPalette
+          commands={allCommands}
+          onClose={closePalette}
+          {...(search && { onSearch: search.onOpen })}
+        />
+      )}
     </ShellActionsContext.Provider>
   )
 }

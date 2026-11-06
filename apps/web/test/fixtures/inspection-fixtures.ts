@@ -317,7 +317,13 @@ export const taskDetails = {
     checks: {
       headSha: TASK_HEAD,
       results: [
-        { name: 'SAMPLE-ONLY typecheck', state: 'passed', headSha: TASK_HEAD, detail: 'clean', artifactRef: null },
+        {
+          name: 'SAMPLE-ONLY typecheck',
+          state: 'passed',
+          headSha: TASK_HEAD,
+          detail: 'clean\n0 errors',
+          artifactRef: null,
+        },
         // A stale row for another commit: it must never show under this head.
         { name: 'SAMPLE-ONLY stale check', state: 'failed', headSha: OLD_HEAD, detail: 'old', artifactRef: null },
       ],

@@ -1,6 +1,8 @@
 import { useId, useRef, useState } from 'react'
 import type { Route } from '../router'
+import { timeLabel } from './format'
 import {
+  Button,
   ChevronIcon,
   CloseIcon,
   ConnectionsIcon,
@@ -16,7 +18,6 @@ import {
 import { CONFIGURATION_ROUTES, ROUTE_LABELS, WORK_ROUTES } from './routes'
 import { Sheet } from './Sheet'
 import { nextTheme, THEME_LABELS, type ThemeChoice } from './theme'
-import { timeLabel } from './work-model'
 
 export interface RepositoryOption {
   id: string
@@ -58,26 +59,28 @@ export function pausedSince(at: string): string {
 
 function PauseButton({ pause }: { pause: PauseControl }) {
   const paused = pause.state === 'paused'
+  const help = useId()
   return (
-    <div className="pause">
+    <section className="pause" aria-label="Processing">
       {paused && (
         <p className="pause-state">
           <strong>Processing paused</strong>
           {pause.pausedAt ? pausedSince(pause.pausedAt) : ''}. Messages are kept and no new turn runs.
         </p>
       )}
-      <button
-        type="button"
-        className="nav-item"
+      <Button
+        className="pause-button"
+        aria-describedby={help}
         disabled={pause.busy || pause.state === 'unknown' || pause.unavailable !== undefined}
-        title={
-          pause.unavailable ??
-          'Stops new launches for all work. Running turns finish. Hold and Stop act on one piece of work.'
-        }
         onClick={pause.onToggle}
       >
         {pause.busy ? 'Working…' : paused ? 'Resume processing' : 'Pause processing'}
-      </button>
+      </Button>
+      <p id={help} className="pause-state">
+        {paused
+          ? 'Resuming lets queued work start again.'
+          : 'Stops new runs for all work. Runs in progress finish.'}
+      </p>
       {pause.state === 'unknown' && (
         <p className="pause-state">Could not read whether processing is paused.</p>
       )}
@@ -87,7 +90,7 @@ function PauseButton({ pause }: { pause: PauseControl }) {
           {pause.error}
         </p>
       )}
-    </div>
+    </section>
   )
 }
 
@@ -101,7 +104,7 @@ export interface SidebarProps {
   needsCount: number | null
   /** Legacy rows with no repository, offered read-only while any exist. */
   unassigned?: { current: boolean; onOpen: () => void }
-  /** The persistent global control beside Needs you (#22). */
+  /** The persistent global control, set apart from navigation just below Needs you (#22). */
   pause?: PauseControl
   recent: readonly RecentItem[]
   onOpenRecent: (id: string) => void
@@ -119,7 +122,12 @@ export function Sidebar(props: SidebarProps) {
   const [choosing, setChoosing] = useState(false)
   const repoButton = useRef<HTMLButtonElement>(null)
   const canSwitch = props.repositories.length > 1 || (props.repositories.length === 1 && repository === null)
-  const repoLabel = repository ?? { name: 'Choose a repository', detail: 'None chosen yet' }
+  const viewingUnassigned = props.unassigned?.current === true
+  const repoLabel =
+    repository ??
+    (viewingUnassigned
+      ? { name: 'Unassigned', detail: 'Read-only history' }
+      : { name: 'Choose a repository', detail: 'None chosen yet' })
 
   const navItem = (target: Route) => {
     const NavIcon = ROUTE_ICONS[target]
@@ -176,6 +184,7 @@ export function Sidebar(props: SidebarProps) {
           {repository && <span className="sr-only">Repository: </span>}
           <RepositoryLabel name={repoLabel.name} detail={repoLabel.detail} />
           {repository && <span className="sr-only">. Switch repository</span>}
+          {viewingUnassigned && <span className="sr-only">. Choose a repository</span>}
           <UpDownIcon />
         </button>
       ) : (
@@ -189,19 +198,9 @@ export function Sidebar(props: SidebarProps) {
 
       <nav className="nav-stack" aria-label="Workspace">
         {WORK_ROUTES.map(navItem)}
-        {props.pause && <PauseButton pause={props.pause} />}
-        {props.unassigned && (
-          <button
-            type="button"
-            className="nav-item"
-            aria-current={props.unassigned.current ? 'page' : undefined}
-            onClick={props.unassigned.onOpen}
-          >
-            <WorkIcon />
-            Unassigned
-          </button>
-        )}
       </nav>
+
+      {props.pause && <PauseButton pause={props.pause} />}
 
       {recent.length > 0 && (
         <section className="recent" aria-label="Recent work">
@@ -215,12 +214,28 @@ export function Sidebar(props: SidebarProps) {
                   aria-current={item.current ? 'true' : undefined}
                   onClick={() => props.onOpenRecent(item.id)}
                 >
-                  {item.title}
+                  <span className="clamp-2" title={item.title}>
+                    {item.title}
+                  </span>
                 </button>
               </li>
             ))}
           </ul>
         </section>
+      )}
+
+      {props.unassigned && (
+        <nav className="nav-stack rail-history" aria-label="History">
+          <button
+            type="button"
+            className="nav-item"
+            aria-current={props.unassigned.current ? 'page' : undefined}
+            onClick={props.unassigned.onOpen}
+          >
+            <WorkIcon />
+            Unassigned
+          </button>
+        </nav>
       )}
 
       <div className="rail-foot">

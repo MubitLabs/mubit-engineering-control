@@ -1,0 +1,156 @@
+[
+  {
+    "name": "leave stdin open on a one-shot launch",
+    "file": "packages/engines/src/claude/adapter.ts",
+    "find": "    else proc.stdin?.end()\n",
+    "replace": "\n",
+    "tests": ["packages/engines/test/claude-input.test.ts"]
+  },
+  {
+    "name": "close stdin on a stream launch too",
+    "file": "packages/engines/src/claude/adapter.ts",
+    "find": "    else proc.stdin?.end()\n",
+    "replace": "    proc.stdin?.end()\n",
+    "tests": ["packages/engines/test/claude-input.test.ts"]
+  },
+  {
+    "name": "known read waits for the probes",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "    lookForEngines().catch(() => {})\n",
+    "replace": "    await lookForEngines().catch(() => {})\n",
+    "tests": ["apps/desktop/test/readiness.test.ts"]
+  },
+  {
+    "name": "a look starts for every read",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "    looking ??= engines()\n",
+    "replace": "    looking = engines()\n",
+    "tests": ["apps/desktop/test/readiness.test.ts"]
+  },
+  {
+    "name": "a finished look is never kept",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "        knownEngines = found\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/readiness.test.ts"]
+  },
+  {
+    "name": "a finished look blocks the next",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "        looking = null\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/readiness.test.ts"]
+  },
+  {
+    "name": "an unanswered look reads as no engine",
+    "file": "apps/desktop/src/readiness.ts",
+    "find": "    if (id === 'engines' && engines === null) return 'checking'\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/readiness.test.ts"]
+  },
+  {
+    "name": "checking gives the missing reason",
+    "file": "apps/desktop/src/readiness.ts",
+    "find": "blocked.status === 'checking'\n",
+    "replace": "false\n",
+    "tests": ["apps/desktop/test/readiness.test.ts"]
+  },
+  {
+    "name": "work title cut at 80",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "const TITLE_CAP = 500\n",
+    "replace": "const TITLE_CAP = 80\n",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "legacy work title cut at 80",
+    "file": "apps/desktop/src/server.ts",
+    "find": "const WORK_TITLE_LENGTH = 500\n",
+    "replace": "const WORK_TITLE_LENGTH = 80\n",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "a whole multi-line command in the summary",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "`Ran ${firstLine(command) ?? ''}`",
+    "replace": "`Ran ${command}`",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "a failed command reads as run",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "${body.ok === false ? ' (failed)' : ''}",
+    "replace": "",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "array command dropped",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "  if (Array.isArray(command)) {\n",
+    "replace": "  if (false) {\n",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "limit window stays raw",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "LIMIT_WINDOWS[str(body.window) ?? ''] ?? 'Usage limit'",
+    "replace": "str(body.window) ?? 'Usage limit'",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "setup done without a completion",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "  readiness.completion !== null && readiness.steps.every((step) => step.status === 'done')\n",
+    "replace": "  readiness.steps.every((step) => step.status === 'done')\n",
+    "tests": ["apps/web/test/walkthrough.test.ts"]
+  },
+  {
+    "name": "setup done with one stage done",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "readiness.steps.every((step) => step.status === 'done')",
+    "replace": "readiness.steps.some((step) => step.status === 'done')",
+    "tests": ["apps/web/test/walkthrough.test.ts"]
+  },
+  {
+    "name": "search offered with nothing typed",
+    "file": "apps/web/src/next/command-search.ts",
+    "find": "if (typed === '' || !available) return null",
+    "replace": "if (!available) return null",
+    "tests": ["apps/web/test/walkthrough.test.ts"]
+  },
+  {
+    "name": "search offered with nothing to answer it",
+    "file": "apps/web/src/next/command-search.ts",
+    "find": "if (typed === '' || !available) return null",
+    "replace": "if (typed === '') return null",
+    "tests": ["apps/web/test/walkthrough.test.ts"]
+  },
+  {
+    "name": "an empty class reads as allowed",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "Array.isArray(list) && list.length > 0 ? [entryLine(cls, list)] : []",
+    "replace": "Array.isArray(list) ? [entryLine(cls, list)] : []",
+    "tests": ["apps/web/test/walkthrough.test.ts"]
+  },
+  {
+    "name": "several rules read as one",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "  if (entries.length > 1) return `${name}: allowed without asking, ${entries.length} rules.`\n",
+    "replace": "",
+    "tests": ["apps/web/test/walkthrough.test.ts"]
+  },
+  {
+    "name": "unreadable policy summarised as none",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "  if (!isRecord(parsed)) return null\n",
+    "replace": "  if (!isRecord(parsed)) parsed = {}\n",
+    "tests": ["apps/web/test/walkthrough.test.ts"]
+  },
+  {
+    "name": "one line of output counts as several",
+    "file": "apps/web/src/next/format.ts",
+    "find": "text.trim().includes('\\n')",
+    "replace": "text.includes('\\n')",
+    "tests": ["apps/web/test/walkthrough.test.ts"]
+  }
+]

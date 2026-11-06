@@ -561,12 +561,12 @@ describe('repo reads', () => {
     const { app } = makeServer()
     track(app)
     const repo = await registerRepo(app, 'a')
-    await postMessage(app, { text: `  ${'y'.repeat(100)}\nsecond line`, repoId: repo, intent: 'new' })
+    await postMessage(app, { text: `  ${'y'.repeat(600)}\nsecond line`, repoId: repo, intent: 'new' })
     await postMessage(app, { text: 'Fix the login\n\nIt fails on Safari', repoId: repo, intent: 'new' })
     const rows = (await app.inject({ method: 'GET', url: `/api/work?repoId=${repo}` })).json() as {
       title?: string
     }[]
-    expect(rows.map((row) => row.title)).toEqual(['y'.repeat(80), 'Fix the login'])
+    expect(rows.map((row) => row.title)).toEqual(['y'.repeat(500), 'Fix the login'])
   })
 
   it('a work row with no origin message has no title rather than an id', async () => {

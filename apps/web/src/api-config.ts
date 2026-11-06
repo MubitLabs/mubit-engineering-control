@@ -70,8 +70,10 @@ export const configApi = {
     return decodeCapabilities(await request<unknown>('/api/status'))
   },
 
-  async readiness(): Promise<Readiness> {
-    return decodeReadiness(await request<unknown>('/api/setup/readiness'))
+  /** `known` answers at once from the last look at the engines, which may not have finished. */
+  async readiness(engines: 'probe' | 'known' = 'probe'): Promise<Readiness> {
+    const query = engines === 'known' ? '?engines=known' : ''
+    return decodeReadiness(await request<unknown>(`/api/setup/readiness${query}`))
   },
 
   skipStep(step: string): Promise<unknown> {

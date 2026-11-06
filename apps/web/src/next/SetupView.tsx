@@ -7,6 +7,7 @@ import {
   type ReadinessStep,
   type SetupAnswer,
   type StepRoute,
+  setupDone,
 } from './config-model'
 import { Button, Status, type StatusTone } from './primitives'
 
@@ -14,11 +15,13 @@ const TONES: Record<ReadinessStep['status'], StatusTone> = {
   done: 'good',
   missing: 'attention',
   skipped: 'neutral',
+  checking: 'neutral',
 }
 const WORDS: Record<ReadinessStep['status'], string> = {
   done: 'Done',
   missing: 'Not done',
   skipped: 'Skipped',
+  checking: 'Checking',
 }
 
 function MetaChoice({
@@ -182,12 +185,19 @@ export function SetupView({
     meta_slot: <MetaChoice readiness={readiness} busy={metaBusy} error={metaError} onChoose={onChooseMeta} />,
   }
   const { completion } = readiness
+  const allDone = setupDone(readiness)
+  const ended = (finished || allDone) && completion !== null
+  const chat = <SetupChat onSend={onAsk} onOpenSettings={() => onNavigate('settings')} />
 
   return (
     <div className="page">
       <PageHeader
         title="Setup"
-        subtitle="What is really ready, read from what MEC has saved. You can leave and come back."
+        subtitle={
+          allDone
+            ? 'Setup is finished. Nothing more is needed here.'
+            : 'What is really ready, read from what MEC has saved. You can leave and come back.'
+        }
       />
       <ol className="stages">
         {readiness.steps.map((step, index) => {
@@ -230,7 +240,7 @@ export function SetupView({
         })}
       </ol>
 
-      {finished && completion ? (
+      {ended ? (
         <section className="config-block" aria-label="Setup complete">
           <h2>Ready</h2>
           <p>
@@ -252,7 +262,14 @@ export function SetupView({
           </Button>
         </div>
       )}
-      <SetupChat onSend={onAsk} onOpenSettings={() => onNavigate('settings')} />
+      {ended ? (
+        <details className="technical">
+          <summary>Ask about setup</summary>
+          {chat}
+        </details>
+      ) : (
+        chat
+      )}
     </div>
   )
 }

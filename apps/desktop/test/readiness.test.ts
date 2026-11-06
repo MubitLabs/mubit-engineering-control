@@ -51,6 +51,90 @@ async function complete(ctx: ConfigServer): Promise<void> {
   expect((await ctx.post('/api/wizard/meta-slot', { slotId })).statusCode).toBe(200)
 }
 
+describe('GET /api/setup/readiness?engines=known', () => {
+  /** A probe that answers only when told, so the first read cannot be waiting for it by luck. */
+  function heldProbe(ctx: ConfigServer) {
+    const release: Array<() => void> = []
+    let calls = 0
+    ctx.setProbe(
+      (cmd) =>
+        new Promise((resolve) => {
+          calls += 1
+          release.push(() => resolve({ code: 0, stdout: `${cmd} 9.9.9\n`, stderr: '' }))
+        }),
+    )
+    return {
+      calls: () => calls,
+      release: () => {
+        for (const go of release.splice(0)) go()
+      },
+    }
+  }
+  const known = async (ctx: ConfigServer) =>
+    (await ctx.get('/api/setup/readiness?engines=known')).json() as Readiness
+  const settle = () => new Promise((resolve) => setImmediate(resolve))
+
+  it('answers the saved facts at once while the engines are still being looked for', async () => {
+    const ctx = server()
+    const probe = heldProbe(ctx)
+    seedSlot(ctx.store, { label: 'max-1' })
+    const body = await known(ctx)
+    expect(step(body, 'engines').status).toBe('checking')
+    expect(step(body, 'engines').detail).toMatch(/checking/i)
+    expect(step(body, 'connection').status).toBe('done')
+    expect(body.finish.enabled).toBe(false)
+    expect(body.finish.reason).toMatch(/still checking/i)
+    expect(body.completion).toBeNull()
+    expect(probe.calls()).toBe(3)
+    probe.release()
+  })
+
+  it('one look serves the reads behind it, and its answer takes over', async () => {
+    const ctx = server()
+    const probe = heldProbe(ctx)
+    await known(ctx)
+    await known(ctx)
+    expect(probe.calls()).toBe(3)
+    probe.release()
+    await settle()
+    const body = await known(ctx)
+    expect(step(body, 'engines').status).toBe('done')
+    expect(step(body, 'engines').detail).toContain('claude 9.9.9')
+    probe.release()
+  })
+
+  it('a finished look stays usable while the next one runs, and its answer replaces it', async () => {
+    const ctx = server()
+    await readiness(ctx)
+    ctx.setProbe(nothingInstalled)
+    expect(step(await known(ctx), 'engines').status).toBe('done')
+    await settle()
+    expect(step(await known(ctx), 'engines').status).toBe('missing')
+  })
+
+  it('a probe that throws leaves the next look free to run', async () => {
+    const ctx = server()
+    ctx.setProbe(async () => {
+      throw new Error('spawn failed')
+    })
+    await known(ctx)
+    await settle()
+    ctx.setProbe(async (cmd) => ({ code: 0, stdout: `${cmd} 1.0.0\n`, stderr: '' }))
+    await known(ctx)
+    await settle()
+    expect(step(await known(ctx), 'engines').status).toBe('done')
+  })
+
+  it('the plain read still waits for what the engines say', async () => {
+    const ctx = server()
+    const probe = heldProbe(ctx)
+    const pending = readiness(ctx)
+    await settle()
+    probe.release()
+    expect(step(await pending, 'engines').status).toBe('done')
+  })
+})
+
 describe('GET /api/setup/readiness', () => {
   it('gives five stages in order, each with a state and the next action', async () => {
     const ctx = server()

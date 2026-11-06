@@ -314,7 +314,7 @@ describe('inspection routes: honesty', () => {
       expect(res.body, url).not.toContain('AAAAAAAA')
     }
     const row = (await get('/api/inspect/work')).json().items[0]
-    expect(row.title.length).toBeLessThanOrEqual(80 + '[redacted:anthropic]'.length)
+    expect(row.title.length).toBeLessThanOrEqual(500 + '[redacted:anthropic]'.length)
     expect(row.title).toContain('[redacted:')
   })
 
@@ -647,19 +647,24 @@ describe('inspection routes: stage', () => {
 })
 
 describe('inspection routes: titles, counts, details, search, snapshot', () => {
-  it('serves a stored title, else the first line of the origin message cut to 80, else null', async () => {
+  it("serves a stored title, else the origin message's first line up to 500, else null", async () => {
     store.atomic(() => {
       store.messages.save({ id: 'msg_1', text: `\n  Add audit log viewing\nmore detail`, createdAt: AT })
-      store.messages.save({ id: 'msg_2', text: 'y'.repeat(200), createdAt: AT })
+      store.messages.save({ id: 'msg_2', text: 'y'.repeat(600), createdAt: AT })
+      store.messages.save({ id: 'msg_3', text: `${'word '.repeat(30)}end`, createdAt: AT })
     })
     seedWork('wi_titled', { title: 'Stored title', originMessageId: 'msg_1' })
     seedWork('wi_msg', { originMessageId: 'msg_1' })
     seedWork('wi_long', { originMessageId: 'msg_2' })
+    seedWork('wi_whole', { originMessageId: 'msg_3' })
+    seedWork('wi_stored', { title: 'z'.repeat(120) })
     seedWork('wi_none')
     const rows = Object.fromEntries((await get('/api/inspect/work')).json().items.map((r: any) => [r.id, r]))
     expect(rows.wi_titled.title).toBe('Stored title')
     expect(rows.wi_msg.title).toBe('Add audit log viewing')
-    expect(rows.wi_long.title).toHaveLength(80)
+    expect(rows.wi_long.title).toHaveLength(500)
+    expect(rows.wi_whole.title).toBe(`${'word '.repeat(30)}end`)
+    expect(rows.wi_stored.title).toHaveLength(120)
     expect(rows.wi_none.title).toBeNull()
   })
 

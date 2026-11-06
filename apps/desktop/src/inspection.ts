@@ -539,6 +539,8 @@ const DEPENDS_CAP = 100
 const CURSOR_CAP = 200
 const CLS_CAP = 4000
 const LABEL_CAP = 80
+/** A title is the whole first line unless that is absurd: the screen wraps or clamps the rest. */
+const TITLE_CAP = 500
 /**
  * Count caps alone do not hold a byte bound: JSON spends up to 6 bytes on one character. These budgets
  * keep a heavy but ordinary answer servable; the hard ceiling is in `serve`.
@@ -948,11 +950,11 @@ class Inspector {
 
   #titleOf(doc: StoreDoc): string | null {
     const stored = str(doc.title)
-    if (stored !== null && stored.trim() !== '') return cutText(stored.trim(), 80)
+    if (stored !== null && stored.trim() !== '') return cutText(stored.trim(), TITLE_CAP)
     const originId = str(doc.originMessageId)
     const text = originId === null ? null : str(this.#store.messages.get(originId)?.text)
     const line = text === null ? null : firstLine(redactText(text))
-    return line === null ? null : line.slice(0, 80)
+    return line === null ? null : line.slice(0, TITLE_CAP)
   }
 
   #deliveryRecord(doc: StoreDoc | undefined): StoreDoc | undefined {
@@ -1237,7 +1239,7 @@ class Inspector {
       return {
         id,
         localKey,
-        title: line === null ? (localKey ?? id).slice(0, 80) : line.slice(0, 80),
+        title: line === null ? (localKey ?? id).slice(0, 80) : line.slice(0, TITLE_CAP),
         role: shortOrNull(str(task.role)),
         status: shortText(str(task.status) ?? 'ready'),
         dependsOn,
@@ -1777,7 +1779,7 @@ class Inspector {
       add({
         kind: 'message',
         id,
-        title: cutText(firstLine(str(message.text) ?? '') ?? id, 80),
+        title: cutText(firstLine(str(message.text) ?? '') ?? id, TITLE_CAP),
         repoLabel: this.repoLabel(repo),
         workItemId: str(message.workItemId),
       })
@@ -1965,12 +1967,49 @@ export function replyOf(store: Store, message: StoreDoc): string | null {
 // ── Activity lines ───────────────────────────────────────────────────────────────────────────
 
 /** What one event says, in a line. Only the fields the contract names for that type. */
+const LIMIT_WINDOWS: Readonly<Record<string, string>> = {
+  five_hour: '5-hour limit',
+  seven_day: 'Weekly limit',
+  seven_day_opus: 'Weekly Opus limit',
+  seven_day_sonnet: 'Weekly Sonnet limit',
+  weekly: 'Weekly limit',
+  per_minute: 'Per-minute limit',
+  per_day: 'Daily limit',
+  overage: 'Overage limit',
+}
+const LIMIT_STATES: Readonly<Record<string, string>> = {
+  allowed: 'fine for now',
+  warning: 'close to the limit',
+  rejected: 'reached',
+}
+
+/** The input fields that say what a call touched, in the order worth showing. */
+const TOOL_SUBJECTS = ['file_path', 'filePath', 'path', 'pattern', 'url', 'query'] as const
+
+function commandOf(input: Record<string, Json> | null): string | null {
+  const command = input?.command ?? input?.cmd
+  if (Array.isArray(command)) {
+    return command.filter((part): part is string => typeof part === 'string').join(' ') || null
+  }
+  return str(command)
+}
+
+function toolSummary(body: Record<string, Json>): string {
+  const tool = str(body.tool) ?? 'tool'
+  const input = obj(body.input)
+  const command = commandOf(input)
+  const subject = TOOL_SUBJECTS.map((field) => str(input?.[field])).find((value) => value !== null)
+  const line = command !== null ? `Ran ${firstLine(command) ?? ''}` : subject ? `${tool} ${subject}` : null
+  if (line === null) return `${tool}${body.ok === false ? ' failed' : ''}`
+  return `${line.trim()}${body.ok === false ? ' (failed)' : ''}`
+}
+
 function activitySummary(type: string, body: Record<string, Json>): string {
   switch (type) {
     case 'message':
       return `${str(body.role) ?? 'unknown'}: ${firstLine(str(body.text) ?? '') ?? ''}`
     case 'tool_call':
-      return `${str(body.tool) ?? 'tool'}${body.ok === false ? ' failed' : ''}`
+      return toolSummary(body)
     case 'permission_request':
       return 'Asked for permission'
     case 'permission_result':
@@ -1978,7 +2017,7 @@ function activitySummary(type: string, body: Record<string, Json>): string {
     case 'usage':
       return `${num(body.input_tokens) ?? '?'} in, ${num(body.output_tokens) ?? '?'} out`
     case 'rate_limit':
-      return `${str(body.window) ?? 'unknown'} ${str(body.status) ?? 'unknown'}`
+      return `${LIMIT_WINDOWS[str(body.window) ?? ''] ?? 'Usage limit'}: ${LIMIT_STATES[str(body.status) ?? ''] ?? 'not reported'}`
     case 'report': {
       const report = obj(body.report)
       return `${str(report?.kind) ?? 'report'}: ${str(report?.summary) ?? ''}`

@@ -9,6 +9,7 @@ import {
   connectionActions,
   type ParkedRow,
 } from './config-model'
+import { timeLabel } from './format'
 import { type ParkedCommands, ParkedNotices } from './ParkedNotice'
 import { Button, Status, type StatusTone, useFormFocus } from './primitives'
 
@@ -56,8 +57,6 @@ const REASON_WORDS: Record<string, string> = {
   engine_unsupported: 'This engine version is not supported.',
   provider_unreachable: 'The provider could not be reached.',
 }
-
-const when = (iso: string): string => new Date(iso).toLocaleString()
 
 function Fact({ term, children }: { term: string; children: ReactNode }) {
   return (
@@ -211,8 +210,8 @@ function ConnectionItem({
       <dl className="facts-grid">
         <Fact term="Identity">{identity || 'Not reported'}</Fact>
         <Fact term="Key">{row.fingerprint ? `Ends ${row.fingerprint.last4}` : 'None stored'}</Fact>
-        <Fact term="Last check">{row.lastProbeAt ? when(row.lastProbeAt) : 'Not checked yet'}</Fact>
-        <Fact term="Usage">No reading yet</Fact>
+        <Fact term="Last check">{row.lastProbeAt ? timeLabel(row.lastProbeAt) : 'Not checked yet'}</Fact>
+        <Fact term="Usage">No reading yet. MEC does not record usage for a connection.</Fact>
         <Fact term="Runs at once">{row.concurrency ?? 'Default limit'}</Fact>
         <Fact term="Slot class">{row.slotClass ?? 'None set'}</Fact>
         <Fact term="Pinned version">Not pinned</Fact>
@@ -241,9 +240,7 @@ function ConnectionItem({
             Replace key
           </Button>
         )}
-        <Button variant="quiet" disabled={!drain.enabled} title={drain.enabled ? undefined : drain.reason}>
-          Drain
-        </Button>
+        {drain.enabled && <Button variant="quiet">Drain</Button>}
         {parkedHere.length === 0 && (
           <Button variant="quiet" disabled title={switchReason}>
             Switch work

@@ -192,8 +192,31 @@ export function registerConfigRoutes(
       }),
     )
 
+  /** The last look at what is installed, and the one running. One at a time, whoever asks. */
+  let knownEngines: Readiness['engines'] | null = null
+  let looking: Promise<Readiness['engines']> | null = null
+  const lookForEngines = (): Promise<Readiness['engines']> => {
+    looking ??= engines()
+      .then((found) => {
+        knownEngines = found
+        return found
+      })
+      .finally(() => {
+        looking = null
+      })
+    return looking
+  }
+
   // ─── Readiness ────────────────────────────────────────────────────────────────
-  app.get('/api/setup/readiness', async () => buildReadiness(store, await engines()))
+  // `?engines=known` answers from saved facts now and looks again behind the answer: one engine's
+  // `--version` can take the whole probe timeout, and the other four stages do not depend on it.
+  app.get('/api/setup/readiness', async (request) => {
+    if ((request.query as { engines?: unknown }).engines !== 'known') {
+      return buildReadiness(store, await lookForEngines())
+    }
+    lookForEngines().catch(() => {})
+    return buildReadiness(store, knownEngines)
+  })
 
   app.post('/api/setup/skip', async (request, reply) => {
     const body = (request.body ?? {}) as { step?: unknown; skipped?: unknown }
@@ -414,11 +437,21 @@ export function registerConfigRoutes(
   // `GET /api/models` answers the parsed table; an editor needs the words a save replaces.
   app.get('/api/models/text', async (_request, reply) => {
     try {
-      const { provenance } = loadModelsTable({ userPath: join(keystoreRoot, 'models.yaml') })
+      const { provenance, table } = loadModelsTable({ userPath: join(keystoreRoot, 'models.yaml') })
       return {
         yaml: readFileSync(provenance.path, 'utf8'),
         sha256: provenance.sha256,
         source: provenance.source,
+        summary: {
+          tiers: table.tiers,
+          engines: Object.entries(table.engines).map(([engine, entry]) => ({
+            engine,
+            models: [
+              ...Object.entries(entry.models ?? {}),
+              ...Object.values(entry.providers ?? {}).flatMap((block) => Object.entries(block.models)),
+            ].map(([id, model]) => ({ id, tier: model.tier })),
+          })),
+        },
       }
     } catch (error) {
       reply.code(500).send({

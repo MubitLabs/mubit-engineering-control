@@ -218,6 +218,8 @@ export class ClaudeAdapter implements EngineAdapter {
     }
     this.spawns.set(spec.brief.attempt_id, launch)
     if (launch.inputOpen) this.#write(launch, spec.brief.objective)
+    // A one-shot prompt rides argv. With stdin left open the engine waits 3 s for input it never gets.
+    else proc.stdin?.end()
     return handle
   }
 

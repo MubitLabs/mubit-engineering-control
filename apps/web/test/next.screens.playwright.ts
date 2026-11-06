@@ -477,6 +477,34 @@ test.describe('the repo workspace', () => {
     await expect(page.getByRole('button', { name: 'Send' })).toHaveAttribute('aria-disabled', 'true')
   })
 
+  test('the walkthrough: Unassigned names itself in the repository control, in full', async ({ page }) => {
+    await twoRepos(page, {
+      messages: [{ id: 'm_old', text: 'An old message', createdAt: '' }],
+    })
+    await start(page)
+    await page.getByRole('button', { name: 'Unassigned', exact: true }).click()
+    await expect(page.getByText('An old message')).toBeVisible()
+    const control = page.locator('.repo-switch')
+    await expect(control).toContainText('Read-only history')
+    await expect(control).toHaveAccessibleName(/Choose a repository/)
+    const clipped = await control
+      .locator('strong')
+      .evaluate((node) => node.scrollWidth > node.clientWidth || node.scrollHeight > node.clientHeight)
+    expect(clipped).toBe(false)
+  })
+
+  test('the walkthrough: with none chosen the control shows its whole label', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await twoRepos(page)
+    await start(page, 'chat')
+    const strong = page.locator('.repo-switch strong')
+    await expect(strong).toHaveText('Choose a repository')
+    const clipped = await strong.evaluate(
+      (node) => node.scrollWidth > node.clientWidth || node.scrollHeight > node.clientHeight,
+    )
+    expect(clipped).toBe(false)
+  })
+
   test('reload on Unassigned keeps it, with no notice', async ({ page }) => {
     await twoRepos(page, {
       messages: [{ id: 'm_old', text: 'An old message', createdAt: '' }],
@@ -1022,6 +1050,33 @@ test.describe('the shell', () => {
     await page.getByRole('button', { name: 'Open commands' }).click()
     await page.keyboard.type('zzz')
     await expect(page.getByText('No matching commands')).toBeVisible()
+  })
+
+  test('the walkthrough: the palette hands words it cannot match to the work search', async ({ page }) => {
+    await live(page)
+    let asked = ''
+    await page.route('**/api/inspect/search**', (route) => {
+      asked = new URL(route.request().url()).searchParams.get('q') ?? ''
+      return route.fulfill({
+        json: {
+          items: [
+            { kind: 'work', id: 'work_w', title: 'Wave two', repoLabel: 'alpha', workItemId: 'work_w' },
+          ],
+          nextCursor: null,
+          observedAt: '2026-11-06T10:00:00.000Z',
+        },
+      })
+    })
+    await page.getByRole('button', { name: 'Open commands' }).click()
+    await page.keyboard.type('wave')
+    await expect(page.getByText('No matching commands')).toHaveCount(0)
+    const offer = page.getByRole('option', { name: 'Search work, tasks and messages for “wave”' })
+    await expect(offer).toHaveAttribute('aria-selected', 'true')
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('dialog', { name: 'Search' })).toBeVisible()
+    await expect(page.getByRole('searchbox')).toHaveValue('wave')
+    await expect(page.getByRole('button', { name: /Wave two/ })).toBeVisible()
+    expect(asked).toBe('wave')
   })
 
   test('21: navigation exposes aria-current and moves focus to the heading', async ({ page }) => {

@@ -155,8 +155,13 @@
 }
 
 .repo-text strong {
+  display: -webkit-box;
   font-size: 13px;
   font-weight: 600;
+  line-height: 1.3;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .nav-stack {
@@ -1892,17 +1897,75 @@ button.choice:hover,
   justify-items: start;
   gap: 8px;
   max-width: 720px;
+  margin-bottom: 32px;
 }
 
+/* An action, not a place: apart from navigation, with its effect said out loud. */
 .pause {
   display: grid;
-  gap: 2px;
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.pause-button {
+  justify-self: stretch;
 }
 
 .pause-state {
-  padding: 0 8px;
+  padding: 0 4px;
   font-size: 12px;
+  line-height: 1.45;
   color: var(--secondary);
+}
+
+.rail-history {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.plain-summary {
+  max-width: 720px;
+  margin: 0 0 16px;
+  padding-left: 18px;
+}
+
+.plain-summary li {
+  margin-bottom: 4px;
+}
+
+.advanced {
+  margin-top: 16px;
+}
+
+.advanced > summary {
+  min-height: var(--target);
+  margin-bottom: 8px;
+  cursor: pointer;
+  color: var(--secondary);
+}
+
+/* The whole text stays in the page for assistive technology; only its box is cut. */
+.clamp-2 {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.check-list .check-output {
+  max-height: 32dvh;
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.check-list li > span:last-child {
+  min-width: 0;
+  flex: 1;
 }
 
 .pause-state strong {

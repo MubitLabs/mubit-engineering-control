@@ -487,7 +487,7 @@ function rowsInScope(rows: Store['workItems'], store: Store, request: FastifyReq
   return rows.list(filter)
 }
 
-const WORK_TITLE_LENGTH = 80
+const WORK_TITLE_LENGTH = 500
 
 /** §18: work reads by words, not ids. No §10 title exists yet, so the request names it. */
 function workTitleOf(store: Store, work: StoreDoc): string | undefined {

@@ -479,6 +479,11 @@ export function LiveApp() {
         : ''
       : (state.labels[repoId] ?? rows.find((row) => row.repoId === repoId)?.repoLabel ?? null)
 
+  const openSearch = (query?: string) => {
+    if (query !== undefined) inspection.setQuery(query)
+    setSearching(true)
+  }
+
   const chooseResult = ({ hit }: SearchRowView) => {
     const target = searchTarget(hit, activeLabel)
     const owner = rows.find((row) => row.id === target.workItemId)
@@ -504,7 +509,7 @@ export function LiveApp() {
           },
         ]
       : []),
-    { id: 'search', label: 'Search', run: () => setSearching(true) },
+    { id: 'search', label: 'Search', run: () => openSearch() },
     ...repositories
       .filter((repo) => repo.id !== repoId)
       .map((repo) => ({
@@ -705,7 +710,7 @@ export function LiveApp() {
         composer={address.route === 'chat' ? composer : null}
         composerFocusRequest={focusRequest}
         commands={commands}
-        search={{ onOpen: () => setSearching(true) }}
+        search={{ onOpen: openSearch }}
       >
         {page}
       </NextApp>

@@ -9,8 +9,10 @@ import {
   foldDiff,
   lineDiff,
   type ModelsText,
+  modelsSummaryLines,
   type PolicyView,
   type PromptPartView,
+  policySummary,
   type RepositoryView,
   saveBar,
 } from './config-model'
@@ -143,22 +145,43 @@ interface EditorProps {
   onUseNewest: () => void
 }
 
-function TextBlock({ label, rows, ...props }: EditorProps & { label: string; rows: number }) {
+function TextBlock({
+  label,
+  rows,
+  advanced = false,
+  ...props
+}: EditorProps & { label: string; rows: number; advanced?: boolean }) {
   const { editor, onEdit, onSave, onDiscard, onUseNewest } = props
   const field = useRef<HTMLTextAreaElement>(null)
+  const [opened, setOpened] = useState(false)
+  const box = (
+    <label className="field">
+      {label}
+      <textarea
+        ref={field}
+        className="code-input"
+        rows={rows}
+        spellCheck={false}
+        value={editor.draft ?? editor.base}
+        onChange={(event) => onEdit(event.target.value)}
+      />
+    </label>
+  )
   return (
     <>
-      <label className="field">
-        {label}
-        <textarea
-          ref={field}
-          className="code-input"
-          rows={rows}
-          spellCheck={false}
-          value={editor.draft ?? editor.base}
-          onChange={(event) => onEdit(event.target.value)}
-        />
-      </label>
+      {advanced ? (
+        // A draft keeps it open: an unsaved edit is never folded out of sight on return.
+        <details
+          className="advanced"
+          open={opened || editor.draft !== null}
+          onToggle={(event) => setOpened(event.currentTarget.open)}
+        >
+          <summary>Advanced</summary>
+          {box}
+        </details>
+      ) : (
+        box
+      )}
       {editor.save.kind === 'saved' && (
         <p className="muted" role="status">
           Saved.
@@ -176,6 +199,18 @@ function TextBlock({ label, rows, ...props }: EditorProps & { label: string; row
 }
 
 const shortHash = (sha: string): string => sha.slice(0, 12)
+
+function PlainSummary({ lines }: { lines: readonly string[] | null }) {
+  if (lines === null)
+    return <p className="muted">The saved text cannot be summarised. Open Advanced to read it.</p>
+  return (
+    <ul className="plain-summary">
+      {lines.map((line) => (
+        <li key={line}>{line}</li>
+      ))}
+    </ul>
+  )
+}
 
 export function PolicyBlock({
   policy,
@@ -210,8 +245,9 @@ export function PolicyBlock({
       ) : (
         <p className="muted">A saved edit applies to new work after the next restart.</p>
       )}
+      <PlainSummary lines={policySummary(editor.editor.base)} />
       {proposals}
-      <TextBlock label="Policy file" rows={12} {...editor} />
+      <TextBlock label="Policy file" rows={12} advanced {...editor} />
     </section>
   )
 }
@@ -228,8 +264,9 @@ export function ModelsBlock({
         {models.source === 'user' ? 'Your table' : 'The shipped table'}, version{' '}
         <span className="mono">{shortHash(models.sha256)}</span>.
       </p>
+      <PlainSummary lines={modelsSummaryLines(models.summary)} />
       {proposals}
-      <TextBlock label="Capability table" rows={18} {...editor} />
+      <TextBlock label="Capability table" rows={18} advanced {...editor} />
     </section>
   )
 }

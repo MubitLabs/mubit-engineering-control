@@ -1,5 +1,6 @@
 import type { TaskProgress, TaskRowProps } from './Conversation'
 import type { ApprovalProps, DecisionStatus, QuestionProps } from './Decision'
+import { timeLabel } from './format'
 import type { ArtifactLinkView, Fact, InspectorChecks, InspectorScope } from './Inspector'
 import type {
   ActivityItem,
@@ -52,17 +53,6 @@ export function mapRead<T, U>(read: Read<T>, map: (data: T) => U): Read<U> {
   if (read.status === 'loading') return read
   if (read.status === 'ready') return { ...read, data: map(read.data) }
   return { ...read, data: read.data === null ? null : map(read.data) }
-}
-
-/** The time alone means today: any other day says which, or a date tomorrow reads as now. */
-export function timeLabel(at: string): string {
-  const date = new Date(at)
-  if (Number.isNaN(date.getTime())) return at
-  const time = { hour: '2-digit', minute: '2-digit' } as const
-  const now = new Date()
-  if (date.toDateString() === now.toDateString()) return date.toLocaleTimeString([], time)
-  const year = date.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' as const }
-  return date.toLocaleString([], { month: 'short', day: 'numeric', ...year, ...time })
 }
 
 /** One answer for every surface: ready, empty or failed, never a failure dressed as empty. */

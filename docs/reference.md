@@ -103,14 +103,14 @@ Readiness is read from saved facts: walking through Setup changes none of them. 
 
 | Method | Path | Body | What it does |
 | --- | --- | --- | --- |
-| GET | `/api/setup/readiness` | — | The five steps with their next action, the engines found, `metaCandidates` with the server's verdict on each, `finish`, and `completion` naming the repository and meta slot once the first four steps hold. |
+| GET | `/api/setup/readiness` | — | The five steps with their next action, the engines found, `metaCandidates` with the server's verdict on each, `finish`, and `completion` naming the repository and meta slot once the first four steps hold. It waits for the engine probes. With `?engines=known` it answers at once from the last probe and probes again behind the answer; until a first probe has answered, the `engines` step says `checking` and Finish stays off. |
 | POST | `/api/setup/skip` | `{ step, skipped? }` | Notes that the owner moved on. A saved fact outranks it. |
 | GET | `/api/setup/drafts` | — | Setup-agent proposals. A pending policy, models or prompts proposal carries `preview`: `{ base, changes: [{ label, before, after }] }`, the current text and the text Apply would save. `base` is the version `before` was read at. A repository proposal has none, and neither does one whose stored text no longer loads. A repository proposal that carried `trust` has `trustIgnored: true`: applying one always stores it untrusted. |
 | POST | `/api/setup/drafts/:id/apply` | `{ base }` | Applies a proposal through the manual save's validation and stale check. `base` is the hash or revision the owner was looking at, which is `preview.base` when there is one; a repository draft needs none. |
 | POST | `/api/setup/drafts/:id/dismiss` | — | Marks it `denied`. It can never apply. |
 | GET | `/api/policy` | — | `{ text, sha256, revision, source, activeSha256, restartRequired, updatedAt? }`. |
 | PUT | `/api/policy` | `{ text, base_sha256 }` | Validates with `loadPolicy`, so an always-confirm class is refused, and writes revision `n+1` to `settings/policy` with a `policy_updated` event on the `policy` stream. It applies to new work after the next restart. A launch queued under the old version never starts: the launch gate fails its attempt, which gives its capacity back, and blocks the work with `policy_changed`. Running attempts are not touched (§13). |
-| GET | `/api/models/text` | — | `{ yaml, sha256, source }`: the words a `PUT /api/models` replaces. |
+| GET | `/api/models/text` | — | `{ yaml, sha256, source, summary }`: the words a `PUT /api/models` replaces, and `summary` as `{ tiers, engines: [{ engine, models: [{ id, tier }] }] }` read from the same table. |
 | PATCH | `/api/repositories/:id` | `{ base_revision, bootstrapCmds?, checkCmds?, trusted? }` | Edits a repository under the argv rules and appends `repository_updated` to the `repositories` stream. `base_revision` comes from `GET /api/repositories`. Work already admitted keeps its pin. |
 | GET | `/api/backups` | — | `{ lastAt?, archive?, note, excluded }`. Served only with a backup seam. |
 | POST | `/api/backups` | — | Takes one backup into `<data dir>/backups` with `VACUUM INTO`, the same redacted backup as `mec backup`: `{ status, lastAt, archive }`. It runs on the request and blocks the server until it finishes. A failure answers 500 `backup_failed` and records nothing. |

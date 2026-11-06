@@ -391,6 +391,9 @@ function ConnectionsSurface({ capabilities }: { capabilities: Capabilities | nul
 
 // ─── Setup ──────────────────────────────────────────────────────────────────────
 
+/** How soon Setup reads again while the engines are being looked for. */
+const ENGINE_RECHECK_MS = 1_000
+
 function SetupSurface({
   store,
   onNavigate,
@@ -400,8 +403,16 @@ function SetupSurface({
   onNavigate: (route: Route) => void
   onRepositories: () => void
 }) {
-  const [readiness, refresh] = useRead(() => configApi.readiness())
+  const [readiness, refresh] = useRead(() => configApi.readiness('known'))
   const [connections, refreshConnections] = useRead(() => configApi.connections())
+  // The look ends at the probe timeout at worst, so this stops by itself.
+  const checking = readiness.value?.steps.some((step) => step.status === 'checking') === true
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each answer starts the next wait.
+  useEffect(() => {
+    if (!checking) return
+    const timer = setTimeout(refresh, ENGINE_RECHECK_MS)
+    return () => clearTimeout(timer)
+  }, [checking, readiness.value, refresh])
   const changed = useCallback(() => {
     refresh()
     refreshConnections()
@@ -467,7 +478,7 @@ function SetupSurface({
         if (route === 'settings' && step === 'repository') store.section = 'repositories'
         onNavigate(route)
       }}
-      onRecheck={refresh}
+      onRecheck={() => void configApi.readiness().finally(refresh)}
       onAsk={(text) =>
         configApi.setupMessage(text).catch((error: unknown) => ({ failure: failureText(error) }))
       }

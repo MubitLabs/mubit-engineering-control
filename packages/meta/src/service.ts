@@ -94,9 +94,9 @@ import { EscalationCounter } from './escalation'
 import { enqueueWake, FollowUps } from './followups'
 import { routeMessage } from './routing'
 import { type LaunchRecord, type PlacementTable, type SchedulerDeps, schedulePass } from './scheduler'
-import { knownChecks, workResultOf } from './work-facts'
 import type { PlannerConfirmationDraft, PlannerQuestionRecord, PlannerTurnJournal } from './tools'
 import { PlannerTools } from './tools'
+import { knownChecks, workResultOf } from './work-facts'
 
 /** One planned task as the service persists it: the v0 four fields, plus the §5.2 brief fields. */
 export type MetaPlanTask = {

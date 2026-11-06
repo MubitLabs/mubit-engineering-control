@@ -104,12 +104,15 @@ export async function yieldCheck(
   run: GhRun,
   repo: string,
   changedFiles: string[],
+  branches: { defaultBranch: string; ownBranch?: string },
 ): Promise<{ yieldTo: string | null }> {
   if (changedFiles.length === 0) return { yieldTo: null }
+  const { defaultBranch, ownBranch } = branches
 
   const listed = await run(['pr', 'list', '-R', repo, '--json', 'number,headRefName', '--state', 'open'])
   if (listed.code === 0) {
     for (const pr of parseJson<Array<{ number: number; headRefName: string }>>(listed.stdout) ?? []) {
+      if (pr.headRefName === ownBranch) continue
       const viewed = await run(['pr', 'view', String(pr.number), '-R', repo, '--json', 'files'])
       if (viewed.code !== 0) continue
       const files = (parseJson<{ files: Array<{ filename: string }> }>(viewed.stdout)?.files ?? []).map(
@@ -123,16 +126,16 @@ export async function yieldCheck(
     }
   }
 
-  const branches = await run(['api', `repos/${repo}/branches`, '--jq', '.[].name'])
-  if (branches.code === 0) {
-    // The compare base is `main`; comparing main with itself is a guaranteed no-files result.
-    const names = lines(branches.stdout)
-      .filter((name) => name !== 'main')
+  const listedBranches = await run(['api', `repos/${repo}/branches`, '--jq', '.[].name'])
+  if (listedBranches.code === 0) {
+    // The compare base is the pinned default branch; comparing it with itself finds no files.
+    const names = lines(listedBranches.stdout)
+      .filter((name) => name !== defaultBranch && name !== ownBranch)
       .slice(0, MAX_BRANCH_COMPARES)
     for (const branch of names) {
       const compared = await run([
         'api',
-        `repos/${repo}/compare/main...${branch}`,
+        `repos/${repo}/compare/${defaultBranch}...${branch}`,
         '--jq',
         '.files[].filename',
       ])
@@ -226,6 +229,14 @@ export type ReleaseDeps = {
   now: () => Date
   /** The push leg's git; tests may inject one, production uses the argv-only default. */
   git?: GitExec
+  /**
+   * Where a branch MEC built lives (§14): the bare cache, not the registered clone. Answers from
+   * the store for a repository id and branch, so no caller ever supplies a directory. Undefined
+   * for any other branch, which pushes from the registered path.
+   */
+  pushSource?: (repoId: string, branch: string) => { gitDir: string } | undefined
+  /** Called once a card has settled, by whichever door answered it. Never settles anything. */
+  onCardSettled?: (card: StoreDoc, outcome: CardOutcome) => void
 }
 
 /** The delivery's prflow projection (packages/integration prflow.ts), kept in the engines repo beside the settings docs. */
@@ -408,7 +419,7 @@ const needsPreflight = (answer: 'approve' | 'deny', card: ConfirmationRecord, at
   answer === 'approve' && at <= card.expiresAt
 
 /** A branch's head on GitHub; undefined when it cannot be read, which never counts as a match. */
-async function remoteHead(run: GhRun, repo: string, branch: string): Promise<string | undefined> {
+export async function remoteHead(run: GhRun, repo: string, branch: string): Promise<string | undefined> {
   const read = await run(['api', `repos/${repo}/git/ref/heads/${branch}`, '--jq', '.object.sha'])
   return read.code === 0 ? shaOf(read.stdout) : undefined
 }
@@ -480,6 +491,13 @@ export async function createPrBehindCard(
  * at all.
  */
 export async function resolvePrCreate(
+  deps: ReleaseDeps,
+  input: { confirmationId: string; answer: 'approve' | 'deny' },
+): Promise<{ status: string; prNumber?: number; prUrl?: string; error?: string; reason?: string }> {
+  return announce(deps, input.confirmationId, await answerPrCreate(deps, input))
+}
+
+async function answerPrCreate(
   deps: ReleaseDeps,
   input: { confirmationId: string; answer: 'approve' | 'deny' },
 ): Promise<{ status: string; prNumber?: number; prUrl?: string; error?: string; reason?: string }> {
@@ -569,7 +587,7 @@ type PrFacts = {
   mergeStateStatus: string
 }
 
-async function readPr(run: GhRun, repo: string, prNumber: number): Promise<PrFacts | undefined> {
+export async function readPr(run: GhRun, repo: string, prNumber: number): Promise<PrFacts | undefined> {
   const viewed = await run([
     'pr',
     'view',
@@ -647,7 +665,7 @@ const MERGE_STATE_HOLD: Record<string, string> = {
  * while checks are pending, but any other failed exit makes the rows unusable as green, an
  * unknown state is a failure, and no rows at all is not green.
  */
-async function readRequiredChecks(
+export async function readRequiredChecks(
   run: GhRun,
   repo: string,
   prNumber: number,
@@ -678,6 +696,13 @@ async function readRequiredChecks(
  * stays where the table says (ci_green — only GitHub confirms).
  */
 export async function mergeBehindCard(
+  deps: ReleaseDeps,
+  input: { confirmationId: string; repo: string; prNumber: number; answer: 'approve' | 'deny' },
+): Promise<{ merged: boolean; reason?: string }> {
+  return announce(deps, input.confirmationId, await answerMerge(deps, input))
+}
+
+async function answerMerge(
   deps: ReleaseDeps,
   input: { confirmationId: string; repo: string; prNumber: number; answer: 'approve' | 'deny' },
 ): Promise<{ merged: boolean; reason?: string }> {
@@ -816,21 +841,26 @@ function parseRemote(remote: string): { host: string; slug: string } | undefined
 
 /**
  * §13/§14: where a push may come from and go to. The git directory is the local path a
- * repository was registered with, never anything a caller sends. The GitHub repository is
- * that clone's own `origin`, and gh names a host of its own, so the URL gh reports must be the
- * origin's host and repository; one repository's commits cannot be sent to another, a
+ * repository was registered with, or the bare cache for a branch MEC built there, and never
+ * anything a caller sends. The GitHub repository is the registered clone's own `origin`, or the
+ * registered URL when there is no clone, and gh names a host of its own, so the URL gh reports
+ * must be that host and repository; one repository's commits cannot be sent to another, a
  * same-named one elsewhere included. The default branch is refused here, on both opening and
  * approving: an always-confirm card still does not make the default branch a place MEC
  * pushes to.
  */
-async function pushTarget(deps: ReleaseDeps, repoId: string, branch: string): Promise<PushTarget> {
+export async function pushTarget(deps: ReleaseDeps, repoId: string, branch: string): Promise<PushTarget> {
   assertBranch(branch)
   const doc = repoId.startsWith('repo_') ? deps.store.engines.get(repoId) : undefined
   if (doc === undefined) throw codedError('unknown_repo', `repository ${repoId} is not registered`)
-  const gitDir = String(doc.url ?? '')
+  const registered = String(doc.url ?? '')
+  const source = deps.pushSource?.(repoId, branch)
+  const gitDir = source?.gitDir ?? registered
   if (!isAbsolute(gitDir)) throw codedError('repo_not_local', `${repoId} has no local git directory`)
   const git = deps.git ?? defaultGitExec
-  const origin = await git(['-C', gitDir, 'remote', 'get-url', 'origin'])
+  const origin = isAbsolute(registered)
+    ? await git(['-C', registered, 'remote', 'get-url', 'origin'])
+    : { code: 0, stdout: registered, stderr: '' }
   const remote = origin.code === 0 ? parseRemote(origin.stdout) : undefined
   if (remote === undefined)
     throw codedError('remote_unreadable', `${repoId} has no origin on a host gh can answer for`)
@@ -909,6 +939,13 @@ export async function openPushCard(
  * release stream; a retry is a NEW card, never a replay.
  */
 export async function resolvePush(
+  deps: ReleaseDeps,
+  input: { confirmationId: string; answer: 'approve' | 'deny' },
+): Promise<{ status: string; pushed?: boolean; headSha?: string; error?: string; reason?: string }> {
+  return announce(deps, input.confirmationId, await answerPush(deps, input))
+}
+
+async function answerPush(
   deps: ReleaseDeps,
   input: { confirmationId: string; answer: 'approve' | 'deny' },
 ): Promise<{ status: string; pushed?: boolean; headSha?: string; error?: string; reason?: string }> {
@@ -1003,6 +1040,67 @@ export function isReleaseCard(doc: StoreDoc): boolean {
   if (doc.cls === 'pr_create') return typeof payload.repo === 'string' && typeof payload.branch === 'string'
   if (doc.cls === 'pr_merge') return typeof payload.repo === 'string' && typeof payload.prNumber === 'number'
   return false
+}
+
+/**
+ * Tells `onCardSettled` what an answer did, and hands the answer back. Every door runs through
+ * here, so continuation cannot depend on who answered, and a held card stays silent. What the
+ * hook does is not part of the answer: the card has settled, and its result stands.
+ */
+function announce<T extends object>(deps: ReleaseDeps, id: string, answer: T): T {
+  const card = deps.store.confirmations.get(id)
+  if (card === undefined || card.status === 'pending') return answer
+  const { status, cls } = card
+  try {
+    const outcome = { ...answer, id, cls: String(cls), status: String(status) }
+    deps.onCardSettled?.(card, outcome)
+  } catch (error) {
+    console.error(`[release] continuation after ${id} failed: ${String(error)}`)
+  }
+  return answer
+}
+
+/**
+ * §13: changed input makes the earlier decision stale. Settles a pending card bound to another
+ * head, as policy and never as consent, and does nothing to a card still bound to this one.
+ */
+export function staleCard(deps: ReleaseDeps, id: string, head: string): boolean {
+  const card = deps.store.confirmations.get(id)
+  if (card?.status !== 'pending' || card.inputSha === head) return false
+  const at = deps.now().toISOString()
+  const payload = card.payload as { repo?: string; branch?: string }
+  const cls = String(card.cls) as ReleaseClass
+  settleCard(deps, id, cls, 'deny', at, head)
+  deps.store.atomic(() => {
+    appendEvent(
+      deps.store,
+      `release:${String(payload.repo)}:${String(payload.branch)}`,
+      'card_stale',
+      { confirmationId: id, headSha: head, at },
+      at,
+    )
+  })
+  return true
+}
+
+/** One step on a delivery's prflow machine, along a listed row only. */
+export function movePrFlow(deps: ReleaseDeps, repo: string, branch: string, event: PrEvent): void {
+  const at = deps.now().toISOString()
+  deps.store.atomic(() => {
+    savePrFlow(deps.store, advance(prFlowOf(deps.store, repo, branch, at), event, at))
+  })
+}
+
+/** A delivery fact on the same stream its cards write to, so the workbench's tray hears it. */
+export function releaseEvent(
+  deps: ReleaseDeps,
+  repo: string,
+  branch: string,
+  type: string,
+  body: Record<string, Json>,
+): void {
+  const at = deps.now().toISOString()
+  deps.store.atomic(() => appendEvent(deps.store, `release:${repo}:${branch}`, type, { ...body, at }, at))
 }
 
 export async function resolveReleaseCard(

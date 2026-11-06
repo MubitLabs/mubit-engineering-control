@@ -179,7 +179,8 @@ describe('continuing coordination (§11, §12)', () => {
     expect(sent.status).toBeLessThan(300)
 
     const statuses = (): string[] => r.read((store) => store.tasks.list().map((doc) => String(doc.status)))
-    await until(() => statuses().filter((status) => status === 'accepted').length === 2)
+    const through = ['accepted', 'integrated']
+    await until(() => statuses().filter((status) => through.includes(status)).length === 2)
 
     const facts = r.read((store) => {
       const attempts = store.attempts.list()
@@ -511,7 +512,9 @@ describe('continuing coordination (§11, §12)', () => {
     await new Promise((resolve) => setTimeout(resolve, 2200))
     expect(wakes).toEqual(['report ready'])
     const notes = r.read((store) => store.engines.list().filter((doc) => String(doc.id).startsWith('note/')))
-    expect(notes.map((doc) => doc.text)).toEqual(['att_1 progress: halfway'])
+    // The local result is a note as well: it is written by MEC, not by a report (§6).
+    const reported = notes.map((doc) => String(doc.text)).filter((text) => text.startsWith('att_1'))
+    expect(reported).toEqual(['att_1 progress: halfway'])
   }, 60_000)
 
   it('the timer’s pass places work a slot change freed, with no command to say so', async () => {

@@ -2,7 +2,7 @@
 import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MetaAgentService, type MetaBrain, type MetaDecision, type MetaPlanTask, workResultOf } from '../src'
-import { PlannerTools } from '../src/tools'
+import type { PlannerTools } from '../src/tools'
 
 const NOW = () => '2026-11-05T12:00:00.000Z'
 const REPO = 'repo_a'
@@ -19,7 +19,7 @@ const task = (over: Partial<MetaPlanTask> = {}): MetaPlanTask => ({
   ...over,
 })
 
-function rig(checks: { name: string; cmd: string }[], decision: MetaDecision) {
+function rig(checks: { name: string; cmd: string }[], decision: MetaDecision | { next: MetaDecision }) {
   const store = new MemoryRepositories()
   store.atomic(() => {
     store.engines.save({ id: REPO, url: 'https://example.test/a', bootstrap: [], checks, trust: true })
@@ -27,7 +27,7 @@ function rig(checks: { name: string; cmd: string }[], decision: MetaDecision) {
   const seen: { tools?: PlannerTools } = {}
   const brain: MetaBrain = async (input) => {
     seen.tools = (input as { tools?: PlannerTools }).tools as PlannerTools
-    return decision
+    return 'next' in decision ? decision.next : decision
   }
   const service = new MetaAgentService({ store, effects: store.effects, brain, now: NOW })
   return { store, service, seen }
@@ -102,16 +102,20 @@ describe('check profiles (§14, §15)', () => {
 
 describe('what the meta agent reports (§12.7, §15)', () => {
   it('report_result carries the reducer output, so a claim cannot stand alone', async () => {
-    const decision: MetaDecision = {
-      ...planned([task()]),
-      reports: [{ workItemId: 'wi_turn', summary: 'All done and shipped!', artifacts: [] }],
-    }
-    const { store, service } = rig(CHECKS, decision)
+    const script = { next: planned([task()]) }
+    const { store, service } = rig(CHECKS, script)
     const outcome = await service.onUserMessage({ messageId: 'msg_1', text: 'go', repoId: REPO })
     const workItemId = outcome.workItemId as string
+    script.next = {
+      ack: 'Reporting',
+      plan: { tasks: [task()] },
+      reports: [{ workItemId, summary: 'All done and shipped!', artifacts: [] }],
+    }
+    await service.onWake({ causationId: 'report/x', reason: 'report ready', workItemId })
     const events = store.events.read(`work:${workItemId}`).filter((event) => event.type === 'result_reported')
     expect(events).toHaveLength(1)
-    const body = events[0]?.body as { result: { complete: boolean } }
+    const body = events[0]?.body as { summary: string; result: { complete: boolean } }
+    expect(body.summary).toBe('All done and shipped!')
     expect(body.result.complete).toBe(false)
     expect(workResultOf(store, workItemId).remaining.length).toBeGreaterThan(0)
   })

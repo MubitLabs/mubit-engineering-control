@@ -109,6 +109,8 @@ export type ServerDeps = {
    * real repository.
    */
   ghRun?: GhRun
+  /** The result path's seam on the release routes (`delivery.ts`). */
+  delivery?: Pick<ReleaseDeps, 'pushSource' | 'onCardSettled'>
   /** The push card's git; tests may inject it, production uses the argv-only default. */
   gitExec?: GitExec
   /**
@@ -514,6 +516,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     effects: deps.effects,
     now,
     ...(deps.gitExec !== undefined && { git: deps.gitExec }),
+    ...deps.delivery,
   }
   const app = Fastify({ logger: false })
 

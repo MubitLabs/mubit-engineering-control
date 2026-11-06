@@ -278,7 +278,7 @@ describe('reports and the head (§10, §15)', () => {
     })
     pass()
     expect(store.tasks.get('task_a')?.status).not.toBe('accepted')
-    expect(String((queued(store)[0]?.continuation as StoreDoc).evidence)).toContain(H2)
+    expect(queued(store)[0]?.continuation).toMatchObject({ evidence: expect.stringContaining(H2) })
   })
 })
 

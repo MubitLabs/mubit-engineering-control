@@ -11,9 +11,11 @@ export type {
   StopOutcome,
 } from './authority'
 export {
+  blockWork,
   failLaunch,
   holdWorkItem,
   isHeld,
+  isTerminal,
   launchAuthority,
   launchFailure,
   mandateOf,
@@ -54,12 +56,12 @@ export { enqueueWake, FollowUps, settleSpecialistCard, unreadNotes } from './fol
 export { handBack } from './handback'
 export type { BrainEngine, RealClaudeBrainOptions, RecordedToolCall } from './real-brain'
 export { RealClaudeBrain } from './real-brain'
-export type { LiveWork, RoutingDecision } from './routing'
-export { routeMessage } from './routing'
 export type { Continuation, RepairLedger } from './repair'
 export { nextRepair, repairEvidence, repairLedger } from './repair'
+export type { LiveWork, RoutingDecision } from './routing'
+export { routeMessage } from './routing'
 export type { LaunchRecord, PlacementTable, SchedulerDeps } from './scheduler'
-export { schedulePass } from './scheduler'
+export { blockTask, openRepairTask, schedulePass } from './scheduler'
 export type {
   MetaBrain,
   MetaDecision,

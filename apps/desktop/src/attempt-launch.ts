@@ -11,6 +11,7 @@ import {
   constants,
   existsSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -33,16 +34,19 @@ import { ClaudeAdapter } from '@mec/engines'
 import {
   cachedDefaultTip,
   commitAll,
+  completeMidMerge,
   excludeFromWorktree,
   git,
+  gitLines,
   headSha,
   historyTouches,
+  isMidMerge,
   RepoCache,
   Worktrees,
   worktreeAdminDir,
 } from '@mec/git'
 import { issueToken } from '@mec/mec-tools'
-import { type LaunchAuthority, mandateOf, repoFields } from '@mec/meta'
+import { type Continuation, integrationDocId, type LaunchAuthority, mandateOf, repoFields } from '@mec/meta'
 import { loadModelsTable, PromptStore, userModelsPath } from '@mec/prompts'
 import {
   type AttemptFacts,
@@ -156,7 +160,31 @@ const cacheUrl = (urlOrPath: string): string =>
   /^[a-z][a-z0-9+.-]*:\/\//i.test(urlOrPath) ? urlOrPath : pathToFileURL(resolve(urlOrPath)).href
 
 /** Registration refused shell syntax (§14), so a command is whitespace-separated argv. */
-const argvOf = (command: string): string[] => command.trim().split(/\s+/)
+export const argvOf = (command: string): string[] => command.trim().split(/\s+/)
+
+const CONFLICT_MARKER = /^(<{7}|>{7}) /m
+
+/**
+ * What an attempt's tree becomes when it ends. A repair in a mid-merge worktree ends the merge
+ * (§14), and `completeMidMerge` proves two parents, so it can never pass as an ordinary commit.
+ * A file still carrying markers was not resolved, and a commit would hide that. Anything else is
+ * `commitAll`, with its `.mec/` exclusion.
+ */
+export async function commitWork(
+  path: string,
+  message: string,
+  identity: { name: string; email: string },
+): Promise<string | null> {
+  if (!(await isMidMerge(path))) return commitAll(path, message, identity)
+  const unmerged = await gitLines(['diff', '--name-only', '--diff-filter=U'], { cwd: path })
+  const marked = unmerged.filter((file) => {
+    const full = join(path, file)
+    return existsSync(full) && CONFLICT_MARKER.test(readFileSync(full, 'utf8'))
+  })
+  if (marked.length > 0) throw new Error(`conflict markers remain in ${marked.join(', ')}`)
+  const { mergeSha } = await completeMidMerge({ worktree: path, message, ...identity })
+  return mergeSha
+}
 
 type Loaded = {
   attempt: StoreDoc
@@ -200,7 +228,7 @@ export class AttemptLauncher {
       journalRoot: join(deps.dataDir, 'journal'),
       supervisor: this.#supervisor,
       facts: deps.facts,
-      git: { commitAll, headSha, historyTouches, adminDirOf: worktreeAdminDir },
+      git: { commitAll: commitWork, headSha, historyTouches, adminDirOf: worktreeAdminDir },
       adapterFor: (brief) => this.#adapterFor(brief),
       planFor: (brief) => this.#planOf(brief),
     })
@@ -278,18 +306,24 @@ export class AttemptLauncher {
     if (slot.state !== 'healthy') throw new Later(`slot ${fields.slotId} is ${String(slot.state)}`)
     const binary = resolveBinary(engine, process.env.PATH)
     if (binary === undefined) throw refuse(`engine_missing: ${engine} is not on PATH`)
-    const roleName = String(task.role)
+    // A repair or a review is its own role on the task's own record (§15).
+    const roleName = String(attempt.role ?? task.role)
+    const continuation = attempt.continuation as Continuation | undefined
     const role = BUILTIN_ROSTER[roleName as BuiltinRole]
     if (role === undefined) throw refuse(`unknown_role: ${roleName}`)
 
     // Cache and pinned base (§14, decision #36): the first dispatch pins it for the whole work item.
     const registered = (work.pin as { url?: string } | undefined)?.url ?? String(repo.url)
     const { gitDir } = await this.#cache.ensure(cacheUrl(registered))
-    const baseSha = await this.#pinBase(fields.workItemId, gitDir)
+    const baseSha = this.#baseFor(task, await this.#pinBase(fields.workItemId, gitDir))
 
-    const worktree = join(dataDir, 'work', attemptId)
+    // §15: a repair or a review works where the attempt before it did, on what it left.
+    const worktree = continuation?.worktree ?? join(dataDir, 'work', attemptId)
     const tempDir = join(dataDir, 'tmp', attemptId)
-    const branch = branchOf(store, fields, attempt)
+    const branch = continuation?.branch ?? branchOf(store, fields, attempt)
+    if (continuation?.worktree !== undefined && !existsSync(join(worktree, '.git'))) {
+      throw refuse(`worktree_gone: ${worktree}`)
+    }
     await new Worktrees(gitDir).add({ path: worktree, branch, baseSha, createBranch: true })
     await excludeFromWorktree(worktree, '.mec/*')
     mkdirSync(tempDir, { recursive: true })
@@ -366,6 +400,7 @@ export class AttemptLauncher {
         { name: 'original_request', text: `The original request, verbatim:\n${originText}` },
         { name: 'task', text: `Your task:\n${String(task.objective)}` },
         { name: 'environment', text: environment },
+        ...(continuation === undefined ? [] : [{ name: continuation.kind, text: briefOf(continuation) }]),
       ],
     })
 
@@ -560,19 +595,37 @@ export class AttemptLauncher {
     return { attempt, task, work, repo, slot }
   }
 
-  /** The base, pinned once and reused by every later task of the work item. */
+  /**
+   * The base, pinned once and reused by every later task of the work item, with the default
+   * branch it came from and the cache it is in: delivery reads both from here (§14).
+   */
   async #pinBase(workItemId: string, gitDir: string): Promise<string> {
     const { store } = this.#deps
-    const known = store.workItems.get(workItemId)?.base_sha
-    if (typeof known === 'string') return known
-    const tip = await cachedDefaultTip(gitDir)
+    const pinned = store.workItems.get(workItemId)
+    if (typeof pinned?.base_sha === 'string' && typeof pinned.git_dir === 'string') return pinned.base_sha
+    const tip = typeof pinned?.base_sha === 'string' ? pinned.base_sha : await cachedDefaultTip(gitDir)
+    const head = await git(['symbolic-ref', '--short', 'HEAD'], { cwd: gitDir })
     store.atomic(() => {
       const work = store.workItems.get(workItemId)
       if (work !== undefined) {
-        store.workItems.save({ ...work, base_sha: tip, updatedAt: new Date().toISOString() })
+        store.workItems.save({
+          ...work,
+          base_sha: tip,
+          default_branch: head.stdout.trim(),
+          git_dir: gitDir,
+          updatedAt: new Date().toISOString(),
+        })
       }
     })
     return tip
+  }
+
+  /** §14: an `integration` dependent starts from the integration commit, anything else from the pin. */
+  #baseFor(task: StoreDoc, pinned: string): string {
+    const waits = Array.isArray(task.dependsOn) && task.dependsOn.length > 0
+    if (!waits || task.basePolicy === 'contract') return pinned
+    const head = this.#deps.store.engines.get(integrationDocId(String(task.workItemId)))?.head
+    return typeof head === 'string' ? head : pinned
   }
 
   #model(task: StoreDoc, slot: StoreDoc): ResolvedModel | undefined {
@@ -609,6 +662,17 @@ export class AttemptLauncher {
   }
 }
 
+/** What a repair or a reviewer is told, beside the evidence (§15). */
+function briefOf(continuation: Continuation): string {
+  if (continuation.kind === 'repair') return `Repair this, from this evidence:\n${continuation.evidence}`
+  return [
+    continuation.evidence,
+    `This is review round ${continuation.round}: put round {count: ${continuation.round}} on your report.`,
+    "End with a `ready` report. List each finding as an artifact {kind: 'finding', ref: what is wrong and where}.",
+    'A `ready` report with no finding says this commit passed review.',
+  ].join('\n')
+}
+
 /**
  * The slot layer: what the slot stores, with the home variable by the probe's rule. A linked slot
  * runs as `claude` does. A slot saved before its env was recorded has only its home, and that is enough.
@@ -640,7 +704,10 @@ function originMessageOf(task: StoreDoc, work: StoreDoc): string {
 }
 
 /** Decision #36: the registered repo's own identity, and no identity refuses the attempt. */
-async function commitIdentity(registered: string, gitDir: string): Promise<{ name: string; email: string }> {
+export async function commitIdentity(
+  registered: string,
+  gitDir: string,
+): Promise<{ name: string; email: string }> {
   const local = !/^[a-z][a-z0-9+.-]*:\/\//i.test(registered) && existsSync(registered)
   const cwd = local ? registered : gitDir
   const read = async (key: string): Promise<string> =>

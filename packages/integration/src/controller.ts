@@ -47,7 +47,9 @@ export type ControllerTask = {
   head: string
 }
 
-type MergeOutcome = { outcome: 'merged'; mergeSha: string } | { outcome: 'conflict'; conflictedPaths: string[] }
+type MergeOutcome =
+  | { outcome: 'merged'; mergeSha: string }
+  | { outcome: 'conflict'; conflictedPaths: string[] }
 
 export type ControllerDeps = {
   git: {
@@ -120,7 +122,8 @@ function verdictFor(
       effect: { kind: 'integrated', taskId, sha },
     }
   }
-  if (taskId === undefined) return { state: next, effect: { kind: 'refused', reason: `checks failed on ${sha}` } }
+  if (taskId === undefined)
+    return { state: next, effect: { kind: 'refused', reason: `checks failed on ${sha}` } }
   const failing = failingOf(checks)
   if (failing.length === 0) {
     const names = checks.filter((check) => check.status === 'error').map((check) => check.name)
@@ -134,7 +137,11 @@ function verdictFor(
 }
 
 /** The worktree's head is not the one recorded, or a repair just ended: check what is there. */
-async function verifyHead(deps: ControllerDeps, state: IntegrationState, sha: string): Promise<IntegrationRun> {
+async function verifyHead(
+  deps: ControllerDeps,
+  state: IntegrationState,
+  sha: string,
+): Promise<IntegrationRun> {
   const verdict = await checksOn(deps, sha)
   if (verdict === undefined) return { state, effect: { kind: 'wait', reason: 'the head moved again' } }
   const taskId = state.verifying ?? Object.keys(state.integrated).at(-1)

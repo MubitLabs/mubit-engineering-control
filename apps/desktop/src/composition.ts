@@ -37,6 +37,7 @@ import Database from 'better-sqlite3'
 import { AttemptLauncher } from './attempt-launch'
 import { backupStore } from './backup-cli'
 import { type Cleaner, StoreFacts } from './core-facts'
+import { Delivery } from './delivery'
 import { plannerPlacement } from './planner-placement'
 import { savedPolicyText } from './policy-store'
 import { buildHealthSnapshot, buildServer } from './server'
@@ -276,6 +277,12 @@ export async function startServer(opts: {
     })
   }
 
+  // M2.3 follows the runner: with the flag off nothing is accepted, so nothing could deliver.
+  const delivery =
+    launcher === undefined
+      ? undefined
+      : new Delivery({ store, effects: store.effects, dataDir: opts.dataDir })
+
   // The first pass waits for the tools server: a launch needs its URL. Rows a previous process
   // left running went back to pending above, before this.
   // §11: due effects first, then the scheduler. The queue's pass waits for its jobs, so the
@@ -284,6 +291,7 @@ export async function startServer(opts: {
     if (paused) return
     void store.effects.run().catch(() => {})
     schedulerPass()
+    delivery?.kick()
   }, PASS_INTERVAL_MS)
   queueTimer.unref()
   if (!paused) {
@@ -304,6 +312,7 @@ export async function startServer(opts: {
     // §20: an on-demand backup of the live store.
     backups: { take: () => backupStore(db, opts.dataDir, join(opts.dataDir, 'backups')) },
     ...(process.env.MEC_FAKE_ENGINE === '1' && { setupDecide: scriptedSetupDecide }),
+    ...(delivery !== undefined && { delivery: delivery.hooks }),
   })
   await app.listen({ port: 0, host: '127.0.0.1' })
   const address = app.server.address()
@@ -327,6 +336,7 @@ export async function startServer(opts: {
     writeFileSync(healthPath, `${JSON.stringify(final, null, 2)}\n`)
     // Before the tools go: an engine that loses its tools mid-turn fails instead of stopping.
     if (launcher !== undefined) await within(opts.closeBoundMs ?? CLOSE_BOUND_MS, launcher.close())
+    if (delivery !== undefined) await within(opts.closeBoundMs ?? CLOSE_BOUND_MS, delivery.close())
     await tools.stop()
     // §20, decision #36: only work already in flight finishes, within the bound. A drain would
     // start paid planner turns on the way out; pending rows are for the next start. Past the

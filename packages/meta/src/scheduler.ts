@@ -312,9 +312,60 @@ function settleAttempt(
   const step =
     decided.verdict === 'review'
       ? nextReview(decided.head, ledger, caps, target)
-      : nextRepair(decided, ledger, caps, { ...target, ...(claimed !== undefined && { claimedHead: claimed }) })
+      : nextRepair(decided, ledger, caps, {
+          ...target,
+          ...(claimed !== undefined && { claimedHead: claimed }),
+        })
   if ('block' in step) blockTask(store, task, step.block, at)
   else continueTask(store, task, step.next, at)
+}
+
+/**
+ * §14, decision #36: a conflict or red combined checks open a repair task, on the same counter as
+ * its task's own repairs, in the integration worktree. At the cap the task blocks with what
+ * remains. A task already integrated cannot block, so its work does.
+ */
+export function openRepairTask(
+  store: Store,
+  caps: Caps,
+  input: { root: StoreDoc; evidence: string; worktree: string; branch: string; id: string; at: string },
+): void {
+  const { root, evidence, worktree, branch, id, at } = input
+  const { attempts, reports } = familyOf(store, root)
+  const ledger = repairLedger(attempts, reports)
+  const decided = { verdict: 'repair', reason: 'integration', evidence } as const
+  const step = nextRepair(decided, ledger, caps, { worktree, branch })
+  if ('block' in step) {
+    if (canTransition(TASK_MACHINE, String(root.status), 'block')) blockTask(store, root, step.block, at)
+    else blockWork(store, String(root.workItemId), step.block, at)
+    return
+  }
+  const number = store.tasks.list({ workItemId: String(root.workItemId) }).length + 1
+  store.tasks.save({
+    id,
+    workItemId: root.workItemId ?? null,
+    repoId: root.repoId ?? null,
+    localKey: `repair-${number}`,
+    repairOf: root.id ?? null,
+    planRevision: root.planRevision ?? null,
+    objective: evidence,
+    dependsOn: [],
+    role: 'repair_agent',
+    basePolicy: 'integration',
+    status: 'ready',
+    acceptanceChecks: root.acceptanceChecks ?? [],
+    originalRequestRef: root.originalRequestRef ?? null,
+    next: step.next as unknown as Json,
+    createdAt: at,
+    updatedAt: at,
+  })
+  appendEvent(
+    store,
+    `work:${String(root.workItemId)}`,
+    'repair_opened',
+    { taskId: id, repairOf: String(root.id), at },
+    at,
+  )
 }
 
 /** §10: work reaches `reviewing` with the first finished task and `integrating` with the first accepted. */
@@ -334,7 +385,7 @@ function advanceWork(store: Store, workItemId: string, at: string): void {
   }
 }
 
-function blockTask(store: Store, task: StoreDoc, reason: string, at: string): void {
+export function blockTask(store: Store, task: StoreDoc, reason: string, at: string): void {
   const { deferred: _deferred, ...rest } = task
   moveTask(store, rest, 'block', { blockedReason: reason }, at)
   appendEvent(

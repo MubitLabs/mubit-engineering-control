@@ -38,10 +38,14 @@ export function repairLedger(attempts: readonly StoreDoc[], reports: readonly St
 /** Keeps what a repair needs and no more of a log. */
 const TAIL_CHARS = 2000
 
-type RepairVerdict = Extract<Acceptance, { verdict: 'repair' }>
+/** A verdict on a task's head, or evidence the integration controller already wrote. */
+type RepairVerdict =
+  | Extract<Acceptance, { verdict: 'repair' }>
+  | { verdict: 'repair'; reason: 'integration'; evidence: string }
 
 /** The evidence a repair starts from. The log tails were redacted before they were stored. */
 export function repairEvidence(decided: RepairVerdict, claimedHead?: string): string {
+  if (decided.reason === 'integration') return decided.evidence
   const { head, reason } = decided
   if (reason === 'report_head') {
     return `Your ready report named ${claimedHead ?? 'no commit'}, but the head is ${head}.`

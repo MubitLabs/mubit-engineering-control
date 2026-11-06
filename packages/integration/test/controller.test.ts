@@ -67,8 +67,7 @@ function rig(): Rig {
           message,
           identity: { name: 'MEC', email: 'mec@example.com' },
         }),
-      prepareRepair: (paths) =>
-        prepareMidMergeRepair({ sourceWorktree: worktree, conflictPaths: paths }),
+      prepareRepair: (paths) => prepareMidMergeRepair({ sourceWorktree: worktree, conflictPaths: paths }),
     },
     checks: async (sha) => {
       ran.push(sha)

@@ -183,3 +183,37 @@ Not run: `test:screens`, because no web file changed, and any engine, because th
 | #38's "pause is not offered" caught M3.3's global control | The screen test failed | It excludes that control by name and requires it, over the whole page |
 
 `m3.3-config.json` is 57 mutants, five of them new, and all were killed.
+
+## Two review blockers
+
+6 November 2026, on `653e1d4`. Fixed test first, one commit each.
+
+| Blocker | Test | Red | Green |
+| --- | --- | --- | --- |
+| The backup and the drill matched `.mec` by exact case, so a tracked `.MEC/` took the token into the archive | `leaves out a worktree's .MEC files…`, the same with `.Mec` | The file was in the extracted archive | Pass |
+| | `the drill names a token in a worktree's .MEC…` | `[]`, not the path | Pass |
+| The launcher read only `slot.env`, so a slot saved before `dcbbdc1` ran on the default login | `a slot saved with no env launches under its home` | `null`, not the home | Pass |
+| | `a slot of its own runs under its home, whatever its stored env says` | The stored path, not the home | Pass |
+| | `a linked slot keeps the variable unset, whatever its stored env says` | The stored path, not `null` | Pass |
+| | `a slot of its own with no home…` | The launch resolved | Pass, `slot_home_missing` |
+| | `the startup probe slot places nothing: it names no home` | One launch enqueued | Pass, no task |
+
+`a linked slot needs no home` and `a slot of its own with an empty home` were added after the first green. Their reds are the `a linked slot needs a home` and `an empty home counts as one` mutants.
+
+**The launcher's rule.** It is the probe's: a linked slot leaves `CLAUDE_CONFIG_DIR` unset and any other runs under `slot.home`, whatever its `env` stores. No stored doc is rewritten.
+
+**`slot_claude_probe`.** It stays as it is, and it is no longer launchable. `probeSlotAtStartup` writes it and nothing in the repository reads it by id, launches on it deliberately, or sets `MEC_PROBE_SLOT`: the variable appears only in `composition.ts`. It records the probe, and the health claim carries the result. A worker placed on it used to run on the default login, not the home that was probed. `isLaunchableSlot` now requires a home or `linkedDefault`, so the planner and dispatch never see it, and `plannerPlacement` agrees with the launcher's refusal. Giving it a `home` was the alternative. That would turn a diagnostic directory into a worker's login, and change a stored doc.
+
+**Intended test changes.** The M2.1 launch seed was a linked slot in name only, and now says `linkedDefault: true`. The Add connection test clears that flag and also asserts the saved `env`, because the launcher no longer depends on it and `a dedicated slot saves no env` survived until then.
+
+| Command | Result |
+| --- | --- |
+| `python3 tools/mutants/run.py tools/mutants/m3.3-config.json` | 63 of 65 on the first run. Two survivors, `a dedicated slot saves no env` and `a linked slot needs a home`, were closed with tests and killed on a rerun of those two. The other 63 were not rerun after that, because only tests were added. 8 new |
+| `pnpm build:desktop` | Passed |
+| `pnpm --dir apps/web build` | Passed |
+| `pnpm check`, first run | 4 failed, 2538 passed, 15 skipped, with two other mutant runs on the machine. Besides `login-cards`, three timed out or failed in `server.test.ts`, `a11y-gate.test.ts` and `bundle.test.ts`. All 71 tests in those three files passed alone |
+| `pnpm check`, second run | 1 failed, 2541 passed, 15 skipped. The failure is the permitted `login-cards.test.ts` node-pty case |
+
+Not run: `test:screens`, because no web file changed, and any engine. Case folding was not exercised through the launcher: the tests write to `.MEC` directly.
+
+On a scratch repository on this Mac (`core.ignorecase` true), `.mec/mcp.json` landed in a tracked `.MEC/` and `git add --all -- ':!.mec'` staged nothing, because `.mec/*` in the exclude file matched. That rests on `core.ignorecase`, and no test here covers it.

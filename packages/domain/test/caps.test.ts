@@ -11,6 +11,7 @@ describe('DEFAULT_CAPS', () => {
       fanOut: 3,
       agentDepth: 1,
       repairAttemptsPerTask: 2,
+      reviewRoundsPerTask: 3,
     })
   })
 })

@@ -401,7 +401,8 @@ export function registerConfigRoutes(
   })
 
   // ─── Repository edit ──────────────────────────────────────────────────────────
-  // §14: bootstrap, checks and trust, never the URL. Work already admitted reads its pin (M1.2).
+  // §14: bootstrap, checks and trust, never the URL. A pin holds a hash, not the commands, so work
+  // admitted before an edit is refused at its next launch (`repo_profile_changed`), never rerun.
   app.patch('/api/repositories/:id', async (request, reply) => {
     const id = String((request.params as { id?: string }).id ?? '')
     const doc = id.startsWith('repo_') ? store.engines.get(id) : undefined

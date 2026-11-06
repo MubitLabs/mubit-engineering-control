@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { type ConfigServer, makeConfigServer } from './config-server'
 
-/** §14, #22: a repository is edited here. Work already admitted keeps what it was pinned to. */
+/** §14, #22: a repository is edited here. Work already admitted keeps its pin, and a launch compares it. */
 
 const servers: ConfigServer[] = []
 afterEach(async () => {

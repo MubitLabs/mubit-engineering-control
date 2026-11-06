@@ -475,7 +475,7 @@ export function RepositoryEditor({
     <article className="repository">
       <h3 className="mono">{repository.url}</h3>
       <p className="field-note">
-        Edits apply to new work. Work already admitted keeps what it was pinned to.
+        Edits apply to new work. Work admitted under the old commands is refused at its next launch.
       </p>
       <TextBlock label="Bootstrap commands" rows={2} {...bootstrap} />
       <small className="muted">{BOOTSTRAP_HINT}</small>

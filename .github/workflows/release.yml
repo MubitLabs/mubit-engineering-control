@@ -22,6 +22,10 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      - name: the tag is v plus the desktop version
+        run: |
+          version=$(node -p "require('./apps/desktop/package.json').version")
+          [ "${GITHUB_REF_NAME}" = "v${version}" ] || { echo "tag ${GITHUB_REF_NAME} does not match apps/desktop version v${version}"; exit 1; }
       - run: pnpm check
 
   tarball:

@@ -147,7 +147,8 @@ describe('/api/events is bounded', () => {
   })
 
   it('a real connection serves the whole backlog past one flush, in order', async () => {
-    const count = EVENT_FLUSH_CAP * 3
+    // Past what the half-second poll alone could serve before the deadline below.
+    const count = EVENT_FLUSH_CAP * 30
     seed('work:a', count)
     await app.listen({ port: 0, host: '127.0.0.1' })
     const { port } = app.server.address() as AddressInfo
@@ -181,8 +182,21 @@ describe('/api/events is bounded', () => {
     client.pause()
     client.write('GET /api/events?stream=work:a HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n')
     await new Promise((resolve) => setTimeout(resolve, 1_000))
-    // A writer that ignores the socket's answer holds the rest of the 32 MiB in memory here.
-    expect(serverSocket?.writableLength).toBeLessThan(1024 * 1024)
+    // `bytesWritten` counts what was handed to the socket, buffered or not. A writer that ignores
+    // the socket's answer has handed over all 32 MiB by now.
+    expect(serverSocket?.bytesWritten).toBeGreaterThan(0)
+    expect(serverSocket?.bytesWritten).toBeLessThan(16 * 1024 * 1024)
+    // And `drain` starts it again: the client that reads gets the whole backlog.
+    let received = 0
+    client.on('data', (chunk: Buffer) => {
+      received += chunk.length
+    })
+    client.resume()
+    const deadline = Date.now() + 15_000
+    while (Date.now() < deadline && received < 500 * 64 * 1024) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    expect(received).toBeGreaterThanOrEqual(500 * 64 * 1024)
     client.destroy()
   }, 30_000)
 })

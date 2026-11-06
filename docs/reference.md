@@ -27,7 +27,7 @@ What the router recognises today (`runCli` in `apps/desktop/src/mec.ts`; usage l
 | Code | Meaning |
 | --- | --- |
 | 0 | Runs normally (paused included); degraded parts add lines |
-| 1 | Not running, running twice, not answering, or runtime error — a restart may fix it |
+| 1 | Not running, running twice, not answering (`health.json`'s heartbeat is missing or more than 10 s from now), or runtime error — a restart may fix it |
 | 2 | A part other than the runtime reports an error — a restart will not fix it; output names the part |
 | 3 | Waiting for setup (no slot, no repository, not initialised) |
 
@@ -71,9 +71,13 @@ Additive routes for the overhaul's views; `/api/work` and the other routes above
 | GET | `/api/inspect/snapshot` | `?repoId=` | The oldest 100 registered repositories with their needs counts (`repositoriesTruncated` counts those left out), the needs count for the scope, and the event cursors (`repositories` and the newest 100 `work:<id>` streams) read in one consistent call. |
 | GET | `/api/inspect/work` | `?repoId=&cursor=&limit=` | A page of work rows: title, repository, stage (`key`, `label`, `waitingOn`), reason, next action, task counts, last activity. |
 | GET | `/api/inspect/work/:id` | — | One work item: its tasks (`tasksTruncated` counts those left out, and each task's `dependsOnTruncated` the ids left out), hold, delivery, `delegation` (empty until attempts record parents), coverage and cursors (`cursorsTruncated` counts attempt streams left out; the work stream and the newest attempts are kept). 404 for an id that is not a work item. |
-| GET | `/api/inspect/tasks/:id` | — | One task: attempts (requested and actual model kept apart), checks and diff for the exact head only, reported usage, coverage. What was cut is counted: `dependsOnTruncated`, `attemptsTruncated` (older attempts; the newest are kept), `checks.truncated`, `diff.truncated`. |
+| GET | `/api/inspect/tasks/:id` | — | One task: attempts (requested and actual model kept apart), checks and diff for the exact head only, reported usage with `usage.coverage` (`total`, `subtotal` or `unknown`), `outcome` (`process`, `validation` and `delivery` of the latest attempt with a head; a clean exit proves only the first), coverage. What was cut is counted: `dependsOnTruncated`, `attemptsTruncated` (older attempts; the newest are kept), `checks.truncated`, `diff.truncated`. |
 | GET | `/api/inspect/needs` | `?repoId=&recent=1&cursor=&limit=` | A page of open questions and pending cards together, oldest first. `recent=1` adds up to 20 recently settled and expired ones after them, latest settled first (`answeredAt`, `resolvedAt`, or the expiry of a card that lapsed unanswered, then record order). The cursor is keyed by record, so an item settling between pages never skips another, and one walk serves at most 20 recent items; an item that settles while the walk is still on the open rows can appear again under `recent=1` with its new status. A card's `workItemId` is set only from a stored `workItemId` or `mandateId`, never from a branch name. |
-| GET | `/api/inspect/search` | `?q=&repoId=` | Messages by text or id, work by title, tasks by name, and references (`#12`, a GitHub PR URL, a SHA) where a stored field holds them. At most 20 per kind. |
+| GET | `/api/inspect/search` | `?q=&repoId=` | Messages by text or id (wake rows are not messages and are left out), work by title, tasks by name, attempts by id, and references (`#12`, a GitHub PR URL, a SHA) where a stored field holds them. At most 20 per kind. |
+| GET | `/api/inspect/attempts/:id/activity` | `?cursor=&limit=` | A page of `{seq, type, at, summary, detail}` from the attempt's stream, redacted. Only the contract's engine event types; a page can be short, or empty, with `nextCursor` still set. `tool_call` is a completed call, so nothing here says what is running now. 404 for an unknown attempt. |
+| GET | `/api/inspect/artifacts` | `attemptId`, `ref`, `?cursor=` | One file under the attempt's worktree, as `text/plain` with `nosniff`, redacted on read, at most 1 MiB a page. `x-mec-artifact-size` gives the size and `x-mec-next-cursor` the next page. A page never ends inside a key or a character. Binary files answer `{ref, binary: true, size}`. `..` and absolute refs answer 400; a symlink out of the worktree, `.mec/` and `.git` answer 403; a file that is missing, or an attempt with no worktree, answers 404. |
+
+Every `/api/inspect/*` route answers 403 `forbidden_host` unless `Host` is loopback, and 403 `client_header_required` for a browser-shaped request (`Origin`, `Referer`, `Sec-Fetch-*` or a `Mozilla/` user agent) without `x-mec-client: 1`.
 
 ### Slots
 
@@ -137,7 +141,7 @@ Refusals to open a card answer 422 `{ error, detail }` (404 for `unknown_repo`).
 
 | Method | Path | Query | What it does |
 | --- | --- | --- | --- |
-| GET | `/api/events` | `stream`, `after?` | SSE over the store's gap-free event log (`work:<id>`, `slot:<id>`, `release:…`), from `after` onwards. |
+| GET | `/api/events` | `stream`, `after?`, `compact?` | SSE over the store's gap-free event log (`work:<id>`, `slot:<id>`, `release:…`), from `after` onwards. `stream=a,b&after=1,5` is one connection with comma-aligned cursors, and `Last-Event-ID` is ignored, so a client resumes with its own cursors. Bodies are redacted. `compact=1` sends `{stream, seq, type, at}` and no body. At most 100 events per stream per pass, and nothing while the socket pushes back. A client more than 10,000 events behind on one stream gets one `event: reset` frame (`{reason, stream}`) and the response ends: take a fresh snapshot and reopen. 403 `forbidden_host` unless `Host` is loopback. |
 
 Also: `GET /healthz` → `{ ok: true }`, and `GET /api/status` → the §21.2 snapshot (`runtime`, `parts`, `setup.has_slot` / `setup.has_repository`) that `mec status` reads. The built workbench is served at `/*` with an SPA fallback.
 

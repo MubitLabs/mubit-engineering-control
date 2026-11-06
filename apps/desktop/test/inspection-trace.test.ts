@@ -437,6 +437,28 @@ describe('activity pages', () => {
   })
 })
 
+describe('activity past the store bound', () => {
+  it('a detail that grows when it is encoded again ends the page early, and the rest follows', async () => {
+    // Stored at about 64 KB each, so the store's byte bound passes all of them on one page, but the
+    // detail is that JSON as a string: every quote is escaped twice and the row doubles.
+    const count = 30
+    for (let seq = 1; seq <= count; seq += 1) {
+      event(seq, 'tool_call', { type: 'tool_call', tool: 'Read', input: { a: '"'.repeat(32_000) } })
+    }
+    const seen: number[] = []
+    let cursor: string | null = null
+    do {
+      const query: string = cursor === null ? '' : `&cursor=${cursor}`
+      const res: any = await get(`/api/inspect/attempts/att_1/activity?limit=100${query}`)
+      expect(res.status).toBe(200)
+      expect(Buffer.byteLength(res.body)).toBeLessThanOrEqual(MIB)
+      seen.push(...res.json().items.map((i: any) => i.seq))
+      cursor = res.json().nextCursor
+    } while (cursor !== null)
+    expect(seen).toEqual(Array.from({ length: count }, (_, i) => i + 1))
+  })
+})
+
 describe('artifacts', () => {
   it('artifact path escape is refused', async () => {
     writeFileSync(join(scratch, 'secret.txt'), 'outside')
@@ -456,6 +478,14 @@ describe('artifacts', () => {
       expect(res.status, ref).toBeGreaterThanOrEqual(400)
       expect(res.body, ref).not.toContain('outside')
     }
+  })
+
+  it('a ref with .. is refused before it is resolved, even one that stays inside', async () => {
+    writeFileSync(join(worktree, 'ok.txt'), 'inside')
+    for (const ref of ['src/../ok.txt', '../att_1/ok.txt', 'src\\..\\ok.txt']) {
+      expect((await artifact(ref)).status, ref).toBe(400)
+    }
+    expect((await artifact(join(worktree, 'ok.txt'))).status).toBe(400)
   })
 
   it('the control directories are refused, through a symlink too', async () => {
@@ -537,14 +567,15 @@ describe('artifacts', () => {
   })
 
   it('a character across a page boundary stays whole', async () => {
-    writeFileSync(join(worktree, 'wide.txt'), 'é'.repeat(MIB))
+    // The odd first byte puts the page's last byte in the middle of a two-byte character.
+    writeFileSync(join(worktree, 'wide.txt'), `a${'é'.repeat(MIB / 2)}`)
     const first = await artifact('wide.txt')
     expect(first.status).toBe(200)
     expect(first.body).not.toContain('�')
     const second = await artifact('wide.txt', `&cursor=${first.headers['x-mec-next-cursor']}`)
     expect(second.status).toBe(200)
     expect(second.body).not.toContain('�')
-    expect(first.body.length + second.body.length).toBe(MIB)
+    expect(first.body.length + second.body.length).toBe(MIB / 2 + 1)
   })
 
   it('a binary file returns metadata only', async () => {
@@ -553,6 +584,11 @@ describe('artifacts', () => {
     expect(res.status).toBe(200)
     expect(res.json()).toEqual({ ref: 'a.bin', binary: true, size: 5 })
     expect(res.headers['x-content-type-options']).toBe('nosniff')
+  })
+
+  it('a NUL makes a file binary even when it decodes as text', async () => {
+    writeFileSync(join(worktree, 'c.bin'), Buffer.from([0x41, 0x00, 0x42]))
+    expect((await artifact('c.bin')).json()).toEqual({ ref: 'c.bin', binary: true, size: 3 })
   })
 
   it('invalid text is treated as binary', async () => {

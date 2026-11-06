@@ -431,7 +431,8 @@ const EFFECT_KINDS = ['launch', 'deliver', 'relay', 'note', 'reply', 'external',
 /**
  * §26 Capability drift: a startup probe degrades the slot before any attempt starts. The
  * probe is the vendor's own --version/--help/auth status (§5.8); MEC_PROBE_SLOT is a
- * dedicated CLAUDE_CONFIG_DIR home.
+ * dedicated CLAUDE_CONFIG_DIR home. The doc records the probe and names no home, so nothing
+ * launches on it.
  */
 async function probeSlotAtStartup(
   store: SqliteStore,

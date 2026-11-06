@@ -93,6 +93,7 @@ function seedInto(store: SqliteStore, repo: string, seed: Seed = {}): void {
       engine: 'claude',
       kind: 'claude-sub',
       home: '/nowhere',
+      linkedDefault: true,
       state: 'healthy',
       env: {},
       ...seed.slot,
@@ -329,6 +330,25 @@ describe('a chat request', { timeout: 60_000 }, () => {
     expect((await request(dataDir)).tasksCreated).toBe(0)
   })
 
+  // `probeSlotAtStartup` saves this doc under MEC_PROBE_SLOT. A launch would be refused, so a plan
+  // cannot be placed on it either.
+  it('the startup probe slot places nothing: it names no home', async () => {
+    const { dataDir, repo, bin } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedSlots(dataDir, repo, [
+      {
+        id: 'slot_claude_probe',
+        label: 'startup probe',
+        engine: 'claude',
+        kind: 'claude-sub',
+        state: 'healthy',
+      },
+    ])
+    expect((await request(dataDir)).tasksCreated).toBe(0)
+    expect(peek(dataDir, (store) => store.attempts.list())).toEqual([])
+    expect(existsSync(join(bin, 'seen.json'))).toBe(false)
+  })
+
   it('a degraded Claude slot places nothing', async () => {
     const { dataDir, repo } = scratch({ steps: SUCCESS })
     process.env.MEC_REAL_RUNNER = '1'
@@ -476,15 +496,70 @@ describe('the launch path', { timeout: 60_000 }, () => {
     await adding.close()
     const slot = peek(dataDir, (store) => store.slots.get('slot_max-2'))
     expect(typeof slot?.home).toBe('string')
+    expect(slot?.env).toEqual({ CLAUDE_CONFIG_DIR: slot?.home })
 
     process.env.MEC_REAL_RUNNER = '1'
     seedStore(dataDir, repo, {
       checks: [{ name: 'made', cmd: 'test -f made.txt' }],
-      slot: { ...slot, id: 'slot_linked', state: 'healthy' },
+      slot: { ...slot, id: 'slot_linked', state: 'healthy', linkedDefault: undefined },
     })
     await serve(dataDir)
     await reaches(dataDir, 'succeeded')
     expect(seen().config_dir).toBe(slot?.home)
+  })
+
+  // The probe's rule (§5.3): only `linkedDefault` means "the variable unset". A slot saved before
+  // dcbbdc1 has no `env`, and no stored doc is rewritten, so its home has to be enough.
+  it('a slot saved with no env launches under its home', async () => {
+    const { dataDir, repo, seen } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedStore(dataDir, repo, {
+      checks: [{ name: 'made', cmd: 'test -f made.txt' }],
+      slot: { linkedDefault: undefined, home: '/slots/claude/old', env: undefined },
+    })
+    await serve(dataDir)
+    await reaches(dataDir, 'succeeded')
+    expect(seen().config_dir).toBe('/slots/claude/old')
+  })
+
+  it('a slot of its own runs under its home, whatever its stored env says', async () => {
+    const { dataDir, repo, seen } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedStore(dataDir, repo, {
+      checks: [{ name: 'made', cmd: 'test -f made.txt' }],
+      slot: {
+        linkedDefault: undefined,
+        home: '/slots/claude/own',
+        env: { CLAUDE_CONFIG_DIR: '/slots/claude/other' },
+      },
+    })
+    await serve(dataDir)
+    await reaches(dataDir, 'succeeded')
+    expect(seen().config_dir).toBe('/slots/claude/own')
+  })
+
+  it('a linked slot needs no home: it runs as `claude` does', async () => {
+    const { dataDir, repo, seen } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedStore(dataDir, repo, {
+      checks: [{ name: 'made', cmd: 'test -f made.txt' }],
+      slot: { home: undefined },
+    })
+    await serve(dataDir)
+    await reaches(dataDir, 'succeeded')
+    expect(seen().config_dir).toBeNull()
+  })
+
+  it('a linked slot keeps the variable unset, whatever its stored env says', async () => {
+    const { dataDir, repo, seen } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedStore(dataDir, repo, {
+      checks: [{ name: 'made', cmd: 'test -f made.txt' }],
+      slot: { home: '/home/someone/.claude', env: { CLAUDE_CONFIG_DIR: '/home/someone/.claude' } },
+    })
+    await serve(dataDir)
+    await reaches(dataDir, 'succeeded')
+    expect(seen().config_dir).toBeNull()
   })
 
   // Composition reads a saved policy first (M3.3), so the launcher has to hold that text too.
@@ -756,6 +831,16 @@ describe('what a launch refuses, before any spend', { timeout: 60_000 }, () => {
     ],
     ['a non-registry engine', { slot: { engine: 'codex' } }, /engine_not_launchable: codex/],
     ['a key-based slot', { slot: { kind: 'claude-api' } }, /slot_kind_unsupported/],
+    [
+      'a slot of its own with no home, as the startup probe saves one',
+      { slot: { linkedDefault: undefined, home: undefined, env: undefined } },
+      /slot_home_missing: slot_linked/,
+    ],
+    [
+      'a slot of its own with an empty home',
+      { slot: { linkedDefault: undefined, home: '' } },
+      /slot_home_missing/,
+    ],
     ['an unknown role', { task: { role: 'wizard' } }, /unknown_role/],
     [
       'a model the table does not know',

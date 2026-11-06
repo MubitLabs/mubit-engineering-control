@@ -404,5 +404,54 @@
     "find": "segments[2]?.toLowerCase() === '.mec'",
     "replace": "segments[2] === '.mec'",
     "tests": ["apps/desktop/test/backup.test.ts"]
+  },
+  {
+    "name": "a slot with no env runs on the default login",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "  return slot.linkedDefault === true ? kept : { ...kept, CLAUDE_CONFIG_DIR: String(slot.home) }\n",
+    "replace": "  return slot.linkedDefault === true || slot.env === undefined ? kept : { ...kept, CLAUDE_CONFIG_DIR: String(slot.home) }\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "a linked slot is pointed at its home",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "  return slot.linkedDefault === true ? kept : { ...kept, CLAUDE_CONFIG_DIR: String(slot.home) }\n",
+    "replace": "  return { ...kept, CLAUDE_CONFIG_DIR: String(slot.home) }\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "a stored home variable outranks the rule",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "([name, value]) => name !== 'CLAUDE_CONFIG_DIR' && typeof value === 'string'",
+    "replace": "([, value]) => typeof value === 'string'",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "a slot with no home launches",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "    if (lacksHome(slot)) throw refuse(`slot_home_missing: ${fields.slotId} is not linked and has no home`)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "a slot with no home is placed",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "    LAUNCHABLE_KINDS.includes(String(slot.kind)) &&\n    !lacksHome(slot)\n",
+    "replace": "    LAUNCHABLE_KINDS.includes(String(slot.kind))\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "a linked slot needs a home",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "  slot.linkedDefault !== true && (typeof slot.home !== 'string' || slot.home === '')\n",
+    "replace": "  typeof slot.home !== 'string' || slot.home === ''\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "an empty home counts as one",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "(typeof slot.home !== 'string' || slot.home === '')",
+    "replace": "typeof slot.home !== 'string'",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
   }
 ]

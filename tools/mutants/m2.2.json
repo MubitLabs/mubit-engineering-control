@@ -249,7 +249,7 @@
     "file": "packages/engines/src/claude/adapter.ts",
     "find": "    launch.inputOpen = false\n    launch.proc.stdin?.end()\n",
     "replace": "    launch.inputOpen = false\n",
-    "tests": ["packages/engines/test/claude-input.test.ts"]
+    "tests": ["packages/engines/test/claude-input-eof.test.ts"]
   },
   {
     "name": "second session started",

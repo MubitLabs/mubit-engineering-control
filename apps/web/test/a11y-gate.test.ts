@@ -57,4 +57,18 @@ describe('lighthouse script', () => {
   it('exits non-zero with no reports at all', () => {
     expect(run().status).not.toBe(0)
   })
+
+  it('refuses a theme it does not know rather than scoring the default', () => {
+    const result = spawnSync(process.execPath, [SCRIPT, '--theme', 'sepia', 'http://127.0.0.1:1/', '#chat'], {
+      encoding: 'utf8',
+    })
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('--theme')
+  })
+
+  it('refuses a theme with no value', () => {
+    const result = spawnSync(process.execPath, [SCRIPT, '--theme'], { encoding: 'utf8' })
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('--theme')
+  })
 })

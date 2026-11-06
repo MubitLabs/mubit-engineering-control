@@ -109,6 +109,8 @@ async function openWorkbench(
 ): Promise<void> {
   await page.addInitScript((choice) => {
     localStorage.setItem('mec-theme', choice)
+    // This suite is the classic shell, which is no longer the default (decision #35).
+    localStorage.setItem('mec-ui-shell', 'classic')
   }, theme)
   await stubApi(page, broken, overrides)
   await page.goto(`#${route}`)

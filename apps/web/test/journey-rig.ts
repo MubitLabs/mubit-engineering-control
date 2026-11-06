@@ -32,6 +32,11 @@ here=$(dirname "$0")
 echo "$*" >> "$here/gh.log"
 case "$*" in
   "repo view"*) echo '{"url":"${ON_GITHUB}","defaultBranchRef":{"name":"main"}}' ;;
+  "pr list"*"--head"*)
+    # What a boot reads to settle an approved card. Any answer but this one is the open-PR scan.
+    if [ -f "$here/pr-branch" ]; then
+      printf '[{"number":${PR},"url":"${ON_GITHUB}/pull/${PR}","state":"OPEN"}]\\n'
+    else echo '[]'; fi ;;
   "pr list"*) echo '[]' ;;
   "api repos/${SLUG}/branches"*) ;;
   *"/git/ref/heads/"*) git -C "$here/../github.git" rev-parse "refs/heads/\${2##*/git/ref/heads/}" ;;
@@ -40,6 +45,8 @@ case "$*" in
       [ "$1" = "--head" ] && printf %s "$2" > "$here/pr-branch"
       shift
     done
+    # The PR exists from here on; a server killed in this sleep never hears its URL.
+    [ -f "$here/pr-create-delay" ] && sleep "$(cat "$here/pr-create-delay")"
     echo "${ON_GITHUB}/pull/${PR}" ;;
   "pr view"*)
     branch=$(cat "$here/pr-branch")
@@ -121,6 +128,8 @@ export interface Rig {
   /** Stops the server by this signal, then starts it on the same store. */
   restart: (how: 'SIGTERM' | 'SIGKILL') => Promise<void>
   ghLog: () => string[]
+  /** `gh pr create` makes its PR, then waits this long before it answers. */
+  delayPrCreate: (seconds: number) => void
   /** Worker attempts the fake CLI started, in order. Fake mode only. */
   launched: () => string[]
   /** A branch on the fake GitHub, or undefined. */
@@ -286,6 +295,7 @@ export async function startRig(mode: JourneyMode): Promise<Rig> {
       },
       ghLog: () =>
         existsSync(join(bin, 'gh.log')) ? readFileSync(join(bin, 'gh.log'), 'utf8').split('\n') : [],
+      delayPrCreate: (seconds) => writeFileSync(join(bin, 'pr-create-delay'), String(seconds)),
       launched: () =>
         existsSync(join(bin, 'launched.log'))
           ? readFileSync(join(bin, 'launched.log'), 'utf8').split('\n').filter(Boolean)

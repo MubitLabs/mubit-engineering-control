@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import AxeBuilder from '@axe-core/playwright'
 import { expect, type Page, test } from '@playwright/test'
+import { cellsAt, openCell, THEMES, VIEWPORTS } from './matrix-cells'
 
 /**
  * The accessibility gate (axe) of the screens suite. Like the rest of it, deliberately NOT in CI
@@ -67,3 +68,46 @@ test('the lighthouse script exits non-zero on the broken page', async ({ baseURL
   expect(result.stdout).toContain('FAIL')
   expect(result.status).not.toBe(0)
 })
+
+test('the lighthouse script refuses a theme the page did not take', async ({ baseURL }) => {
+  test.setTimeout(120_000)
+  const script = fileURLToPath(new URL('../scripts/lighthouse.mjs', import.meta.url))
+  const result = spawnSync(process.execPath, [script, '--theme', 'dark', `${baseURL}${BROKEN}`, '#broken'], {
+    encoding: 'utf8',
+    env: { ...process.env, TMPDIR: tmpdir() },
+  })
+  expect(result.stderr).toContain('did not take')
+  expect(result.status).not.toBe(0)
+})
+
+// ── The matrix of matrix-cells.ts: surfaces, states and sheets, three widths, two themes ──────
+
+for (const viewport of VIEWPORTS) {
+  for (const theme of THEMES) {
+    test.describe(`${viewport.name} ${theme}`, () => {
+      test.use({ viewport: { width: viewport.width, height: viewport.height } })
+
+      for (const cell of cellsAt(viewport.width)) {
+        test(`${cell.name} ${viewport.name} ${theme} has no violations`, async ({ page }) => {
+          await openCell(page, theme, cell)
+          await expectNoViolations(page, cell.surface ?? '.shell')
+        })
+      }
+
+      test(`default entry, no repository ${viewport.name} ${theme} has no violations`, async ({ page }) => {
+        await page.route('**/api/**', (route) => {
+          const { pathname } = new URL(route.request().url())
+          if (pathname === '/api/events') {
+            return route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' })
+          }
+          if (pathname === '/api/inspect/work' || pathname === '/api/inspect/needs') {
+            return route.fulfill({ json: { items: [], nextCursor: null, observedAt: '' } })
+          }
+          return route.fulfill({ json: [] })
+        })
+        await openCell(page, theme, { name: 'default entry', url: '/#chat', ready: '.empty' })
+        await expectNoViolations(page, '.shell')
+      })
+    })
+  }
+}

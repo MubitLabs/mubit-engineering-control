@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useRef, useState } from 'react'
 import {
   type BackupsRecord,
   type Capabilities,
@@ -14,7 +14,7 @@ import {
   type RepositoryView,
   saveBar,
 } from './config-model'
-import { Button } from './primitives'
+import { Button, useFormFocus } from './primitives'
 import { BOOTSTRAP_HINT, CHECKS_HINT } from './RepositoryForm'
 import { SaveBar } from './SaveBar'
 
@@ -145,11 +145,13 @@ interface EditorProps {
 
 function TextBlock({ label, rows, ...props }: EditorProps & { label: string; rows: number }) {
   const { editor, onEdit, onSave, onDiscard, onUseNewest } = props
+  const field = useRef<HTMLTextAreaElement>(null)
   return (
     <>
       <label className="field">
         {label}
         <textarea
+          ref={field}
           className="code-input"
           rows={rows}
           spellCheck={false}
@@ -162,7 +164,13 @@ function TextBlock({ label, rows, ...props }: EditorProps & { label: string; row
           Saved.
         </p>
       )}
-      <SaveBar view={saveBar(editor)} onSave={onSave} onDiscard={onDiscard} onUseNewest={onUseNewest} />
+      <SaveBar
+        view={saveBar(editor)}
+        onSave={onSave}
+        onDiscard={onDiscard}
+        onUseNewest={onUseNewest}
+        returnFocus={field}
+      />
     </>
   )
 }
@@ -509,13 +517,18 @@ export function RepositoriesBlock({
   proposals: ReactNode
   children: ReactNode
 }) {
+  const { opener, form: panel } = useFormFocus(adding)
   return (
     <section className="config-block" aria-label="Repositories">
       <div className="block-head">
         <h2>Repositories</h2>
-        {!adding && <Button onClick={onAdd}>Add repository</Button>}
+        {!adding && (
+          <Button ref={opener} onClick={onAdd}>
+            Add repository
+          </Button>
+        )}
       </div>
-      {adding && form}
+      {adding && <div ref={panel}>{form}</div>}
       {proposals}
       {children}
     </section>

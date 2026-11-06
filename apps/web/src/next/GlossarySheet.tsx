@@ -30,14 +30,21 @@ export function GlossaryButton() {
       </IconButton>
       {open && (
         <Sheet variant="dialog" title="Glossary" onClose={() => setOpen(false)}>
-          <dl className="facts glossary">
-            {CONCEPTS.map((concept) => (
-              <div key={concept.term}>
-                <dt>{concept.term}</dt>
-                <dd>{concept.meaning}</dd>
-              </div>
-            ))}
-          </dl>
+          <section
+            className="glossary"
+            aria-label="Terms"
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region
+            tabIndex={0}
+          >
+            <dl className="facts">
+              {CONCEPTS.map((concept) => (
+                <div key={concept.term}>
+                  <dt>{concept.term}</dt>
+                  <dd>{concept.meaning}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
         </Sheet>
       )}
     </>

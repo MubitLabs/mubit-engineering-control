@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { engineName } from './ConnectionForm'
 import { PageHeader } from './Conversation'
 import {
@@ -10,7 +10,7 @@ import {
   type ParkedRow,
 } from './config-model'
 import { type ParkedCommands, ParkedNotices } from './ParkedNotice'
-import { Button, Status, type StatusTone } from './primitives'
+import { Button, Status, type StatusTone, useFormFocus } from './primitives'
 
 /** Calls that can fail say how; the row keeps showing what is true until the server has answered. */
 export interface ConnectionCommands {
@@ -190,6 +190,8 @@ function ConnectionItem({
   const parkedHere = parked.filter((entry) => entry.slotId === row.id)
   const switchReason = switchWork.enabled ? 'Nothing is parked on this connection.' : switchWork.reason
   const identity = [row.identity?.email, row.identity?.plan].filter(Boolean).join(', ')
+  const replaceFocus = useFormFocus(replacing)
+  const retireFocus = useFormFocus(arm !== null)
   return (
     <li className="connection">
       <header className="connection-head">
@@ -232,7 +234,7 @@ function ConnectionItem({
         {actions.probe && <Button onClick={() => commands.probe(row.id)}>Check again</Button>}
         {actions.validate && <Button onClick={() => commands.validate(row.id)}>Validate</Button>}
         {actions.replaceKey && (
-          <Button aria-expanded={replacing} onClick={() => setReplacing(true)}>
+          <Button ref={replaceFocus.opener} aria-expanded={replacing} onClick={() => setReplacing(true)}>
             Replace key
           </Button>
         )}
@@ -244,7 +246,12 @@ function ConnectionItem({
             Switch work
           </Button>
         )}
-        <Button variant="quiet" aria-expanded={arm !== null} onClick={() => commands.armRetire(row.id)}>
+        <Button
+          ref={retireFocus.opener}
+          variant="quiet"
+          aria-expanded={arm !== null}
+          onClick={() => commands.armRetire(row.id)}
+        >
           Retire
         </Button>
       </div>
@@ -256,18 +263,22 @@ function ConnectionItem({
         commands={parkedCommands}
       />
       {replacing && (
-        <ReplaceKey
-          onReplace={(key) => commands.replaceKey(row.id, key)}
-          onClose={() => setReplacing(false)}
-        />
+        <div ref={replaceFocus.form}>
+          <ReplaceKey
+            onReplace={(key) => commands.replaceKey(row.id, key)}
+            onClose={() => setReplacing(false)}
+          />
+        </div>
       )}
       {arm && (
-        <RetirePanel
-          row={row}
-          arm={arm}
-          onCancel={commands.disarmRetire}
-          onRetire={() => commands.retire(row.id, row.label)}
-        />
+        <div ref={retireFocus.form}>
+          <RetirePanel
+            row={row}
+            arm={arm}
+            onCancel={commands.disarmRetire}
+            onRetire={() => commands.retire(row.id, row.label)}
+          />
+        </div>
       )}
     </li>
   )
@@ -300,6 +311,13 @@ export function ConnectionsView({
   const unavailable = [capabilityGate(capabilities, 'drain'), capabilityGate(capabilities, 'switchWork')]
     .flatMap((gate) => (gate.enabled ? [] : [gate.reason]))
     .filter(() => rows.length > 0)
+  const { opener, form: panel } = useFormFocus(adding)
+  // A retired row takes the focus on it away. Add connection is the next thing on the page.
+  const count = useRef(rows.length)
+  useEffect(() => {
+    if (rows.length < count.current && document.activeElement === document.body) opener.current?.focus()
+    count.current = rows.length
+  }, [rows.length, opener])
   return (
     <div className="page">
       <PageHeader
@@ -307,13 +325,17 @@ export function ConnectionsView({
         subtitle="Each connection is one engine signed in to one account. Keys and logins stay on this machine."
         action={
           adding ? undefined : (
-            <Button variant="primary" onClick={onAdd}>
+            <Button ref={opener} variant="primary" onClick={onAdd}>
               Add connection
             </Button>
           )
         }
       />
-      {adding && <section className="config-block">{form}</section>}
+      {adding && (
+        <div ref={panel} className="config-block">
+          {form}
+        </div>
+      )}
       {rows.length === 0 && !adding ? (
         <div className="empty">
           <h2>No connections yet</h2>

@@ -26,5 +26,47 @@
     "find": "verdicts.every((verdict) => verdict.ok)",
     "replace": "verdicts.some((verdict) => verdict.ok)",
     "tests": ["apps/web/test/a11y-gate.test.ts"]
+  },
+  {
+    "name": "default stays classic",
+    "file": "apps/web/src/ui-flag.ts",
+    "find": "=== 'classic' ? 'classic' : 'next'",
+    "replace": "=== 'next' ? 'next' : 'classic'",
+    "tests": ["apps/web/test/ui-flag.test.ts"]
+  },
+  {
+    "name": "stored classic ignored",
+    "file": "apps/web/src/ui-flag.ts",
+    "find": "=== 'classic' ? 'classic' : 'next'",
+    "replace": "=== 'classic' ? 'next' : 'next'",
+    "tests": ["apps/web/test/ui-flag.test.ts"]
+  },
+  {
+    "name": "a throwing read falls to classic",
+    "file": "apps/web/src/ui-flag.ts",
+    "find": "  } catch {\n    return 'next'\n  }\n}\n\n/** A choice",
+    "replace": "  } catch {\n    return 'classic'\n  }\n}\n\n/** A choice",
+    "tests": ["apps/web/test/ui-flag.test.ts"]
+  },
+  {
+    "name": "a classic that cannot be kept half-applies",
+    "file": "apps/web/src/ui-flag.ts",
+    "find": "    return shell\n  } catch {\n    return 'next'",
+    "replace": "    return shell\n  } catch {\n    return shell",
+    "tests": ["apps/web/test/ui-flag.test.ts"]
+  },
+  {
+    "name": "an unknown param overrides a stored classic",
+    "file": "apps/web/src/ui-flag.ts",
+    "find": "return { shell: readStored(storage), search }",
+    "replace": "return { shell: asked === null ? readStored(storage) : 'next', search }",
+    "tests": ["apps/web/test/ui-flag.test.ts"]
+  },
+  {
+    "name": "an unknown lighthouse theme is scored anyway",
+    "file": "apps/web/scripts/lighthouse.mjs",
+    "find": "if (!THEMES.includes(theme)) throw",
+    "replace": "if (theme === undefined) throw",
+    "tests": ["apps/web/test/a11y-gate.test.ts"]
   }
 ]

@@ -1,11 +1,11 @@
 import { expect, type Page, test } from '@playwright/test'
 
 /**
- * The next shell behind its flag: `?ui=next` runs the live path against route mocks here (the
+ * The next shell, the default: `?ui=next` runs the live path against route mocks here (the
  * real server is the verifier's job), and fixtures/next-harness.html renders the same components
  * with synthetic props. The numbers in
  * the test names are the prototype defects this shell must not repeat (the design audit).
- * Axe and Lighthouse are not installed here: nothing below claims them.
+ * Axe and Lighthouse live in a11y.screens.playwright.ts.
  */
 
 const VIEWPORTS = [
@@ -214,10 +214,26 @@ const openDrawer = async (page: Page) => page.getByRole('button', { name: 'Open 
 const inertRoot = (page: Page) => page.evaluate(() => document.getElementById('root')?.inert)
 
 test.describe('the flag', () => {
-  test('classic is the default, with no param and no stored choice', async ({ page }) => {
+  test('next is the default, with no param and no stored choice', async ({ page }) => {
+    await mockServer(page)
     await page.goto('/')
+    await expect(page.locator('.shell')).toBeVisible()
+    await expect(page.locator('.rail-item')).toHaveCount(0)
+  })
+
+  test('the launcher deep link for an unfinished setup opens Setup in the new shell', async ({ page }) => {
+    await mockServer(page)
+    await page.goto('/#/wizard')
+    await expect(page.locator('.shell h1')).toHaveText('Setup')
+  })
+
+  test('?ui=classic applies, strips the param, keeps the hash and survives a reload', async ({ page }) => {
+    await page.goto('/?ui=classic#work')
     await expect(page.locator('.rail-item').first()).toBeVisible()
-    await expect(page.locator('.scroller')).toHaveCount(0)
+    expect(new URL(page.url()).search).toBe('')
+    expect(new URL(page.url()).hash).toBe('#work')
+    await page.reload()
+    await expect(page.locator('.rail-item').first()).toBeVisible()
   })
 
   test('?ui=next applies, strips the param, keeps the hash and survives a reload', async ({ page }) => {
@@ -229,7 +245,7 @@ test.describe('the flag', () => {
     await expect(page.locator('.shell h1')).toHaveText('Work')
   })
 
-  test('the way back: Return to the classic workbench turns the flag off', async ({ page }) => {
+  test('the way back: Return to the classic workbench sticks through a reload', async ({ page }) => {
     await live(page)
     await page.getByRole('link', { name: 'Return to the classic workbench' }).click()
     await expect(page.locator('.rail-item').first()).toBeVisible()
@@ -237,14 +253,27 @@ test.describe('the flag', () => {
     await expect(page.locator('.rail-item').first()).toBeVisible()
   })
 
-  test('throwing storage stays classic even when ?ui=next asks', async ({ page }) => {
+  test('the palette carries the way back to classic, and it sticks', async ({ page }) => {
+    await mockServer(page, { repositories: [REPO_A] })
+    await page.goto('/#chat')
+    await expect(composerBox(page)).toBeVisible()
+    await page.keyboard.press('Control+k')
+    await page.getByRole('option', { name: 'Return to the classic workbench' }).click()
+    await expect(page.locator('.rail-item').first()).toBeVisible()
+    await page.reload()
+    await expect(page.locator('.rail-item').first()).toBeVisible()
+  })
+
+  test('throwing storage gives next, even when ?ui=classic asks', async ({ page }) => {
+    await mockServer(page)
     await page.addInitScript(() => {
       Storage.prototype.setItem = () => {
         throw new DOMException('denied', 'SecurityError')
       }
     })
-    await page.goto('/?ui=next')
-    await expect(page.locator('.rail-item').first()).toBeVisible()
+    await page.goto('/?ui=classic')
+    await expect(page.locator('.shell')).toBeVisible()
+    await expect(page.locator('.rail-item')).toHaveCount(0)
   })
 })
 
@@ -281,9 +310,12 @@ test.describe('?ui=next is honest with no repository', () => {
     await expect(page.getByRole('button', { name: 'Send' })).toHaveAttribute('aria-disabled', 'true')
   })
 
-  test('the empty state points at Setup in classic', async ({ page }) => {
+  test('the empty state opens Setup here, without leaving the new shell', async ({ page }) => {
     await live(page)
-    await expect(page.getByRole('link', { name: 'Open Setup' })).toHaveAttribute('href', '?ui=classic#setup')
+    await page.getByRole('link', { name: 'Open Setup' }).click()
+    await expect(page.locator('.shell h1')).toHaveText('Setup')
+    expect(new URL(page.url()).search).toBe('')
+    expect(await page.evaluate(() => localStorage.getItem('mec-ui-shell'))).toBe('next')
   })
 
   test('a failed read ends in Retry, not endless loading', async ({ page }) => {

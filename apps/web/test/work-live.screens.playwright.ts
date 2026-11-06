@@ -39,8 +39,10 @@ interface Over {
   workDetail?: (id: string) => Reply
   /** Runs before the answer, so the next read sees what the post changed. */
   posted?: (path: string) => void
-  /** The stream's body on each connection. */
-  events?: () => string
+  /** The stream's body for a connection from these cursors. Null holds it open and quiet. */
+  events?: (search: string) => string | null
+  /** The event cursor a snapshot serves. */
+  cursor?: () => number
 }
 
 async function server(page: Page, over: Over = {}) {
@@ -77,11 +79,9 @@ async function server(page: Page, over: Over = {}) {
 
     if (pathname === '/api/events') {
       streams.push(url.search)
-      return route.fulfill({
-        status: 200,
-        contentType: 'text/event-stream',
-        body: over.events?.() ?? '',
-      })
+      const body = over.events ? over.events(url.search) : ''
+      if (body === null) return
+      return route.fulfill({ status: 200, contentType: 'text/event-stream', body })
     }
     reads.push(pathname)
     if (pathname === '/api/repositories') {
@@ -105,7 +105,7 @@ async function server(page: Page, over: Over = {}) {
         ],
         repositoriesTruncated: 0,
         needsCount: 0,
-        cursors: { repositories: 1 },
+        cursors: { repositories: over.cursor?.() ?? 1 },
       })
     }
     if (pathname === '/api/inspect/work') return send(over.work?.() ?? { status: 200, body: workPage })
@@ -690,21 +690,28 @@ test.describe('a settled card', () => {
   })
 })
 
+/** The last cursor of `after`, the repositories stream's, with `&compact=1` or nothing behind it. */
+const LAST_CURSOR_ONE = /after=(?:[\d,]*,)?1(?:&|$)/
+
 test('the reset notice does not outlast a failure it would contradict', async ({ page }) => {
   let down = false
-  let resetNext = false
-  await server(page, {
+  let historyMoved = false
+  const { reads } = await server(page, {
     work: () => (down ? { status: 503, body: { error: 'down' } } : { status: 200, body: workPage }),
-    events: () => {
-      const body = resetNext ? 'event: reset\ndata: {}\n\n' : ''
-      resetNext = false
-      return body
+    cursor: () => (historyMoved ? 2 : 1),
+    // As the server does: every connection from a lost cursor is told to reset, not just the first,
+    // because the page can abandon one mid-subscribe. Past the new snapshot's cursor a stream stays
+    // open, so no reconnect refreshes the page between recovering and the click on Retry.
+    events: (search) => {
+      if (!historyMoved) return ''
+      return LAST_CURSOR_ONE.test(search) ? 'event: reset\ndata: {}\n\n' : null
     },
   })
   await open(page, 'repo/repo_a/work')
   await expect(page.getByRole('region', { name: 'Ended' })).toBeVisible()
-  // The stream's empty body ends the connection, so the next one the page opens carries this.
-  resetNext = true
+  // The first snapshot is served, so only the snapshot the reset asks for carries the new cursor.
+  await expect.poll(() => reads.includes('/api/inspect/snapshot')).toBe(true)
+  historyMoved = true
   const notice = page.getByText('Read again from the start')
   await expect(notice).toBeVisible()
   down = true
@@ -723,7 +730,7 @@ test('the events connection starts from the snapshot’s cursors', async ({ page
   await expect(page.getByRole('region', { name: 'Ended' })).toBeVisible()
   await expect.poll(() => streams.length).toBeGreaterThan(0)
   expect(streams.at(-1)).toContain('repositories')
-  expect(streams.at(-1)).toMatch(/after=(?:[\d,]*,)?1$/)
+  expect(streams.at(-1)).toMatch(LAST_CURSOR_ONE)
 })
 
 for (const [width, height] of [

@@ -1,6 +1,7 @@
 /**
- * The default-off shell flag. Everything that is not an explicit, durable `next` is classic:
- * a local presentation choice that grants no authority and asks no server.
+ * The shell flag. Everything that is not an explicit, durable `classic` is next: a local
+ * presentation choice that grants no authority and asks no server. Classic stays reachable for
+ * one verified install (decision #35).
  */
 export type Shell = 'classic' | 'next'
 
@@ -19,10 +20,7 @@ export function resolveShell(search: string, storage: () => ShellStore): ShellCh
   const params = new URLSearchParams(search)
   const asked = params.get('ui')
 
-  if (asked !== 'next' && asked !== 'classic') {
-    if (asked !== null) return { shell: 'classic', search }
-    return { shell: readStored(storage), search }
-  }
+  if (asked !== 'next' && asked !== 'classic') return { shell: readStored(storage), search }
 
   params.delete('ui')
   const rest = params.toString()
@@ -31,9 +29,9 @@ export function resolveShell(search: string, storage: () => ShellStore): ShellCh
 
 function readStored(storage: () => ShellStore): Shell {
   try {
-    return storage().getItem(UI_SHELL_KEY) === 'next' ? 'next' : 'classic'
+    return storage().getItem(UI_SHELL_KEY) === 'classic' ? 'classic' : 'next'
   } catch {
-    return 'classic'
+    return 'next'
   }
 }
 
@@ -43,6 +41,6 @@ function store(storage: () => ShellStore, shell: Shell): Shell {
     storage().setItem(UI_SHELL_KEY, shell)
     return shell
   } catch {
-    return 'classic'
+    return 'next'
   }
 }

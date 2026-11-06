@@ -11,9 +11,11 @@ import { askTurn, planTurn, type Rig, startRig } from './journey-rig'
  *
  * `MEC_JOURNEY_REAL=1` runs the first test alone, on the real planner and a real specialist through
  * a linked slot. One bounded request: a line in engine-runs.md first. See docs/changes/2026-11-06-journey-tests.
+ * Adding `MEC_JOURNEY_KILL=1` runs the kill test alone instead, also one bounded request.
  */
 const mode = journeyMode(process.env)
 const ONE_REAL_PASS = 'one real pass is the budget (decision #18)'
+const KILL_PASS = process.env.MEC_JOURNEY_KILL === '1'
 
 let rig: Rig
 test.beforeEach(async () => {
@@ -101,6 +103,7 @@ const slowWorker = (ms: number) => [
 ]
 
 test('one request reaches a tested PR on the scratch lane', async ({ page }) => {
+  test.skip(mode === 'real' && KILL_PASS, ONE_REAL_PASS)
   rig.plannerTurns(
     askTurn('Should the file end with a newline?', ['Yes', 'No']),
     planTurn([{ id: 'hello', objective: REQUEST }]),
@@ -152,6 +155,30 @@ test('one request reaches a tested PR on the scratch lane', async ({ page }) => 
   await expect(page.getByText('Pull request ready for review')).toBeVisible()
 })
 
+test('a server killed during pr create leaves one pull request', async ({ page }) => {
+  test.skip(mode === 'real' && !KILL_PASS, ONE_REAL_PASS)
+  rig.plannerTurns(planTurn([{ id: 'hello', objective: REQUEST }]))
+  await ask(page)
+  await expect.poll(answerAnyThenCards, QUIET_TIME).toEqual(['push'])
+  await open(page, 'Needs you')
+  await approve(page, PUSH)
+  await expect.poll(pendingClasses, QUIET_TIME).toEqual(['pr_create'])
+
+  const created = (): string[] => rig.ghLog().filter((line) => line.startsWith('pr create'))
+  rig.delayPrCreate(5)
+  await approve(page, /pull request/i)
+  await expect.poll(created, QUIET_TIME).toHaveLength(1)
+  await rig.restart('SIGKILL')
+
+  // The boot reads what the remote shows: the approval is not spent twice, and the work goes on.
+  await expect.poll(deliveryStage, QUIET_TIME).toBe('pr-ready')
+  expect(created()).toHaveLength(1)
+  expect(await pendingClasses()).toEqual([])
+  await page.goto(`${rig.url}/?ui=next#repo/${rig.repoId}/work`)
+  await page.locator('.work-row').first().click()
+  await expect(page.getByText('Pull request ready for review')).toBeVisible(QUIET_TIME)
+})
+
 test('a delivery ready for review says so on its Work row', async ({ page }) => {
   test.skip(mode === 'real', ONE_REAL_PASS)
   rig.plannerTurns(planTurn([{ id: 'hello', objective: REQUEST }]))
@@ -161,7 +188,9 @@ test('a delivery ready for review says so on its Work row', async ({ page }) => 
   await approve(page, /pull request/i)
   await expect.poll(deliveryStage, QUIET_TIME).toBe('pr-ready')
   await open(page, 'Work')
-  await expect(page.locator('.work-row').first()).toContainText('Ready for review')
+  // `pr_ready` lands on the release and inbox streams, which the page does not follow, so the row
+  // moves on the 10 s refetch. Five seconds, the default, made this a race.
+  await expect(page.locator('.work-row').first()).toContainText('Ready for review', { timeout: 15_000 })
 })
 
 test('declining keeps the local result', async ({ page }) => {

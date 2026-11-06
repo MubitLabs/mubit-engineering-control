@@ -45,9 +45,13 @@ By hand, on the git-ignored bundle, since `run.py` drives vitest only:
 
 `one request reaches a tested PR` and the others were not hand-mutated. `a delivery ready for review` was run once with `test.fail()` removed: it fails on `Expected substring: "Ready for review"`, `Received ... scratchWorking`, the reason it states.
 
-## The real runs: for the coordinator
+## The real runs: done
 
-No engine has run. Each needs a line in `handoffs/engine-runs.md` first. `engine-runs.md` showed 15 Claude of 20 when this was written; check it again. Both use the real `HOME` for the linked login, a scratch data dir under `$TMPDIR` and a fake `gh`. Neither reads a credential. Run them one at a time. Build first:
+Run on 6 November 2026, on the replay branch `feat/next-final`, with no separate verifier by the coordinator's brief. Results are in `docs/log/HANDSHAKES.md` and `handoffs/engine-runs.md`: self-approval `refused`, the journey passed, and the kill test below passed on real Claude.
+
+`a server killed during pr create leaves one pull request` was added for the kill check left to Stage B. `gh pr create` makes its PR and answers late, and the server takes SIGKILL between the two. Passed on the fake CLI in 32 s. Hand mutant: `reconcileExternal` over no cards, in the bundle, fails on `Expected: "pr-ready"`, `Received: "awaiting-pr"`. Killed. Real: `MEC_JOURNEY_REAL=1 MEC_JOURNEY_KILL=1 pnpm --dir apps/web exec playwright test --config playwright.journey.config.ts -g 'killed during'`, one Claude line. Without `MEC_JOURNEY_KILL` it skips itself on a real pass, and with it the first test does.
+
+What follows is the recipe as it was written before those runs. Each needs a line in `handoffs/engine-runs.md` first. `engine-runs.md` showed 15 Claude of 20 when this was written; check it again. Both use the real `HOME` for the linked login, a scratch data dir under `$TMPDIR` and a fake `gh`. Neither reads a credential. Run them one at a time. Build first:
 
 ```sh
 pnpm install --frozen-lockfile && pnpm build:desktop && pnpm --dir apps/web build

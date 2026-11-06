@@ -243,7 +243,30 @@ export function Shell({
     setDrawerOpen(false)
     scroller.current?.scrollTo?.({ top: 0 })
     if (layers.modalOpen()) return
-    scroller.current?.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true })
+    const page = scroller.current
+    if (!page) return
+    const origin = document.activeElement
+    let heading = page.querySelector<HTMLElement>('h1')
+    heading?.focus({ preventScroll: true })
+    // A surface that reads first draws its heading late, or draws it again once it has read.
+    const settle = new MutationObserver(() => {
+      const drawn = page.querySelector<HTMLElement>('h1')
+      if (!drawn || drawn === heading) return
+      const held = document.activeElement
+      if (held !== null && held !== document.body && held !== origin) {
+        settle.disconnect()
+        return
+      }
+      heading = drawn
+      drawn.focus({ preventScroll: true })
+    })
+    settle.observe(page, { childList: true, subtree: true })
+    const stop = () => settle.disconnect()
+    document.addEventListener('pointerdown', stop, { once: true })
+    return () => {
+      settle.disconnect()
+      document.removeEventListener('pointerdown', stop)
+    }
   }, [route, focusComposer])
 
   // Leaving Needs you drops its evidence: a later visit starts without a stale inspector.

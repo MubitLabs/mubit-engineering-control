@@ -1,17 +1,21 @@
 #!/usr/bin/env node
 // The Lighthouse accessibility gate. Not in CI, not in `pnpm check`: `pnpm --dir apps/web test:lighthouse`.
 //
-//   node scripts/lighthouse.mjs <baseUrl> <#route>...        drive Playwright's chromium, score each route
+//   node scripts/lighthouse.mjs [--theme light|dark] <baseUrl> <#route>...   score each route
 //   node scripts/lighthouse.mjs --from-report <file>...      judge Lighthouse JSON reports already on disk
 //
 // Accessibility category only. Every route must score at least THRESHOLD. Any miss, any unreadable
 // or incomplete report, and any browser failure exits non-zero. Reports go to $TMPDIR, not the repo.
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+// --theme stores the choice the way the shell does, and a page that does not take it fails the run.
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const THRESHOLD = 95
+
+const THEME_KEY = 'mec-next-theme'
+const THEMES = ['light', 'dark']
 
 /** Judges one parsed report. Returns { ok, score, reason }: never throws, never defaults to a pass. */
 export function judgeReport(report, threshold = THRESHOLD) {
@@ -42,16 +46,32 @@ function print(label, verdict) {
   )
 }
 
-async function scoreRoutes(baseUrl, routes) {
+/** Sets the shell's stored theme for this profile, and proves the page took it. */
+async function applyTheme(context, url, theme) {
+  const page = await context.newPage()
+  await page.goto(url)
+  await page.evaluate(([key, value]) => localStorage.setItem(key, value), [THEME_KEY, theme])
+  await page.reload()
+  await page.waitForLoadState('networkidle')
+  const applied = await page.evaluate(() => document.documentElement.dataset.theme)
+  await page.close()
+  if (applied !== theme) throw new Error(`the page did not take theme ${theme}: ${url}`)
+}
+
+async function scoreRoutes(baseUrl, routes, theme) {
   const { chromium } = await import('@playwright/test')
   const { default: lighthouse } = await import('lighthouse')
   const dir = join(process.env.TMPDIR || tmpdir(), `mec-lighthouse-${Date.now()}`)
   mkdirSync(dir, { recursive: true })
   const port = 9222 + Math.floor(Math.random() * 500)
+  // One lasting profile, because Lighthouse opens its own tabs and they must see the stored theme.
   // The bundled chromium follows the macOS system proxy for loopback unless told not to (a102313).
-  const browser = await chromium.launch({ args: ['--no-proxy-server', `--remote-debugging-port=${port}`] })
+  const browser = await chromium.launchPersistentContext(mkdtempSync(join(dir, 'profile-')), {
+    args: ['--no-proxy-server', `--remote-debugging-port=${port}`],
+  })
   const verdicts = []
   try {
+    if (theme) await applyTheme(browser, baseUrl + routes[0], theme)
     for (const [index, route] of routes.entries()) {
       const url = baseUrl + route
       let verdict
@@ -90,11 +110,20 @@ async function main(argv) {
       return verdict
     })
   } else {
-    const [baseUrl, ...routes] = argv
-    if (!baseUrl || routes.length === 0) {
-      throw new Error('usage: lighthouse.mjs <baseUrl> <#route>... | --from-report <file>...')
+    let args = argv
+    let theme = null
+    if (args[0] === '--theme') {
+      theme = args[1]
+      if (!THEMES.includes(theme)) throw new Error(`--theme takes ${THEMES.join(' or ')}`)
+      args = args.slice(2)
     }
-    verdicts = await scoreRoutes(baseUrl, routes)
+    const [baseUrl, ...routes] = args
+    if (!baseUrl || routes.length === 0) {
+      throw new Error(
+        'usage: lighthouse.mjs [--theme light|dark] <baseUrl> <#route>... | --from-report <file>...',
+      )
+    }
+    verdicts = await scoreRoutes(baseUrl, routes, theme)
   }
   return verdicts.length > 0 && verdicts.every((verdict) => verdict.ok) ? 0 : 1
 }

@@ -73,7 +73,7 @@ export function NoRepositories() {
       title="Add a repository to begin"
       body="Conversations and work belong to a repository. Setup registers the first one."
     >
-      <a className="btn btn-default" href="?ui=classic#setup">
+      <a className="btn btn-default" href="#setup">
         Open Setup
       </a>
       <ReturnToClassic />

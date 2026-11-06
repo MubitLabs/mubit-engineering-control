@@ -58,6 +58,8 @@ test('an expired sign-in offers Sign in again, and Drain says why it is off', as
   await expect(row.getByRole('button', { name: 'Drain' })).toBeDisabled()
   await expect(page.getByText('Draining a connection is not available')).toBeVisible()
   await expect(row.getByText('No reading yet')).toBeVisible()
+  await expect(row.getByText('Default limit')).toBeVisible()
+  await expect(row.getByText('None set')).toBeVisible()
 })
 
 async function startSignIn(page: Page): Promise<void> {

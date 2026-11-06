@@ -104,6 +104,20 @@ describe('the configuration client against the real routes', () => {
     expect((await configApi.connections()).rows).toEqual([])
   })
 
+  it('a slot carries its scheduling fields only when something set them', async () => {
+    await configApi.dedicated('claude', 'unset')
+    await configApi.dedicated('claude', 'set')
+    const doc = store.slots.get('slot_set')
+    store.slots.save({ ...doc, id: 'slot_set', concurrency: 0, slotClass: 'batch' })
+
+    const rows = (await configApi.connections()).rows
+    const unset = rows.find((row) => row.label === 'unset')
+    expect(unset).toBeDefined()
+    expect(unset).not.toHaveProperty('concurrency')
+    expect(unset).not.toHaveProperty('slotClass')
+    expect(rows.find((row) => row.label === 'set')).toMatchObject({ concurrency: 0, slotClass: 'batch' })
+  })
+
   it('saves policy, prompts and models through their decoders', async () => {
     const policy = await configApi.policy()
     expect(policy.source).toBe('default')

@@ -142,6 +142,9 @@ function connectionRow(doc: StoreDoc) {
     ...(fingerprint !== undefined && {
       fingerprint: { provider: String(fingerprint.provider), last4: String(fingerprint.last4) },
     }),
+    // The scheduler's fields: nothing writes them yet, and absent means its defaults.
+    ...(typeof doc.concurrency === 'number' && { concurrency: doc.concurrency }),
+    ...(text(doc.slotClass) !== undefined && { slotClass: text(doc.slotClass) }),
     // No stream records these for a slot yet: null is "no reading", never zero or "off".
     usage: null,
     pin: null,

@@ -162,6 +162,8 @@ function decodeRow(path: string, raw: unknown): ConnectionRow {
     ...optional('stateReason', row.stateReason),
     ...optional('engineVersion', row.engineVersion),
     ...optional('lastProbeAt', row.lastProbeAt),
+    ...(typeof row.concurrency === 'number' && { concurrency: row.concurrency }),
+    ...optional('slotClass', row.slotClass),
     ...(identity !== undefined && { identity }),
     ...(fingerprint !== undefined && { fingerprint }),
     usage: null,

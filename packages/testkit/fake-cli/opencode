@@ -9,20 +9,24 @@
  *
  *   version: 'opencode v2.2.5'     what `--version` prints
  *   noUrl: true                    serve prints garbage instead of the url line
+ *   replyFails: 500                a permission reply answers this status
  *   steps: [...]                   what a prompt does, each one of:
  *
  *   {event: {type, data}}          one SSE event
  *   {write: {path, text}}          write a file relative to the session directory
  *   {ask: {id, action, resources, source?}}  permission.asked; the reply lands in answers.jsonl
+ *   {asks: [ask, ...]}             parallel asks. Like the real server, a reject settles every
+ *                                  other ask still pending, whose own reply then answers 404
  *   {call: {tool, args}}           a mec-tools call; the answer lands in tool-answers.jsonl
  *   {saveToken: true}              copy the bearer token to token.txt beside this file
  *   {sleep: ms}                    wait
+ *   {hold: 'name'}                 wait until a file of this name appears beside this file
  *   {verdict: 'succeeded'}         session.execution.<verdict>, then a late usage event
  *
  * It writes `seen.json` beside itself on serve start, and appends each request to
  * `requests.jsonl`.
  */
-import { appendFileSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { dirname, join } from 'node:path'
 
@@ -84,22 +88,25 @@ async function call(tool, args) {
   appendFileSync(join(here, 'tool-answers.jsonl'), `${JSON.stringify({ tool, answer: await response.json() })}\n`)
 }
 
+async function ask(request) {
+  const reply = new Promise((resolve) => replies.set(request.id, resolve))
+  event('permission.asked', { sessionID: SESSION, source: { type: 'tool', id: 'x' }, ...request })
+  appendFileSync(join(here, 'answers.jsonl'), `${JSON.stringify({ id: request.id, answer: await reply })}\n`)
+}
+
 async function turn() {
   for (const step of scenario.steps ?? []) {
     if (step.event !== undefined) event(step.event.type, step.event.data)
     else if (step.write !== undefined) writeFileSync(join(directory, step.write.path), step.write.text)
-    else if (step.ask !== undefined) {
-      const reply = new Promise((resolve) => replies.set(step.ask.id, resolve))
-      event('permission.asked', { sessionID: SESSION, source: { type: 'tool', id: 'x' }, ...step.ask })
-      appendFileSync(
-        join(here, 'answers.jsonl'),
-        `${JSON.stringify({ id: step.ask.id, answer: await reply })}\n`,
-      )
-    } else if (step.call !== undefined) await call(step.call.tool, step.call.args ?? {})
+    else if (step.ask !== undefined) await ask(step.ask)
+    else if (step.asks !== undefined) await Promise.all(step.asks.map(ask))
+    else if (step.call !== undefined) await call(step.call.tool, step.call.args ?? {})
     else if (step.saveToken === true) {
       writeFileSync(join(here, 'token.txt'), (authorization ?? '').replace(/^Bearer /, ''))
     } else if (step.sleep !== undefined) await sleep(step.sleep)
-    else if (step.verdict !== undefined) {
+    else if (step.hold !== undefined) {
+      while (!existsSync(join(here, step.hold))) await sleep(25)
+    } else if (step.verdict !== undefined) {
       event(`session.execution.${step.verdict}`, { sessionID: SESSION })
       event('session.renamed', { sessionID: SESSION, title: 'after the verdict' })
     }
@@ -141,8 +148,23 @@ const server = createServer((request, response) => {
     }
     const reply = path.match(/\/permission\/([^/]+)\/reply$/)
     if (reply !== null) {
+      if (scenario.replyFails !== undefined) {
+        response.writeHead(scenario.replyFails).end('{"name":"UnknownError"}')
+        return
+      }
+      const settled = replies.get(reply[1])
+      if (settled === undefined) {
+        response.writeHead(404, { 'content-type': 'application/json' })
+        response.end('{"name":"PermissionNotFoundError"}')
+        return
+      }
       response.writeHead(204).end()
-      replies.get(reply[1])?.(body)
+      replies.delete(reply[1])
+      settled(body)
+      if (body?.decision === 'reject') {
+        for (const dropped of replies.values()) dropped({ dropped: true })
+        replies.clear()
+      }
       return
     }
     response.writeHead(200, { 'content-type': 'application/json' })

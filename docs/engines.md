@@ -90,6 +90,8 @@ Two real runs on a scratch repo, the linked `~/.codex` login, `gpt-5.6-luna` at 
 - **The live catalogue is not the table.** `codex debug models` and `model/list` show `gpt-5.6-sol`, `-terra` and `-luna`. `packages/prompts/defaults/models.yaml` lists `gpt-6-*`, and the linked home's default is `gpt-6-astra` at `ultra`. The runs used a scratch `models.yaml`.
 - **MCP tools** appear as `mcpToolCall` items, and `default_tools_approval_mode="approve"` ran `report` with no elicitation.
 - **A linked home still adds** `~/.codex/AGENTS.md` and skills to the turn.
+- **`thread/start` under a profile that can write the cwd trusts the repo cache.** It writes `[projects."<data>/repos"] trust_level = "trusted"` into `config.toml`, then loads project config, and a repository's own MCP server ran outside the sandbox. `-c projects={"<data>/repos"={trust_level="untrusted"}}` stops both; `project_root_markers=[]` does not.
+- **Each command runs in its own process group,** as a child of the app-server, so signalling the server's group misses it. A background job from a finished command did not survive.
 
 ## OpenCode 2.2.5 through the attempt runner (M2.4 Part B, 5 November 2026)
 
@@ -99,6 +101,8 @@ Two real runs on a scratch repo, the default home's existing `zai-coding-plan` l
 - **`OPENCODE_CONFIG` merges in for a server,** though `opencode debug config` does not list it: that command reads through another process.
 - **A linked home's MCP servers connect** whatever the attempt config says, and `*: deny` keeps their tools from the model: it reported none. `codemode: false` on `mec` makes its tools plain `mec_<tool>` actions, and a mid-string `Bearer {env:MEC_TOOLS_TOKEN}` header is expanded.
 - **`reject` with a `message` lets the turn go on.** Three rejections in one run did not end it.
+- **A reject settles every other ask still pending in the session.** With two parallel asks, the second's reply answers 404 `PermissionNotFoundError`. MEC records that ask as `deny`, because nothing it wanted ran.
+- **`read` follows a link in the repository out of the worktree.** A direct outside read is refused and a link's is not, so a launch refuses a tracked link that leads out.
 - **Edit asks carry a relative path:** `resources: ["hello.txt"]`. Shell asks carry the command in `resources` too, with no `metadata.command`.
 - **Events echo the prompt,** so a verdict's name can appear in the text of an earlier event. The first run ended there. The stream's end has to read the event's own `type`.
 - **The default `build` agent has no rule against `external_directory`,** and the `general` subagent allows everything including shell. Starting from `*: deny` covers both.

@@ -12,9 +12,15 @@
  *   readable and unwritable, and the deny list refuses reading too. `thread/start` must then leave
  *   `sandbox` out: 0.148.0 drops the profile when it is sent. The adapter checks the profile came
  *   back active.
+ * - `thread/start` under a profile that can write the cwd marks the repo cache trusted in the
+ *   home's config.toml, then loads the repository's `.codex/` (§8.4 says never). Naming the cache
+ *   `untrusted` stops both; `project_root_markers=[]` does not.
+ * - `:root` reads, so other attempts' worktrees and temp dirs go by name: a sibling's `.mec/mcp.json`
+ *   is a live bearer. The most specific entry wins, which keeps this attempt's own.
  * - A `-c` table merges into the user's, so MCP servers do not go by replacing the table: each is
  *   named and disabled, and a server that cannot be named refuses the launch.
  */
+import { dirname } from 'node:path'
 import type { Writable } from 'node:stream'
 import type { OwnedSpawn } from './owned-spawn'
 
@@ -74,6 +80,8 @@ function disabledServer({ name, transport }: CodexServerRef): string {
 export function codexAttemptArgs(opts: CodexAttemptOptions): string[] {
   const filesystem: Record<string, string> = {
     ':root': 'read',
+    [dirname(opts.worktree)]: 'deny',
+    [dirname(opts.tempDir)]: 'deny',
     [opts.worktree]: opts.readOnly ? 'read' : 'write',
     [opts.tempDir]: 'write',
     [opts.sharedClone]: 'read',
@@ -84,6 +92,7 @@ export function codexAttemptArgs(opts: CodexAttemptOptions): string[] {
   const entries = Object.entries(filesystem).map(([path, access]) => `${toml(path)}=${toml(access)}`)
   const overrides = [
     `default_permissions=${toml(CODEX_PROFILE)}`,
+    `projects={${toml(dirname(opts.sharedClone))}={trust_level="untrusted"}}`,
     `permissions.${CODEX_PROFILE}={filesystem={${entries.join(',')}}}`,
     `mcp_servers.mec={url=${toml(opts.toolsUrl)},bearer_token_env_var=${toml(CODEX_TOKEN_VAR)},default_tools_approval_mode="approve"}`,
     ...opts.otherServers.filter(({ name }) => name !== 'mec').map(disabledServer),

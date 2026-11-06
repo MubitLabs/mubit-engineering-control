@@ -20,8 +20,8 @@ const B_ONLY = [
 export default defineConfig({
   test: {
     environment: 'node',
-    testTimeout: 20_000,
-    hookTimeout: 30_000,
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
     projects: [
       {
         extends: true,

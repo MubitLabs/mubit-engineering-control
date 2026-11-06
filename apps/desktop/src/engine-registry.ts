@@ -9,8 +9,8 @@
  */
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readlinkSync, realpathSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve as resolvePath, sep } from 'node:path'
 import type {
   AttemptRef,
   Capabilities,
@@ -50,7 +50,10 @@ import { SlotKeystore } from '@mec/slots'
 /** §13's always-confirm commands, refused by the engine itself: see the Claude row. */
 const CLAUDE_DENIED_TOOLS = 'Bash(git push:*),Bash(gh:*)'
 
-const PROBE_TIMEOUT_MS = 15_000
+const PROBE_TIMEOUT_MS = 60_000
+
+/** A repository's file list can be long, and a cut one would pass links unseen. */
+const LISTING_BYTES = 256 * 1024 * 1024
 
 /** What `docs/log/HANDSHAKES.md` shows of Codex through the runner, and it equals the adapter's probe. */
 const CODEX_CAPABILITIES: Capabilities = {
@@ -99,6 +102,8 @@ export type AdapterContext = {
   spawn: (hooks: { stdin: boolean }) => OwnedSpawn
   /** A key read at launch (§5.4), for this process only. */
   secrets: Record<string, string>
+  /** Text for the attempt's failure reason, which carries the engine's stderr tail and this. */
+  onFailure: (detail: string) => void
 }
 
 export type EngineRow = {
@@ -145,7 +150,8 @@ function run(
   env: Record<string, string>,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    execFile(binary, [...args], { env, timeout: PROBE_TIMEOUT_MS }, (error, stdout, stderr) => {
+    const options = { env, timeout: PROBE_TIMEOUT_MS, maxBuffer: LISTING_BYTES }
+    execFile(binary, [...args], options, (error, stdout, stderr) => {
       resolve({ code: error ? 1 : 0, stdout: String(stdout), stderr: String(stderr) })
     })
   })
@@ -230,9 +236,37 @@ const KEY_VARS: Readonly<Record<string, string>> = {
   'google-gemini': 'GOOGLE_GENERATIVE_AI_API_KEY',
 }
 
+/** Where a link really leads, following every link. One that dangles counts by its target's path. */
+function linkTarget(path: string): string {
+  try {
+    return realpathSync(path)
+  } catch {
+    return resolvePath(realpathSync(dirname(path)), readlinkSync(path))
+  }
+}
+
+/**
+ * The tracked links that lead out of the worktree. OpenCode's `read` is allowed and judged by the
+ * name it was given, so a repository's link reaches any file the user can. The worker has no shell
+ * to make a new one, which leaves the links the repository came with.
+ */
+async function linksOutside(worktree: string, env: Record<string, string>): Promise<string[]> {
+  const listing = await run('git', ['-C', worktree, 'ls-files', '-z', '--stage'], env)
+  if (listing.code !== 0) throw new Error('git ls-files failed, so the launch cannot check for links')
+  const root = realpathSync(worktree)
+  return listing.stdout
+    .split('\0')
+    .filter((entry) => entry.startsWith('120000 '))
+    .map((entry) => entry.slice(entry.indexOf('\t') + 1))
+    .filter((path) => {
+      const target = linkTarget(join(worktree, path))
+      return target !== root && !target.startsWith(`${root}${sep}`)
+    })
+}
+
 const opencodeRow: EngineRow = {
   engine: 'opencode',
-  kinds: ['opencode-glm', 'opencode-gemini'],
+  kinds: ['opencode-glm'],
   // No OS sandbox (§8.4). `off` is the truth, and the decider then refuses every shell ask.
   sandbox: 'off',
   domains: [],
@@ -248,13 +282,16 @@ const opencodeRow: EngineRow = {
     ...COMMIT_NOTE,
   ],
   asksLeaveSandbox: false,
-  prepare: (ctx) => {
+  prepare: async (ctx) => {
+    const links = await linksOutside(ctx.worktree, ctx.probeEnv)
+    if (links.length > 0) throw new Error(`worktree_link_outside: ${links.join(', ')}`)
     const path = join(ctx.worktree, '.mec', 'opencode.json')
     writeFileSync(path, `${JSON.stringify(opencodeAttemptConfig({ toolsUrl: ctx.toolsUrl }))}\n`)
     return { env: { OPENCODE_CONFIG: path } }
   },
-  adapter: ({ binary, cwd, secrets, spawn }) =>
+  adapter: ({ binary, cwd, secrets, spawn, onFailure }) =>
     new OpenCodeAdapter({
+      onFailure,
       connect: (spec) =>
         startOpenCodeClient({ binary, cwd, env: spec.env, secrets, spawn: spawn({ stdin: true }) }),
     }),

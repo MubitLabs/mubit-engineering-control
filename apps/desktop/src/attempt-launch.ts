@@ -539,6 +539,7 @@ export class AttemptLauncher {
       cwd: brief.worktree,
       prepared,
       secrets: prepared.secrets,
+      onFailure: (detail) => onStderr?.(detail),
       spawn: ({ stdin }) =>
         ownedSpawn(this.#supervisor, owner, { stdin, ...(onStderr !== undefined && { onStderr }) }),
     })

@@ -132,6 +132,48 @@ describe('Supervisor', () => {
     await expect(supervisor.stop('group-2', 1, { graceMs: 150 })).resolves.toBe('terminated')
   })
 
+  // `set -m` gives each background job a process group of its own, as Codex does for a command.
+  it('stops a descendant that left for a process group of its own', async () => {
+    const pidFile = join(workdir, 'own-group.pid')
+    const supervisor = new Supervisor()
+    supervisor.spawn({
+      attemptId: 'own-group',
+      generation: 1,
+      cmd: '/bin/sh',
+      args: ['-c', `set -m; /bin/sleep 30 & echo $! > ${pidFile}; wait`],
+      cwd: workdir,
+      env,
+    })
+    const pid = await waitForPidFile(pidFile)
+    try {
+      await supervisor.stop('own-group', 1, { graceMs: 150 })
+      expect(isGone(pid)).toBe(true)
+    } finally {
+      if (!isGone(pid)) process.kill(pid, 'SIGKILL')
+    }
+  })
+
+  it('escalates on a descendant in its own group that ignores SIGTERM', async () => {
+    const pidFile = join(workdir, 'stubborn.pid')
+    const inner = `trap "" TERM; echo $$ > ${pidFile}; /bin/sleep 30; /bin/sleep 30`
+    const supervisor = new Supervisor()
+    supervisor.spawn({
+      attemptId: 'stubborn',
+      generation: 1,
+      cmd: '/bin/sh',
+      args: ['-c', `set -m; /bin/sh -c '${inner}' & wait`],
+      cwd: workdir,
+      env,
+    })
+    const pid = await waitForPidFile(pidFile)
+    try {
+      await expect(supervisor.stop('stubborn', 1, { graceMs: 150 })).resolves.toBe('escalated')
+      expect(isGone(pid)).toBe(true)
+    } finally {
+      if (!isGone(pid)) process.kill(pid, 'SIGKILL')
+    }
+  })
+
   it('escalates to SIGKILL when SIGTERM is ignored', async () => {
     const supervisor = new Supervisor()
     // The ready file appears only after `trap '' TERM` is installed, so the group signal

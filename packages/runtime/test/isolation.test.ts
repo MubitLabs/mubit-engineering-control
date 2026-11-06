@@ -35,6 +35,12 @@ describe('defaultDenyRead', () => {
     expect(deny).toContain(`${home}/.aws`)
     expect(deny).toContain(`${home}/.config/gh`)
   })
+
+  it("covers OpenCode's default home, which holds a login", () => {
+    const deny = defaultDenyRead(home)
+    expect(deny).toContain(`${home}/.local/share/opencode`)
+    expect(deny).toContain(`${home}/.config/opencode`)
+  })
 })
 
 describe('the shared clone', () => {

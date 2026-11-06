@@ -69,9 +69,10 @@ describe('the Codex client', () => {
   it('a request in flight when the server dies rejects, and the stream ends with the code', async () => {
     const { client, stop } = start('dies')
     const hanging = client.post({ jsonrpc: '2.0', id: 9, method: 'never/answered' })
+    const refused = expect(hanging).rejects.toThrow()
     await client.post(INIT)
     await stop()
-    await expect(hanging).rejects.toThrow()
+    await refused
     const lines = client.notifications()[Symbol.asyncIterator]()
     await expect(lines.next()).resolves.toMatchObject({ done: true })
     expect(client.processExitCode()).toBeGreaterThanOrEqual(128)
@@ -126,6 +127,17 @@ describe('the attempt arguments', () => {
   it('denies every deny-listed path, for reading too', () => {
     expect(profile).toContain('"/data/mec.db"="deny"')
     expect(profile).toContain('"/home/u/.codex"="deny"')
+  })
+
+  it("refuses reading sibling attempts' worktrees and temp dirs, and keeps this attempt's own", () => {
+    expect(profile).toContain('"/data/work"="deny"')
+    expect(profile).toContain('"/data/tmp"="deny"')
+    expect(profile).toContain('"/data/work/att_1"="write"')
+    expect(profile).toContain('"/data/tmp/att_1"="write"')
+  })
+
+  it('never lets thread/start trust the repo cache, so project config stays off', () => {
+    expect(args).toContain('projects={"/data/repos"={trust_level="untrusted"}}')
   })
 
   it('a read-only role writes nothing to the worktree', () => {

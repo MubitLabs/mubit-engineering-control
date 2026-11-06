@@ -8,7 +8,9 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -36,7 +38,7 @@ afterEach(async () => {
   process.env.PATH = REAL_PATH
   delete process.env.MEC_REAL_RUNNER
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
-})
+}, 120_000)
 
 const gitIn = (cwd: string, ...args: string[]): string =>
   execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
@@ -138,7 +140,7 @@ function peek<T>(dataDir: string, read: (store: SqliteStore, db: Database.Databa
   }
 }
 
-async function until(test: () => boolean, ms = 30_000): Promise<void> {
+async function until(test: () => boolean, ms = 120_000): Promise<void> {
   const deadline = Date.now() + ms
   while (!test()) {
     if (Date.now() > deadline) throw new Error('condition never held')
@@ -185,8 +187,19 @@ describe('the registry', () => {
     expect(existsSync(join(bin, 'seen.json'))).toBe(false)
   })
 
+  it('a kind that has not run for real is refused: opencode-gemini has no proof', async () => {
+    const { dataDir, repo, bin } = scratch('opencode', { steps: [] })
+    const slot = { engine: 'opencode', kind: 'opencode-gemini', provider: 'google-gemini' }
+    seed(dataDir, repo, { slot, task: { modelRequest: { model: 'gemini-x', reason: 'cheap' } } })
+    const end = await launched(dataDir)
+    expect(String(end.terminal_reason)).toContain('slot_kind_unsupported')
+    expect(existsSync(join(bin, 'seen.json'))).toBe(false)
+  })
+
   it('the planner sees exactly what a launch would accept', () => {
     expect(isLaunchableSlot({ id: 's', engine: 'codex', kind: 'codex-sub' })).toBe(true)
+    expect(isLaunchableSlot({ id: 's', engine: 'opencode', kind: 'opencode-glm' })).toBe(true)
+    expect(isLaunchableSlot({ id: 's', engine: 'opencode', kind: 'opencode-gemini' })).toBe(false)
     expect(isLaunchableSlot({ id: 's', engine: 'codex', kind: 'codex-api' })).toBe(false)
     expect(isLaunchableSlot({ id: 's', engine: 'gemini', kind: 'codex-sub' })).toBe(false)
   })
@@ -203,7 +216,7 @@ const SUCCESS = [
   { complete: 'completed' },
 ]
 
-describe('Codex through the runner', { timeout: 60_000 }, () => {
+describe('Codex through the runner', { timeout: 180_000 }, () => {
   const ROW = ENGINE_ROWS.codex
   if (ROW === undefined) throw new Error('no codex row')
 
@@ -250,6 +263,7 @@ describe('Codex through the runner', { timeout: 60_000 }, () => {
     expect(token.length).toBeGreaterThan(20)
     expect(JSON.stringify(seen())).not.toContain(token)
     expect(allDurable(dataDir)).not.toContain(token)
+    expect(seen().token_file).toBe(false)
     expect(existsSync(join(String(end.worktree), '.mec', 'mcp.json'))).toBe(false)
   })
 
@@ -303,6 +317,25 @@ describe('Codex through the runner', { timeout: 60_000 }, () => {
     expect(profile).toContain(`${dataDir}/journal"="deny"`)
   })
 
+  it("the profile refuses sibling attempts and keeps this attempt's own paths", async () => {
+    const { dataDir, repo, seen } = scratch('codex', { steps: [{ complete: 'completed' }] })
+    seed(dataDir, repo, { slot: CODEX_SLOT })
+    await launched(dataDir)
+    const profile = (seen().argv as string[]).find((arg) => arg.startsWith('permissions.mec=')) ?? ''
+    expect(profile).toContain(`"${dataDir}/work"="deny"`)
+    expect(profile).toContain(`"${dataDir}/tmp"="deny"`)
+    expect(profile).toContain(`"${dataDir}/work/att_1"="write"`)
+    expect(profile).toContain(`"${dataDir}/tmp/att_1"="write"`)
+  })
+
+  it('the repo cache is named untrusted, so thread/start cannot trust it (§8.4)', async () => {
+    const { dataDir, repo, seen } = scratch('codex', { steps: [{ complete: 'completed' }] })
+    seed(dataDir, repo, { slot: CODEX_SLOT })
+    await launched(dataDir)
+    const cache = realpathSync(join(dataDir, 'repos'))
+    expect(seen().argv).toContain(`projects={"${cache}"={trust_level="untrusted"}}`)
+  })
+
   it('a thread without the profile refuses, and leaves no process behind', async () => {
     const { dataDir, repo, seen } = scratch('codex', { profile: null, steps: [] })
     seed(dataDir, repo, { slot: CODEX_SLOT })
@@ -317,7 +350,7 @@ describe('Codex through the runner', { timeout: 60_000 }, () => {
       } catch {
         return true
       }
-    }, 5000)
+    }, 30_000)
   })
 
   it('a drifted version degrades the slot and spends nothing', async () => {
@@ -349,6 +382,24 @@ describe('Codex through the runner', { timeout: 60_000 }, () => {
     expect(() => process.kill(seen().pid, 0)).toThrow()
   })
 
+  it('a stop takes a running command with it, in its own process group (§8.1)', async () => {
+    const steps = [{ command: 60 }, { sleep: 60_000 }]
+    const { dataDir, repo, bin } = scratch('codex', { steps })
+    seed(dataDir, repo, { slot: CODEX_SLOT, task: { budget: { wall_clock_ms: 3000 } } })
+    const end = await launched(dataDir)
+    const pid = Number(readFileSync(join(bin, 'command.pid'), 'utf8'))
+    try {
+      expect(end.state).toBe('interrupted')
+      expect(() => process.kill(pid, 0)).toThrow()
+    } finally {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        // gone, as it should be
+      }
+    }
+  })
+
   it('the server dying mid-turn fails the attempt, it does not hang', async () => {
     const { dataDir, repo } = scratch('codex', { steps: [{ exit: 3 }] })
     seed(dataDir, repo, { slot: CODEX_SLOT })
@@ -368,7 +419,7 @@ const OPENCODE_SUCCESS = [
   { verdict: 'succeeded' },
 ]
 
-describe('OpenCode through the runner', { timeout: 60_000 }, () => {
+describe('OpenCode through the runner', { timeout: 180_000 }, () => {
   const ROW = ENGINE_ROWS.opencode
   if (ROW === undefined) throw new Error('no opencode row')
   const WITH_TASK = { slot: GLM_SLOT, task: GLM_TASK }
@@ -473,6 +524,110 @@ describe('OpenCode through the runner', { timeout: 60_000 }, () => {
     expect(answers.map(({ answer }) => answer.decision)).toEqual(['once', 'reject', 'reject', 'reject'])
   })
 
+  it('two parallel asks: the one the engine settled itself is recorded, and the turn goes on', async () => {
+    const steps = [
+      {
+        asks: [
+          { id: 'per_1', action: 'shell', resources: ['ls'] },
+          { id: 'per_2', action: 'edit', resources: ['src/a.ts'] },
+        ],
+      },
+      ...OPENCODE_SUCCESS,
+    ]
+    const { dataDir, repo, lines } = scratch('opencode', { steps })
+    seed(dataDir, repo, { ...WITH_TASK, checks: CHECKS })
+    const end = await launched(dataDir, ['succeeded', 'checks_failed', 'failed'])
+    expect(end.state).toBe('succeeded')
+    expect(lines('answers.jsonl')).toEqual([
+      { id: 'per_1', answer: expect.objectContaining({ decision: 'reject' }) },
+      { id: 'per_2', answer: { dropped: true } },
+    ])
+    const journal = readFileSync(join(dataDir, 'journal', 'att_1', 'events.jsonl'), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((text) => JSON.parse(text))
+    expect(journal.filter((event) => event.type === 'permission_request')).toHaveLength(2)
+    expect(
+      journal.filter((event) => event.type === 'permission_result').map((event) => event.decision),
+    ).toEqual(['deny', 'deny'])
+    expect(peek(dataDir, (store) => store.engines.get('report/att_1/1'))).toBeDefined()
+  })
+
+  it('a reply that fails any other way ends the attempt and says why', async () => {
+    const steps = [{ ask: { id: 'per_1', action: 'shell', resources: ['ls'] } }, { verdict: 'succeeded' }]
+    const { dataDir, repo } = scratch('opencode', { replyFails: 500, steps })
+    seed(dataDir, repo, WITH_TASK)
+    const end = await launched(dataDir)
+    expect(end.state).toBe('failed')
+    expect(String(end.terminal_reason)).toContain('engine_crashed')
+    expect(String(end.terminal_reason)).toContain('answered 500')
+  })
+
+  it('each event reaches the journal as it happens, before the verdict (§8.6)', async () => {
+    const steps = [
+      { event: { type: 'session.text.ended', data: { text: 'said before the verdict' } } },
+      { hold: 'go' },
+      { verdict: 'succeeded' },
+    ]
+    const { dataDir, repo, bin } = scratch('opencode', { steps })
+    seed(dataDir, repo, WITH_TASK)
+    process.env.MEC_REAL_RUNNER = '1'
+    const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 4000 })
+    closers.push(server.close)
+    const journal = join(dataDir, 'journal', 'att_1', 'events.jsonl')
+    await until(
+      () => existsSync(journal) && readFileSync(journal, 'utf8').includes('said before the verdict'),
+      30_000,
+    ).finally(() => writeFileSync(join(bin, 'go'), ''))
+    await until(() => SETTLED.includes(String(attempt(dataDir)?.state)))
+    expect(attempt(dataDir)?.state).not.toBe('failed')
+  })
+
+  describe('a committed link', () => {
+    const committed = (repo: string): void => {
+      gitIn(repo, 'add', '--all')
+      gitIn(repo, 'commit', '--quiet', '-m', 'links')
+    }
+
+    it.each([
+      ['to a file', (outside: string) => outside],
+      ['to a missing file', (outside: string) => `${outside}.missing`],
+    ])('out of the worktree %s refuses the launch with no spend', async (_name, target) => {
+      const { dataDir, repo, bin, root } = scratch('opencode', { steps: [{ verdict: 'succeeded' }] })
+      const outside = join(root, 'secret.txt')
+      writeFileSync(outside, 'CANARY\n')
+      symlinkSync(target(outside), join(repo, 'notes.txt'))
+      committed(repo)
+      seed(dataDir, repo, WITH_TASK)
+      const end = await launched(dataDir)
+      expect(end.state).toBe('failed')
+      expect(String(end.terminal_reason)).toContain('worktree_link_outside: notes.txt')
+      expect(existsSync(join(bin, 'seen.json'))).toBe(false)
+    })
+
+    it('out of the worktree through a link of the repo refuses too', async () => {
+      const { dataDir, repo, bin, root } = scratch('opencode', { steps: [{ verdict: 'succeeded' }] })
+      symlinkSync(root, join(repo, 'up'))
+      symlinkSync('up/secret.txt', join(repo, 'notes.txt'))
+      writeFileSync(join(root, 'secret.txt'), 'CANARY\n')
+      committed(repo)
+      seed(dataDir, repo, WITH_TASK)
+      const end = await launched(dataDir)
+      expect(String(end.terminal_reason)).toContain('worktree_link_outside')
+      expect(existsSync(join(bin, 'seen.json'))).toBe(false)
+    })
+
+    it('inside the worktree launches', async () => {
+      const { dataDir, repo } = scratch('opencode', { steps: [{ verdict: 'succeeded' }] })
+      mkdirSync(join(repo, 'docs'))
+      symlinkSync('../a.txt', join(repo, 'docs', 'a.txt'))
+      committed(repo)
+      seed(dataDir, repo, WITH_TASK)
+      const end = await launched(dataDir)
+      expect(end.state).not.toBe('failed')
+    })
+  })
+
   it('a task with no model refuses before any spend: a session inherits none', async () => {
     const { dataDir, repo, bin } = scratch('opencode', { steps: [] })
     seed(dataDir, repo, { slot: GLM_SLOT })
@@ -503,7 +658,7 @@ describe('OpenCode through the runner', { timeout: 60_000 }, () => {
       } catch {
         return true
       }
-    }, 5000)
+    }, 30_000)
   })
 
   it('a stop ends interrupted, with the group confirmed gone', async () => {

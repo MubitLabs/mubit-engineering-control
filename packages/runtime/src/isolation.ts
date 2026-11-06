@@ -30,6 +30,8 @@ export function defaultDenyRead(homeDir: string, dataDir = `${homeDir}/.mec`): s
     `${homeDir}/.ssh`,
     `${homeDir}/.aws`,
     `${homeDir}/.config/gh`,
+    `${homeDir}/.local/share/opencode`, // the default home holds a login
+    `${homeDir}/.config/opencode`,
   ]
 }
 

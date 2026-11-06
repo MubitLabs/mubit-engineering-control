@@ -33,7 +33,7 @@ function isVerdict(line: string): boolean {
   }
 }
 
-const START_TIMEOUT_MS = 30_000
+const START_TIMEOUT_MS = 60_000
 const VERDICT_GRACE_MS = 1500
 
 export type OpenCodeRule = { action: string; resource: string; effect: 'allow' | 'ask' | 'deny' }

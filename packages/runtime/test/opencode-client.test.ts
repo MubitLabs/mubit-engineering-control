@@ -65,7 +65,9 @@ describe('the OpenCode client', () => {
   })
 
   it('an answer with an empty body is no answer, not a parse error', async () => {
-    const { client, stop } = await start('empty')
+    const steps = [{ ask: { id: 'y', action: 'edit', resources: ['a'] } }]
+    const { client, stop } = await start('empty', { scenario: { steps } })
+    await client.post('/api/session/x/prompt', { text: 'go' })
     await expect(client.post('/api/session/x/permission/y/reply', { decision: 'once' })).resolves.toBe(
       undefined,
     )

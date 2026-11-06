@@ -313,6 +313,90 @@ describe('OpenCodeAdapter through connect', () => {
   })
 })
 
+describe('OpenCodeAdapter stream', () => {
+  const line = (type: string, data: unknown) => `data: ${JSON.stringify({ id: 'e', type, data })}`
+  const ask = (id: string) => line('permission.asked', { id, action: 'shell', resources: ['ls'] })
+  const SESSION = line('session.created', { sessionID: 'ses_1', model: {} })
+  const DONE = line('session.execution.succeeded', {})
+
+  const adapterOver = (post: (path: string) => Promise<unknown>, lines: () => AsyncIterable<string>) =>
+    new OpenCodeAdapter({
+      connect: async () => ({ post, sse: lines, ready: async () => {} }),
+    })
+
+  it('hands each event over as it arrives, not when the stream ends', async () => {
+    let speak: () => void = () => {}
+    const spoken = new Promise<void>((resolve) => {
+      speak = resolve
+    })
+    const adapter = adapterOver(
+      async () => ({ data: { id: 'ses_1' } }),
+      async function* () {
+        yield SESSION
+        await spoken
+        yield line('session.text.ended', { text: 'still working' })
+        await new Promise(() => {}) // the stream stays open, as it does through a long turn
+      },
+    )
+    const events = adapter.events(await adapter.launch(spec({})))[Symbol.asyncIterator]()
+    await expect(events.next()).resolves.toMatchObject({ value: { type: 'session_started' } })
+    speak()
+    const second = await Promise.race([
+      events.next(),
+      new Promise<'held'>((resolve) => setTimeout(() => resolve('held'), 2000)),
+    ])
+    expect(second).toMatchObject({ value: { type: 'message', text: 'still working' } })
+  })
+
+  it('a 404 on a reply means the engine settled that ask: nothing ran, and the stream reads on', async () => {
+    const adapter = adapterOver(
+      async (path) => {
+        if (path.endsWith('per_2/reply')) throw new Error(`opencode ${path} answered 404: {}`)
+        return { data: { id: 'ses_1' } }
+      },
+      async function* () {
+        yield SESSION
+        yield ask('per_1')
+        yield ask('per_2')
+        yield DONE
+      },
+    )
+    const decisions = ['deny', 'allow'] as const
+    let next = 0
+    const bridge: PermissionBridge = { request: async () => decisions[next++] ?? 'deny' }
+    const events = []
+    for await (const event of adapter.events(await adapter.launch(spec({ bridge })))) events.push(event)
+    expect(
+      events.flatMap((event) =>
+        event.type === 'permission_result' ? [[event.request_id, event.decision]] : [],
+      ),
+    ).toEqual([
+      ['per_1', 'deny'],
+      ['per_2', 'deny'],
+    ])
+    expect(events.at(-1)).toMatchObject({ type: 'exit', terminal_reason: 'completed' })
+  })
+
+  it('any other failure ends the stream and says why, as the last thing before the exit', async () => {
+    const adapter = adapterOver(
+      async (path) => {
+        if (path.endsWith('/reply')) throw new Error(`opencode ${path} answered 500: boom`)
+        return { data: { id: 'ses_1' } }
+      },
+      async function* () {
+        yield SESSION
+        yield ask('per_1')
+        yield DONE
+      },
+    )
+    const events = []
+    for await (const event of adapter.events(await adapter.launch(spec({})))) events.push(event)
+    expect(events.at(-2)).toMatchObject({ type: 'error', class: 'engine_bug' })
+    expect(JSON.stringify(events.at(-2))).toContain('answered 500: boom')
+    expect(events.at(-1)).toMatchObject({ type: 'exit', code: 1, terminal_reason: 'crashed' })
+  })
+})
+
 describe('classifyOpencodeError', () => {
   it('maps the real 2.2.5 provider error shapes', () => {
     // real z.ai coding-endpoint auth failure (see the auth_expired fixture)

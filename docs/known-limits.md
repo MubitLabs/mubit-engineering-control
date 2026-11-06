@@ -118,3 +118,11 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
   - The model table lists `gpt-6-*`; 0.148.0's catalogue offers `gpt-5.6-*`. A planner choosing a
     Codex tier from the shipped table can pick a model the engine refuses, which fails that attempt.
   - `send` stays unsupported on both, with an explicit failure, until `deliver` is proven.
+  - A stop finds a server's commands by parentage, so a command outlives a server that crashed
+    before any stop: its parent is gone and nothing ties it to the attempt. The same holds for a
+    command started in the moment between that listing and the signal.
+  - OpenCode refuses a launch on a tracked link leading out of the worktree. An untracked one is
+    not checked: bootstrap commands are the only other writer, and they run on the host anyway.
+  - `opencode-gemini` slots can be added and do not launch, until a real run proves that login.
+  - The Claude profile does not deny `<data>/work` or `<data>/tmp`, so a sibling's `.mec/mcp.json`
+    is readable there. Codex's profile denies both.

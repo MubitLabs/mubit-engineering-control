@@ -42,6 +42,12 @@ export const OPENCODE_PERMISSION_DEADLINE_MS = 300_000
 /** What a rejected ask tells the model. The rule that refused it is the bridge's to record. */
 const REFUSED = 'MEC refused this. Carry on without it, and say so in your report.'
 
+/**
+ * A reject settles every other ask still pending in the session (real 2.2.5, two parallel edits),
+ * so the reply to a sibling answers 404 `PermissionNotFoundError`. Nothing that ask wanted ran.
+ */
+const ALREADY_SETTLED = /answered 404\b/
+
 export type OpenCodePost = (path: string, body?: unknown) => Promise<unknown>
 export type OpenCodeSse = () => AsyncIterable<string>
 export type OpenCodeAuthList = () => Promise<{ code: number; stdout: string; stderr: string }>
@@ -75,6 +81,8 @@ export type OpenCodeAdapterDeps = {
   defaultModel?: { id: string; providerID: string }
   /** Clock for event timestamps and bridge deadlines; injectable for deterministic tests. */
   now?: () => string
+  /** Hears why the stream failed, as text an `exit` has no field for. */
+  onFailure?: (detail: string) => void
 }
 
 const defaultAuthList: OpenCodeAuthList = async () => {
@@ -209,49 +217,69 @@ export class OpenCodeAdapter implements EngineAdapter {
     if (sseFactory !== undefined && stream !== undefined) {
       const now = this.deps.now ?? (() => new Date().toISOString())
       const parser = createOpenCodeEventParser(now())
+      const push = (body: EngineEventBody): void => {
+        stream.bodies.push(body)
+        for (const wake of stream.wake.splice(0)) wake()
+      }
       void (async () => {
+        let failure: unknown
         try {
           for await (const line of sseFactory()) {
             for (const body of parser.push(line)) {
-              stream.bodies.push(body)
+              if (body.type !== 'permission_request') {
+                push(body)
+                continue
+              }
               // The permission round trip runs INSIDE the read loop (see the
               // Launch type's 2.2.5 finding note): bridge → reply post →
               // synthesised permission_result (2.2.5 sends no echo event).
-              if (body.type === 'permission_request') {
-                // An edit's target may be relative: the decider judges the real path.
-                const paths = body.operation.paths?.map((path) =>
-                  isAbsolute(path) ? path : resolve(spec.brief.worktree, path),
-                )
-                const corrected = {
-                  ...body,
-                  operation: { ...body.operation, ...(paths !== undefined && { paths }) },
-                  evidence: { ...body.evidence, worktree: spec.brief.worktree },
-                }
-                stream.bodies[stream.bodies.length - 1] = corrected
-                const decision = await spec.bridge.request(
-                  { attempt_id: spec.brief.attempt_id, generation: spec.brief.generation },
-                  corrected.operation,
-                  corrected.evidence,
-                  new Date(Date.parse(now()) + OPENCODE_PERMISSION_DEADLINE_MS).toISOString(),
-                )
-                // allow answers once (never `always`: each approval binds one operation, plan §13)
-                // A reject without a message ends the turn; with one, the model hears it and goes on.
-                await this.post(`/api/session/${sessionId}/permission/${body.request_id}/reply`, {
-                  decision: decision === 'allow' ? 'once' : 'reject',
-                  ...(decision !== 'allow' && { message: REFUSED }),
-                })
-                stream.bodies.push({
-                  type: 'permission_result',
-                  request_id: body.request_id,
-                  decision,
-                })
+              // An edit's target may be relative: the decider judges the real path.
+              const paths = body.operation.paths?.map((path) =>
+                isAbsolute(path) ? path : resolve(spec.brief.worktree, path),
+              )
+              const corrected = {
+                ...body,
+                operation: { ...body.operation, ...(paths !== undefined && { paths }) },
+                evidence: { ...body.evidence, worktree: spec.brief.worktree },
               }
+              push(corrected)
+              const decision = await spec.bridge.request(
+                { attempt_id: spec.brief.attempt_id, generation: spec.brief.generation },
+                corrected.operation,
+                corrected.evidence,
+                new Date(Date.parse(now()) + OPENCODE_PERMISSION_DEADLINE_MS).toISOString(),
+              )
+              // allow answers once (never `always`: each approval binds one operation, plan §13)
+              // A reject without a message ends the turn; with one, the model hears it and goes on.
+              const reply = this.post(`/api/session/${sessionId}/permission/${body.request_id}/reply`, {
+                decision: decision === 'allow' ? 'once' : 'reject',
+                ...(decision !== 'allow' && { message: REFUSED }),
+              })
+              const settled = await reply.then(
+                () => false,
+                (error: unknown) => {
+                  if (ALREADY_SETTLED.test(String(error))) return true
+                  throw error
+                },
+              )
+              push({
+                type: 'permission_result',
+                request_id: body.request_id,
+                decision: settled ? 'deny' : decision,
+              })
             }
           }
-        } catch {
-          // a dead stream ends the attempt; the runtime's crash rule applies
+        } catch (error) {
+          failure = error // a dead stream ends the attempt; the runtime's crash rule applies
         } finally {
-          for (const flush of parser.flush()) stream.bodies.push(flush)
+          const held = parser.flush()
+          if (failure !== undefined) {
+            const detail = failure instanceof Error ? failure.message : String(failure)
+            this.deps.onFailure?.(detail)
+            push({ type: 'error', class: 'engine_bug', detail })
+            if (held.length === 0) held.push({ type: 'exit', code: 1, terminal_reason: 'crashed' })
+          }
+          for (const flush of held) push(flush)
           stream.ended = true
           for (const wake of stream.wake.splice(0)) wake()
         }

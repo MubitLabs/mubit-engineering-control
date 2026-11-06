@@ -415,7 +415,9 @@ export function resumeAuthority(
     fields.recheck === true
       ? attempt?.state === 'work_complete' &&
         !(noVerdict(attempt) && attempt.checks_stopped !== 'server_closing')
-      : attempt?.resuming === true && [...PARKED, 'interrupted'].includes(String(attempt.state))
+      : attempt?.resuming === true &&
+        attempt.switched_to === undefined &&
+        [...PARKED, 'interrupted'].includes(String(attempt.state))
   if (!current || !fits) return { verdict: 'drop', reason: 'attempt_not_queued' }
   const mandate = revalidateWork(work, now, policyHash) as MandateCheck
   return resumeVerdict({ held: isHeld(work), mandate })

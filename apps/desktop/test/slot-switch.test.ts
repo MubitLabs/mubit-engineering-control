@@ -1,15 +1,21 @@
 // M2.4, §5.10, §13: moving parked work to another slot. New attempt, same worktree, no session, and
 // a person says yes unless policy already did.
 import { join } from 'node:path'
+import { loadPolicy } from '@mec/policy'
+import type { SqliteStore } from '@mec/store'
 import { afterEach, describe, expect, it } from 'vitest'
+import { resumeAuthority } from '../src/recovery'
+import { applySwitch, type SwitchDeps } from '../src/slot-switch'
 import {
   attemptOf,
   brainThatNeverRuns,
   cleanUp,
   eventsOf,
+  POLICY,
   PROBE_DOWN,
   PROBE_OK,
   peek,
+  peekAsync,
   type Rig,
   type Served,
   scratch,
@@ -66,6 +72,21 @@ const answer = (server: Served, id: string, value: string) =>
   })
 
 const attempts = (rig: Rig) => peek(rig, (store) => store.attempts.list({ taskId: 'task_1' }))
+
+const NOW = '2026-11-05T11:00:00.000Z'
+
+/** The module's own seam, on a real store, for what only a race can reach. */
+const direct = (store: SqliteStore): SwitchDeps => ({
+  store,
+  effects: store.effects,
+  policy: loadPolicy(POLICY),
+  now: () => NOW,
+  probe: async () => true,
+})
+
+const patchAttempt = (rig: Rig, fields: Record<string, unknown>, id = 'att_1'): void => {
+  peek(rig, (store) => store.attempts.save({ ...store.attempts.get(id), id, ...(fields as object) }))
+}
 
 describe('switch slot', { timeout: 40_000 }, () => {
   it('switch needs a confirmation', async () => {
@@ -213,5 +234,25 @@ describe('switch slot', { timeout: 40_000 }, () => {
     await until(() => attempts(rig).length === 2)
     await until(() => rig.started() || attemptOf(rig, 'att_2')?.state === 'failed')
     if (rig.started()) expect(rig.seen().argv).not.toContain('--resume')
+  })
+
+  it('a resuming attempt cannot also switch', async () => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    patchAttempt(rig, { resuming: true })
+    const server = await serve(rig, QUIET)
+    const asked = await ask(server)
+    expect(asked.status).toBe(409)
+    expect(await asked.json()).toMatchObject({ error: 'nothing_parked' })
+    expect(attempts(rig)).toHaveLength(1)
+  })
+
+  it('a late resume row for an attempt that switched is dropped', () => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    patchAttempt(rig, { resuming: true, switched_to: 'att_2', generation: 2 })
+    const payload = { attempt_id: 'att_1', work_item_id: WORK, generation: 2, resume: true }
+    const verdict = peek(rig, (store) => resumeAuthority(store, payload, NOW, 'any-hash'))
+    expect(verdict).toEqual({ verdict: 'drop', reason: 'attempt_not_queued' })
   })
 })

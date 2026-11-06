@@ -5,7 +5,7 @@
  *
  * What moves is a new attempt on the same worktree with a handoff pack. It carries no session id:
  * sessions are never resumed across slots or engines. The parked attempt stays on the record with
- * `switched_to`, which keeps it from also resuming.
+ * `switched_to`, which keeps it from also resuming, and one already resuming cannot also switch.
  *
  * An approval lands through the inbox's own door; a pass applies it, so a crash between the two is
  * only a late switch, and `applied` on the card makes it one switch.
@@ -44,7 +44,9 @@ const appendEvent = (store: Store, stream: string, type: string, body: Json, at:
 function parkedOn(store: Store, workItemId: string): StoreDoc[] {
   return store.attempts
     .list({ workItemId })
-    .filter((doc) => PARKED.includes(String(doc.state)) && doc.switched_to === undefined)
+    .filter(
+      (doc) => PARKED.includes(String(doc.state)) && doc.switched_to === undefined && doc.resuming !== true,
+    )
 }
 
 const shaped = (doc: StoreDoc): ParkedAttempt => ({

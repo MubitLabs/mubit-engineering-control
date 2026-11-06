@@ -372,6 +372,12 @@ export function LiveApp() {
     inspection.clearNotice()
     go({ route: 'work', repoId: workRepo(workId), workId, taskId: null })
   }
+  /** From a list that spans the filter, so the row it opens must be in scope. */
+  const showWork = (workId: string) => {
+    const owner = rows.find((row) => row.id === workId)
+    if (owner !== undefined && !inFilter(owner, filter)) setFilter({ kind: 'all' })
+    openWork(workId)
+  }
   const openTask = (id: string) =>
     go({ route: 'work', repoId: workRepo(selectedWorkId), workId: selectedWorkId, taskId: id })
 
@@ -443,6 +449,7 @@ export function LiveApp() {
     work: rows,
     repository: repoName,
     open: openHere,
+    paused: pause.state === 'paused',
   })
 
   const thread = readData(chatRead) ?? []
@@ -585,6 +592,7 @@ export function LiveApp() {
             void inspection.readEvidence(id)
           }}
           onRetryEvidence={(id) => void inspection.readEvidence(id)}
+          onOpenWork={showWork}
           onRetry={retryRead}
           partialNote={needs.partial ? NEEDS_CUT : null}
         />
@@ -617,7 +625,7 @@ export function LiveApp() {
         onDiscuss={() => {
           if (conversation.discuss) discuss(conversation.discuss)
         }}
-        onOpenWork={openWork}
+        onOpenWork={showWork}
         planWorkId={conversationRow?.id ?? null}
         meta={meta}
         onAnswer={inspection.answer}

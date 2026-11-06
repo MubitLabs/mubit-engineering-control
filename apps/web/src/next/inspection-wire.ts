@@ -53,6 +53,15 @@ export type DeliveryView = {
   headSha: string | null
   prNumber: number | null
   prUrl: string | null
+  /** `owner/name`, which a merge card binds. Null until a push resolved it. */
+  repo: string | null
+  /** What the last read of GitHub saw. Null when nothing has read it. */
+  ci: 'passing' | 'none-required' | 'running' | 'failing' | 'unreadable' | null
+  ciReadAt: string | null
+  /** Why delivery stopped, in a sentence. Null when nothing failed. */
+  failure: string | null
+  /** The open merge card: the question is already asked. */
+  mergeCardId: string | null
 }
 
 export type WorkDetail = WorkRow & {
@@ -166,7 +175,7 @@ export type TaskDetail = TaskRow & {
   diff: {
     headSha: string | null
     summary: string | null
-    files: { path: string; added: number; removed: number }[]
+    files: { path: string; added: number; removed: number; binary?: true }[]
     truncated: number
   }
   usage: { reportedUsd: number | null; missingAttempts: number; mode: 'api' | 'subscription' | 'unknown' }
@@ -198,7 +207,24 @@ export type CardItem = {
   detailPath: string
 }
 
-export type NeedItem = QuestionItem | CardItem
+/** §18.2: work in a `person` stage with no question or card of its own to answer. */
+export type WorkNeedItem = {
+  kind: 'work'
+  id: string
+  repoId: string | null
+  repoLabel: string | null
+  workItemId: string
+  title: string
+  stageKey: string
+  stageLabel: string
+  reason: string | null
+  nextAction: string | null
+  status: 'open'
+  since: string
+  readOnly: boolean
+}
+
+export type NeedItem = QuestionItem | CardItem | WorkNeedItem
 
 /** GET /api/inspect/snapshot: one consistent read of the counts and the event cursors. */
 export type Snapshot = {
@@ -252,4 +278,8 @@ export type ChatLine = {
   idempotencyKey?: string
   /** The server redacted this message: it looked like a key. */
   secretGuard?: true
+  /** The meta agent's answer to a quick question (§12.2). */
+  replyText?: string
+  /** Said while processing was paused. It is not a receipt: the turn has not run. */
+  pausedAck?: string
 }

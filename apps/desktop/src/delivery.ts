@@ -595,6 +595,8 @@ export class Delivery {
       error: undefined,
       retryAt: undefined,
       pollAt: undefined,
+      ci: undefined,
+      ciAt: undefined,
     })
   }
 
@@ -760,7 +762,8 @@ export class Delivery {
       this.#patch(id, { stage: 'closed', ready: undefined })
       return
     }
-    const notReady = (): void => this.#patch(id, { stage: 'pr_open', limit: undefined })
+    const notReady = (seen?: { ci: string; ciAt: string }): void =>
+      this.#patch(id, { stage: 'pr_open', limit: undefined, ci: seen?.ci, ciAt: seen?.ciAt })
     if (pr.headRefOid !== doc.head) {
       movePrFlow(this.release, repo, branch, 'target_moved')
       return notReady()
@@ -776,17 +779,19 @@ export class Delivery {
       }
     }
     const { verdict } = await readRequiredChecks(run, repo, prNumber)
+    // What this read saw, for the page: it says nothing about a head read later.
+    const seen = { ci: verdict, ciAt: this.#now }
     if (verdict === 'green' || verdict === 'no_required_checks') {
       movePrFlow(this.release, repo, branch, 'ci_passed')
       if (doc.stage !== 'ready') releaseEvent(this.release, repo, branch, 'pr_ready', { prNumber, verdict })
       // Decision #34: ready on local checks, with the limit stated. The merge card still holds.
-      this.#patch(id, { stage: 'ready', limit: verdict === 'green' ? undefined : verdict })
+      this.#patch(id, { stage: 'ready', limit: verdict === 'green' ? undefined : verdict, ...seen })
       // After the patch: this frame makes the page read the stage back.
       if (doc.stage !== 'ready') workEvent(this.release, id, 'pr_ready', { prNumber, verdict })
       return
     }
     if (verdict === 'ci_failed') movePrFlow(this.release, repo, branch, 'ci_failed')
-    notReady()
+    notReady(seen)
   }
 
   /** §14: only GitHub's own state says merged, and #29 ends the work there. */

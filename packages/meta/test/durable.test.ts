@@ -484,6 +484,15 @@ describe('chat during Pause (decision #27, §20)', () => {
     return { service, store }
   }
 
+  it('the paused acknowledgement is on the record at once, and it is not a receipt', async () => {
+    const { service, store } = paused(countingBrain(plan).brain)
+    await service.onUserMessage({ messageId: 'msg_1', text: 'go', repoId: 'repo_a' })
+    expect(store.messages.get('msg_1')).toMatchObject({
+      pausedAck: 'Recorded. Processing is paused, so planning starts when you resume.',
+    })
+    expect(store.messages.get('msg_1')?.ackText).toBeUndefined()
+  })
+
   it('a new-work message is stored with no planner turn and no receipt', async () => {
     const next = countingBrain(plan)
     const { service, store } = paused(next.brain)

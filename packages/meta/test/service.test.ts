@@ -408,3 +408,94 @@ describe('MetaAgentService (plan §6/§12)', () => {
     expect(store.workItems.get(outcome.workItemId!)?.state).toBe('stopped')
   })
 })
+
+describe('an answer reaches chat (§12.2: quick questions are answered directly)', () => {
+  const answered = async (decision: MetaDecision, summary: string) => {
+    const store = new MemoryRepositories()
+    store.atomic(() => {
+      store.engines.save({
+        id: REPO,
+        url: 'https://example.test/main',
+        bootstrap: [],
+        checks: [],
+        trust: true,
+      })
+    })
+    const service = new MetaAgentService({
+      store,
+      effects: store.effects,
+      brain: async (input) => ({
+        ...decision,
+        reports: summary === '' ? [] : [{ workItemId: input.workItemId as string, summary, artifacts: [] }],
+      }),
+      now: NOW,
+    })
+    await service.onUserMessage({ messageId: 'msg_q', text: 'What does it do?', repoId: REPO })
+    return store.messages.get('msg_q')
+  }
+
+  it('stores the reported answer on the message it answers', async () => {
+    const line = await answered({ ack: 'I will answer that here.' }, 'It lists the audit log.')
+    expect(line).toMatchObject({ ackText: 'I will answer that here.', replyText: 'It lists the audit log.' })
+  })
+
+  it('redacts it before the write', async () => {
+    const key = `sk-ant-${'a1B2c3D4'.repeat(6)}`
+    const line = await answered({ ack: 'Here.' }, `The key is ${key}`)
+    expect(JSON.stringify(line)).not.toContain(key)
+    expect(line?.replyText).toContain('[redacted:')
+  })
+
+  it('a report that only repeats the acknowledgement says nothing new', async () => {
+    const line = await answered({ ack: 'Same words.' }, 'Same words.')
+    expect(line?.replyText).toBeUndefined()
+  })
+
+  it('a turn that asks a question has its card: the report is not chat', async () => {
+    const line = await answered(
+      { ack: 'One thing first.', questions: [{ id: 'q1', question: 'Which?', options: [], at: NOW() }] },
+      'I asked which one.',
+    )
+    expect(line?.replyText).toBeUndefined()
+  })
+
+  it('a plan is not narrated (§12.7)', async () => {
+    const line = await answered(twoTaskPlan, 'Planned two tasks.')
+    expect(line?.replyText).toBeUndefined()
+  })
+
+  it('a wake is not narrated: only a person asked (§12.7)', async () => {
+    const store = new MemoryRepositories()
+    store.atomic(() => {
+      store.engines.save({
+        id: REPO,
+        url: 'https://example.test/main',
+        bootstrap: [],
+        checks: [],
+        trust: true,
+      })
+    })
+    seedWork(store, 'wi_wake', 'executing')
+    store.atomic(() => {
+      store.workItems.save({ ...store.workItems.get('wi_wake'), repoId: REPO } as never)
+    })
+    const service = new MetaAgentService({
+      store,
+      effects: store.effects,
+      brain: async () => ({
+        ack: 'Noted.',
+        reports: [{ workItemId: 'wi_wake', summary: 'A specialist finished.', artifacts: [] }],
+      }),
+      now: NOW,
+    })
+    await service.onWake({ reason: 'report', workItemId: 'wi_wake', causationId: 'cause_1' })
+    const line = store.messages.list({ workItemId: 'wi_wake' })[0]
+    expect(line?.ackText).toBe('Noted.')
+    expect(line?.replyText).toBeUndefined()
+  })
+
+  it('a turn with no report stores nothing', async () => {
+    const line = await answered({ ack: 'Noted.' }, '')
+    expect(line?.replyText).toBeUndefined()
+  })
+})

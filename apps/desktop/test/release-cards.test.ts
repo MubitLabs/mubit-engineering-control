@@ -1381,3 +1381,94 @@ describe('resolvePrCreate keeps its direct shape', () => {
     expect(creates(calls)).toHaveLength(0)
   })
 })
+
+describe('a merge card opened from a work item (§13, §14)', () => {
+  const ready = (h: Harness, change: Record<string, unknown> = {}): void => {
+    h.store.atomic(() => {
+      h.store.workItems.save({ id: 'wi_1', state: 'integrating', repoId: 'repo_1' })
+      h.store.engines.save({
+        id: 'delivery/wi_1',
+        workItemId: 'wi_1',
+        stage: 'ready',
+        repo: REPO,
+        branch: BRANCH,
+        prNumber: PR,
+        ...change,
+      } as StoreDoc)
+    })
+  }
+  const ask = (h: Harness, workItemId = 'wi_1') =>
+    h.post('/api/release/merge', { repo: REPO, prNumber: PR, workItemId })
+
+  it('binds the card to the work, so its stage and Needs you can join it', async () => {
+    const h = await harness(fakeGh(world()).run)
+    ready(h)
+    const res = await ask(h)
+    expect(res.status).toBe(200)
+    const card = h.store.confirmations.get(String(res.body.confirmationId))
+    expect(card).toMatchObject({ cls: 'pr_merge', workItemId: 'wi_1', status: 'pending' })
+  })
+
+  it('asking again while a card is open answers with that card, not a second one', async () => {
+    const h = await harness(fakeGh(world()).run)
+    ready(h)
+    const first = await ask(h)
+    const second = await ask(h)
+    expect(second.body.confirmationId).toBe(first.body.confirmationId)
+    expect(h.store.confirmations.list({ status: 'pending' })).toHaveLength(1)
+  })
+
+  it('a settled card leaves the next ask a new card: merge is asked each time', async () => {
+    const h = await harness(fakeGh(world()).run)
+    ready(h)
+    const first = await ask(h)
+    await h.post(`/api/release/merge/${String(first.body.confirmationId)}/resolve`, { answer: 'deny' })
+    const second = await ask(h)
+    expect(second.status).toBe(200)
+    expect(second.body.confirmationId).not.toBe(first.body.confirmationId)
+  })
+
+  it('a card past its time is not reused', async () => {
+    const h = await harness(fakeGh(world()).run)
+    ready(h)
+    const id = String((await ask(h)).body.confirmationId)
+    h.store.atomic(() => {
+      const card = h.store.confirmations.get(id) as StoreDoc
+      h.store.confirmations.save({ ...card, expiresAt: '2000-01-01T00:00:00.000Z' })
+    })
+    expect((await ask(h)).body.confirmationId).not.toBe(id)
+  })
+
+  it('a head that moved is a new card: an open one speaks for the old head', async () => {
+    const w = world()
+    const h = await harness(fakeGh(w).run)
+    ready(h)
+    const first = await ask(h)
+    w.prHead = MOVED
+    expect((await ask(h)).body.confirmationId).not.toBe(first.body.confirmationId)
+  })
+
+  it('refuses a work item whose delivery is another pull request', async () => {
+    const h = await harness(fakeGh(world()).run)
+    ready(h, { prNumber: PR + 1 })
+    const res = await ask(h)
+    expect(res.status).toBe(409)
+    expect(res.body.error).toBe('delivery_mismatch')
+    expect(h.store.confirmations.list({ status: 'pending' })).toEqual([])
+  })
+
+  it('refuses a delivery that is not ready', async () => {
+    const h = await harness(fakeGh(world()).run)
+    ready(h, { stage: 'pr_open' })
+    const res = await ask(h)
+    expect(res.status).toBe(409)
+    expect(res.body.error).toBe('delivery_not_ready')
+  })
+
+  it('refuses unknown work', async () => {
+    const h = await harness(fakeGh(world()).run)
+    const res = await ask(h, 'wi_nope')
+    expect(res.status).toBe(404)
+    expect(h.store.confirmations.list({ status: 'pending' })).toEqual([])
+  })
+})

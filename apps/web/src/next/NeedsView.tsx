@@ -6,7 +6,14 @@ import { Button } from './primitives'
 import { useShellActions } from './Shell'
 import { StateNotice } from './states'
 import { ReadNotice, RepoScope } from './WorkView'
-import type { ApprovalView, NeedCard, QuestionView, RepoFilterOption, SurfaceState } from './work-model'
+import type {
+  ApprovalView,
+  NeedCard,
+  QuestionView,
+  RepoFilterOption,
+  SurfaceState,
+  WorkNeedView,
+} from './work-model'
 
 interface NeedHandlers {
   onAnswer: (id: string, answer: string) => void
@@ -14,6 +21,8 @@ interface NeedHandlers {
   onDeny: (id: string) => void
   onInspect: (id: string) => void
   onRetryEvidence: (id: string) => void
+  /** Blocked work has nothing to answer here: its way forward is the delivery itself. */
+  onOpenWork: (workItemId: string) => void
 }
 
 /** The same frame on Needs you and in the conversation: one record, settled once. */
@@ -103,6 +112,23 @@ function ApprovalCard({
   )
 }
 
+function WorkNeed({ view, onOpen }: { view: WorkNeedView; onOpen: NeedHandlers['onOpenWork'] }) {
+  return (
+    <StateNotice
+      kind="blocked"
+      title={view.title}
+      body={
+        view.actionable
+          ? `${view.body} In ${view.repository}.`
+          : `${view.body} This work has no repository, so it can be read here and not acted on.`
+      }
+      {...(view.actionable && {
+        action: { label: 'Open this delivery', onClick: () => onOpen(view.workItemId) },
+      })}
+    />
+  )
+}
+
 function Card({
   card,
   handlers,
@@ -112,6 +138,7 @@ function Card({
   handlers: NeedHandlers
   claimFocus: boolean
 }) {
+  if (card.kind === 'work') return <WorkNeed view={card.view} onOpen={handlers.onOpenWork} />
   return card.kind === 'question' ? (
     <QuestionCard view={card.view} onAnswer={handlers.onAnswer} claimFocus={claimFocus} />
   ) : (

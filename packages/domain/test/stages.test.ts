@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkItemView } from '../src'
-import { STAGE_TABLE, stageOf, workViewOf } from '../src'
+import { plannerTurnEnded, STAGE_TABLE, stageOf, workViewOf } from '../src'
 
 /** The neutral view: open, mid-execution, no hold, no question, nothing reported. */
 const view = (overrides: Partial<WorkItemView> = {}): WorkItemView => ({
@@ -177,5 +177,40 @@ describe('a delivery ready for review (§10)', () => {
     expect(stageOf(asked).label).toBe('Needs your approval')
     const merged = workViewOf({ state: 'done' }, { ...facts, merged: true, deliveryReady: true })
     expect(stageOf(merged).key).toBe('ended/merged')
+  })
+})
+
+describe('a planner turn that ended with no plan (§10: `waiting`, the turn ended with nothing pending)', () => {
+  const AT = '2026-11-05T12:00:00.000Z'
+  const LATER = '2026-11-05T12:05:00.000Z'
+  const ack = { routing: 'new_work', ackText: 'Answered.', updatedAt: AT }
+
+  it('has ended when its last message has a receipt and nothing came after', () => {
+    expect(plannerTurnEnded([ack], [])).toBe(true)
+  })
+
+  it('has not ended without a message, or with one still in its turn', () => {
+    expect(plannerTurnEnded([], [])).toBe(false)
+    expect(plannerTurnEnded([ack, { routing: 'new_work', updatedAt: LATER }], [])).toBe(false)
+  })
+
+  it('an attached follow-up may start a turn, so it is not an end', () => {
+    expect(plannerTurnEnded([{ routing: 'attach', ackText: 'Noted.', updatedAt: AT }], [])).toBe(false)
+  })
+
+  it('an answer after the last turn has a wake on its way', () => {
+    expect(plannerTurnEnded([ack], [{ status: 'answered', answeredAt: LATER }])).toBe(false)
+    expect(plannerTurnEnded([{ ...ack, updatedAt: LATER }], [{ status: 'answered', answeredAt: AT }])).toBe(
+      true,
+    )
+  })
+
+  it('reads as idle only while planning', () => {
+    const facts = { openQuestions: 0, awaitingConfirmation: false, attempts: [], merged: false }
+    const stage = (state: string, turnEnded: boolean) =>
+      stageOf(workViewOf({ state }, { ...facts, turnEnded })).key
+    expect(stage('planning', true)).toBe('idle')
+    expect(stage('planning', false)).toBe('working')
+    expect(stage('executing', true)).toBe('working')
   })
 })

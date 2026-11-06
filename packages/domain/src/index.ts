@@ -30,7 +30,7 @@ export type {
 } from './scheduling'
 export { planDispatches } from './scheduling'
 export type { Stage, StageRow, WorkItemView } from './stages'
-export { STAGE_TABLE, stageOf, workViewOf } from './stages'
+export { plannerTurnEnded, STAGE_TABLE, stageOf, workViewOf } from './stages'
 export type {
   AttemptEvent,
   AttemptState,

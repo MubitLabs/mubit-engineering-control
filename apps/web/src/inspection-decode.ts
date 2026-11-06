@@ -173,6 +173,21 @@ function delivery(path: string, value: unknown, what: string): DeliveryView {
     headSha: strOrNull(path, raw.headSha, `${what}.headSha`),
     prNumber: numOrNull(path, raw.prNumber, `${what}.prNumber`),
     prUrl: strOrNull(path, raw.prUrl, `${what}.prUrl`),
+    // The server leaves these out until they are true, so absent is the healthy answer.
+    repo: raw.repo == null ? null : str(path, raw.repo, `${what}.repo`),
+    ci:
+      raw.ci == null
+        ? null
+        : oneOf<NonNullable<DeliveryView['ci']>>(path, raw.ci, `${what}.ci`, [
+            'passing',
+            'none-required',
+            'running',
+            'failing',
+            'unreadable',
+          ]),
+    ciReadAt: raw.ciReadAt == null ? null : str(path, raw.ciReadAt, `${what}.ciReadAt`),
+    failure: raw.failure == null ? null : str(path, raw.failure, `${what}.failure`),
+    mergeCardId: raw.mergeCardId == null ? null : str(path, raw.mergeCardId, `${what}.mergeCardId`),
   }
 }
 
@@ -222,6 +237,7 @@ function fileChange(path: string, value: unknown, what: string) {
     path: str(path, raw.path, `${what}.path`),
     added: num(path, raw.added, `${what}.added`),
     removed: num(path, raw.removed, `${what}.removed`),
+    ...(raw.binary === true && { binary: true as const }),
   }
 }
 
@@ -260,7 +276,22 @@ function needItem(path: string, value: unknown, what: string): NeedItem {
       detailPath: str(path, raw.detailPath, `${what}.detailPath`),
     }
   }
-  throw new DecodeError(path, `${what}.kind is neither question nor card`)
+  if (raw.kind === 'work') {
+    return {
+      kind: 'work',
+      ...shared,
+      workItemId: str(path, raw.workItemId, `${what}.workItemId`),
+      title: str(path, raw.title, `${what}.title`),
+      stageKey: str(path, raw.stageKey, `${what}.stageKey`),
+      stageLabel: str(path, raw.stageLabel, `${what}.stageLabel`),
+      reason: strOrNull(path, raw.reason, `${what}.reason`),
+      nextAction: strOrNull(path, raw.nextAction, `${what}.nextAction`),
+      status: oneOf(path, raw.status, `${what}.status`, ['open']),
+      since: str(path, raw.since, `${what}.since`),
+      readOnly: bool(path, raw.readOnly, `${what}.readOnly`),
+    }
+  }
+  throw new DecodeError(path, `${what}.kind is not a need this page knows`)
 }
 
 /** GET /api/inspect/work */
@@ -529,6 +560,8 @@ export function decodeChatLines(raw: unknown): ChatLine[] {
       ...(typeof line.replyText === 'string' && { replyText: line.replyText }),
       ...(typeof line.idempotencyKey === 'string' && { idempotencyKey: line.idempotencyKey }),
       ...(line.secretGuard === true && { secretGuard: true as const }),
+      ...(typeof line.replyText === 'string' && { replyText: line.replyText }),
+      ...(typeof line.pausedAck === 'string' && { pausedAck: line.pausedAck }),
     }
   })
 }

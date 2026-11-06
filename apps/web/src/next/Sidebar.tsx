@@ -16,6 +16,7 @@ import {
 import { CONFIGURATION_ROUTES, ROUTE_LABELS, WORK_ROUTES } from './routes'
 import { Sheet } from './Sheet'
 import { nextTheme, THEME_LABELS, type ThemeChoice } from './theme'
+import { timeLabel } from './work-model'
 
 export interface RepositoryOption {
   id: string
@@ -50,6 +51,11 @@ export interface PauseControl {
   onToggle: () => void
 }
 
+/** The banner's wording around a served time. A person reads it, so it is never the ISO form. */
+export function pausedSince(at: string): string {
+  return Number.isNaN(new Date(at).getTime()) ? '' : ` since ${timeLabel(at)}`
+}
+
 function PauseButton({ pause }: { pause: PauseControl }) {
   const paused = pause.state === 'paused'
   return (
@@ -57,7 +63,7 @@ function PauseButton({ pause }: { pause: PauseControl }) {
       {paused && (
         <p className="pause-state">
           <strong>Processing paused</strong>
-          {pause.pausedAt ? ` since ${pause.pausedAt}` : ''}. Messages are kept and no new turn runs.
+          {pause.pausedAt ? pausedSince(pause.pausedAt) : ''}. Messages are kept and no new turn runs.
         </p>
       )}
       <button

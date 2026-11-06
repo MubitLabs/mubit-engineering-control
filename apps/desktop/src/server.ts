@@ -1037,7 +1037,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   app.post('/api/processing/pause', async (_request, reply) => {
     if (deps.pauseControl === undefined) return reply.code(404).send({ error: 'pause is not available' })
     deps.pauseControl.pause()
-    return { status: 'paused' }
+    const { pausedAt } = processingOf(store)
+    return { status: 'paused', ...(pausedAt !== undefined && { pausedAt }) }
   })
 
   app.post('/api/processing/resume', async (_request, reply) => {
@@ -1709,6 +1710,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       repo?: unknown
       prNumber?: unknown
       confirmationId?: unknown
+      workItemId?: unknown
     }
     const repo = typeof body.repo === 'string' ? body.repo.trim() : ''
     const prNumber =
@@ -1734,6 +1736,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         repo,
         prNumber,
         ...(originConfirmationId !== undefined && { originConfirmationId }),
+        ...(typeof body.workItemId === 'string' && { workItemId: body.workItemId }),
       })
     } catch (error) {
       return refuse(error, reply)

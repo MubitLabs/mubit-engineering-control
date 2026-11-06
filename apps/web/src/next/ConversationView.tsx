@@ -11,7 +11,7 @@ import {
 import { GlossaryButton } from './GlossarySheet'
 import { QuestionCard } from './NeedsView'
 import { useShellActions } from './Shell'
-import { EmptyState } from './states'
+import { EmptyState, StateNotice } from './states'
 import { ReadNotice } from './WorkView'
 import type {
   ConversationEntry,
@@ -40,6 +40,8 @@ export interface ConversationViewProps {
   meta?: MetaStatusView | null
   onAnswer: (id: string, answer: string) => void
   onRetry: () => void
+  /** Opens a delivery in Work, for work this thread says is blocked. */
+  onOpenWork: (workItemId: string) => void
   /** The text on its way to the server, shown until the thread has it. */
   sending?: string | null
   /** Unassigned history: nothing can be sent here, so the empty state invites nothing. */
@@ -95,6 +97,15 @@ export function ConversationView(props: ConversationViewProps) {
       {isSending && <UserMessage>{sending}</UserMessage>}
       {props.questions.map((question) => (
         <QuestionCard key={question.id} view={question} onAnswer={props.onAnswer} />
+      ))}
+      {view.blocked.map((item) => (
+        <StateNotice
+          key={item.id}
+          kind="blocked"
+          title={item.title}
+          body={item.body}
+          action={{ label: 'Open this delivery', onClick: () => props.onOpenWork(item.id) }}
+        />
       ))}
       {view.plan && (
         <>

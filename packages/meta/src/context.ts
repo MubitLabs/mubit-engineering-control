@@ -20,6 +20,7 @@ import type { Store, StoreDoc } from '@mec/contracts'
 import type { Caps, ModelAvailability, ModelTier, SlotModelsView, TierTableLike } from '@mec/domain'
 import {
   availableTiersOnSlot,
+  plannerTurnEnded,
   stageOf,
   tableEntries,
   WORK_ITEM_TERMINAL,
@@ -518,6 +519,10 @@ function stageFacts(store: Store, doc: StoreDoc, now: string): Parameters<typeof
       ),
     attempts: store.attempts.list({ workItemId: id }),
     merged: store.engines.get(`delivery/${id}`)?.stage === 'merged',
+    turnEnded: plannerTurnEnded(
+      store.messages.list({ workItemId: id }),
+      store.engines.list({ workItemId: id }).filter((row) => String(row.id).startsWith('question/')),
+    ),
   }
 }
 

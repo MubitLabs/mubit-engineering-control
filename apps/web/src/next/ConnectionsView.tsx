@@ -31,6 +31,12 @@ export interface RetireArm {
   busy: boolean
 }
 
+/** The engine, its version and its provider, as far as each is known. */
+export function connectionLine(engine: string, version?: string, provider?: string): string {
+  const name = version ? `${engine} ${version}` : engine
+  return provider ? `${name}, ${provider}` : name
+}
+
 const toneOf = (state: string): StatusTone =>
   state === 'healthy' ? 'good' : state === 'degraded' ? 'attention' : 'neutral'
 
@@ -197,10 +203,7 @@ function ConnectionItem({
       <header className="connection-head">
         <div>
           <h2>{row.label}</h2>
-          <p className="muted">
-            {engineName(row.engine)}
-            {row.engineVersion ? ` ${row.engineVersion}` : ''}, {row.provider}
-          </p>
+          <p className="muted">{connectionLine(engineName(row.engine), row.engineVersion, row.provider)}</p>
         </div>
         <Status tone={toneOf(row.state)}>{STATE_WORDS[row.state] ?? row.state}</Status>
       </header>

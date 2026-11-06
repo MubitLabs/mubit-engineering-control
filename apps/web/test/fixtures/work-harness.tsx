@@ -10,7 +10,7 @@ import {
   decodeWorkPage,
 } from '../../src/inspection-decode'
 import { ConversationView } from '../../src/next/ConversationView'
-import type { NeedItem, Page, WorkRow } from '../../src/next/inspection-wire'
+import type { NeedItem, Page, WorkDetail, WorkRow } from '../../src/next/inspection-wire'
 import { NeedsView } from '../../src/next/NeedsView'
 import { SearchSheet } from '../../src/next/SearchSheet'
 import { Shell } from '../../src/next/Shell'
@@ -87,15 +87,64 @@ function initialRead<T>(ready: T, empty: T): Read<T> {
   return { status: 'ready', data: ready, readAt: READ_AT }
 }
 
-const decodedWork = decodeWorkPage(workPage)
-const decodedNeeds = decodeNeedsPage(needsPage)
+const servedWork = decodeWorkPage(workPage)
+const decodedWork =
+  variant === 'delivery'
+    ? {
+        ...servedWork,
+        items: servedWork.items.map((row) =>
+          row.id === 'work_blocked'
+            ? {
+                ...row,
+                stage: { key: 'person/blocked', label: 'Blocked', waitingOn: 'person' as const },
+                reason: 'Blocked: SAMPLE-ONLY reason',
+              }
+            : row,
+        ),
+      }
+    : servedWork
+const blockedNeed: NeedItem = {
+  kind: 'work',
+  id: 'work_blocked',
+  repoId: 'repo_a',
+  repoLabel: 'sample-console',
+  workItemId: 'work_blocked',
+  title: 'SAMPLE-ONLY blocked delivery',
+  stageKey: 'person/blocked',
+  stageLabel: 'Blocked',
+  reason: 'Blocked: SAMPLE-ONLY reason',
+  nextAction: 'Resolve what blocks it',
+  status: 'open',
+  since: READ_AT,
+  readOnly: false,
+}
+const servedNeeds = decodeNeedsPage(needsPage)
+const decodedNeeds =
+  variant === 'delivery' ? { ...servedNeeds, items: [blockedNeed, ...servedNeeds.items] } : servedNeeds
 const decodedEmptyNeeds: Page<NeedItem> = { items: [], nextCursor: null, observedAt: READ_AT }
 const hits = decodeSearchPage(searchPage).items
 const lines = decodeChatLines(chatLines)
 
+/** `state=delivery`: the surfaces delivery adds, on the same sample work. */
+const DELIVERY_STATES: Record<string, Partial<WorkDetail['delivery']>> = {
+  work_working: {
+    stage: 'pr-ready',
+    branch: 'mec/sample/integration',
+    prNumber: 12,
+    prUrl: 'https://github.com/sample/console/pull/12',
+    repo: 'sample/console',
+    ci: 'none-required',
+    ciReadAt: READ_AT,
+  },
+  work_blocked: { failure: 'Combined checks failed on abc1230: SAMPLE-ONLY typecheck.' },
+}
+
 const workDetail = (id: string) => {
   const raw = workDetails[id as keyof typeof workDetails]
-  return raw ? decodeWorkDetail(raw) : null
+  if (!raw) return null
+  const decoded = decodeWorkDetail(raw)
+  if (variant !== 'delivery') return decoded
+  return { ...decoded, delivery: { ...decoded.delivery, ...DELIVERY_STATES[id] } }
 }
 const taskDetail = (id: string) => {
   const raw = taskDetails[id as keyof typeof taskDetails]
@@ -172,6 +221,8 @@ function HarnessApp() {
         row.repoId === repositoryId && row.id !== chatRow?.id && workRowView(row).outcome === null,
     ),
   })
+  // The delivery screens are the ones that show a blocked notice; the rest keep their baselines.
+  const chatView = variant === 'delivery' ? chat : { ...chat, blocked: [] }
   const meta = metaStatus(
     {
       status: 'ready',
@@ -269,7 +320,7 @@ function HarnessApp() {
         <ConversationView
           surface={readSurface(work, () => chat.entries.length === 0 && chat.plan === null)}
           subtitle={`Meta agent, working in ${repository?.name}`}
-          view={chat}
+          view={chatView}
           questions={chatQuestions}
           selectedTaskId={taskInScope?.id ?? null}
           onOpenTask={setSelectedTask}
@@ -325,6 +376,7 @@ function HarnessApp() {
           }}
           onInspect={setSelectedCard}
           onRetryEvidence={() => {}}
+          onOpenWork={() => {}}
           onRetry={retry}
         />
       )}

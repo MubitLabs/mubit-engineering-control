@@ -172,7 +172,16 @@ const tasks = {
   shipped: taskRow('task_shipped', 'SAMPLE-ONLY add the shortcuts', 'integrated'),
 }
 
-const NO_DELIVERY = { stage: 'none', branch: null, headSha: null, prNumber: null, prUrl: null } as const
+const DELIVERY_FACTS = { repo: null, ci: null, ciReadAt: null, failure: null, mergeCardId: null }
+
+const NO_DELIVERY = {
+  stage: 'none',
+  branch: null,
+  headSha: null,
+  prNumber: null,
+  prUrl: null,
+  ...DELIVERY_FACTS,
+} as const
 
 const quietDetail = {
   originMessageId: null,
@@ -250,7 +259,14 @@ export const workDetails = {
     ...workRows.completed,
     ...quietDetail,
     tasks: [tasks.shipped],
-    delivery: { stage: 'merged', branch: 'sample/shortcuts', headSha: TASK_HEAD, prNumber: 12, prUrl: null },
+    delivery: {
+      stage: 'merged',
+      branch: 'sample/shortcuts',
+      headSha: TASK_HEAD,
+      prNumber: 12,
+      prUrl: null,
+      ...DELIVERY_FACTS,
+    },
     coverage: COVERED,
   },
   work_legacy: { ...workRows.legacy, ...quietDetail, planRevision: null, tasks: [] },

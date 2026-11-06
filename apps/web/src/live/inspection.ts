@@ -55,6 +55,7 @@ export interface InspectionClient {
   lift(id: string): Promise<CommandResult>
   stop(id: string): Promise<CommandResult>
   retry(id: string): Promise<CommandResult>
+  merge(input: { repo: string; prNumber: number; workItemId: string }): Promise<CommandResult>
   resolve(id: string, answer: ResolveAnswer): Promise<ResolveResult>
   answer(id: string, answer: string): Promise<void>
   activity(id: string, cursor: string | null, signal?: AbortSignal): Promise<Page<ActivityItem>>
@@ -139,6 +140,7 @@ const COMMAND_WORDS: Record<string, string> = {
   free: 'This work was not held.',
   stopped: 'Stopped.',
   retrying: 'Asked once more. Anything that would leave this machine still comes to you as a card.',
+  card_open: 'The merge card is in Needs you. Nothing merges until you approve it.',
 }
 
 function commandFailure(error: unknown): string {
@@ -552,12 +554,17 @@ export function createInspection(client: InspectionClient) {
         })
     },
 
-    /** Retry, hold, lift and stop act on the item's own id, whatever is selected or filtered. */
+    /** Each acts on the item's own id, whatever is selected or filtered. */
     act(action: WorkAction): void {
       const key = `${action.kind}:${action.workItemId}`
       if (settling.has(key)) return
       settling.add(key)
-      client[action.kind](action.workItemId)
+      const { workItemId } = action
+      const run =
+        action.kind === 'merge'
+          ? client.merge({ repo: action.repo, prNumber: action.prNumber, workItemId })
+          : client[action.kind](workItemId)
+      run
         .then(
           ({ status }): CommandNotice => ({ kind: 'done', text: COMMAND_WORDS[status] ?? status }),
           (error: unknown): CommandNotice => ({ kind: 'failed', text: commandFailure(error) }),

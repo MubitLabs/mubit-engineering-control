@@ -55,6 +55,10 @@ export type ChatMessage = {
   ackText?: string
   /** The server redacted this message: it looked like a key. */
   secretGuard?: boolean
+  /** The meta agent's answer to a quick question (§12.2). */
+  replyText?: string
+  /** Said while processing was paused. It is not a receipt: the turn has not run. */
+  pausedAck?: string
   kind?: ChatMessageKind
   /** Who said it, e.g. "Meta agent on max-1" / "You". */
   meta?: string
@@ -615,8 +619,10 @@ export const api = {
     })
   },
 
-  pauseProcessing(): Promise<{ status: string }> {
-    return requestOrNotServed<{ status: string }>('/api/processing/pause', { method: 'POST' })
+  pauseProcessing(): Promise<{ status: string; pausedAt?: string }> {
+    return requestOrNotServed<{ status: string; pausedAt?: string }>('/api/processing/pause', {
+      method: 'POST',
+    })
   },
 
   resumeProcessing(): Promise<{ status: string }> {

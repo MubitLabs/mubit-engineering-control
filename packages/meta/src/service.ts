@@ -856,6 +856,11 @@ export class MetaAgentService {
 
     // Decision #27: stored, and no receipt, so resuming finds it and runs its turn then.
     if (!resumed && processingOf(this.#store).paused) {
+      // Not `ackText`: that is the receipt, and having one would stop the resume finding this.
+      this.#store.atomic(() => {
+        const doc = this.#store.messages.get(input.messageId)
+        if (doc !== undefined) this.#store.messages.save({ ...doc, pausedAck: PAUSED_ACK })
+      })
       return {
         acknowledged: PAUSED_ACK,
         workItemId,

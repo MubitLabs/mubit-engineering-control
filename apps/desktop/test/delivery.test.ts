@@ -539,6 +539,23 @@ describe('the result path (§14, #11, #12)', () => {
     expect(r.doc()).toMatchObject({ stage: 'ready', limit: 'no_required_checks' })
   })
 
+  it('stores what the last read saw of CI, and forgets it when the head moves', async () => {
+    const r = await openPr({ world: { checks: ok('[{"name":"ci","state":"PENDING"}]') } })
+    await r.passes(1)
+    expect(r.doc()).toMatchObject({ stage: 'pr_open', ci: 'ci_pending' })
+    r.world.checks = ok('[{"name":"ci","state":"FAILURE"}]')
+    await r.passes(1)
+    expect(r.doc()).toMatchObject({ stage: 'pr_open', ci: 'ci_failed' })
+    r.world.checks = ok('[{"name":"ci","state":"SUCCESS"}]')
+    await r.passes(1)
+    expect(r.doc()).toMatchObject({ stage: 'ready', ci: 'green' })
+    expect(typeof r.doc().ciAt).toBe('string')
+    r.world.pr = { state: 'OPEN', headRefOid: 'f'.repeat(40) }
+    await r.passes(1)
+    expect(r.doc().stage).toBe('pr_open')
+    expect(r.doc().ci).toBeUndefined()
+  })
+
   it('declined push keeps the result and opens nothing', async () => {
     const r = await localComplete()
     await resolveReleaseCard(r.delivery.release, String(r.cards('push')[0]?.id), 'deny')

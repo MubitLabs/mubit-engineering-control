@@ -24,8 +24,9 @@
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import type { EngineEvent, Json, KeyFingerprint, Store, StoreDoc } from '@mec/contracts'
-import { type Stage, stageOf, workViewOf } from '@mec/domain'
-import { assertRepoAdmission, holdsGroup, type MetaTurn, processingOf } from '@mec/meta'
+import { plannerTurnEnded, type Stage, stageOf, workViewOf } from '@mec/domain'
+import { git } from '@mec/git'
+import { assertRepoAdmission, holdsGroup, integrationDocId, type MetaTurn, processingOf } from '@mec/meta'
 import { type AttemptOutcome, type CheckRecord, projectAttempt } from '@mec/scorecards'
 import { redact, type SecretSpan, secretSpans } from '@mec/slots'
 import {
@@ -93,6 +94,15 @@ export type DeliveryView = {
   headSha: string | null
   prNumber: number | null
   prUrl: string | null
+  /** `owner/name`, which is what a merge card binds. Absent until a push resolved it. */
+  repo?: string
+  /** What the last read of GitHub saw. Absent when nothing has read it. */
+  ci?: 'passing' | 'none-required' | 'running' | 'failing' | 'unreadable'
+  ciReadAt?: string
+  /** Why delivery stopped, in a sentence. Absent when nothing failed. */
+  failure?: string
+  /** The open merge card, so nothing asks twice. */
+  mergeCardId?: string
 }
 
 export type WorkDetail = WorkRow & {
@@ -166,7 +176,7 @@ export type TaskDetail = TaskRow & {
   diff: {
     headSha: string | null
     summary: string | null
-    files: { path: string; added: number; removed: number }[]
+    files: { path: string; added: number; removed: number; binary?: true }[]
     truncated: number
   }
   /** `coverage: 'subtotal'` says `reportedUsd` is known to be short of the total. */
@@ -211,6 +221,22 @@ export type NeedItem =
       status: 'pending' | 'approved' | 'denied' | 'expired' | 'stale'
       expiresAt: string
       detailPath: string
+    }
+  | {
+      /** §18.2: work in a `person` stage with no question or card of its own to answer. */
+      kind: 'work'
+      id: string
+      repoId: string | null
+      repoLabel: string | null
+      workItemId: string
+      title: string
+      stageKey: string
+      stageLabel: string
+      reason: string | null
+      nextAction: string | null
+      status: 'open'
+      since: string
+      readOnly: boolean
     }
 
 /** What the meta agent is doing for one repository, from running turns and stored facts. */
@@ -557,8 +583,58 @@ const DELIVERY_STAGES: Readonly<Record<string, DeliveryView['stage']>> = {
   ready: 'pr-ready',
   merged: 'merged',
 }
+/** The record's verdict (`readRequiredChecks`) on the wire. */
+const CI_READINGS: Readonly<Record<string, NonNullable<DeliveryView['ci']>>> = {
+  green: 'passing',
+  no_required_checks: 'none-required',
+  ci_pending: 'running',
+  ci_failed: 'failing',
+  ci_unreadable: 'unreadable',
+}
+/** What the integration step writes into a blocked item's reason (`Delivery.#work`, `#integrationDoc`). */
+const INTEGRATION_BLOCK = /^(integration: |bootstrap_failed|repo_profile_changed)/
+/** A commit id, the only thing a stored ref may be before it reaches `git`. */
+const SHA = /^[0-9a-f]{7,64}$/
+const FAILURE_CAP = 500
 /** Headroom for the envelope fields around a page's items. */
 const ENVELOPE_BYTES = 1024
+
+/** A head and what it was built on, in the clone that holds both. */
+type DiffSource = { gitDir: string; base: string; head: string }
+
+/** What `git` reports between two commits. Binary files have no line counts to give. */
+type MeasuredDiff = {
+  summary: string
+  files: { path: string; added: number; removed: number; binary?: true }[]
+}
+
+const short = (sha: string): string => sha.slice(0, 7)
+
+/**
+ * The accepted head's real file list (§15), read from git because no writer stores one on the
+ * attempt. Names and counts only: file contents have not been through a slot's redaction. Undefined
+ * is "could not be read", which the page says in those words.
+ */
+async function measureDiff({ gitDir, base, head }: DiffSource): Promise<MeasuredDiff | undefined> {
+  const read = await git(['diff', '--no-ext-diff', '--no-renames', '--numstat', '-z', base, head], {
+    cwd: gitDir,
+    allowFailure: true,
+  }).catch(() => undefined)
+  if (read === undefined || read.code !== 0) return undefined
+  const files = read.stdout
+    .split('\0')
+    .filter((entry) => entry !== '')
+    .map((entry) => {
+      const [added = '', removed = '', ...path] = entry.split('\t')
+      return added === '-'
+        ? { path: path.join('\t'), added: 0, removed: 0, binary: true as const }
+        : { path: path.join('\t'), added: Number(added), removed: Number(removed) }
+    })
+  const added = files.reduce((sum, file) => sum + file.added, 0)
+  const removed = files.reduce((sum, file) => sum + file.removed, 0)
+  const count = `${files.length} ${files.length === 1 ? 'file' : 'files'} changed`
+  return { summary: `${count}, +${added} -${removed}, ${short(base)} to ${short(head)}`, files }
+}
 
 type InspectDeps = {
   store: Store
@@ -718,13 +794,58 @@ class Inspector {
     })
   }
 
-  /** Everything that needs a person now, all repositories, oldest first. The single source of every count. */
-  #openRows(): NeedRow[] {
+  /** The open questions and pending cards: what a stage reads as a decision (§10). */
+  #decisionRows(): NeedRow[] {
     const questions = this.#collect('engine', { idPrefix: QUESTION_PREFIX, equals: { status: 'open' } })
     const cards = this.#cardRows(this.#collect('confirmation', { equals: { status: 'pending' } }))
-    return [...questions.map((row) => this.#questionRow(row)), ...cards]
-      .filter(({ item }) => item.status === 'open' || item.status === 'pending')
-      .sort((a, b) => a.rowid - b.rowid)
+    return [...questions.map((row) => this.#questionRow(row)), ...cards].filter(
+      ({ item }) => item.status === 'open' || item.status === 'pending',
+    )
+  }
+
+  /**
+   * §18.2: open work in a `person` stage comes first in Needs you. A decision stage has its question
+   * or card there already, and `held` is not a person stage: the owner chose it, and Work shows it.
+   */
+  #workNeedRows(decisions: NeedItem[]): NeedRow[] {
+    const rows = this.#collect('work_item', {})
+    const views = this.workRows(
+      rows.map((row) => row.doc),
+      decisions,
+    )
+    return views.flatMap((view, index): NeedRow[] => {
+      const { key, label } = view.stage
+      if (!key.startsWith('person/') || key === 'person/decision') return []
+      const item: NeedItem = {
+        kind: 'work',
+        id: view.id,
+        repoId: view.repoId,
+        repoLabel: view.repoLabel,
+        workItemId: view.id,
+        title: view.title ?? 'Untitled request',
+        stageKey: key,
+        stageLabel: label,
+        reason: view.reason,
+        nextAction: view.nextAction,
+        status: 'open',
+        since: view.updatedAt,
+        readOnly: view.readOnly,
+      }
+      return [{ rowid: rows[index]?.rowid ?? 0, item, settledAt: view.updatedAt }]
+    })
+  }
+
+  /** Everything that needs a person now, all repositories, oldest first. The single source of every count. */
+  #openRows(): NeedRow[] {
+    const decisions = this.#decisionRows()
+    return [...decisions, ...this.#workNeedRows(decisions.map((row) => row.item))].sort(
+      (a, b) => a.rowid - b.rowid,
+    )
+  }
+
+  /** What a stage counts as a decision. A work row is not one: its stage is what made it a row. */
+  openDecisions(): NeedItem[] {
+    return this.#decisionRows().map((row) => row.item)
   }
 
   openNeeds(): NeedItem[] {
@@ -838,6 +959,60 @@ class Inspector {
     return doc === undefined ? undefined : this.#store.engines.get(deliveryDocId(String(doc.id)))
   }
 
+  #integrationRecord(doc: StoreDoc | undefined): StoreDoc | undefined {
+    return doc === undefined ? undefined : this.#store.engines.get(integrationDocId(String(doc.id)))
+  }
+
+  /** Why delivery stopped: the integration's own failure, then the record's, then what blocked it. */
+  #deliveryFailure(doc: StoreDoc, record: StoreDoc | undefined): string | null {
+    const failed = obj(this.#integrationRecord(doc)?.failed)
+    if (failed !== null) {
+      const repairing = failed.repairing === true ? ' A repair is open.' : ''
+      const sha = str(failed.sha)
+      const names = Array.isArray(failed.failing)
+        ? failed.failing.flatMap((entry) => str(obj(entry)?.name) ?? [])
+        : []
+      const what =
+        failed.reason === 'conflict'
+          ? `Merging a task conflicted in ${strings(failed.conflictedPaths).join(', ') || 'unnamed paths'}.`
+          : `Combined checks failed${sha === null ? '' : ` on ${short(sha)}`}${names.length > 0 ? `: ${names.join(', ')}` : ''}.`
+      return cutText(`${what}${repairing}`, FAILURE_CAP)
+    }
+    const error = str(record?.error)
+    if (error !== null) {
+      const again = str(record?.retryAt) === null ? '' : ' MEC tries this step again.'
+      return cutText(`${error}.${again}`.replace('..', '.'), FAILURE_CAP)
+    }
+    const blocked = str(doc.blockedReason)
+    return str(doc.state) === 'blocked' && blocked !== null && INTEGRATION_BLOCK.test(blocked)
+      ? cutText(blocked, FAILURE_CAP)
+      : null
+  }
+
+  /** A ready record with no reading predates them, and only one reading could have made it ready. */
+  #ciOf(record: StoreDoc): Pick<DeliveryView, 'ci' | 'ciReadAt'> {
+    const reading = str(record.ci) ?? (record.stage === 'ready' ? (str(record.limit) ?? 'green') : null)
+    const ci = reading === null ? undefined : CI_READINGS[reading]
+    const readAt = str(record.ciAt)
+    return { ...(ci !== undefined && { ci }), ...(readAt !== null && { ciReadAt: shortText(readAt) }) }
+  }
+
+  /** The detail's own fields: a list row reads none of this. */
+  #deliveryExtras(doc: StoreDoc, needs: NeedItem[]): Partial<DeliveryView> {
+    const record = this.#deliveryRecord(doc)
+    const failure = this.#deliveryFailure(doc, record)
+    const repo = str(record?.repo)
+    const card = needs.find(
+      (item) => item.kind === 'card' && item.cls === 'pr_merge' && item.workItemId === String(doc.id),
+    )
+    return {
+      ...(repo !== null && { repo: cutText(repo, LABEL_CAP) }),
+      ...(record !== undefined && this.#ciOf(record)),
+      ...(failure !== null && { failure }),
+      ...(card !== undefined && { mergeCardId: card.id }),
+    }
+  }
+
   #deliveryOf(doc: StoreDoc): DeliveryView {
     const record = this.#deliveryRecord(doc)
     if (record !== undefined) {
@@ -898,6 +1073,16 @@ class Inspector {
               : `Blocked: ${cutText(String(doc.blockedReason), 200)}`,
           nextAction: 'Resolve what blocks it',
         }
+      case 'person/review':
+        return {
+          reason: 'The pull request is ready for your review',
+          nextAction: 'Review it, then merge it from Work',
+        }
+      case 'idle':
+        return {
+          reason: 'No work was planned, and nothing is running.',
+          nextAction: 'Reply in Conversation to start work',
+        }
       case 'waiting/quota':
         return { reason: 'Every runnable attempt is waiting for quota', nextAction: null }
       case 'working':
@@ -911,8 +1096,16 @@ class Inspector {
    * A planning item whose turn ended with no task and nothing asked. Nothing more will happen on
    * it, so it must not read as Working: its reply is what it was for, and if none came it says so.
    */
-  #turnOutcome(doc: StoreDoc, tasks: number, waitingOnPerson: boolean): WorkRow['turnOutcome'] {
-    if (str(doc.state) !== 'planning' || tasks > 0 || waitingOnPerson) return null
+  #turnOutcome(
+    doc: StoreDoc,
+    tasks: number,
+    waitingOnPerson: boolean,
+    turnEnded: boolean,
+  ): WorkRow['turnOutcome'] {
+    if (tasks > 0 || waitingOnPerson) return null
+    // The service ends a turn that answered, so only a request that had no delivery ends with no task.
+    if (str(doc.state) === 'done') return 'answered'
+    if (str(doc.state) !== 'planning' || !turnEnded) return null
     const origin = this.#store.messages.get(str(doc.originMessageId) ?? '')
     if (typeof origin?.ackText !== 'string') return null
     if (this.#metaTurns().some((turn) => turn.workItemId === String(doc.id))) return null
@@ -925,6 +1118,14 @@ class Inspector {
     const counts = this.#reads.countByField('task', 'workItemId', 'status', ids, 'ready')
     const lastAt = this.#reads.lastEventAt(ids.map((id) => `work:${id}`))
     const attempts = this.#groupBy(this.#reads.docsByField('attempt', 'workItemId', ids), 'workItemId')
+    const planning = docs.filter((doc) => doc.state === 'planning').map((doc) => String(doc.id))
+    const messages = this.#groupBy(this.#reads.docsByField('message', 'workItemId', planning), 'workItemId')
+    const questions = this.#groupBy(
+      this.#reads
+        .docsByField('engine', 'workItemId', planning)
+        .filter((doc) => String(doc.id).startsWith(QUESTION_PREFIX)),
+      'workItemId',
+    )
     return docs.map((doc) => {
       const id = String(doc.id)
       const mine = needs.filter((item) => item.workItemId === id)
@@ -935,7 +1136,8 @@ class Inspector {
       const delivery = this.#deliveryOf(doc).stage
       const byStatus = counts[id] ?? {}
       const total = Object.values(byStatus).reduce((sum, n) => sum + n, 0)
-      const turnOutcome = this.#turnOutcome(doc, total, mine.length > 0)
+      const turnEnded = plannerTurnEnded(messages.get(id) ?? [], questions.get(id) ?? [])
+      const turnOutcome = this.#turnOutcome(doc, total, mine.length > 0, turnEnded)
       const stage =
         turnOutcome !== null
           ? TURN_STAGES[turnOutcome]
@@ -986,7 +1188,7 @@ class Inspector {
     })
     const rows = this.workRows(
       page.rows.map((row) => row.doc),
-      this.openNeeds(),
+      this.openDecisions(),
     )
     // The store capped the raw docs; cap what is actually sent too, ending early with a valid cursor.
     const items: WorkRow[] = []
@@ -1016,7 +1218,9 @@ class Inspector {
       usage: some((a) => num(a.costUsd) !== null || obj(a.usage) !== null),
       delivery:
         this.#deliveryRecord(workDoc) !== undefined ||
-        (workDoc !== undefined && obj(workDoc.delivery) !== null),
+        this.#integrationRecord(workDoc) !== undefined ||
+        (workDoc !== undefined &&
+          (obj(workDoc.delivery) !== null || this.#deliveryFailure(workDoc, undefined) !== null)),
     }
   }
 
@@ -1075,7 +1279,7 @@ class Inspector {
       tasks,
       tasksTruncated: allTasks.length - tasks.length,
       delegation: this.#delegation(allTasks.slice(0, tasks.length), attempts),
-      delivery: this.#deliveryOf(doc),
+      delivery: { ...this.#deliveryOf(doc), ...this.#deliveryExtras(doc, needs) },
       retry: retryOffer(this.#store, doc) ?? null,
       coverage: this.#coverage(attempts, doc),
       cursors: this.#reads.cursors([`work:${id}`, ...attemptStreams]),
@@ -1374,7 +1578,22 @@ class Inspector {
     }
   }
 
-  taskDetail(id: string): TaskDetail | undefined {
+  /** The head `taskDetail` will speak for, when nothing stored its diff. Only commit ids pass. */
+  diffSource(id: string): DiffSource | undefined {
+    const attempts = this.#reads
+      .docsByField('attempt', 'taskId', [id])
+      .sort((a, b) => (num(a.generation) ?? 0) - (num(b.generation) ?? 0))
+    const named = attempts.reverse().find((attempt) => headOf(attempt) !== null)
+    if (named === undefined || obj(named.diff) !== null) return undefined
+    const work = this.#reads.getDoc('task', id)
+    const gitDir = str(this.#store.workItems.get(str(work?.workItemId) ?? '')?.git_dir)
+    const head = headOf(named)
+    const base = str(named.base_sha) ?? str(named.baseSha)
+    if (gitDir === null || head === null || base === null) return undefined
+    return SHA.test(head) && SHA.test(base) ? { gitDir, base, head } : undefined
+  }
+
+  taskDetail(id: string, measured?: MeasuredDiff): TaskDetail | undefined {
     const task = this.#reads.getDoc('task', id)
     if (task === undefined) return undefined
     const [row] = this.taskRows([task]) as [TaskRow]
@@ -1435,7 +1654,7 @@ class Inspector {
       })
     }
     const checks = takeWithin(allChecks, CHECK_CAP, CHECK_BYTES)
-    const diffRecord = obj(named?.diff)
+    const diffRecord = obj(named?.diff) ?? (measured as unknown as Record<string, Json> | undefined) ?? null
     const fileList = diffRecord?.files
     const allFiles = Array.isArray(fileList)
       ? fileList.flatMap((entry) => {
@@ -1446,6 +1665,7 @@ class Inspector {
                   path: cutText(String(file.path), 300),
                   added: num(file.added) ?? 0,
                   removed: num(file.removed) ?? 0,
+                  ...(file.binary === true && { binary: true as const }),
                 },
               ]
             : []
@@ -1472,7 +1692,10 @@ class Inspector {
       },
       usage: this.#usageOf(shown, attempts.length),
       outcome: this.#outcomeOf(named, checkDocs, workDoc),
-      coverage: this.#coverage(attempts, workDoc),
+      coverage: {
+        ...this.#coverage(attempts, workDoc),
+        ...(measured !== undefined && { diff: true }),
+      },
     }
   }
 
@@ -1876,15 +2099,17 @@ export function registerInspectionRoutes(app: FastifyInstance, deps: InspectDeps
     '/api/inspect/work/:id',
     gated,
     serve((request) =>
-      inspector.workDetail(String((request.params as { id?: string }).id ?? ''), inspector.openNeeds()),
+      inspector.workDetail(String((request.params as { id?: string }).id ?? ''), inspector.openDecisions()),
     ),
   )
 
-  app.get(
-    '/api/inspect/tasks/:id',
-    gated,
-    serve((request) => inspector.taskDetail(String((request.params as { id?: string }).id ?? ''))),
-  )
+  // Git runs before the read, not inside it: `consistent` is one synchronous transaction.
+  app.get('/api/inspect/tasks/:id', gated, async (request, reply) => {
+    const id = String((request.params as { id?: string }).id ?? '')
+    const source = inspector.diffSource(id)
+    const measured = source === undefined ? undefined : await measureDiff(source)
+    return serve(() => inspector.taskDetail(id, measured))(request, reply)
+  })
 
   app.get(
     '/api/inspect/needs',

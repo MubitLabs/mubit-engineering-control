@@ -185,6 +185,21 @@ function DeliveryDetail({
           </ul>
         </section>
       )}
+      {!detail.outcome && (
+        <section className="work-links">
+          <h3>Delivery</h3>
+          <p className={detail.delivery.failure === null ? undefined : 'tone-bad'}>{detail.delivery.label}</p>
+          {detail.delivery.ci && <p>{detail.delivery.ci}</p>}
+          {detail.delivery.waiting && <p>{detail.delivery.waiting}</p>}
+          {detail.delivery.prUrl && detail.delivery.prLabel && (
+            <p>
+              <a href={detail.delivery.prUrl} target="_blank" rel="noreferrer">
+                {detail.delivery.prLabel}
+              </a>
+            </p>
+          )}
+        </section>
+      )}
       {detail.dependencies.length > 0 && (
         <section className="work-links">
           <h3>Dependencies</h3>

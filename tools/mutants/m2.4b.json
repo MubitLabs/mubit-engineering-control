@@ -261,7 +261,7 @@
   {
     "name": "reject ends the turn",
     "file": "packages/engines/src/opencode/adapter.ts",
-    "find": "                  ...(decision !== 'allow' && { message: REFUSED }),\n",
+    "find": "                ...(decision !== 'allow' && { message: REFUSED }),\n",
     "replace": "",
     "tests": ["packages/engines/test/opencode.test.ts"]
   },

@@ -108,6 +108,7 @@ async function turn() {
       while (!existsSync(join(here, step.hold))) await sleep(25)
     } else if (step.verdict !== undefined) {
       event(`session.execution.${step.verdict}`, { sessionID: SESSION })
+      await sleep(100) // a later chunk: in the same one, a stream cut at the verdict would still show it
       event('session.renamed', { sessionID: SESSION, title: 'after the verdict' })
     }
   }

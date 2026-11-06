@@ -36,7 +36,18 @@ import {
 } from '@mec/domain'
 import { type ResolvedModel, resolveModel } from '../../runtime/src/model'
 import { repoOf } from './admission'
-import { blockWork, holdsGroup, isHeld, isTerminal, mandateOf, noVerdict, processingOf } from './authority'
+import {
+  blockWork,
+  cannotStartYet,
+  HOST_RUN_UNAGREED,
+  holdsGroup,
+  hostRunAgreed,
+  isHeld,
+  isTerminal,
+  mandateOf,
+  noVerdict,
+  processingOf,
+} from './authority'
 import { enqueueWake, type FollowUps } from './followups'
 import { type Continuation, nextRepair, nextReview, repairLedger } from './repair'
 import { classifyWake } from './wakes'
@@ -93,6 +104,7 @@ const launchKey = (attempt: StoreDoc): string => `${String(attempt.id)}:${Number
 
 function occupies(deps: SchedulerDeps, attempt: StoreDoc): boolean {
   const state = String(attempt.state) as AttemptState
+  if (cannotStartYet(deps.store, attempt)) return false
   // A resume on its way holds what it held, or a new task would take its place (§20).
   if (attempt.resuming === true) return true
   if (!OCCUPYING.includes(state)) return false
@@ -608,6 +620,15 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
       const changed = startable.map((task) => defer(store, task, held, at)).some(Boolean)
       if (changed || workItemId === scoped) {
         appendEvent(store, `work:${workItemId}`, 'launch_withheld', { workItemId, reason: 'held', at }, at)
+      }
+      continue
+    }
+    if (!hostRunAgreed(store, repoOf(work))) {
+      const unagreed = { reason: HOST_RUN_UNAGREED, releases: 'the owner agrees to host runs here' }
+      const changed = startable.map((task) => defer(store, task, unagreed, at)).some(Boolean)
+      if (changed || workItemId === scoped) {
+        const body = { workItemId, reason: HOST_RUN_UNAGREED, at }
+        appendEvent(store, `work:${workItemId}`, 'launch_withheld', body, at)
       }
       continue
     }

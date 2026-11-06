@@ -22,6 +22,7 @@ function rig(extra: StoreDoc = {}) {
       bootstrap: [],
       checks: [{ name: 'unit', cmd: 'true' }],
       trust: false,
+      hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
     })
     store.workItems.save({
       id: 'wi_1',

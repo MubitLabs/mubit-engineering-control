@@ -459,7 +459,7 @@ function TrustControl({
       <p>
         {repository.trust
           ? 'Trusted: engines honour this repository’s own configuration.'
-          : 'Untrusted: engines ignore this repository’s own configuration.'}
+          : 'Untrusted: engines ignore this repository’s own configuration. Its setup and checks still run on this machine once you agree.'}
       </p>
       {armed ? (
         <form
@@ -478,7 +478,7 @@ function TrustControl({
         >
           <p>
             {next
-              ? 'Engines will honour its hooks, MCP servers, plugins and settings. Those can run commands on this machine.'
+              ? 'Engines will honour its hooks, MCP servers, plugins and settings. Those can run commands on this machine. Its setup and checks run here once you agree, trusted or not.'
               : 'Engines will stop honouring its hooks, MCP servers, plugins and settings.'}
           </p>
           <div className="form-actions">
@@ -497,6 +497,84 @@ function TrustControl({
   )
 }
 
+const waitingWords = (count: number): string => {
+  if (count === 0) return 'No work is waiting on this now.'
+  return count === 1 ? '1 item is waiting and will start.' : `${count} items are waiting and will start.`
+}
+
+/** Set on an open tab that has no approval key: agreeing needs one, withdrawing never does. */
+export interface HostRunControlProps {
+  repository: RepositoryView
+  busy: boolean
+  error: string | null
+  onAgree: () => void
+  onWithdraw: () => void
+}
+
+/** The owner's agreement for one repository, in the words of what it allows. */
+export function HostRunControl({ repository, busy, error, onAgree, onWithdraw }: HostRunControlProps) {
+  const [armed, setArmed] = useState(false)
+  const agreed = repository.hostRunAgreedAt !== null
+  return (
+    <div className="trust">
+      <p>
+        {agreed
+          ? 'Agreed: MEC may run work in this repository.'
+          : 'Waiting for your agreement: nothing runs in this repository.'}
+      </p>
+      {armed ? (
+        <form
+          className="armed-panel armed-danger"
+          onSubmit={(event) => {
+            event.preventDefault()
+            setArmed(false)
+            if (agreed) onWithdraw()
+            else onAgree()
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.stopPropagation()
+              setArmed(false)
+            }
+          }}
+        >
+          {agreed ? (
+            <p>
+              No new work starts here, and queued work waits. An engine already running finishes its turn, and
+              its checks then wait for you.
+            </p>
+          ) : (
+            <>
+              <p>
+                MEC may start engines here, and run this repository’s setup and check commands. Those commands
+                run on this machine as you, outside any sandbox, with your files and your network, whether or
+                not the repository is trusted.
+              </p>
+              <p>{waitingWords(repository.waiting)}</p>
+              <p>You can withdraw this here at any time, and nothing new starts after that.</p>
+            </>
+          )}
+          <div className="form-actions">
+            <Button variant="quiet" onClick={() => setArmed(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={busy}>
+              {agreed ? 'Withdraw agreement' : 'Agree to run here'}
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <Button onClick={() => setArmed(true)}>{agreed ? 'Withdraw…' : 'Review and agree…'}</Button>
+      )}
+      {error !== null && (
+        <p className="field-error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  )
+}
+
 export interface RepositoryEditorProps {
   repository: RepositoryView
   bootstrap: EditorProps
@@ -505,6 +583,7 @@ export interface RepositoryEditorProps {
   trustError: string | null
   isolation: { editable: boolean; reason: string | null }
   onSetTrust: (trust: boolean) => void
+  hostRun: Omit<HostRunControlProps, 'repository'>
 }
 
 export function RepositoryEditor({
@@ -515,6 +594,7 @@ export function RepositoryEditor({
   trustError,
   isolation,
   onSetTrust,
+  hostRun,
 }: RepositoryEditorProps) {
   return (
     <article className="repository">
@@ -526,6 +606,8 @@ export function RepositoryEditor({
       <small className="muted">{BOOTSTRAP_HINT}</small>
       <TextBlock label="Check profile" rows={3} {...checks} />
       <small className="muted">{CHECKS_HINT}</small>
+      <h4>Running on this machine</h4>
+      <HostRunControl repository={repository} {...hostRun} />
       <h4>Trust</h4>
       <TrustControl repository={repository} busy={trustBusy} onSetTrust={onSetTrust} />
       {trustError !== null && (

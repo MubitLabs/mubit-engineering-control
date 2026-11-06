@@ -291,6 +291,14 @@ function needItem(path: string, value: unknown, what: string): NeedItem {
       readOnly: bool(path, raw.readOnly, `${what}.readOnly`),
     }
   }
+  if (raw.kind === 'agreement') {
+    return {
+      kind: 'agreement',
+      ...shared,
+      status: oneOf(path, raw.status, `${what}.status`, ['open']),
+      waiting: typeof raw.waiting === 'number' ? raw.waiting : 0,
+    }
+  }
   throw new DecodeError(path, `${what}.kind is not a need this page knows`)
 }
 

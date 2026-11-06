@@ -69,19 +69,27 @@ export type MandateCheck = { ok: true } | { ok: false; reason: 'expired' | 'with
 
 export type ResumeVerdict =
   | { verdict: 'run' }
-  | { verdict: 'defer'; reason: 'held' }
+  | { verdict: 'defer'; reason: 'held' | 'blocked' | 'host_run_unagreed' }
   | { verdict: 'drop'; reason: 'mandate_expired' | 'mandate_withdrawn' | 'policy_changed' }
 
 /**
  * §5.10, §10, §13.4, in the launch gate's order: a dead mandate ends the resume, a hold keeps it
- * waiting, and a policy change alone does not outrank a hold. Nothing here lifts one.
+ * waiting, and a policy change alone does not outrank a hold. Nothing here lifts one. Blocked work
+ * and a repository the owner has not agreed to wait the same way.
  */
-export function resumeVerdict(input: { held: boolean; mandate: MandateCheck }): ResumeVerdict {
-  const { held, mandate } = input
+export function resumeVerdict(input: {
+  held: boolean
+  mandate: MandateCheck
+  blocked?: boolean
+  agreed?: boolean
+}): ResumeVerdict {
+  const { held, mandate, blocked = false, agreed = true } = input
   if (!mandate.ok && mandate.reason !== 'policy_changed') {
     return { verdict: 'drop', reason: `mandate_${mandate.reason}` }
   }
   if (held) return { verdict: 'defer', reason: 'held' }
+  if (blocked) return { verdict: 'defer', reason: 'blocked' }
+  if (!agreed) return { verdict: 'defer', reason: 'host_run_unagreed' }
   return mandate.ok ? { verdict: 'run' } : { verdict: 'drop', reason: 'policy_changed' }
 }
 

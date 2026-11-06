@@ -28,11 +28,13 @@ import { plannerTurnEnded, type Stage, stageOf, workViewOf } from '@mec/domain'
 import { git } from '@mec/git'
 import {
   assertRepoAdmission,
+  awaitsAgreement,
   holdsGroup,
   integrationDocId,
   isHeld,
   type MetaTurn,
   processingOf,
+  waitingForAgreement,
 } from '@mec/meta'
 import { type AttemptOutcome, type CheckRecord, projectAttempt } from '@mec/scorecards'
 import { redact, type SecretSpan, secretSpans } from '@mec/slots'
@@ -228,6 +230,16 @@ export type NeedItem =
       status: 'pending' | 'approved' | 'denied' | 'expired' | 'stale'
       expiresAt: string
       detailPath: string
+    }
+  | {
+      /** A repository whose work waits on the owner: one row, however many items wait on it. */
+      kind: 'agreement'
+      id: string
+      repoId: string
+      repoLabel: string | null
+      workItemId: null
+      status: 'open'
+      waiting: number
     }
   | {
       /** §18.2: work in a `person` stage with no question or card of its own to answer. */
@@ -606,6 +618,8 @@ const INTEGRATION_BLOCK =
 /** A commit id, the only thing a stored ref may be before it reaches `git`. */
 const SHA = /^[0-9a-f]{7,64}$/
 const FAILURE_CAP = 500
+/** Stages with a Needs you row of their own: a question or card, or the repository's agreement. */
+const OWN_ROW_STAGES = new Set(['person/decision', 'person/agreement'])
 /** Headroom for the envelope fields around a page's items. */
 const ENVELOPE_BYTES = 1024
 
@@ -815,7 +829,8 @@ class Inspector {
 
   /**
    * §18.2: open work in a `person` stage comes first in Needs you. A decision stage has its question
-   * or card there already, and `held` is not a person stage: the owner chose it, and Work shows it.
+   * or card there already, an agreement has its repository's one row, and `held` is not a person
+   * stage: the owner chose it, and Work shows it.
    */
   #workNeedRows(decisions: NeedItem[]): NeedRow[] {
     const rows = this.#collect('work_item', {})
@@ -825,7 +840,7 @@ class Inspector {
     )
     return views.flatMap((view, index): NeedRow[] => {
       const { key, label } = view.stage
-      if (!key.startsWith('person/') || key === 'person/decision') return []
+      if (!key.startsWith('person/') || OWN_ROW_STAGES.has(key)) return []
       const item: NeedItem = {
         kind: 'work',
         id: view.id,
@@ -845,12 +860,34 @@ class Inspector {
     })
   }
 
+  /** One row per repository with work only the owner's agreement holds back. */
+  #agreementRows(): NeedRow[] {
+    return this.#collect('engine', { idPrefix: REPO_PREFIX }).flatMap(({ rowid, doc }) => {
+      const repoId = String(doc.id)
+      const waiting = waitingForAgreement(this.#store, repoId)
+      if (waiting === 0) return []
+      const id = shortText(`agreement_${repoId}`)
+      const item: NeedItem = {
+        kind: 'agreement',
+        id,
+        repoId: shortText(repoId),
+        repoLabel: this.repoLabel(repoId),
+        workItemId: null,
+        status: 'open',
+        waiting,
+      }
+      return [{ rowid, item, settledAt: '' }]
+    })
+  }
+
   /** Everything that needs a person now, all repositories, oldest first. */
   #openRows(): NeedRow[] {
     const decisions = this.#decisionRows()
-    return [...decisions, ...this.#workNeedRows(decisions.map((row) => row.item))].sort(
-      (a, b) => a.rowid - b.rowid,
-    )
+    return [
+      ...decisions,
+      ...this.#agreementRows(),
+      ...this.#workNeedRows(decisions.map((row) => row.item)),
+    ].sort((a, b) => a.rowid - b.rowid)
   }
 
   /** What a stage counts as a decision. A work row is not one: its stage is what made it a row. */
@@ -1072,6 +1109,11 @@ class Inspector {
               nextAction: 'Answer the question',
             }
           : { reason: 'A confirmation is waiting for you', nextAction: 'Approve or deny the card' }
+      case 'person/agreement':
+        return {
+          reason: 'Nothing runs in this repository until you agree',
+          nextAction: 'Read and answer the agreement in Settings, Repositories',
+        }
       case 'held': {
         const hold = obj(doc.hold)
         const why = str(hold?.reason)
@@ -1156,6 +1198,7 @@ class Inspector {
                 attempts: attempts.get(id) ?? [],
                 merged: delivery === 'merged',
                 deliveryReady: delivery === 'pr-ready',
+                hostRunUnagreed: awaitsAgreement(this.#store, doc),
               }),
             )
       const repoId = repoIdOf(doc)
@@ -1455,6 +1498,8 @@ class Inspector {
         row,
       )
     }
+    const agreeing = open.find((row) => row.stage.key === 'person/agreement')
+    if (agreeing !== undefined) return quiet('waiting_you', 'Waiting for your agreement', agreeing)
     const active = this.#reads
       .docsByField(
         'attempt',

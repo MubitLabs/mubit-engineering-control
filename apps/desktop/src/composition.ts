@@ -36,6 +36,7 @@ import type { EffectHandler, HealthClaim, Json } from '@mec/store'
 import { DirLock, HealthBoardImpl, InspectionReads, MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import { FakeEngine } from '@mec/testkit'
 import Database from 'better-sqlite3'
+import { ApprovalKey, openLink } from './approval'
 import { AttemptLauncher, realRunnerOn } from './attempt-launch'
 import { backupStore } from './backup-cli'
 import { type Cleaner, StoreFacts } from './core-facts'
@@ -47,6 +48,7 @@ import {
   defaultProbeRun,
   dropResume,
   enqueueProbes,
+  enqueueRecheck,
   isRecheckRow,
   isResumeRow,
   markResumed,
@@ -171,6 +173,10 @@ export async function startServer(opts: {
   closeBoundMs?: number
   /** A test seam: the probe's command runner. Given one, slots are probed with no runner flag too. */
   probeRun?: ProbeRun
+  /** The key a deliberate starter chose (`--approval-key-fd`). Otherwise this process mints one. */
+  approvalKey?: string
+  /** A test seam: what opens the approval link. */
+  openLink?: (url: string) => void
 }): Promise<RunningServer> {
   // Fail fast: a build without its prompts never starts, before it takes the lock (§16).
   defaultsRoot()
@@ -234,6 +240,7 @@ export async function startServer(opts: {
         at,
       })
     },
+    withheld: (doc) => enqueueRecheck(store.effects, doc),
   })
 
   // §20, O9: the boot order. Nothing runs and nothing is dispatched until all of this is done.
@@ -473,6 +480,12 @@ export async function startServer(opts: {
       delivery: delivery.hooks,
       retryWork: (workItemId: string) => delivery.retry(workItemId),
     }),
+    wakeLaunches: () => store.effects.wakeDeferred(['launch']),
+    approval: {
+      key: new ApprovalKey(opts.approvalKey),
+      // `listening`, never a request's Host, which a caller chooses.
+      link: (code) => (opts.openLink ?? openLink)(`http://127.0.0.1:${listening}/#pair=${code}`),
+    },
     parked: {
       switchSlot: (input) => requestSwitch(switchDeps, input),
       resumeNow: (workItemId) => resumeParked(parkDeps, { workItemId, explicit: true }),

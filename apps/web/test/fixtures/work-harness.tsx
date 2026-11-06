@@ -375,6 +375,7 @@ function HarnessApp() {
             setOutcomes((all) => ({ ...all, [id]: DENIED }))
           }}
           onInspect={setSelectedCard}
+          onAgreement={() => {}}
           onRetryEvidence={() => {}}
           onOpenWork={() => {}}
           onRetry={retry}

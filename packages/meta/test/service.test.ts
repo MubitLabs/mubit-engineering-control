@@ -46,7 +46,14 @@ const REPO = 'repo_main'
 
 const rig = (decision: MetaDecision, store = new MemoryRepositories()) => {
   store.atomic(() => {
-    store.engines.save({ id: REPO, url: 'https://example.test/main', bootstrap: [], checks: [], trust: true })
+    store.engines.save({
+      id: REPO,
+      url: 'https://example.test/main',
+      bootstrap: [],
+      checks: [],
+      trust: true,
+      hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
+    })
   })
   const service = new MetaAgentService({
     store,

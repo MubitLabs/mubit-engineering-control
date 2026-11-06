@@ -11,6 +11,7 @@ import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseHealthSnapshot } from '../src/health'
 import { buildServer, type ServerDeps } from '../src/server'
+import { ownerApproval, ownerHeaders } from './approval-rig'
 
 const AT = '2026-11-03T12:00:00.000Z'
 
@@ -66,6 +67,7 @@ function makeServer(metaFor?: (store: Store) => ServerDeps['metaAgent']): {
     health,
     policyText: '{"preAuthorised":{}}',
     now: () => new Date(AT),
+    approval: ownerApproval(),
     ...(metaFor !== undefined && { metaAgent: metaFor(store) }),
   }
   return { store, app: buildServer(deps) }
@@ -661,6 +663,7 @@ describe('buildServer', () => {
     const resolved = await server.inject({
       method: 'POST',
       url: '/api/inbox/conf_install_1/resolve',
+      headers: ownerHeaders,
       payload: { answer: 'approve' },
     })
     expect(resolved.statusCode).toBe(200)
@@ -670,6 +673,7 @@ describe('buildServer', () => {
     const again = await server.inject({
       method: 'POST',
       url: '/api/inbox/conf_install_1/resolve',
+      headers: ownerHeaders,
       payload: { answer: 'deny' },
     })
     expect(again.statusCode).toBe(409)
@@ -685,6 +689,7 @@ describe('buildServer', () => {
     const approve = await server.inject({
       method: 'POST',
       url: '/api/inbox/conf_empty/resolve',
+      headers: ownerHeaders,
       payload: { answer: 'approve' },
     })
     expect(approve.statusCode).toBe(422)
@@ -694,6 +699,7 @@ describe('buildServer', () => {
     const deny = await server.inject({
       method: 'POST',
       url: '/api/inbox/conf_empty/resolve',
+      headers: ownerHeaders,
       payload: { answer: 'deny' },
     })
     expect(deny.statusCode).toBe(200)
@@ -706,12 +712,14 @@ describe('buildServer', () => {
     const bad = await server.inject({
       method: 'POST',
       url: '/api/inbox/conf_x/resolve',
+      headers: ownerHeaders,
       payload: { answer: 'maybe' },
     })
     expect(bad.statusCode).toBe(400)
     const missing = await server.inject({
       method: 'POST',
       url: '/api/inbox/conf_missing/resolve',
+      headers: ownerHeaders,
       payload: { answer: 'approve' },
     })
     expect(missing.statusCode).toBe(404)
@@ -815,6 +823,7 @@ describe('inbox resolve binds to the card input (audit #5)', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/inbox/conf_bound_1/resolve',
+      headers: ownerHeaders,
       payload: { answer: 'approve' },
     })
     expect(res.statusCode).toBe(200)

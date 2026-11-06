@@ -2,22 +2,22 @@
   {
     "name": "needs: work rows left out of the list",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "    return [...decisions, ...this.#workNeedRows(decisions.map((row) => row.item))].sort(",
-    "replace": "    return [...decisions].sort(",
+    "find": "      ...this.#workNeedRows(decisions.map((row) => row.item)),\n",
+    "replace": "",
     "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
   },
   {
     "name": "needs: a decision stage is listed twice",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "      if (!key.startsWith('person/') || key === 'person/decision') return []",
-    "replace": "      if (!key.startsWith('person/')) return []",
+    "find": "const OWN_ROW_STAGES = new Set(['person/decision', 'person/agreement'])",
+    "replace": "const OWN_ROW_STAGES = new Set(['person/agreement'])",
     "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
   },
   {
     "name": "needs: held work is listed",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "      if (!key.startsWith('person/') || key === 'person/decision') return []",
-    "replace": "      if (view.stage.waitingOn !== 'person' || key === 'person/decision') return []",
+    "find": "      if (!key.startsWith('person/') || OWN_ROW_STAGES.has(key)) return []",
+    "replace": "      if (view.stage.waitingOn !== 'person' || OWN_ROW_STAGES.has(key)) return []",
     "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
   },
   {

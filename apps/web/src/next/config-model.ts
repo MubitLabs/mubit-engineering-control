@@ -137,6 +137,10 @@ export interface RepositoryView {
   checks: CheckProfile[]
   trust: boolean
   revision: string
+  /** When the owner agreed to runs on this machine; null means nothing runs here. */
+  hostRunAgreedAt: string | null
+  /** Open work items only that agreement holds back. */
+  waiting: number
 }
 export interface CheckProfile {
   name: string

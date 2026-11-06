@@ -47,6 +47,7 @@ import {
   settleSpecialistCard,
   stableMessageId,
   stopWorkItem,
+  waitingForAgreement,
 } from '@mec/meta'
 import type { ConfirmationRecord } from '@mec/policy'
 import { ALWAYS_CONFIRM, loadPolicy, resolveConfirmation } from '@mec/policy'
@@ -65,6 +66,7 @@ import {
 } from '@mec/slots'
 import type { InspectionReads } from '@mec/store'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
+import { APPROVAL_HEADER, ApprovalKey } from './approval'
 import { type BackupControl, liveSlot, registerConfigRoutes, repositoryRevision } from './config-routes'
 import type { RetryOutcome } from './delivery'
 import { buildDoctorReport } from './doctor'
@@ -168,6 +170,13 @@ export type ServerDeps = {
     stopWork?(id: string): StopOutcome
   }
   /** §20 pause: the composition root owns the queue timer; absent, the routes answer 404. */
+  /**
+   * The owner's key, and how a code reaches the browser. Absent, a fresh key nobody holds: such a
+   * server resolves nothing, so a build that forgets this fails closed.
+   */
+  approval?: { key: ApprovalKey; link: (code: string) => void }
+  /** A waiting launch row is due now, not at its next 30 s look. Inside the caller's transaction. */
+  wakeLaunches?: () => void
   /** §5.10: what the switch and resume routes reach; absent, they answer 404. */
   parked?: {
     switchSlot(input: { workItemId: string; toSlot: string; reason: string }): Promise<SwitchAnswer>
@@ -567,6 +576,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   //     *local* page (another project's dev server) from posting as the user.
   // EventSource streams are GETs: leg 1 covers them, leg 2 never applies.
   const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
+  // A route that acts on the owner's word needs the key, so a local process that is not the owner's
+  // browser cannot say it. By the route's own pattern, so a new resolve route is covered unasked.
+  const OWNER_WORD = /(\/resolve|\/host-run\/agree)$/
+  const approval = deps.approval ?? { key: new ApprovalKey(), link: () => {} }
   // §12.1, decision #10: a request that names another repository is the client's error.
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof RepoAdmissionError) {
@@ -600,7 +613,25 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     if (browserShaped && mutating && request.headers['x-mec-client'] !== '1') {
       return reply.code(403).send({ error: 'missing client header' })
     }
+    const ownerWord = request.method === 'POST' && OWNER_WORD.test(request.routeOptions.url ?? '')
+    if (ownerWord && !approval.key.accepts(request.headers[APPROVAL_HEADER])) {
+      return reply.code(403).send({ error: 'approval_required' })
+    }
     return undefined
+  })
+
+  // Anyone may ask for a link: the code goes to the default browser and never into this answer.
+  app.post('/api/approval/link', async () => {
+    const code = approval.key.issueCode(Date.now())
+    if (code !== undefined) approval.link(code)
+    return { opened: code !== undefined }
+  })
+
+  // No GET serves the key, and nothing serves it without a live code.
+  app.post('/api/approval/redeem', async (request, reply) => {
+    const key = approval.key.redeem((request.body as { code?: unknown } | null)?.code, Date.now())
+    if (key === undefined) return reply.code(403).send({ error: 'approval_link_invalid' })
+    return { key }
   })
 
   app.get('/healthz', async () => ({ ok: true }))
@@ -1543,6 +1574,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         checks: Array.isArray(doc.checks) ? doc.checks : [],
         trust: doc.trust === true,
         revision: repositoryRevision(doc),
+        hostRunAgreedAt: typeof doc.hostRunAgreedAt === 'string' ? doc.hostRunAgreedAt : null,
+        waiting: waitingForAgreement(store, String(doc.id)),
       })),
   )
 
@@ -2368,6 +2401,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     probeCmd,
     policyText: deps.policyText,
     ...(deps.backups !== undefined && { backups: deps.backups }),
+    ...(deps.wakeLaunches !== undefined && { wakeLaunches: deps.wakeLaunches }),
     keyShape: (keystoreId) => {
       const provider = Object.values(API_KEY_PROVIDERS).find((entry) => entry.keystoreId === keystoreId)
       return provider?.pattern === undefined

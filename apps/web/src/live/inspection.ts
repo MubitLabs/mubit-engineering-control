@@ -126,6 +126,13 @@ function failedOutcome(error: unknown): ApprovalOutcome {
       toast: 'Someone answered this card first. Yours was not used.',
     }
   }
+  if (error instanceof HttpError && error.reason === 'approval_required') {
+    return {
+      closes: false,
+      note: 'Not answered',
+      toast: 'This browser has no approval key, so nothing was answered. Link it, then answer again.',
+    }
+  }
   const why = error instanceof HttpError && error.reason !== undefined ? ` (${error.reason})` : ''
   return {
     closes: false,

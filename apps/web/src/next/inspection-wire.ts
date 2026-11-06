@@ -224,7 +224,18 @@ export type WorkNeedItem = {
   readOnly: boolean
 }
 
-export type NeedItem = QuestionItem | CardItem | WorkNeedItem
+/** A repository whose work waits for the owner: one row, however many items it holds back. */
+export type AgreementItem = {
+  kind: 'agreement'
+  id: string
+  repoId: string | null
+  repoLabel: string | null
+  workItemId: string | null
+  status: 'open'
+  waiting: number
+}
+
+export type NeedItem = QuestionItem | CardItem | WorkNeedItem | AgreementItem
 
 /** GET /api/inspect/snapshot: one consistent read of the counts and the event cursors. */
 export type Snapshot = {

@@ -357,6 +357,8 @@ export function decodeRepositories(raw: unknown): RepositoryView[] {
       }),
       trust: repo.trust === true,
       revision: str(path, repo.revision, 'repository.revision'),
+      hostRunAgreedAt: typeof repo.hostRunAgreedAt === 'string' ? repo.hostRunAgreedAt : null,
+      waiting: typeof repo.waiting === 'number' ? repo.waiting : 0,
     }
   })
 }

@@ -34,6 +34,7 @@ const rig = (brain: MetaBrain, store = new MemoryRepositories()) => {
         bootstrap: [],
         checks: [],
         trust: true,
+        hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
       })
     })
   }

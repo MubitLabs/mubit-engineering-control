@@ -50,7 +50,15 @@ import {
   worktreeAdminDir,
 } from '@mec/git'
 import { issueToken } from '@mec/mec-tools'
-import { type Continuation, integrationDocId, type LaunchAuthority, mandateOf, repoFields } from '@mec/meta'
+import {
+  type Continuation,
+  HOST_RUN_UNAGREED,
+  hostRunAgreed,
+  integrationDocId,
+  type LaunchAuthority,
+  mandateOf,
+  repoFields,
+} from '@mec/meta'
 import { loadModelsTable, PromptStore, userModelsPath } from '@mec/prompts'
 import {
   type AttemptFacts,
@@ -363,11 +371,21 @@ export class AttemptLauncher {
           onCheckStart: (pid) => this.#markProcess(fields.attemptId, 'check_process', pid),
         },
         entry.abort.signal,
-        () => entry.reason,
+        () => entry.reason ?? this.#withheld(work),
       )
     } finally {
       this.#rechecks.delete(fields.attemptId)
     }
+    // This row is the one that waits: the queue drains a same-payload enqueue made during its run.
+    const after = this.#deps.store.attempts.get(fields.attemptId)
+    if (after?.state === 'work_complete' && after.checks_stopped === HOST_RUN_UNAGREED) {
+      throw new Later(HOST_RUN_UNAGREED)
+    }
+  }
+
+  /** The engine was allowed, and the owner has since withdrawn: its repo's commands wait. */
+  #withheld(work: StoreDoc): StopReason | undefined {
+    return hostRunAgreed(this.#deps.store, String(work.repoId)) ? undefined : HOST_RUN_UNAGREED
   }
 
   /** Stored as soon as the group exists: a boot signals only what this proves is ours (§8.1). */
@@ -460,6 +478,13 @@ export class AttemptLauncher {
     const bootstrap = Array.isArray(repo.bootstrap) ? repo.bootstrap.map(String) : []
     const beforeBootstrap = await dirtyFiles(worktree)
     for (const [index, command] of bootstrap.entries()) {
+      // The steps so far can take minutes, and a withdrawal stops anything not yet begun.
+      const gate = this.#deps.gate(payload)
+      if (gate.verdict === 'defer') throw new Later(gate.reason)
+      if (gate.verdict === 'drop') {
+        this.#deps.drop(payload, gate)
+        return
+      }
       const outcome = await runCheck(repoCommand(`bootstrap_${index + 1}`, command))
       if (outcome.status !== 'passed') {
         throw refuse(`bootstrap_failed: ${command}: ${outcome.logTail.slice(-400)}`)
@@ -602,6 +627,7 @@ export class AttemptLauncher {
       // the admin directory after the path, and a continuation's path is not this attempt's.
       gitAdmin: join(realpathSync(gitDir), 'worktrees', basename(worktree)),
       onCheckStart: (pid) => this.#markProcess(attemptId, 'check_process', pid),
+      withheld: () => this.#withheld(work),
       ...(session !== undefined && { resume: { session_id: session } }),
     })
     this.#stderr.set(attemptId, (chunk) => {

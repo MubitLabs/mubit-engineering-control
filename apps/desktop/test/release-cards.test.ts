@@ -23,6 +23,7 @@ import {
   resolvePrCreate,
 } from '../src/release'
 import { buildServer } from '../src/server'
+import { ownerApproval, ownerHeaders } from './approval-rig'
 
 const REPO = 'owner/repo'
 const BRANCH = 'mec/wi1/integration'
@@ -151,6 +152,7 @@ async function harness(run: GhRun, gitExec?: GitExec): Promise<Harness> {
     policyText: '{"preAuthorised":{}}',
     now: () => new Date(),
     ghRun: run,
+    approval: ownerApproval(),
     ...(gitExec !== undefined && { gitExec }),
   })
   await app.listen({ host: '127.0.0.1', port: 0 })
@@ -159,7 +161,7 @@ async function harness(run: GhRun, gitExec?: GitExec): Promise<Harness> {
   globalThis.fetch = ((input: string | URL, init?: RequestInit) =>
     realFetch(`${origin}${String(input)}`, {
       ...init,
-      headers: { ...(init?.headers as Record<string, string>), origin },
+      headers: { ...(init?.headers as Record<string, string>), origin, ...ownerHeaders },
     })) as typeof fetch
   const web = (await import(/* @vite-ignore */ WEB_API)) as WebApi
   const send = async (url: string, init?: RequestInit) => {

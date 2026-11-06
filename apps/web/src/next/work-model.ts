@@ -4,6 +4,7 @@ import { timeLabel } from './format'
 import type { ArtifactLinkView, Fact, InspectorChecks, InspectorScope } from './Inspector'
 import type {
   ActivityItem,
+  AgreementItem,
   ArtifactPage,
   AttemptView,
   CardEvidence,
@@ -906,6 +907,7 @@ function tasksWaiting(row: WorkRow | undefined): number {
 }
 
 function needAge(item: NeedItem): string {
+  if (item.kind === 'agreement') return ''
   if (item.kind === 'question') return item.askedAt ?? ''
   return item.kind === 'work' ? item.since : item.expiresAt
 }
@@ -1108,10 +1110,27 @@ function workNeedProps(item: WorkNeedItem): WorkNeedView {
   }
 }
 
+export interface AgreementView {
+  id: string
+  title: string
+  body: string
+}
+
+/** Nothing to approve here: the words of the agreement belong to Settings, with the owner reading them. */
+function agreementProps(item: AgreementItem): AgreementView {
+  const items = item.waiting === 1 ? '1 item' : `${item.waiting} items`
+  return {
+    id: item.id,
+    title: `Waiting for your agreement: ${repositoryOf(item)}`,
+    body: `${items} cannot start until you agree that this repository may run on this machine.`,
+  }
+}
+
 export type NeedCard =
   | { kind: 'question'; view: QuestionView }
   | { kind: 'card'; view: ApprovalView }
   | { kind: 'work'; view: WorkNeedView }
+  | { kind: 'agreement'; view: AgreementView }
 
 /** A question is one record wherever it shows (§12.6, §18.2): both places read this same view. */
 export function needCard(
@@ -1121,6 +1140,7 @@ export function needCard(
   answerOutcome: (id: string) => AnswerOutcome | null,
 ): NeedCard {
   if (item.kind === 'work') return { kind: 'work', view: workNeedProps(item) }
+  if (item.kind === 'agreement') return { kind: 'agreement', view: agreementProps(item) }
   return item.kind === 'question'
     ? { kind: 'question', view: questionProps(item, answerOutcome(item.id)) }
     : { kind: 'card', view: approvalProps(item, evidence(item.id), cardOutcome(item.id)) }

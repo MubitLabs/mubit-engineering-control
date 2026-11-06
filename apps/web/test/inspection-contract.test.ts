@@ -9,7 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // SqliteStore, because InspectionReads needs SQL and MemoryRepositories has none.
 import { fakeBrain, MetaAgentService, type MetaBrain } from '../../../packages/meta/src/index'
 import { InspectionReads, MIGRATIONS_v1, migrate, SqliteStore } from '../../../packages/store/src/index'
+import { APPROVAL_HEADER, ApprovalKey } from '../../desktop/src/approval'
 import { buildServer } from '../../desktop/src/server'
+
 import { AlreadyHandledError, HttpError } from '../src/api'
 import { inspectApi } from '../src/api-inspect'
 import { decodeChatLines } from '../src/inspection-decode'
@@ -33,6 +35,7 @@ const originalFetch = globalThis.fetch
 let root: string
 let db: { close(): void }
 let store: SqliteStore
+const OWNER_KEY = 'an-owner-key-'.padEnd(64, '0')
 let app: ReturnType<typeof buildServer>
 let meta: MetaAgentService
 /** Replaces the planner for a test; the model's the only fake part, every tool call is real. */
@@ -85,12 +88,13 @@ beforeEach(() => {
     webDist,
     inspection: new InspectionReads(db as never),
     metaAgent: meta,
+    approval: { key: new ApprovalKey(OWNER_KEY), link: () => {} },
   })
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const res = await app.inject({
       method: (init?.method ?? 'GET') as 'GET',
       url: String(input),
-      headers: (init?.headers ?? {}) as Record<string, string>,
+      headers: { ...(init?.headers as Record<string, string>), [APPROVAL_HEADER]: OWNER_KEY },
       ...(init?.body === undefined ? {} : { payload: String(init.body) }),
     })
     return new Response(res.body, { status: res.statusCode, headers: res.headers as HeadersInit })
@@ -198,7 +202,7 @@ describe('the fixtures’ shape against the real server', () => {
     seedQuestion('q1', id)
     seedCard('card_1', { repoId: 'repo_a' })
     const page = await inspectApi.needs(null)
-    expect(page.items.map((item) => item.kind).sort()).toEqual(['card', 'question'])
+    expect(page.items.map((item) => item.kind).sort()).toEqual(['agreement', 'card', 'question'])
     const card = page.items.find((item) => item.kind === 'card')
     const question = page.items.find((item) => item.kind === 'question')
     expect(Object.keys(card as object).sort()).toEqual(Object.keys(fixtureNeeds.pending).sort())

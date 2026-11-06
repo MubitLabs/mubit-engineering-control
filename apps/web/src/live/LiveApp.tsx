@@ -56,6 +56,7 @@ import {
   workRowView,
 } from '../next/work-model'
 import { repositoryName } from '../repo-target'
+import { ApprovalLink } from './ApprovalLink'
 import { createConfigStore } from './config-store'
 import { createDrafts, type Intent, resolveIntent } from './drafts'
 import { createInspection, liveInspectionClient } from './inspection'
@@ -598,6 +599,8 @@ export function LiveApp() {
           }}
           onRetryEvidence={(id) => void inspection.readEvidence(id)}
           onOpenWork={showWork}
+          onAgreement={() => navigate('settings')}
+          approvalNotice={<ApprovalLink />}
           onRetry={retryRead}
           partialNote={needs.partial ? NEEDS_CUT : null}
         />

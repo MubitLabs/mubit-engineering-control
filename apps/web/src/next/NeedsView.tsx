@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 import { PageHeader } from './Conversation'
 import { Approval, Question } from './Decision'
 import { GlossaryButton } from './GlossarySheet'
@@ -23,6 +23,7 @@ interface NeedHandlers {
   onRetryEvidence: (id: string) => void
   /** Blocked work has nothing to answer here: its way forward is the delivery itself. */
   onOpenWork: (workItemId: string) => void
+  onAgreement: () => void
 }
 
 /** The same frame on Needs you and in the conversation: one record, settled once. */
@@ -139,6 +140,16 @@ function Card({
   claimFocus: boolean
 }) {
   if (card.kind === 'work') return <WorkNeed view={card.view} onOpen={handlers.onOpenWork} />
+  if (card.kind === 'agreement') {
+    return (
+      <StateNotice
+        kind="blocked"
+        title={card.view.title}
+        body={card.view.body}
+        action={{ label: 'Open the agreement', onClick: handlers.onAgreement }}
+      />
+    )
+  }
   return card.kind === 'question' ? (
     <QuestionCard view={card.view} onAnswer={handlers.onAnswer} claimFocus={claimFocus} />
   ) : (
@@ -156,10 +167,12 @@ export interface NeedsViewProps extends NeedHandlers {
   onRetry: () => void
   /** Set when the list stops short of what the server holds, so its count is unknown. */
   partialNote?: string | null
+  /** What this tab lacks to answer a card. */
+  approvalNotice?: ReactNode
 }
 
 export function NeedsView(props: NeedsViewProps) {
-  const { surface, waiting, settled, onRetry, partialNote: _partialNote, ...rest } = props
+  const { surface, waiting, settled, onRetry, partialNote: _partialNote, approvalNotice, ...rest } = props
   /** The last card acted on. Moving under Settled remounts it, so it asks for focus back. */
   const [acted, setActed] = useState<string | null>(null)
   const handlers: NeedHandlers = {
@@ -184,6 +197,7 @@ export function NeedsView(props: NeedsViewProps) {
       {/* A healthy empty state takes no space: only a failure or a list is worth saying. */}
       {surface.state !== 'empty' && <ReadNotice surface={surface} noun="what needs you" onRetry={onRetry} />}
       {props.partialNote && <p className="freshness">{props.partialNote}</p>}
+      {waiting.length > 0 && approvalNotice}
       {waiting.map((card) => (
         <Card key={card.view.id} card={card} handlers={handlers} claimFocus={card.view.id === acted} />
       ))}

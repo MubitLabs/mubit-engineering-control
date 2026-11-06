@@ -806,6 +806,37 @@ describe('a group that outlived its failed attempt', { timeout: 60_000 }, () => 
     expect(attemptOf(rig)?.held_groups).toBeUndefined()
   })
 
+  it('a queued attempt no owner agreed to does not keep a parked one out of its slot', () => {
+    const rig = scratch(STEPS)
+    seedStore(rig, {
+      noRow: true,
+      attempt: { state: 'provider_down', parked: { state: 'provider_down', at: '2026-11-05T10:00:00.000Z' } },
+      slot: { concurrency: 1, last_probe_at: '2026-11-05T10:30:00.000Z' },
+    })
+    peek(rig, (store) => {
+      store.atomic(() => {
+        store.engines.save({ id: 'repo_b', url: 'nowhere', bootstrap: [], checks: [], trust: false })
+        store.workItems.save({ id: 'wi_other', state: 'executing', repoId: 'repo_b' })
+        store.attempts.save({
+          id: 'att_0',
+          taskId: 'task_0',
+          workItemId: 'wi_other',
+          slotId: 'slot_a',
+          state: 'queued',
+        })
+      })
+    })
+    const resumed = peek(rig, (store) =>
+      resumeParked({
+        store,
+        effects: store.effects,
+        policyHash: 'any',
+        now: () => '2026-11-05T11:00:00.000Z',
+      }),
+    )
+    expect(resumed).toEqual(['att_1'])
+  })
+
   it('a parked attempt does not resume into a slot a held group fills', () => {
     const rig = scratch(STEPS)
     seedStore(rig, {

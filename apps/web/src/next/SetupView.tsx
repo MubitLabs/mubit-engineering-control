@@ -155,6 +155,7 @@ export function SetupView({
   readiness,
   connectionForm,
   repositoryForm,
+  agreements,
   metaBusy,
   metaError,
   onChooseMeta,
@@ -166,6 +167,8 @@ export function SetupView({
   readiness: Readiness
   connectionForm: ReactNode
   repositoryForm: ReactNode
+  /** What a new repository needs of the owner, under the steps: its own step is done by then. */
+  agreements?: ReactNode
   metaBusy: boolean
   metaError: string | null
   onChooseMeta: (slotId: string) => void
@@ -240,6 +243,7 @@ export function SetupView({
         })}
       </ol>
 
+      {agreements}
       {ended ? (
         <section className="config-block" aria-label="Setup complete">
           <h2>Ready</h2>

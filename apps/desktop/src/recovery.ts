@@ -27,14 +27,19 @@ import {
   transition,
 } from '@mec/domain'
 import {
+  cannotStartYet,
   enqueueWake,
+  HOST_RUN_UNAGREED,
   holdsGroup,
+  hostRunAgreed,
+  isBlocked,
   isHeld,
   isTerminal,
   type LaunchAuthority,
   mandateOf,
   noVerdict,
   refuseLaunch,
+  repoOf,
   revalidateWork,
 } from '@mec/meta'
 import {
@@ -248,18 +253,25 @@ async function reconcileQueued(deps: ProcessDeps, doc: StoreDoc): Promise<void> 
   deps.effects.enqueue('launch', `${String(doc.id)}:${generation}`, launchPayload(doc, generation, {}))
 }
 
-/** Checks a crash or a shutdown cut short run again on the same head. A stop's verdict stands. */
-async function reconcileChecks(deps: ProcessDeps, doc: StoreDoc): Promise<void> {
-  const { store, effects } = deps
-  if (doc.checks_note !== undefined && doc.checks_stopped !== 'server_closing') return
-  if (!(await clearGroup(deps, doc, doc.check_process))) return
-  if (!mayRun(store.workItems.get(String(doc.workItemId)))) return
+/** What ended a head's checks with no verdict, and leaves them to run again. A stop's stands. */
+const CHECKS_RUN_AGAIN: readonly unknown[] = ['server_closing', HOST_RUN_UNAGREED]
+
+/** One second look at a head, as its own row; the resume gate decides when. */
+export function enqueueRecheck(effects: Effects, doc: StoreDoc): void {
   const generation = Number(doc.generation ?? 1)
   effects.enqueue(
     'launch',
     `${String(doc.id)}:${generation}:recheck`,
     launchPayload(doc, generation, { recheck: true }),
   )
+}
+
+/** Checks a crash or a shutdown cut short run again on the same head. */
+async function reconcileChecks(deps: ProcessDeps, doc: StoreDoc): Promise<void> {
+  const { store, effects } = deps
+  if (doc.checks_note !== undefined && !CHECKS_RUN_AGAIN.includes(doc.checks_stopped)) return
+  if (!(await clearGroup(deps, doc, doc.check_process))) return
+  if (mayRun(store.workItems.get(String(doc.workItemId)))) enqueueRecheck(effects, doc)
 }
 
 /**
@@ -489,17 +501,24 @@ export function resumeAuthority(
   const fits =
     fields.recheck === true
       ? attempt?.state === 'work_complete' &&
-        !(noVerdict(attempt) && attempt.checks_stopped !== 'server_closing')
+        !(noVerdict(attempt) && !CHECKS_RUN_AGAIN.includes(attempt.checks_stopped))
       : attempt?.resuming === true &&
         attempt.switched_to === undefined &&
         [...PARKED, 'interrupted'].includes(String(attempt.state))
   if (!current || !fits) return { verdict: 'drop', reason: 'attempt_not_queued' }
-  const mandate = revalidateWork(work, now, policyHash) as MandateCheck
-  const verdict = resumeVerdict({ held: isHeld(work), mandate })
+  const verdict = resumeVerdict(resumeFacts(store, work, now, policyHash))
   return verdict.verdict === 'run' && attempt?.reconcile_refused !== undefined
     ? { verdict: 'defer', reason: 'reconcile_refused' }
     : verdict
 }
+
+/** What every resume reads of its work, so the row and a pass cannot read it differently. */
+const resumeFacts = (store: Store, work: StoreDoc, now: string, policyHash: string) => ({
+  held: isHeld(work),
+  mandate: revalidateWork(work, now, policyHash) as MandateCheck,
+  blocked: isBlocked(work),
+  agreed: hostRunAgreed(store, repoOf(work)),
+})
 
 const withoutResuming = (doc: StoreDoc): StoreDoc => {
   const { resuming: _resuming, ...rest } = doc
@@ -594,7 +613,9 @@ const classifyPark = (state: ParkedState, resetKnown: boolean): boolean =>
 function inUse(store: Store, slotId: string): number {
   return store.attempts.list().filter((doc) => {
     if (doc.slotId !== slotId) return false
-    if (doc.resuming === true || holdsGroup(doc)) return true
+    if (holdsGroup(doc)) return true
+    if (cannotStartYet(store, doc)) return false
+    if (doc.resuming === true) return true
     return (
       ['queued', 'running', 'stalled'].includes(String(doc.state)) ||
       (doc.state === 'work_complete' && !noVerdict(doc))
@@ -630,11 +651,7 @@ export function resumeParked(deps: ParkDeps, only?: { workItemId: string; explic
             now: at,
           })
     if (!ready) continue
-    const verdict = resumeVerdict({
-      held: isHeld(work),
-      mandate: revalidateWork(work, at, policyHash) as MandateCheck,
-    })
-    if (verdict.verdict !== 'run') continue
+    if (resumeVerdict(resumeFacts(store, work, at, policyHash)).verdict !== 'run') continue
     const room = typeof slot?.concurrency === 'number' ? slot.concurrency : DEFAULT_CAPS.perSlot
     if (inUse(store, String(doc.slotId)) >= room) continue
     store.atomic(() => enqueueResume(store, effects, doc, RESUME_NOTE, at))

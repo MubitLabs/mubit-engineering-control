@@ -18,8 +18,9 @@ const ONE_REAL_PASS = 'one real pass is the budget (decision #18)'
 const KILL_PASS = process.env.MEC_JOURNEY_KILL === '1'
 
 let rig: Rig
-test.beforeEach(async () => {
+test.beforeEach(async ({ page }) => {
   rig = await startRig(mode)
+  await page.addInitScript((key) => window.sessionStorage.setItem('mec.approval-key', key), rig.approvalKey)
 })
 test.afterEach(async () => {
   await rig.dispose()

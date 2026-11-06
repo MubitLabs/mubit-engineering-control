@@ -198,6 +198,15 @@ export const configApi = {
     return send('/api/repositories', 'POST', { ...input, trusted: false })
   },
 
+  /** The owner's own words on the armed panel; the server takes them from nowhere else. */
+  agreeHostRun(id: string): Promise<unknown> {
+    return send(`/api/repositories/${encodeURIComponent(id)}/host-run/agree`, 'POST', {})
+  },
+
+  withdrawHostRun(id: string): Promise<unknown> {
+    return send(`/api/repositories/${encodeURIComponent(id)}/host-run/withdraw`, 'POST', {})
+  },
+
   editRepository(
     id: string,
     baseRevision: string,

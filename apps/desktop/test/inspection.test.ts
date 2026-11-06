@@ -646,6 +646,15 @@ describe('inspection routes: stage', () => {
   })
 })
 
+/** An agreement row counts as a need, and these tests count other things. */
+const agreeTo = (...repoIds: string[]): void => {
+  store.atomic(() => {
+    for (const id of repoIds) {
+      store.engines.save({ ...store.engines.get(id), id, hostRunAgreedAt: AT })
+    }
+  })
+}
+
 describe('inspection routes: titles, counts, details, search, snapshot', () => {
   it("serves a stored title, else the origin message's first line up to 500, else null", async () => {
     store.atomic(() => {
@@ -804,6 +813,7 @@ describe('inspection routes: titles, counts, details, search, snapshot', () => {
 
   it('snapshot gives repositories, the needs count and cursors read together', async () => {
     const a = await say('repo_a', 'one')
+    agreeTo('repo_a', 'repo_b')
     const snapshot = (await get('/api/inspect/snapshot')).json()
     expect(snapshot.repositories.map((r: any) => ({ id: r.id, label: r.label }))).toEqual([
       { id: 'repo_a', label: 'acme/alpha' },

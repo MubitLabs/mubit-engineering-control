@@ -137,6 +137,7 @@ function rig(
       bootstrap: over.bootstrap ?? [],
       checks: over.checks ?? [{ name: 'unit', cmd: 'test -f a.txt' }],
       trust: false,
+      hostRunAgreedAt: AT,
     })
     store.messages.save({ id: 'msg_1', text: 'Add the audit log', role: 'user' })
     store.workItems.save({
@@ -353,6 +354,51 @@ describe('integration (§14)', () => {
     await r.passes(2)
     vi.unstubAllEnvs()
     expect(r.integration().combined).toMatchObject({ passed: false })
+  })
+
+  it('nothing merges or runs until the owner agrees, and then it does', async () => {
+    const r = rig()
+    r.accepted('task_a', 'b.txt', 'two\n')
+    const agreed = r.store.engines.get(REPO) as StoreDoc
+    const { hostRunAgreedAt: _agreed, ...unagreed } = agreed
+    r.store.atomic(() => r.store.engines.save(unagreed as StoreDoc))
+    await r.passes(2)
+    expect(r.store.engines.get(integrationDocId(WORK))).toBeUndefined()
+    r.store.atomic(() => r.store.engines.save(agreed))
+    await r.passes(2)
+    expect(r.integration().combined).toMatchObject({ passed: true })
+  })
+
+  it('a withdrawal between two checks runs neither the next one nor a verdict', async () => {
+    const r = rig({
+      checks: [
+        { name: 'first', cmd: 'sleep 1' },
+        { name: 'second', cmd: 'test -f a.txt' },
+      ],
+    })
+    r.accepted('task_a', 'b.txt', 'two\n')
+    const agreed = r.store.engines.get(REPO) as StoreDoc
+    const { hostRunAgreedAt: _agreed, ...unagreed } = agreed
+    const pass = r.passes(1)
+    await new Promise((done) => setTimeout(done, 400))
+    r.store.atomic(() => r.store.engines.save(unagreed as StoreDoc))
+    await pass
+    expect(r.store.engines.get(integrationDocId(WORK))?.combined).toBeUndefined()
+    expect(r.store.workItems.get(WORK)?.state).not.toBe('blocked')
+  })
+
+  it('a withdrawal between two setup commands runs no further one', async () => {
+    const marker = join(mkdtempSync(join(tmpdir(), 'mec-marker-')), 'second')
+    roots.push(dirname(marker))
+    const r = rig({ bootstrap: ['sleep 1', `touch ${marker}`] })
+    r.accepted('task_a', 'b.txt', 'two\n')
+    const { hostRunAgreedAt: _agreed, ...unagreed } = r.store.engines.get(REPO) as StoreDoc
+    const pass = r.passes(1)
+    await new Promise((done) => setTimeout(done, 400))
+    r.store.atomic(() => r.store.engines.save(unagreed as StoreDoc))
+    await pass
+    expect(existsSync(marker)).toBe(false)
+    expect(r.store.engines.get(integrationDocId(WORK))).toBeUndefined()
   })
 
   it('a conflict leaves both sides for a repair task, and nothing else merges meanwhile', async () => {

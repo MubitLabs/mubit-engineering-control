@@ -87,6 +87,7 @@ function seedInto(store: SqliteStore, repo: string, seed: Seed = {}): void {
       bootstrap: seed.bootstrap ?? [],
       checks: seed.checks ?? [],
       trust: false,
+      hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
     })
     store.messages.save({ id: 'msg_1', text: 'please add the thing' })
     store.slots.save({
@@ -219,7 +220,14 @@ function seedSlots(dataDir: string, repo: string, slots: Record<string, unknown>
   migrate(db, MIGRATIONS_v1)
   const store = new SqliteStore(db)
   store.atomic(() => {
-    store.engines.save({ id: 'repo_a', url: repo, bootstrap: [], checks: [], trust: false })
+    store.engines.save({
+      id: 'repo_a',
+      url: repo,
+      bootstrap: [],
+      checks: [],
+      trust: false,
+      hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
+    })
     for (const slot of slots) store.slots.save(slot as never)
   })
   db.close()

@@ -22,6 +22,7 @@ import {
   yieldCheck,
 } from '../src/release'
 import { buildServer, type ServerDeps } from '../src/server'
+import { ownerApproval, ownerHeaders } from './approval-rig'
 
 const AT = '2026-11-03T12:00:00.000Z'
 const NOW = (): Date => new Date(AT)
@@ -90,6 +91,7 @@ function makeServer(run: GhRun): { store: Store; app: ReturnType<typeof buildSer
     policyText: '{"preAuthorised":{}}',
     now: NOW,
     ghRun: run,
+    approval: ownerApproval(),
   }
   const app = buildServer(deps)
   servers.push(app)
@@ -506,6 +508,7 @@ describe('release routes (cards over HTTP, class-checked)', () => {
     const resolved = await app.inject({
       method: 'POST',
       url: `/api/release/pr/${card.confirmationId}/resolve`,
+      headers: ownerHeaders,
       payload: { answer: 'approve' },
     })
     expect(resolved.statusCode).toBe(200)
@@ -519,6 +522,7 @@ describe('release routes (cards over HTTP, class-checked)', () => {
     const replay = await app.inject({
       method: 'POST',
       url: `/api/release/pr/${card.confirmationId}/resolve`,
+      headers: ownerHeaders,
       payload: { answer: 'deny' },
     })
     expect(replay.statusCode).toBe(409)
@@ -538,6 +542,7 @@ describe('release routes (cards over HTTP, class-checked)', () => {
     const wrongDoor = await app.inject({
       method: 'POST',
       url: `/api/release/pr/${confirmationId}/resolve`,
+      headers: ownerHeaders,
       payload: { answer: 'approve' },
     })
     expect(wrongDoor.statusCode).toBe(400)
@@ -559,6 +564,7 @@ describe('release routes (cards over HTTP, class-checked)', () => {
     const resolved = await app.inject({
       method: 'POST',
       url: `/api/release/merge/${confirmationId}/resolve`,
+      headers: ownerHeaders,
       payload: { answer: 'approve' },
     })
     expect(resolved.statusCode).toBe(200)
@@ -578,12 +584,14 @@ describe('release routes (cards over HTTP, class-checked)', () => {
     const badAnswer = await app.inject({
       method: 'POST',
       url: '/api/release/pr/conf_x/resolve',
+      headers: ownerHeaders,
       payload: { answer: 'maybe' },
     })
     expect(badAnswer.statusCode).toBe(400)
     const missing = await app.inject({
       method: 'POST',
       url: '/api/release/pr/conf_missing/resolve',
+      headers: ownerHeaders,
       payload: { answer: 'approve' },
     })
     expect(missing.statusCode).toBe(404)

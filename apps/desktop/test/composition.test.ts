@@ -283,6 +283,7 @@ const seedInterrupted = (store: SqliteStore, n = 1): void => {
       bootstrap: [],
       checks: [],
       trust: true,
+      hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
     })
     store.workItems.save({
       id: `wi_${n}`,

@@ -10,6 +10,9 @@
  * - **Legacy rows** recorded only `{originMessageId}`, so their status derives from the work
  *   state and they skip the policy comparison: they recorded no hash to compare.
  * - **Pause** is one `settings/processing` doc; a restart reads it back.
+ * - **Agreement** is `hostRunAgreedAt` on the repository doc, outside its profile, set only by the
+ *   owner. Absent means not agreed, so a store from before the field starts unagreed with no
+ *   migration. Unagreed work keeps its rows and runs nothing, and holds no slot meanwhile.
  */
 import type { Json, Store, StoreDoc } from '@mec/contracts'
 import type { Mandate, WorkItemState } from '@mec/domain'
@@ -29,6 +32,9 @@ const LEGACY_POLICY_HASH = ''
 
 const PROCESSING_ID = 'settings/processing'
 
+/** The reason a launch, a resume or a task waits on the owner's agreement. */
+export const HOST_RUN_UNAGREED = 'host_run_unagreed'
+
 export type LaunchDropReason =
   | 'work_missing'
   | 'work_terminal'
@@ -44,7 +50,7 @@ export type LaunchFailureReason = string
 /** What the launch gate decides: `defer` keeps the row, `drop` lets it drain unlaunched. */
 export type LaunchAuthority =
   | { verdict: 'run' }
-  | { verdict: 'defer'; reason: 'held' | 'reconcile_refused' }
+  | { verdict: 'defer'; reason: 'held' | 'blocked' | 'reconcile_refused' | typeof HOST_RUN_UNAGREED }
   | { verdict: 'drop'; reason: LaunchDropReason }
 
 export type HoldOutcome = 'held' | 'missing' | 'terminal' | 'read_only'
@@ -76,6 +82,15 @@ export function isHeld(doc: StoreDoc): boolean {
   const hold = doc.hold as { liftedAt?: string } | null | undefined
   return hold !== undefined && hold !== null && hold.liftedAt === undefined
 }
+
+/** Whether the owner agreed that this repository may run on this machine. */
+export function hostRunAgreed(store: Store, repoId: string | undefined): boolean {
+  if (repoId === undefined) return false
+  const at = store.engines.get(repoId)?.hostRunAgreedAt
+  return typeof at === 'string' && at !== ''
+}
+
+export const isBlocked = (doc: StoreDoc): boolean => String(doc.state) === 'blocked'
 
 export function isTerminal(doc: StoreDoc): boolean {
   return WORK_ITEM_TERMINAL.includes(String(doc.state) as WorkItemState)
@@ -128,11 +143,61 @@ export function launchAuthority(
   const authority = revalidateWork(work, now, policyHash)
   if (!authority.ok && authority.reason !== 'policy_changed') return drop(`mandate_${authority.reason}`)
   if (isHeld(work)) return { verdict: 'defer', reason: 'held' }
+  // Neither one outranks a hold, and a policy change waits for them the way it waits for a lift.
+  if (isBlocked(work)) return { verdict: 'defer', reason: 'blocked' }
+  if (!hostRunAgreed(store, repoId)) return { verdict: 'defer', reason: HOST_RUN_UNAGREED }
   if (!authority.ok) return drop('policy_changed')
   // A group a boot could not prove gone may still be running here (§8.1): nothing goes beside it.
   return attempt.reconcile_refused === undefined
     ? { verdict: 'run' }
     : { verdict: 'defer', reason: 'reconcile_refused' }
+}
+
+/**
+ * An attempt with nothing of its own running, on work the gates above will not let start. Queued
+ * for long, it would hold a slot from work that can run, with nothing to say when it lets go. A
+ * group that may still be there keeps its place: that is §8.1's, and a running attempt is real.
+ */
+export function cannotStartYet(store: Store, attempt: StoreDoc): boolean {
+  if (attempt.reconcile_refused !== undefined) return false
+  const waits = attempt.state === 'queued' || attempt.state === 'work_complete' || attempt.resuming === true
+  if (!waits) return false
+  const work = store.workItems.get(String(attempt.workItemId))
+  if (work === undefined) return false
+  return isBlocked(work) || !hostRunAgreed(store, repoOf(work))
+}
+
+/** Work with something to start that only the owner's agreement holds back. */
+export function awaitsAgreement(store: Store, work: StoreDoc): boolean {
+  if (isTerminal(work) || isHeld(work) || isBlocked(work) || String(work.state) === 'planning') return false
+  if (mandateOf(work).status === 'withdrawn' || hostRunAgreed(store, repoOf(work))) return false
+  const workItemId = String(work.id)
+  if (store.attempts.list({ workItemId }).some((attempt) => attempt.state === 'running')) return false
+  return store.tasks.list({ workItemId }).some((task) => ['ready', 'active'].includes(String(task.status)))
+}
+
+/** How many open work items of one repository wait for its agreement. */
+export function waitingForAgreement(store: Store, repoId: string): number {
+  if (hostRunAgreed(store, repoId)) return 0
+  return store.workItems.list().filter((work) => repoOf(work) === repoId && awaitsAgreement(store, work))
+    .length
+}
+
+/** Records the owner's agreement. A second one keeps the first, and a waiting row is due at once. */
+export function agreeHostRun(store: Store, repoId: string, at: string): void {
+  const doc = store.engines.get(repoId)
+  if (doc === undefined || hostRunAgreed(store, repoId)) return
+  store.engines.save({ ...doc, hostRunAgreedAt: at, updatedAt: at })
+  appendEvent(store, 'repositories', 'host_run_agreed', { repositoryId: repoId, at }, at)
+}
+
+/** The field leaves the doc: absent is what not agreed means. Nothing running is touched here. */
+export function withdrawHostRun(store: Store, repoId: string, at: string): void {
+  const doc = store.engines.get(repoId)
+  if (doc === undefined || !hostRunAgreed(store, repoId)) return
+  const { hostRunAgreedAt: _agreed, ...rest } = doc
+  store.engines.save({ ...rest, updatedAt: at })
+  appendEvent(store, 'repositories', 'host_run_withdrawn', { repositoryId: repoId, at }, at)
 }
 
 /**

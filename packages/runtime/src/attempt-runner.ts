@@ -102,6 +102,8 @@ export type AttemptPlan = {
   onCheckStart?: (pid: number) => void
   /** A relaunch on the same slot continues its session (§5.10). A switch never carries one. */
   resume?: { session_id: string }
+  /** Why the repo's commands may not start now, though the engine was allowed to. */
+  withheld?: () => StopReason | undefined
 }
 
 export type AttemptRunnerDeps = {
@@ -121,7 +123,7 @@ type InputEvidence = {
   inputFinished?: (handle: Live['handle'], inputId: string) => Promise<void>
 }
 
-export type StopReason = 'stop_requested' | 'wall_clock' | 'server_closing'
+export type StopReason = 'stop_requested' | 'wall_clock' | 'server_closing' | 'host_run_unagreed'
 
 type Live = {
   attempt: AttemptRef
@@ -456,7 +458,8 @@ export class AttemptRunner {
       return this.#fail(live, `commit_failed: ${detail}`)
     }
     facts.atomic(() => facts.workCompleted(attempt, head))
-    await this.#runChecks(attempt, head, plan, live.checks.signal, () => live.stopReason)
+    const stopped = (): StopReason | undefined => live.stopReason ?? plan.withheld?.()
+    await this.#runChecks(attempt, head, plan, live.checks.signal, stopped)
   }
 
   /**

@@ -16,8 +16,8 @@
   {
     "name": "a resume does not count a held group against its slot",
     "file": "apps/desktop/src/recovery.ts",
-    "find": "    if (doc.resuming === true || holdsGroup(doc)) return true\n",
-    "replace": "    if (doc.resuming === true) return true\n",
+    "find": "    if (holdsGroup(doc)) return true\n",
+    "replace": "",
     "tests": ["apps/desktop/test/recovery.test.ts", "-t", "a held group fills"]
   },
   {

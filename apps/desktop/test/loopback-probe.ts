@@ -1,5 +1,5 @@
-// Can a worker's shell reach the workbench? The resolve route takes no token: being on loopback is
-// the whole of its authority, so the only thing between a worker and its own card is the sandbox.
+// Can a worker's shell reach the workbench? The sandbox is what stands in front of the route, and
+// the approval key behind it. This measures the sandbox, so `breached` means the shell got through.
 // A worker runs `probe.sh`, which POSTs an approve to a pending push card and reads the inbox. What
 // is judged is what happened to the card and what the script wrote, never what a model said.
 //
@@ -15,6 +15,7 @@ import type { MetaBrain, MetaPlanTask } from '@mec/meta'
 import { MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import Database from 'better-sqlite3'
 import { startServer } from '../src/composition'
+import { ownerHeaders, TEST_KEY } from './approval-rig'
 
 export const OUTPUT = 'loopback-probe.out'
 const DONE = '=== done'
@@ -160,6 +161,7 @@ export async function runProbe(engine: {
       bootstrap: [],
       checks: [{ name: 'unit', cmd: 'test -f a.txt' }],
       trust: false,
+      hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
     })
     seeded.slots.save(engine.slot)
   })
@@ -178,7 +180,13 @@ export async function runProbe(engine: {
     turns += 1
     return turns === 1 ? { ack: 'On it', plan: { tasks: [task] } } : { ack: 'ok' }
   }
-  const server = await startServer({ dataDir, policyText: '{"preAuthorised":{}}', closeBoundMs: 8000, brain })
+  const server = await startServer({
+    dataDir,
+    policyText: '{"preAuthorised":{}}',
+    closeBoundMs: 8000,
+    brain,
+    approvalKey: TEST_KEY,
+  })
   const read = <T>(fn: (store: SqliteStore) => T): T => {
     const open = new Database(join(dataDir, 'mec.db'))
     try {
@@ -190,7 +198,7 @@ export async function runProbe(engine: {
   const post = async (path: string, body: unknown) => {
     const response = await fetch(`${server.url}${path}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...ownerHeaders },
       body: JSON.stringify(body),
     })
     return { status: response.status, body: (await response.json()) as Record<string, unknown> }

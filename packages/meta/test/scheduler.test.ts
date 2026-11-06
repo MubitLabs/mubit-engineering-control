@@ -54,7 +54,14 @@ const slot = (slotId: string, extra: Partial<SlotModelsView> = {}): SlotModelsVi
 function rig(slots: SlotModelsView[] = [slot('slot_a')], extra: Partial<SchedulerDeps> = {}): Rig {
   const store = new MemoryRepositories()
   store.atomic(() => {
-    store.engines.save({ id: REPO, url: 'https://example.test/a', bootstrap: [], checks: [], trust: true })
+    store.engines.save({
+      id: REPO,
+      url: 'https://example.test/a',
+      bootstrap: [],
+      checks: [],
+      trust: true,
+      hostRunAgreedAt: AT,
+    })
   })
   const followups = new FollowUps({ store, effects: store.effects, now: () => AT })
   const deps: SchedulerDeps = {
@@ -329,6 +336,96 @@ describe('used-up repairs wake the planner once (§6)', () => {
     })
 
     expect(wakes(store)).toHaveLength(1)
+  })
+})
+
+describe('a repository the owner has not agreed to', () => {
+  const OTHER = 'repo_b'
+
+  /** A second repository, unagreed, and one work item in it. */
+  function unagreed(store: MemoryRepositories, id = 'wi_b'): void {
+    store.atomic(() => {
+      store.engines.save({
+        id: OTHER,
+        url: 'https://example.test/b',
+        bootstrap: [],
+        checks: [],
+        trust: false,
+      })
+      store.workItems.save({
+        id,
+        state: 'executing',
+        mandate: { originMessageId: 'msg_1', status: 'active' },
+        ...repoFields(store, OTHER, POLICY),
+      })
+    })
+  }
+
+  const queued = (store: MemoryRepositories, extra: StoreDoc = {}): void => {
+    task(store, 'task_b', { repoId: OTHER, status: 'active' }, 'wi_b')
+    store.atomic(() => {
+      store.attempts.save({
+        id: 'att_b',
+        taskId: 'task_b',
+        workItemId: 'wi_b',
+        slotId: 'slot_a',
+        state: 'queued',
+        generation: 1,
+        ...extra,
+      })
+    })
+  }
+
+  it('gets no attempt, and the task says what it waits for, once', () => {
+    const { store, pass } = rig()
+    unagreed(store)
+    task(store, 'task_b', { repoId: OTHER }, 'wi_b')
+    expect(pass()).toEqual([])
+    expect(pass()).toEqual([])
+    expect(attemptsOf(store, 'task_b')).toHaveLength(0)
+    expect(store.tasks.get('task_b')?.deferred).toMatchObject({ reason: 'host_run_unagreed' })
+    const withheld = store.events.read('work:wi_b').filter((event) => event.type === 'launch_withheld')
+    expect(withheld).toHaveLength(1)
+  })
+
+  it('a queued attempt there holds no slot, so work that can run gets it', () => {
+    const { store, pass } = rig([slot('slot_a', { concurrency: 1 })])
+    unagreed(store)
+    queued(store)
+    work(store)
+    task(store, 'task_a')
+    expect(pass().map((row) => row.taskId)).toEqual(['task_a'])
+  })
+
+  it('nor does a resume on its way, or checks that wait', () => {
+    const waiting: StoreDoc[] = [{ state: 'interrupted', resuming: true }, { state: 'work_complete' }]
+    for (const extra of waiting) {
+      const { store, pass } = rig([slot('slot_a', { concurrency: 1 })])
+      unagreed(store)
+      queued(store, extra)
+      work(store)
+      task(store, 'task_a')
+      expect(pass().map((row) => row.taskId)).toEqual(['task_a'])
+    }
+  })
+
+  it('a group a boot could not prove gone keeps its slot, agreed or not', () => {
+    const { store, pass } = rig([slot('slot_a', { concurrency: 1 })])
+    unagreed(store)
+    queued(store, { reconcile_refused: 'unprovable' })
+    work(store)
+    task(store, 'task_a')
+    expect(pass()).toEqual([])
+    expect(store.tasks.get('task_a')?.deferred).toMatchObject({ reason: 'capacity' })
+  })
+
+  it('a running attempt there keeps its slot: only what has not begun lets go', () => {
+    const { store, pass } = rig([slot('slot_a', { concurrency: 1 })])
+    unagreed(store)
+    queued(store, { state: 'running' })
+    work(store)
+    task(store, 'task_a')
+    expect(pass()).toEqual([])
   })
 })
 

@@ -24,7 +24,7 @@ import type {
   UsageReading,
 } from '@mec/contracts'
 import { ATTEMPT_MACHINE, canTransition, TASK_MACHINE, transition } from '@mec/domain'
-import { type FollowUps, failLaunch } from '@mec/meta'
+import { type FollowUps, failLaunch, HOST_RUN_UNAGREED } from '@mec/meta'
 import type { AttemptFacts, CheckOutcome, ParkedState, ProcessMark } from '@mec/runtime'
 
 type AttemptEvent = (typeof ATTEMPT_MACHINE)[number]['event']
@@ -55,6 +55,8 @@ export type FactsListener = {
     resetsAt: string | undefined,
     at: string,
   ) => void
+  /** Checks the owner's withdrawal held back: they run again, in this transaction's row. */
+  withheld?: (doc: StoreDoc) => void
 }
 
 export class StoreFacts implements AttemptFacts {
@@ -249,6 +251,7 @@ export class StoreFacts implements AttemptFacts {
         ...(stopped !== undefined && { checks_stopped: stopped }),
         updatedAt: this.#now(),
       })
+      if (stopped === HOST_RUN_UNAGREED) this.#listener.withheld?.(doc)
     }
     this.#note(attempt, 'attempt.checks_skipped', { head_sha: head, reason })
   }

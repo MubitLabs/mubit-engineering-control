@@ -160,7 +160,7 @@
   {
     "name": "stopped checks run again",
     "file": "apps/desktop/src/recovery.ts",
-    "find": "  if (doc.checks_note !== undefined && doc.checks_stopped !== 'server_closing') return\n",
+    "find": "  if (doc.checks_note !== undefined && !CHECKS_RUN_AGAIN.includes(doc.checks_stopped)) return\n",
     "replace": "",
     "tests": ["apps/desktop/test/recovery.test.ts", "-t", "an attempt stopped mid-check"]
   },

@@ -90,7 +90,14 @@ function seed(dataDir: string, repo: string, { slot, checks, task }: Seed): void
   migrate(db, MIGRATIONS_v1)
   const store = new SqliteStore(db)
   store.atomic(() => {
-    store.engines.save({ id: 'repo_a', url: repo, bootstrap: [], checks: checks ?? [], trust: false })
+    store.engines.save({
+      id: 'repo_a',
+      url: repo,
+      bootstrap: [],
+      checks: checks ?? [],
+      trust: false,
+      hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
+    })
     store.messages.save({ id: 'msg_1', text: 'please add the thing' })
     store.slots.save({ id: 'slot_x', home: '/nowhere', state: 'healthy', env: {}, ...slot } as never)
     store.workItems.save({

@@ -24,6 +24,8 @@ export type WorkItemView = {
   userMessageSinceReport?: boolean
   /** Every runnable attempt is parked in `quota_wait`; the reset time when it is known. */
   quotaWait?: { resetAt?: string }
+  /** The repository needs the owner's agreement before anything of this item can start. */
+  hostRunUnagreed?: boolean
   /** Tasks are ready and no slot capacity is free. */
   queued?: boolean
   /** The pull request is confirmed merged (never assumed). */
@@ -42,6 +44,8 @@ export type WorkFacts = {
   deliveryReady?: boolean
   /** `plannerTurnEnded`: planning stopped with no plan, so nothing is running on this item. */
   turnEnded?: boolean
+  /** This item waits for its repository's agreement; absent where the caller does not read it. */
+  hostRunUnagreed?: boolean
 }
 
 export type Stage = {
@@ -123,6 +127,12 @@ export const STAGE_TABLE: readonly StageRow[] = [
     waitingOn: 'person',
     match: (w) => w.holdStatus === 'held',
     label: () => 'Held by you',
+  },
+  {
+    key: 'person/agreement',
+    waitingOn: 'person',
+    match: (w) => w.hostRunUnagreed === true,
+    label: () => 'Waiting for your agreement',
   },
   {
     key: 'waiting/quota',
@@ -226,5 +236,6 @@ export function workViewOf(doc: Record<string, unknown>, facts: WorkFacts): Work
     merged: facts.merged,
     ...(facts.deliveryReady === true && { deliveryReady: true }),
     ...(facts.turnEnded === true && text(doc.state) === 'planning' && { latestReport: 'waiting' as const }),
+    ...(facts.hostRunUnagreed === true && { hostRunUnagreed: true }),
   }
 }

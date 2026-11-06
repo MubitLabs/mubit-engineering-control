@@ -41,13 +41,16 @@ try {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
   const rawArgs = process.argv.slice(2)
   if (rawArgs.includes('--no-open')) process.env.MEC_NO_OPEN = '1'
-  const args = rawArgs.filter((a) => a !== '--no-open')
+  const KEY_FD = '--approval-key-fd='
+  const keyFd = rawArgs.find((a) => a.startsWith(KEY_FD))?.slice(KEY_FD.length)
+  const args = rawArgs.filter((a) => a !== '--no-open' && !a.startsWith(KEY_FD))
   const HELP = `mec ${pkg.version} — Mubit Engineering Control
 
 usage: mec [command]
 
 (no command)    start the workbench server and print its URL (opens Setup on first run)
 --no-open       start the server without opening a browser
+--approval-key-fd=N  read the approval key from descriptor N: for a script that must answer cards
 --version, -v   print the version
 help            this help
 status          health snapshot + setup state (exit 0–3)
@@ -71,7 +74,10 @@ docs: https://github.com/MubitLabs/mubit-engineering-control — README → guid
   } else {
     const { serveMain } = await import(entry)
     // cliHome's rule: an empty value is unset, or the server and the commands read different roots.
-    await serveMain(process.env.MEC_DATA_DIR || join(homedir(), '.mec'))
+    await serveMain(
+      process.env.MEC_DATA_DIR || join(homedir(), '.mec'),
+      keyFd === undefined ? {} : { approvalKeyFd: Number(keyFd) },
+    )
     // §20: close is bounded, and an engine child that outlived it must not hold the process up.
     process.exit()
   }

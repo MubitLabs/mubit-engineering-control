@@ -16,7 +16,7 @@
 import { randomBytes } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Effects, Json, Store, StoreDoc } from '@mec/contracts'
+import { type Effects, type Json, Later, type Store, type StoreDoc } from '@mec/contracts'
 import {
   type Caps,
   canTransition,
@@ -47,6 +47,7 @@ import {
 import {
   blockTask,
   blockWork,
+  hostRunAgreed,
   integrationDocId,
   isHeld,
   isTerminal,
@@ -302,6 +303,7 @@ export class Delivery {
         await this.#work(work)
       } catch (error) {
         if (this.#closing.signal.aborted) return
+        if (error instanceof Later) continue
         // The worktree is in a state nothing here understands, and a person must say why.
         const detail = error instanceof Error ? error.message : String(error)
         const reason = redact(detail, this.#fingerprints(), [])
@@ -314,6 +316,8 @@ export class Delivery {
     const id = String(work.id)
     const tasks = this.#store.tasks.list({ workItemId: id })
     if (!tasks.some((task) => task.status === 'accepted' || task.status === 'integrated')) return
+    // Merging runs the repo's commands, so this waits with the launches, and a later pass goes on.
+    if (!this.#agreed(work)) return
     // §14: the checks are the ones pinned at admission, as the launch gate holds them to be.
     const pinned = (work.pin as { profileHash?: string } | undefined)?.profileHash
     const current = repoFields(this.#store, String(work.repoId), this.#policyText).pin as {
@@ -370,6 +374,10 @@ export class Delivery {
     })
   }
 
+  #agreed(work: StoreDoc): boolean {
+    return hostRunAgreed(this.#store, String(work.repoId))
+  }
+
   /** The integration record, with its worktree made the first time a task is ready to merge. */
   async #integrationDoc(work: StoreDoc): Promise<StoreDoc | undefined> {
     const id = String(work.id)
@@ -383,6 +391,7 @@ export class Delivery {
     const repo = this.#repoOf(work)
     const bootstrap = Array.isArray(repo?.bootstrap) ? repo.bootstrap.map(String) : []
     for (const [index, command] of bootstrap.entries()) {
+      if (!this.#agreed(work)) return undefined
       const [cmd = '', ...args] = argvOf(command)
       const spec = {
         name: `bootstrap_${index + 1}`,
@@ -464,20 +473,23 @@ export class Delivery {
         },
         prepareRepair: (paths) => prepareMidMergeRepair({ sourceWorktree: worktree, conflictPaths: paths }),
       },
-      checks: () => this.#combinedChecks(id, repo, worktree),
+      checks: () => this.#combinedChecks(work, repo, worktree),
     }
   }
 
   /** The registered checks, run where the merge is. A close voids them: nothing is saved. */
   async #combinedChecks(
-    workItemId: string,
+    work: StoreDoc,
     repo: StoreDoc | undefined,
     worktree: string,
   ): Promise<IntegrationCheck[]> {
+    const workItemId = String(work.id)
     const checks = (Array.isArray(repo?.checks) ? repo.checks : []) as { name: string; cmd: string }[]
     const fingerprints = this.#fingerprints()
     const outcomes: IntegrationCheck[] = []
     for (const check of checks) {
+      // Nothing is saved, as with a close: the next pass finds a head with no verdict and checks it.
+      if (!this.#agreed(work)) throw new Later('the owner withdrew the agreement')
       const [cmd = '', ...args] = argvOf(check.cmd)
       const env = this.#checkEnv(workItemId, worktree)
       const outcome = await runCheck(

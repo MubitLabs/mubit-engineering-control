@@ -12,6 +12,7 @@ import { MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
 import { startServer } from '../src/composition'
+import { ownerHeaders, TEST_KEY } from './approval-rig'
 
 const REPO = 'repo_a'
 const SLUG = 'owner/repo'
@@ -95,7 +96,14 @@ esac
     migrate(db, MIGRATIONS_v1)
     const store = new SqliteStore(db)
     store.atomic(() => {
-      store.engines.save({ id: REPO, url: repo, bootstrap, checks, trust: false })
+      store.engines.save({
+        id: REPO,
+        url: repo,
+        bootstrap,
+        checks,
+        trust: false,
+        hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
+      })
       store.slots.save({
         id: 'slot_linked',
         engine: 'claude',
@@ -113,12 +121,18 @@ esac
       turns += 1
       return turns === 1 ? { ack: 'On it', plan: { tasks } } : { ack: 'ok' }
     }
-    const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 4000, brain })
+    const server = await startServer({
+      dataDir,
+      policyText: POLICY,
+      closeBoundMs: 4000,
+      brain,
+      approvalKey: TEST_KEY,
+    })
     closers.push(server.close)
     const post = async (path: string, body: unknown) => {
       const response = await fetch(`${server.url}${path}`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...ownerHeaders },
         body: JSON.stringify(body),
       })
       return { status: response.status, body: (await response.json()) as Record<string, unknown> }

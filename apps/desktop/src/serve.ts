@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
+import { readApprovalKey } from './approval'
 import { type RunningServer, startServer } from './composition'
 import { readStopMarker } from './stop-marker'
 
@@ -54,13 +55,18 @@ export function startupLines(handle: Pick<RunningServer, 'url' | 'portMoved'>): 
   return [`mec server listening on ${url}`, ...(moved ? [moved] : [])]
 }
 
-export async function serveMain(dataDir: string): Promise<void> {
+/** `approvalKeyFd`: the deliberate path (`--approval-key-fd=N`). Nothing else sets a key. */
+export async function serveMain(dataDir: string, flags: { approvalKeyFd?: number } = {}): Promise<void> {
   if (readStopMarker(dataDir).present) {
     console.log('intentional stop marker present; not starting (run: mec restart)')
     return
   }
 
-  const handle = await startServer(serveOptions(dataDir))
+  const { approvalKeyFd } = flags
+  const handle = await startServer({
+    ...serveOptions(dataDir),
+    ...(approvalKeyFd !== undefined && { approvalKey: readApprovalKey(approvalKeyFd) }),
+  })
   for (const line of startupLines(handle)) console.log(line)
   // Review §3.2: on an incomplete setup, open the browser straight into the wizard;
   // --no-open (exported by bin/mec.js as MEC_NO_OPEN) keeps scripts and CI quiet.

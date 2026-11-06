@@ -13,7 +13,7 @@
  *   a push is refused by name, and shell text is only a heuristic.
  */
 import { createHash } from 'node:crypto'
-import { existsSync, lstatSync, readlinkSync, realpathSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, readlinkSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type {
   AttemptRef,
@@ -127,6 +127,30 @@ const isWithin = (path: string, root: string): boolean => {
   return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
 }
 
+type LeafStat = NonNullable<ReturnType<typeof lstatLeaf>>
+
+/** Bigint: an inode past 2^53 must not read as another file's. */
+const lstatLeaf = (path: string) => lstatSync(path, { bigint: true, throwIfNoEntry: false })
+
+const inodeOf = (stat: LeafStat): string => `${stat.dev}:${stat.ino}`
+
+/** Everything under `.mec`, by inode. */
+function addTree(path: string, inodes: Set<string>): void {
+  const stat = lstatLeaf(path)
+  if (stat === undefined) return
+  inodes.add(inodeOf(stat))
+  if (stat.isDirectory()) for (const name of readdirSync(path)) addTree(join(path, name), inodes)
+}
+
+/** A hard link names a control file with a path none of the checks above can see. */
+function controlInodes(worktree: string): Set<string> {
+  const inodes = new Set<string>()
+  const pointer = lstatLeaf(join(worktree, '.git'))
+  if (pointer !== undefined) inodes.add(inodeOf(pointer))
+  addTree(join(worktree, '.mec'), inodes)
+  return inodes
+}
+
 /** The rule behind `confirm`. Everything it does not name is denied, with a reason. */
 export function judgeOperation(operation: Operation, scope: AttemptScope): Verdict {
   if (operation.kind === 'shell') {
@@ -157,6 +181,13 @@ export function judgeOperation(operation: Operation, scope: AttemptScope): Verdi
         if (!isWithin(path, worktree) && !isWithin(path, tempDir)) {
           return { allow: false, reason: `${path} is outside this attempt's worktree` }
         }
+        const leaf = lstatLeaf(path)
+        if (leaf?.isFile() !== true) continue
+        if (controlInodes(worktree).has(inodeOf(leaf))) {
+          return { allow: false, reason: `${path} belongs to MEC` }
+        }
+        // A write lands on every name: the other one may be anywhere, and this rule cannot see it.
+        if (leaf.nlink > 1n) return { allow: false, reason: `${path} is a hard link to another file` }
       }
     } catch (error) {
       return { allow: false, reason: `cannot resolve that path: ${(error as Error).message}` }

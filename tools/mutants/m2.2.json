@@ -439,5 +439,26 @@
     "find": "facts.checksSkipped(attempt, head, skipped, stopReason)",
     "replace": "facts.checksSkipped(attempt, head, skipped)",
     "tests": ["packages/runtime/test/attempt-runner.test.ts"]
+  },
+  {
+    "name": "hard link to a control file allowed",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "if (controlInodes(worktree).has(inodeOf(leaf))) {",
+    "replace": "if (leaf.ino < 0n) {",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
+  },
+  {
+    "name": "hard-linked leaf allowed",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "if (leaf.nlink > 1n) return",
+    "replace": "if (leaf.nlink > 1000000n) return",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
+  },
+  {
+    "name": "mec files not counted as control",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "  addTree(join(worktree, '.mec'), inodes)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/specialist-tools.test.ts"]
   }
 ]

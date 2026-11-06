@@ -106,6 +106,9 @@ By hand, each one edit, the named tests, then restored. All killed:
 | reduced-motion block removed | reduced motion, Conversation 1440 |
 | `disarm timer removed` | `14: eight seconds disarm` |
 | `remove focus return` | `Work` journey, drawer |
+| a theme the page did not take still scores | `the lighthouse script refuses a theme the page did not take` |
+
+`python3 tools/mutants/run.py tools/mutants/m3.4-release.json`: 10 of 10 killed, with `an unknown lighthouse theme is scored anyway` added. Web unit tests: 396 passed.
 
 ## Not proven
 

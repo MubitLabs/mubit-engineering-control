@@ -75,9 +75,9 @@ import { worktreeIsOurs } from './slot-switch'
 
 export { isLaunchableSlot } from './engine-registry'
 
-/** A real launch is the default: `MEC_REAL_RUNNER=0` turns it off, and `MEC_FAKE_ENGINE=1` wins over both. */
+/** A real launch is the default: `0` or `false` turns it off, and `MEC_FAKE_ENGINE=1` wins over both. */
 export const realRunnerOn = (env: Record<string, string | undefined> = process.env): boolean =>
-  env.MEC_REAL_RUNNER !== '0' && env.MEC_FAKE_ENGINE !== '1'
+  !['0', 'false'].includes(env.MEC_REAL_RUNNER?.toLowerCase() ?? '') && env.MEC_FAKE_ENGINE !== '1'
 
 /** Decision #36 (§11): until policy carries a value. */
 const DEFAULT_WALL_CLOCK_MS = 30 * 60_000
@@ -120,15 +120,24 @@ function fieldsOf(payload: Json): LaunchPayload {
   }
 }
 
+/**
+ * What a repo's command inherits: the shell's own, less the SSH agent socket. An engine keeps it,
+ * because its allowlist is §5.12's; a repo's script has no call on the owner's keys.
+ */
+export function repoInherited(): Record<string, string | undefined> {
+  const { SSH_AUTH_SOCK: _agent, ...inherited } = process.env
+  return inherited
+}
+
 /** The environment a repo's command runs in: scrubbed, no shims to trust, no token (decision #25). */
-function repoEnv(
+export function repoEnv(
   attemptId: string,
   worktree: string,
   tempDir: string,
   gitconfig: string,
 ): Record<string, string> {
   return buildAgentEnv({
-    inherited: process.env as Record<string, string | undefined>,
+    inherited: repoInherited(),
     home: tempDir,
     attempt: {
       MEC_ATTEMPT_ID: attemptId,

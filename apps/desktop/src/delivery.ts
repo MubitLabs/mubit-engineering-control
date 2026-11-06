@@ -61,7 +61,7 @@ import {
 import { loadPolicy } from '@mec/policy'
 import { buildAgentEnv, runCheck } from '@mec/runtime'
 import { redact } from '@mec/slots'
-import { argvOf, commitIdentity } from './attempt-launch'
+import { argvOf, commitIdentity, repoInherited } from './attempt-launch'
 import {
   buildPrBody,
   type CardBlock,
@@ -422,7 +422,7 @@ export class Delivery {
     const tempDir = join(this.#dataDir, 'tmp', `integration-${workItemId}`)
     mkdirSync(tempDir, { recursive: true })
     return buildAgentEnv({
-      inherited: process.env as Record<string, string | undefined>,
+      inherited: repoInherited(),
       home: tempDir,
       attempt: {
         MEC_WORKTREE: worktree,

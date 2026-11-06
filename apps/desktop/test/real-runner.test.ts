@@ -1,6 +1,7 @@
 // The launch default and the two variables that change it, as every reader sees them.
+import { buildAgentEnv } from '@mec/runtime'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { realRunnerOn } from '../src/attempt-launch'
+import { realRunnerOn, repoEnv } from '../src/attempt-launch'
 import { plannerPlacement } from '../src/planner-placement'
 
 afterEach(() => {
@@ -11,6 +12,8 @@ const CASES: { env: Record<string, string>; on: boolean }[] = [
   { env: {}, on: true },
   { env: { MEC_REAL_RUNNER: '1' }, on: true },
   { env: { MEC_REAL_RUNNER: '0' }, on: false },
+  { env: { MEC_REAL_RUNNER: 'false' }, on: false },
+  { env: { MEC_REAL_RUNNER: 'FALSE' }, on: false },
   { env: { MEC_FAKE_ENGINE: '1' }, on: false },
   { env: { MEC_REAL_RUNNER: '1', MEC_FAKE_ENGINE: '1' }, on: false },
 ]
@@ -33,5 +36,17 @@ describe('a real launch is the default', () => {
     for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value)
     const placement = plannerPlacement({} as never, '/nowhere')
     expect(placement.launchableSlots !== undefined).toBe(on)
+  })
+})
+
+describe('what a repository command inherits', () => {
+  it('the agent socket reaches an engine, and never a repository command', () => {
+    const inherited = { PATH: '/bin', SSH_AUTH_SOCK: '/tmp/agent.sock', LANG: 'C' }
+    vi.stubEnv('SSH_AUTH_SOCK', inherited.SSH_AUTH_SOCK)
+    vi.stubEnv('LANG', inherited.LANG)
+    const env = repoEnv('att_1', '/w', '/t', '/g')
+    expect(env.SSH_AUTH_SOCK).toBeUndefined()
+    expect(env.LANG).toBe('C')
+    expect(buildAgentEnv({ inherited, home: '/h', attempt: {} }).SSH_AUTH_SOCK).toBe(inherited.SSH_AUTH_SOCK)
   })
 })

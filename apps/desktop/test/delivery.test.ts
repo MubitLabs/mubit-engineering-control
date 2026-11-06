@@ -16,7 +16,7 @@ import {
   workResultOf,
 } from '@mec/meta'
 import { MemoryRepositories } from '@mec/testkit'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { commitWork } from '../src/attempt-launch'
 import { Delivery, deliveryDocId } from '../src/delivery'
 import {
@@ -344,6 +344,15 @@ describe('integration (§14)', () => {
     expect(next.evidence).toContain(String(r.integration().head))
     expect(r.store.tasks.get('task_a')?.status).toBe('accepted')
     expect(workResultOf(r.store, WORK).complete).toBe(false)
+  })
+
+  it('a combined check gets no SSH agent socket', async () => {
+    vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent.sock')
+    const r = rig({ checks: [{ name: 'agent', cmd: 'printenv SSH_AUTH_SOCK' }] })
+    r.accepted('task_a', 'b.txt', 'two\n')
+    await r.passes(2)
+    vi.unstubAllEnvs()
+    expect(r.integration().combined).toMatchObject({ passed: false })
   })
 
   it('a conflict leaves both sides for a repair task, and nothing else merges meanwhile', async () => {

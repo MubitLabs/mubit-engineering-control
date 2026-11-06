@@ -1,0 +1,86 @@
+[
+  {
+    "name": "never repair the pty helper",
+    "file": "apps/desktop/src/login-cards.ts",
+    "find": "  makeSpawnHelperExecutable(dirname(dirname(require.resolve('node-pty'))))\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts"]
+  },
+  {
+    "name": "repair with the wrong mode",
+    "file": "apps/desktop/src/login-cards.ts",
+    "find": "chmodSync(helper, stat.mode | 0o111)",
+    "replace": "chmodSync(helper, 0o111)",
+    "tests": ["apps/desktop/test/login-cards.test.ts"]
+  },
+  {
+    "name": "rewrite a helper that already runs",
+    "file": "apps/desktop/src/login-cards.ts",
+    "find": "if (stat !== undefined && (stat.mode & 0o111) === 0) chmodSync",
+    "replace": "if (stat !== undefined) chmodSync",
+    "tests": ["apps/desktop/test/login-cards.test.ts"]
+  },
+  {
+    "name": "throw on a platform with no helper",
+    "file": "apps/desktop/src/login-cards.ts",
+    "find": "statSync(helper, { throwIfNoEntry: false })",
+    "replace": "statSync(helper)",
+    "tests": ["apps/desktop/test/login-cards.test.ts"]
+  },
+  {
+    "name": "smoke skips the catalogue",
+    "file": "scripts/smoke-package.mjs",
+    "find": "    await checkCatalogue(url)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts"]
+  },
+  {
+    "name": "smoke accepts a table from outside the package",
+    "file": "scripts/smoke-package.mjs",
+    "find": "if (provenance.path !== inside) {",
+    "replace": "if (false) {",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts"]
+  },
+  {
+    "name": "smoke accepts any table",
+    "file": "scripts/smoke-package.mjs",
+    "find": "if (provenance.sha256 !== shipped) throw",
+    "replace": "if (false) throw",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts"]
+  },
+  {
+    "name": "smoke skips the workbench",
+    "file": "scripts/smoke-package.mjs",
+    "find": "    await checkWorkbench(url)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts"]
+  },
+  {
+    "name": "smoke accepts a failed login card",
+    "file": "scripts/smoke-package.mjs",
+    "find": "if (res.status !== 200) throw new Error(`a login card did not start",
+    "replace": "if (false) throw new Error(`a login card did not start",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts"]
+  },
+  {
+    "name": "smoke trusts the card without its process",
+    "file": "scripts/smoke-package.mjs",
+    "find": "  while (!existsSync(marker)) {\n",
+    "replace": "  while (false) {\n",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts"]
+  },
+  {
+    "name": "pack ignores a failed smoke",
+    "file": "scripts/pack-tarball.mjs",
+    "find": "if (smoked.status !== 0) {",
+    "replace": "if (false) {",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts"]
+  },
+  {
+    "name": "pack stages inside the checkout",
+    "file": "scripts/pack-tarball.mjs",
+    "find": "const staging = mkdtempSync(join(tmpdir(), 'mec-staging-'))",
+    "replace": "const staging = mkdtempSync(join(outDir, 'mec-staging-'))",
+    "tests": ["apps/desktop/test/bundle-defaults.test.ts"]
+  }
+]

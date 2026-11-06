@@ -24,8 +24,8 @@
  * composition root) supplies a spawn.
  */
 import { randomBytes } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { chmodSync, mkdirSync, statSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 
 /** Which engine's CLI to drive, and the slot home its env must point at. */
 export type LoginRequest = {
@@ -242,6 +242,20 @@ export class LoginCardManager {
 }
 
 /**
+ * node-pty's macOS prebuild carries a `spawn-helper` it executes for every pty, and npm and pnpm
+ * both unpack it without the execute bit, so the first spawn dies with `posix_spawnp failed`. Its
+ * own install script does not repair it. Platforms without a prebuilt helper have nothing to do.
+ */
+export function makeSpawnHelperExecutable(
+  ptyDir: string,
+  target = `${process.platform}-${process.arch}`,
+): void {
+  const helper = join(ptyDir, 'prebuilds', target, 'spawn-helper')
+  const stat = statSync(helper, { throwIfNoEntry: false })
+  if (stat !== undefined && (stat.mode & 0o111) === 0) chmodSync(helper, stat.mode | 0o111)
+}
+
+/**
  * The default spawn until the plan's pinned prebuilt pty release exists (§21.7
  * pins `node-pty-prebuilt-multiarch` ^1.0.0-beta; no such version is published
  * as of 3 Nov 2026). Fails loudly and before any card is registered, so a
@@ -273,6 +287,7 @@ export function nodePtySpawn(
       kill(signal?: string): void
     }
   }
+  makeSpawnHelperExecutable(dirname(dirname(require.resolve('node-pty'))))
   const proc = pty.spawn(cmd, args, { name: 'xterm-256color', cwd, env })
   let exited: (code: number) => void
   const exitCode = new Promise<number>((resolve) => {

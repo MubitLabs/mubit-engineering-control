@@ -77,4 +77,7 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
 - **An open tab goes stale if the server restarts on a new port.** An owner ruling is needed.
   A repository edit stops admitted work at its next launch (`repo_profile_changed`); that
   behaviour is kept and the Settings text now says so.
+- **`MEC_FAKE_ENGINE=1` cannot run an attempt from a package.** The fake launch replays a fixture
+  from `packages/testkit`, which is not shipped, so `effects:launch` reports ENOENT. Chat and
+  planning work. The flag is for development and the check needs a checkout.
 - **`bundle.test.ts` waits 6 seconds for health and can flake under load.**

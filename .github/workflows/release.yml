@@ -58,6 +58,8 @@ jobs:
         run: |
           mkdir mec && tar xzf artifact/mec-*.tgz -C mec
           cd mec && npm install --omit=dev --no-audit --no-fund
+      - name: the installed package serves its catalogue
+        run: node scripts/smoke-package.mjs mec
       - name: version and doctor answer
         run: |
           cd mec

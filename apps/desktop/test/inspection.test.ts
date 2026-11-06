@@ -432,7 +432,12 @@ describe('inspection routes: honesty', () => {
       usage: false,
       delivery: false,
     })
-    expect(none.usage).toEqual({ reportedUsd: null, missingAttempts: 0, mode: 'unknown' })
+    expect(none.usage).toEqual({
+      reportedUsd: null,
+      missingAttempts: 0,
+      mode: 'unknown',
+      coverage: 'unknown',
+    })
     expect(none.checks).toEqual({ headSha: null, results: [], truncated: 0 })
     expect(none.diff).toEqual({ headSha: null, summary: null, files: [], truncated: 0 })
     expect(none.attempts).toEqual([])

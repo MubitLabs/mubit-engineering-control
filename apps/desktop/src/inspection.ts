@@ -1,8 +1,8 @@
 /**
- * Canonical inspection, stage 1 (M3.1; plan §10, §17, §18, §22): read-only `GET /api/inspect/*`
- * routes that serve any repository's work, tasks, open decisions and search results through bounded
- * keyset pages. The wire shapes are the contract `31` builds against; this file is where records
- * become those shapes.
+ * Canonical inspection (M3.1; plan §10, §17, §18, §22): read-only `GET /api/inspect/*` routes that
+ * serve any repository's work, tasks, open decisions, search results, attempt activity and artifacts
+ * through bounded pages. The wire shapes are the contract `31` builds against; this file is where
+ * records become those shapes.
  *
  * Rules held here, each with a test:
  * - Nothing is invented. A record the system has not stored yet is `null`, `[]` or `coverage: false`,
@@ -14,11 +14,17 @@
  * - A page is at most 100 rows and ends early with a valid cursor at 1 MiB of JSON. Each detail list
  *   has a count and a byte budget and says how much it cut. Those are the normal bounds; `serve` is
  *   the hard one: an answer still over 1 MiB is never sent, whatever a record holds.
+ * - Every route sits behind `readGate`: a loopback Host, and the client header on a browser request.
+ * - An artifact resolves only under its attempt's worktree, by real path, outside `.mec/` and `.git`.
  */
 
-import type { Json, Store, StoreDoc } from '@mec/contracts'
-import { type Stage, stageOf, type WorkItemView } from '@mec/domain'
+import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs'
+import { isAbsolute, join, relative, sep } from 'node:path'
+import type { EngineEvent, Json, Store, StoreDoc } from '@mec/contracts'
+import { SECRET_PATTERNS } from '@mec/contracts'
+import { type Stage, stageOf, workViewOf } from '@mec/domain'
 import { assertRepoAdmission } from '@mec/meta'
+import { type AttemptOutcome, type CheckRecord, projectAttempt } from '@mec/scorecards'
 import { redact } from '@mec/slots'
 import {
   CursorError,
@@ -26,12 +32,14 @@ import {
   type DocRow,
   decodeCursor,
   decodeCursorAt,
+  type EventRow,
   encodeCursor,
   type InspectionReads,
   MAX_PAGE_BYTES,
   MAX_PAGE_LIMIT,
 } from '@mec/store'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import { deliveryDocId } from './delivery'
 
 // ── The wire shape (handoff 30, "The wire shape") ────────────────────────────────────────────
 
@@ -135,9 +143,24 @@ export type TaskDetail = TaskRow & {
     files: { path: string; added: number; removed: number }[]
     truncated: number
   }
-  usage: { reportedUsd: number | null; missingAttempts: number; mode: 'api' | 'subscription' | 'unknown' }
+  /** `coverage: 'subtotal'` says `reportedUsd` is known to be short of the total. */
+  usage: {
+    reportedUsd: number | null
+    missingAttempts: number
+    mode: 'api' | 'subscription' | 'unknown'
+    coverage: AttemptOutcome['spendCoverage']
+  }
+  /** Three facts about the latest attempt that named a head. A clean exit proves only the first. */
+  outcome: {
+    process: string
+    validation: AttemptOutcome['validation']
+    delivery: AttemptOutcome['delivery']
+  }
   coverage: Coverage
 }
+
+/** One page item of `attempts/:id/activity`. */
+export type ActivityItem = { seq: number; type: string; at: string; summary: string; detail: string | null }
 
 export type NeedItem =
   | {
@@ -178,7 +201,7 @@ export type SearchHit = {
 const redactText = (text: string): string => redact(text, [], [])
 
 /** Redacts every string in a response, keys excluded. */
-function scrub<T>(value: T): T {
+export function scrub<T>(value: T): T {
   if (typeof value === 'string') return redactText(value) as T
   if (Array.isArray(value)) return value.map((entry) => scrub(entry)) as T
   if (typeof value === 'object' && value !== null) {
@@ -219,6 +242,8 @@ const obj = (value: Json | undefined): Record<string, Json> | null =>
 const strings = (value: Json | undefined): string[] =>
   Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : []
 
+const headOf = (attempt: StoreDoc): string | null => str(attempt.head_sha) ?? str(attempt.headSha)
+
 const firstLine = (text: string): string | null => {
   for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim()
@@ -242,6 +267,119 @@ export function repoLabelFromUrl(url: string): string {
 }
 
 class BadRequest extends Error {}
+class Refused extends Error {}
+
+/** A short time for a sentence: `09:07`, with the day when it is not today. The exact time stays in its own field. */
+function whenText(iso: string | null, now: Date): string | null {
+  const at = iso === null ? new Date(Number.NaN) : new Date(iso)
+  if (Number.isNaN(at.getTime())) return null
+  const clock = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+  const today = at.toDateString() === now.toDateString()
+  return today ? clock : `${at.getDate()} ${at.toLocaleString('en-GB', { month: 'short' })} ${clock}`
+}
+
+// ── The read gate (§22) ──────────────────────────────────────────────────────────────────────
+
+/** Any of these says a browser sent the request; a page cannot take one of them off. */
+const BROWSER_HEADERS = ['origin', 'referer', 'sec-fetch-site', 'sec-fetch-mode', 'sec-fetch-dest']
+
+/** A rebound page reaches this server under its own name, and its Host says so. */
+export function hostIsLoopback(host: string | undefined): boolean {
+  const name = host?.toLowerCase().replace(/:\d+$/, '')
+  return name === 'localhost' || name === '127.0.0.1' || name === '[::1]'
+}
+
+const isBrowser = (request: FastifyRequest): boolean =>
+  BROWSER_HEADERS.some((name) => request.headers[name] !== undefined) ||
+  /\bMozilla\//.test(request.headers['user-agent'] ?? '')
+
+/** The hook above the routes passes a same-origin GET, so a read carries its own check. */
+async function readGate(request: FastifyRequest, reply: FastifyReply): Promise<unknown> {
+  if (!hostIsLoopback(request.headers.host)) {
+    return reply.code(403).send({ error: 'forbidden_host' })
+  }
+  if (isBrowser(request) && request.headers['x-mec-client'] !== '1') {
+    return reply.code(403).send({ error: 'client_header_required' })
+  }
+  return undefined
+}
+
+// ── Artifacts ────────────────────────────────────────────────────────────────────────────────
+
+/** The attempt's own control files: a token lives under `.mec/`, and `.git` points at the clone. */
+const CONTROL_DIRS = ['.mec', '.git']
+const ARTIFACT_REF_CAP = 1024
+const ARTIFACT_PAGE_BYTES = MAX_PAGE_BYTES
+/** How far past the page a key is looked for, so a cut cannot fall inside one. */
+const ARTIFACT_OVERLAP_BYTES = 4096
+const BINARY_SNIFF_BYTES = 8192
+
+/** The file `ref` really names under `root`; undefined when it does not exist. */
+function resolveArtifact(root: string, ref: string): string | undefined {
+  if (isAbsolute(ref) || ref.includes('\0') || ref.split(/[\\/]/).includes('..')) {
+    throw new BadRequest('ref must be a path inside the attempt')
+  }
+  let realRoot: string
+  let real: string
+  try {
+    realRoot = realpathSync(root)
+    real = realpathSync(join(realRoot, ref))
+  } catch {
+    return undefined
+  }
+  const inside = relative(realRoot, real)
+  const segments = inside.split(sep)
+  if (inside === '' || segments[0] === '..' || isAbsolute(inside)) throw new Refused('outside the attempt')
+  if (segments.some((segment) => CONTROL_DIRS.includes(segment))) throw new Refused('a control file')
+  return real
+}
+
+/**
+ * Where a page of `chunk` ends: on a character, and never inside a key. A key cut in two matches
+ * no pattern on either page, so it would leave in two halves that both pass redaction.
+ */
+function artifactPageEnd(chunk: Buffer): number {
+  if (chunk.length <= ARTIFACT_PAGE_BYTES) return chunk.length
+  let end = ARTIFACT_PAGE_BYTES
+  while (end > 0 && ((chunk[end] as number) & 0xc0) === 0x80) end -= 1
+  const bytes = chunk.toString('latin1')
+  for (const { pattern } of SECRET_PATTERNS) {
+    for (const match of bytes.matchAll(new RegExp(pattern.source, 'g'))) {
+      if (match.index < end && end < match.index + match[0].length) end = match.index
+    }
+  }
+  return end === 0 ? ARTIFACT_PAGE_BYTES : end
+}
+
+type ArtifactPage = { size: number } & (
+  | { binary: true }
+  | { binary: false; text: string; next: number | null }
+)
+
+function readArtifact(path: string, offset: number): ArtifactPage | undefined {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  try {
+    const stat = fstatSync(fd)
+    if (!stat.isFile()) return undefined
+    const { size } = stat
+    const sniff = Buffer.alloc(Math.min(BINARY_SNIFF_BYTES, size))
+    readSync(fd, sniff, 0, sniff.length, 0)
+    if (sniff.includes(0)) return { size, binary: true }
+    const left = Math.max(0, size - offset)
+    const chunk = Buffer.alloc(Math.min(left, ARTIFACT_PAGE_BYTES + ARTIFACT_OVERLAP_BYTES))
+    readSync(fd, chunk, 0, chunk.length, offset)
+    const end = artifactPageEnd(chunk)
+    let text: string
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(chunk.subarray(0, end))
+    } catch {
+      return { size, binary: true }
+    }
+    return { size, binary: false, text: redactText(text), next: offset + end < size ? offset + end : null }
+  } finally {
+    closeSync(fd)
+  }
+}
 
 // ── The inspector ────────────────────────────────────────────────────────────────────────────
 
@@ -269,6 +407,38 @@ const TASK_BYTES = 768 * 1024
 const CURSOR_BYTES = 64 * 1024
 const SNAPSHOT_STREAM_CAP = 100
 const SEARCH_CAP = 20
+/** A turn with no person behind it (`MetaAgentService.onWake`): its text is a wake reason. */
+const WAKE_MESSAGE_PREFIX = 'msg_wake_'
+/** Usage events read for one attempt; a stream past this is a subtotal. */
+const USAGE_READ_CAP = 5000
+const ACTIVITY_SUMMARY_CAP = 200
+const ACTIVITY_DETAIL_CAP = 64 * 1024
+/** The contract's engine events (`packages/contracts/src/events.ts`). Anything else stays private. */
+const ACTIVITY_TYPES = new Set([
+  'message',
+  'tool_call',
+  'permission_request',
+  'permission_result',
+  'usage',
+  'rate_limit',
+  'report',
+  'error',
+  'exit',
+  'session_started',
+])
+/** The record's stage (`DeliveryStage`) on the wire. What has ended, or stopped short, keeps the last true place. */
+const DELIVERY_STAGES: Readonly<Record<string, DeliveryView['stage']>> = {
+  local_complete: 'local-complete',
+  moved: 'local-complete',
+  declined: 'local-complete',
+  failed: 'local-complete',
+  push_card: 'awaiting-push',
+  pushed: 'awaiting-pr',
+  pr_card: 'awaiting-pr',
+  pr_open: 'pr-open',
+  ready: 'pr-ready',
+  merged: 'merged',
+}
 /** Headroom for the envelope fields around a page's items. */
 const ENVELOPE_BYTES = 1024
 
@@ -534,7 +704,21 @@ class Inspector {
     return line === null ? null : line.slice(0, 80)
   }
 
+  #deliveryRecord(doc: StoreDoc | undefined): StoreDoc | undefined {
+    return doc === undefined ? undefined : this.#store.engines.get(deliveryDocId(String(doc.id)))
+  }
+
   #deliveryOf(doc: StoreDoc): DeliveryView {
+    const record = this.#deliveryRecord(doc)
+    if (record !== undefined) {
+      return {
+        stage: DELIVERY_STAGES[str(record.stage) ?? ''] ?? 'none',
+        branch: shortOrNull(str(record.branch)),
+        headSha: shortOrNull(str(record.head)),
+        prNumber: num(record.prNumber),
+        prUrl: str(record.prUrl) === null ? null : cutText(String(record.prUrl), 500),
+      }
+    }
     const stored = obj(doc.delivery)
     const stages: DeliveryView['stage'][] = [
       'none',
@@ -555,28 +739,6 @@ class Inspector {
     }
   }
 
-  #viewOf(
-    doc: StoreDoc,
-    facts: { openQuestions: number; awaitingConfirmation: boolean; attempts: StoreDoc[] },
-  ): WorkItemView {
-    const hold = obj(doc.hold)
-    const live = facts.attempts.filter((a) =>
-      ['queued', 'running', 'quota_wait'].includes(str(a.state) ?? ''),
-    )
-    const parked = live.length > 0 && live.every((a) => a.state === 'quota_wait')
-    const resets = live.flatMap((a) => str(a.resetsAt) ?? str(a.resetAt) ?? []).sort()
-    return {
-      state: str(doc.state) ?? 'admitted',
-      openQuestions: facts.openQuestions,
-      awaitingConfirmation: facts.awaitingConfirmation,
-      holdStatus: hold !== null && str(hold.liftedAt) === null ? 'held' : 'free',
-      // loginNeeded, latestReport, userMessageSinceReport and queued are not recorded yet (M2 writes
-      // reports and capacity): absent facts cannot match their rows, so the item is never a person stage by guesswork.
-      ...(parked && { quotaWait: resets[0] === undefined ? {} : { resetAt: resets[0] } }),
-      merged: this.#deliveryOf(doc).stage === 'merged',
-    }
-  }
-
   #reasonAndAction(
     stage: Stage,
     doc: StoreDoc,
@@ -594,7 +756,7 @@ class Inspector {
         const hold = obj(doc.hold)
         const why = str(hold?.reason)
         return {
-          reason: `Held by you since ${shortOrNull(str(hold?.at)) ?? 'an unknown time'}${why === null ? '' : `: ${cutText(why, 200)}`}`,
+          reason: `Held by you since ${whenText(str(hold?.at), this.#now()) ?? 'an unknown time'}${why === null ? '' : `: ${cutText(why, 200)}`}`,
           nextAction: 'Tell the meta agent to go ahead when ready',
         }
       }
@@ -628,7 +790,13 @@ class Inspector {
         openQuestions: mine.filter((item) => item.kind === 'question').length,
         awaitingConfirmation: mine.some((item) => item.kind === 'card'),
       }
-      const stage = stageOf(this.#viewOf(doc, { ...facts, attempts: attempts.get(id) ?? [] }))
+      const stage = stageOf(
+        workViewOf(doc, {
+          ...facts,
+          attempts: attempts.get(id) ?? [],
+          merged: this.#deliveryOf(doc).stage === 'merged',
+        }),
+      )
       const byStatus = counts[id] ?? {}
       const repoId = repoIdOf(doc)
       return {
@@ -686,12 +854,15 @@ class Inspector {
     const streams = attempts.map((a) => `attempt:${String(a.id)}`)
     return {
       reports:
-        some((a) => obj(a.report) !== null) || (workDoc !== undefined && str(workDoc.latestReport) !== null),
+        some((a) => (num(a.reports) ?? 0) > 0 || obj(a.report) !== null) ||
+        (workDoc !== undefined && str(workDoc.latestReport) !== null),
       checks: some((a) => Array.isArray(a.checks)),
       diff: some((a) => obj(a.diff) !== null),
       activity: streams.length > 0 && Object.keys(this.#reads.lastEventAt(streams)).length > 0,
-      usage: some((a) => num(a.costUsd) !== null),
-      delivery: workDoc !== undefined && obj(workDoc.delivery) !== null,
+      usage: some((a) => num(a.costUsd) !== null || obj(a.usage) !== null),
+      delivery:
+        this.#deliveryRecord(workDoc) !== undefined ||
+        (workDoc !== undefined && obj(workDoc.delivery) !== null),
     }
   }
 
@@ -759,6 +930,92 @@ class Inspector {
 
   // ── tasks ──
 
+  /** `check/<attempt>/<name>`: what `StoreFacts.checksFinished` stored. */
+  #checkDocs(attemptId: string | undefined): StoreDoc[] {
+    if (attemptId === undefined) return []
+    return this.#collect('engine', { idPrefix: `check/${attemptId}/` }).map((row) => row.doc)
+  }
+
+  /** The stream's usage and exit events, as the engine sent them. */
+  #engineEvents(attempt: StoreDoc): { events: EngineEvent[]; capped: boolean } {
+    const id = String(attempt.id)
+    const stream = `attempt:${id}`
+    const usage = this.#reads.eventsOfType(stream, 'usage', USAGE_READ_CAP)
+    const rows: EventRow[] = [...usage, ...this.#reads.eventsOfType(stream, 'exit', 1)]
+    const events = rows.map((row) => {
+      const body = obj(row.body ?? undefined) ?? {}
+      return {
+        ...body,
+        type: row.type,
+        // The engine's own seq: a replay gets a new place in the stream and keeps this.
+        seq: num(body.seq) ?? row.seq,
+        at: row.at,
+        attempt_id: id,
+        generation: num(body.generation) ?? num(attempt.generation) ?? 1,
+      } as unknown as EngineEvent
+    })
+    return { events, capped: usage.length === USAGE_READ_CAP }
+  }
+
+  /** §19: one figure per attempt from the one calculation, with what it covers. */
+  #usageOf(attempts: StoreDoc[], total: number): TaskDetail['usage'] {
+    const outcomes = attempts.map((attempt) => {
+      const { events, capped } = this.#engineEvents(attempt)
+      const { spend, spendCoverage } = projectAttempt(String(attempt.id), events)
+      const stored = num(attempt.costUsd) ?? num(obj(attempt.usage)?.cost_usd)
+      if (spend === 'unknown') return { usd: stored, partial: false }
+      return { usd: spend, partial: capped || spendCoverage === 'subtotal' }
+    })
+    const known = outcomes.flatMap(({ usd }) => (usd === null ? [] : [usd]))
+    const missingAttempts = total - known.length
+    const modes = new Set(attempts.flatMap((attempt) => this.#billingOf(attempt) ?? []))
+    const onlyMode = modes.size === 1 ? [...modes][0] : undefined
+    return {
+      reportedUsd: known.length === 0 ? null : known.reduce((sum, usd) => sum + usd, 0),
+      missingAttempts,
+      mode: onlyMode ?? 'unknown',
+      coverage:
+        known.length === 0
+          ? 'unknown'
+          : missingAttempts > 0 || outcomes.some(({ partial }) => partial)
+            ? 'subtotal'
+            : 'total',
+    }
+  }
+
+  /** API spend and subscription use are different things (§19): the slot says which this was. */
+  #billingOf(attempt: StoreDoc): 'api' | 'subscription' | undefined {
+    const stored = str(attempt.usageMode)
+    if (stored === 'api' || stored === 'subscription') return stored
+    const kind = str(this.#store.slots.get(str(attempt.slotId) ?? '')?.kind)
+    if (kind?.endsWith('-sub')) return 'subscription'
+    return kind?.endsWith('-api') ? 'api' : undefined
+  }
+
+  #outcomeOf(
+    named: StoreDoc | undefined,
+    checks: StoreDoc[],
+    workDoc: StoreDoc | undefined,
+  ): TaskDetail['outcome'] {
+    if (named === undefined) return { process: 'unknown', validation: 'unknown', delivery: 'unknown' }
+    const head = headOf(named) ?? undefined
+    const records = checks.flatMap((check): CheckRecord[] => {
+      const [name, status, sha] = [str(check.name), str(check.status), str(check.sha)]
+      return name === null || status === null || sha === null ? [] : [{ name, status, sha }]
+    })
+    const stage = str(this.#deliveryRecord(workDoc)?.stage) ?? undefined
+    const outcome = projectAttempt(String(named.id), this.#engineEvents(named).events, {
+      ...(head !== undefined && { head }),
+      checks: records,
+      ...(stage !== undefined && { deliveryStage: stage }),
+    })
+    return {
+      process: str(named.exit_reason) ?? outcome.result,
+      validation: outcome.validation,
+      delivery: outcome.delivery,
+    }
+  }
+
   taskDetail(id: string): TaskDetail | undefined {
     const task = this.#reads.getDoc('task', id)
     if (task === undefined) return undefined
@@ -773,15 +1030,16 @@ class Inspector {
     const shown = attempts.slice(-ATTEMPT_CAP)
     const built = shown.map((attempt): AttemptView => {
       const slotId = str(attempt.slotId)
-      const model = str(attempt.model)
       const engine = str(attempt.engine)
+      // The scheduler names a model before launch; only a pinned engine means one really ran.
+      const model = str(attempt.model) ?? (engine === null ? null : str(attempt.resolved_model))
       const exitCode = num(attempt.exit_code)
-      const terminal = str(attempt.terminal_reason)
+      const terminal = str(attempt.terminal_reason) ?? str(attempt.exit_reason)
       return {
         id: String(attempt.id),
         generation: num(attempt.generation) ?? 1,
         state: str(attempt.state) ?? 'unknown',
-        role: str(task.role),
+        role: str(attempt.role) ?? str(task.role),
         requested: { tier: str(modelRequest?.tier), model: str(modelRequest?.model) },
         // The model that actually ran is recorded by the attempt; never copied from the request.
         actual:
@@ -792,16 +1050,33 @@ class Inspector {
                 engine,
                 slotLabel: slotId === null ? null : (str(this.#store.slots.get(slotId)?.label) ?? null),
               },
-        baseSha: str(attempt.baseSha),
-        headSha: str(attempt.headSha),
+        baseSha: str(attempt.base_sha) ?? str(attempt.baseSha),
+        headSha: headOf(attempt),
         processOutcome: terminal ?? (exitCode === null ? 'unknown' : `exit ${exitCode}`),
         lastActivityAt: lastAt[`attempt:${String(attempt.id)}`] ?? null,
       }
     })
     const views = takeWithin(built.reverse(), ATTEMPT_CAP, ATTEMPT_BYTES).reverse()
-    const named = [...attempts].reverse().find((attempt) => str(attempt.headSha) !== null)
-    const head = str(named?.headSha)
+    const named = [...attempts].reverse().find((attempt) => headOf(attempt) !== null)
+    const head = named === undefined ? null : headOf(named)
     // Checks and diff belong to the exact head they ran on, never inherited from another scope.
+    const checkDocs = this.#checkDocs(named === undefined ? undefined : String(named.id))
+    const recorded = checkDocs.flatMap((check): CheckView[] => {
+      if (str(check.name) === null || str(check.sha) !== head) return []
+      const status = str(check.status)
+      const tail = str(check.log_tail)
+      return [
+        {
+          name: cutText(String(check.name), 120),
+          state:
+            status === 'passed' ? 'passed' : status === 'failed' || status === 'error' ? 'failed' : 'not-run',
+          headSha: head,
+          detail: tail === null ? null : redactText(tail).slice(-500),
+          artifactRef: null,
+        },
+      ]
+    })
+    const skipped = str(named?.checks_note)
     const checkList = named?.checks
     const allChecks: CheckView[] = Array.isArray(checkList)
       ? checkList.flatMap((entry): CheckView[] => {
@@ -819,6 +1094,16 @@ class Inspector {
           ]
         })
       : []
+    allChecks.unshift(...recorded)
+    if (allChecks.length === 0 && skipped !== null) {
+      allChecks.push({
+        name: 'checks',
+        state: 'not-run',
+        headSha: head,
+        detail: cutText(skipped, 500),
+        artifactRef: null,
+      })
+    }
     const checks = takeWithin(allChecks, CHECK_CAP, CHECK_BYTES)
     const diffRecord = obj(named?.diff)
     const fileList = diffRecord?.files
@@ -837,10 +1122,6 @@ class Inspector {
         })
       : []
     const files = takeWithin(allFiles, DIFF_FILE_CAP, DIFF_BYTES)
-    const costs = attempts.map((attempt) => num(attempt.costUsd))
-    const reported = costs.filter((cost): cost is number => cost !== null)
-    const modes = new Set(attempts.map((attempt) => str(attempt.usageMode)).filter((mode) => mode !== null))
-    const onlyMode = modes.size === 1 ? [...modes][0] : null
     return {
       ...row,
       workItemId: shortText(workItemId),
@@ -859,13 +1140,43 @@ class Inspector {
         files,
         truncated: allFiles.length - files.length,
       },
-      usage: {
-        reportedUsd: reported.length === 0 ? null : reported.reduce((sum, cost) => sum + cost, 0),
-        missingAttempts: costs.length - reported.length,
-        mode: onlyMode === 'api' || onlyMode === 'subscription' ? onlyMode : 'unknown',
-      },
+      usage: this.#usageOf(shown, attempts.length),
+      outcome: this.#outcomeOf(named, checkDocs, workDoc),
       coverage: this.#coverage(attempts, workDoc),
     }
+  }
+
+  // ── activity and artifacts ──
+
+  /**
+   * One page of an attempt's stream, allow-listed by type. A page can hold fewer items than its limit,
+   * or none, while `nextCursor` still has more. `tool_call` is a completion, so nothing here says what
+   * is running now.
+   */
+  activityPage(id: string, cursor: string | null, limit: number): Page<ActivityItem> | undefined {
+    if (this.#reads.getDoc('attempt', id) === undefined) return undefined
+    const page = this.#reads.pageEvents(`attempt:${id}`, { cursor, limit })
+    const items: ActivityItem[] = []
+    let bytes = ENVELOPE_BYTES
+    let read = 0
+    for (const row of page.rows) {
+      if (ACTIVITY_TYPES.has(row.type)) {
+        const item = activityItem(row)
+        const size = Buffer.byteLength(JSON.stringify(scrub(item)))
+        if (items.length > 0 && bytes + size > MAX_PAGE_BYTES) {
+          return { items, nextCursor: encodeCursor(read), observedAt: this.observedAt() }
+        }
+        bytes += size
+        items.push(item)
+      }
+      read = row.seq
+    }
+    return { items, nextCursor: page.nextCursor, observedAt: this.observedAt() }
+  }
+
+  /** The only allow-listed root is the attempt's own worktree, as the launcher pinned it. */
+  artifactRoot(attemptId: string): string | undefined {
+    return str(this.#reads.getDoc('attempt', attemptId)?.worktree) ?? undefined
   }
 
   // ── search ──
@@ -890,8 +1201,12 @@ class Inspector {
     }
 
     // Messages by text or id.
-    const messages = this.#reads.searchDocs('message', ['text'], q, { limit: SEARCH_CAP, ...scope })
-    const byId = this.#reads.getDoc('message', q)
+    const messages = this.#reads.searchDocs('message', ['text'], q, {
+      limit: SEARCH_CAP,
+      excludeIdPrefix: WAKE_MESSAGE_PREFIX,
+      ...scope,
+    })
+    const byId = q.startsWith(WAKE_MESSAGE_PREFIX) ? undefined : this.#reads.getDoc('message', q)
     if (byId !== undefined && inScope(str(byId.workItemId), repoIdOf(byId))) messages.unshift(byId)
     for (const message of messages) {
       const id = String(message.id)
@@ -938,6 +1253,21 @@ class Inspector {
       })
     }
 
+    // Attempts by id. They carry no repository of their own, so the scope is their work's.
+    const attempts = this.#reads.searchDocs('attempt', ['id'], q, { limit: SEARCH_CAP })
+    for (const attempt of attempts) {
+      const workItemId = str(attempt.workItemId)
+      if (!inScope(workItemId, null)) continue
+      const id = String(attempt.id)
+      add({
+        kind: 'attempt',
+        id,
+        title: `Attempt ${id}`,
+        repoLabel: this.repoLabel(this.#workRepo(workItemId)),
+        workItemId,
+      })
+    }
+
     // References a stored field holds: a PR number, a GitHub URL, a SHA.
     const pr = /^#(\d{1,9})$/.exec(q)
     const url = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)\/?$/.exec(q)
@@ -952,12 +1282,24 @@ class Inspector {
         if (url === null || prUrl === null || prUrl.includes(`${url[1]}/pull/${url[2]}`))
           workHit(work.doc, 'reference')
       }
+      for (const { doc: record } of this.#reads.pageDocs('engine', {
+        idPrefix: 'delivery/',
+        equals: { prNumber: number, ...filter },
+        limit: SEARCH_CAP,
+      }).rows) {
+        const prUrl = str(record.prUrl)
+        const work = this.#store.workItems.get(str(record.workItemId) ?? '')
+        if (
+          work !== undefined &&
+          (url === null || prUrl === null || prUrl.includes(`${url[1]}/pull/${url[2]}`))
+        )
+          workHit(work, 'reference')
+      }
     }
     if (/^[0-9a-f]{7,40}$/i.test(q)) {
       const sha = q.toLowerCase()
-      for (const attempt of this.#reads.searchDocs('attempt', ['headSha', 'baseSha'], sha, {
-        limit: SEARCH_CAP,
-      })) {
+      const shaFields = ['head_sha', 'base_sha', 'headSha', 'baseSha']
+      for (const attempt of this.#reads.searchDocs('attempt', shaFields, sha, { limit: SEARCH_CAP })) {
         const workItemId = str(attempt.workItemId)
         if (!inScope(workItemId, null)) continue
         const id = String(attempt.id)
@@ -974,6 +1316,12 @@ class Inspector {
         ...scope,
       })) {
         workHit(work, 'reference')
+      }
+      for (const record of this.#reads.searchDocs('engine', ['head'], sha, { limit: SEARCH_CAP, ...scope })) {
+        const work = String(record.id).startsWith('delivery/')
+          ? this.#store.workItems.get(str(record.workItemId) ?? '')
+          : undefined
+        if (work !== undefined) workHit(work, 'reference')
       }
     }
     return [...hits.values()].slice(0, SEARCH_CAP * 5)
@@ -1010,6 +1358,48 @@ class Inspector {
   }
 }
 
+// ── Activity lines ───────────────────────────────────────────────────────────────────────────
+
+/** What one event says, in a line. Only the fields the contract names for that type. */
+function activitySummary(type: string, body: Record<string, Json>): string {
+  switch (type) {
+    case 'message':
+      return `${str(body.role) ?? 'unknown'}: ${firstLine(str(body.text) ?? '') ?? ''}`
+    case 'tool_call':
+      return `${str(body.tool) ?? 'tool'}${body.ok === false ? ' failed' : ''}`
+    case 'permission_request':
+      return 'Asked for permission'
+    case 'permission_result':
+      return 'Permission answered'
+    case 'usage':
+      return `${num(body.input_tokens) ?? '?'} in, ${num(body.output_tokens) ?? '?'} out`
+    case 'rate_limit':
+      return `${str(body.window) ?? 'unknown'} ${str(body.status) ?? 'unknown'}`
+    case 'report': {
+      const report = obj(body.report)
+      return `${str(report?.kind) ?? 'report'}: ${str(report?.summary) ?? ''}`
+    }
+    case 'error':
+      return `${str(body.class) ?? 'unknown'}: ${str(body.detail) ?? ''}`
+    case 'exit':
+      return `Exit ${num(body.code) ?? '?'}: ${str(body.terminal_reason) ?? 'unknown'}`
+    default:
+      return `Started ${str(body.engine) ?? 'unknown'} ${str(body.engine_version) ?? ''}`.trim()
+  }
+}
+
+function activityItem(row: EventRow): ActivityItem {
+  const body = obj(row.body ?? undefined) ?? {}
+  const text = row.type === 'message' ? str(body.text) : JSON.stringify(row.body)
+  return {
+    seq: row.seq,
+    type: row.type,
+    at: shortText(row.at),
+    summary: cutText(activitySummary(row.type, body), ACTIVITY_SUMMARY_CAP),
+    detail: text === null ? null : cutText(text, ACTIVITY_DETAIL_CAP),
+  }
+}
+
 // ── Routes ───────────────────────────────────────────────────────────────────────────────────
 
 function pageParams(query: Record<string, unknown>): { cursor: string | null; limit: number } {
@@ -1034,11 +1424,13 @@ function pageParams(query: Record<string, unknown>): { cursor: string | null; li
 }
 
 /**
- * Registers `GET /api/inspect/{snapshot,work,work/:id,tasks/:id,needs,search}`. Additive: the
- * existing routes keep their shapes. Every response is redacted on its way out.
+ * Registers `GET /api/inspect/{snapshot,work,work/:id,tasks/:id,needs,search,attempts/:id/activity,
+ * artifacts}`. Additive: the existing routes keep their shapes. Every response is redacted on its way
+ * out, and every route is behind `readGate`.
  */
 export function registerInspectionRoutes(app: FastifyInstance, deps: InspectDeps): void {
   const inspector = new Inspector(deps)
+  const gated = { preHandler: readGate }
 
   const repoFilter = (request: FastifyRequest): string | undefined => {
     const repoId = (request.query as { repoId?: unknown }).repoId
@@ -1079,11 +1471,13 @@ export function registerInspectionRoutes(app: FastifyInstance, deps: InspectDeps
 
   app.get(
     '/api/inspect/snapshot',
+    gated,
     serve((request) => inspector.snapshot(repoFilter(request))),
   )
 
   app.get(
     '/api/inspect/work',
+    gated,
     serve((request) => {
       const repoId = repoFilter(request)
       const { cursor, limit } = pageParams(request.query as Record<string, unknown>)
@@ -1093,6 +1487,7 @@ export function registerInspectionRoutes(app: FastifyInstance, deps: InspectDeps
 
   app.get(
     '/api/inspect/work/:id',
+    gated,
     serve((request) =>
       inspector.workDetail(String((request.params as { id?: string }).id ?? ''), inspector.openNeeds()),
     ),
@@ -1100,11 +1495,13 @@ export function registerInspectionRoutes(app: FastifyInstance, deps: InspectDeps
 
   app.get(
     '/api/inspect/tasks/:id',
+    gated,
     serve((request) => inspector.taskDetail(String((request.params as { id?: string }).id ?? ''))),
   )
 
   app.get(
     '/api/inspect/needs',
+    gated,
     serve((request): Page<NeedItem> => {
       const repoId = repoFilter(request)
       const query = request.query as Record<string, unknown>
@@ -1115,6 +1512,7 @@ export function registerInspectionRoutes(app: FastifyInstance, deps: InspectDeps
 
   app.get(
     '/api/inspect/search',
+    gated,
     serve((request): Page<SearchHit> => {
       const repoId = repoFilter(request)
       const q = (request.query as { q?: unknown }).q
@@ -1128,4 +1526,50 @@ export function registerInspectionRoutes(app: FastifyInstance, deps: InspectDeps
       }
     }),
   )
+
+  app.get(
+    '/api/inspect/attempts/:id/activity',
+    gated,
+    serve((request) => {
+      const { cursor, limit } = pageParams(request.query as Record<string, unknown>)
+      return inspector.activityPage(String((request.params as { id?: string }).id ?? ''), cursor, limit)
+    }),
+  )
+
+  /** Text, never markup: `nosniff` and no script, whatever the file claims to be. */
+  app.get('/api/inspect/artifacts', gated, async (request, reply) => {
+    const { attemptId, ref, cursor } = request.query as Record<string, unknown>
+    reply.header('x-content-type-options', 'nosniff')
+    reply.header('content-security-policy', "default-src 'none'")
+    try {
+      if (typeof attemptId !== 'string' || typeof ref !== 'string') {
+        throw new BadRequest('attemptId and ref are required')
+      }
+      if (ref === '' || ref.length > ARTIFACT_REF_CAP) throw new BadRequest('ref is not valid')
+      const offset = pageParams({ cursor }).cursor
+      const root = inspector.artifactRoot(attemptId)
+      const path = root === undefined ? undefined : resolveArtifact(root, ref)
+      const page =
+        path === undefined ? undefined : readArtifact(path, offset === null ? 0 : decodeCursor(offset))
+      if (page === undefined) {
+        reply.code(404)
+        return { error: 'not found' }
+      }
+      if (page.binary) return { ref: redactText(ref), binary: true, size: page.size }
+      reply.header('x-mec-artifact-size', String(page.size))
+      if (page.next !== null) reply.header('x-mec-next-cursor', encodeCursor(page.next))
+      reply.type('text/plain; charset=utf-8')
+      return page.text
+    } catch (error) {
+      if (error instanceof BadRequest) {
+        reply.code(400)
+        return { error: 'bad_request', detail: error.message }
+      }
+      if (error instanceof Refused) {
+        reply.code(403)
+        return { error: 'artifact_refused' }
+      }
+      throw error
+    }
+  })
 }

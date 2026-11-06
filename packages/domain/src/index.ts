@@ -23,7 +23,7 @@ export { BUILTIN_ROLE_NAMES, BUILTIN_ROSTER, compileAdHocRole, RESERVED_NAME_PRE
 export type { ActiveAttempt, DeferReason, DispatchPlan, SchedulableTask, SlotView } from './scheduling'
 export { planDispatches } from './scheduling'
 export type { Stage, StageRow, WorkItemView } from './stages'
-export { STAGE_TABLE, stageOf } from './stages'
+export { STAGE_TABLE, stageOf, workViewOf } from './stages'
 export type {
   AttemptEvent,
   AttemptState,

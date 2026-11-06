@@ -14,11 +14,17 @@ export type PartEntry = { state: PartState; detail?: string }
 export type RuntimeState = 'starting' | 'ready' | 'paused' | 'error'
 
 export type HealthSnapshot = {
-  /** Written by the server on every claim transition; a stale snapshot is `not_answering`. */
+  /** A dead server cannot update this: a stale `heartbeatAt` is what says `not answering`. */
   runtime: { state: RuntimeState; instances: number; answering: boolean }
   parts: Record<string, PartEntry>
   /** Plan §21.2 exit 3: waiting for setup (no slot, no repository). */
   setup: { has_slot: boolean; has_repository: boolean }
+  /** When this answer was read: `answering` speaks for that moment and no later. */
+  observedAt?: string
+  /** Written only into `health.json`, a fresh `heartbeatAt` each tick (§21.2). */
+  instanceId?: string
+  pid?: number
+  heartbeatAt?: string
 }
 
 /** `null` = no snapshot on disk: the server has never run (or died without writing one). */
@@ -36,7 +42,7 @@ export function parseHealthSnapshot(text: string): HealthSnapshot | null {
   ) {
     return null
   }
-  const { runtime, parts, setup } = value
+  const { runtime, parts, setup, observedAt, instanceId, pid, heartbeatAt } = value
   if (
     !['starting', 'ready', 'paused', 'error'].includes(runtime.state) ||
     typeof runtime.instances !== 'number' ||
@@ -46,5 +52,14 @@ export function parseHealthSnapshot(text: string): HealthSnapshot | null {
   ) {
     return null
   }
-  return { runtime, parts, setup }
+  // Older files have none of these, and a field of the wrong type is as good as none.
+  return {
+    runtime,
+    parts,
+    setup,
+    ...(typeof observedAt === 'string' && { observedAt }),
+    ...(typeof instanceId === 'string' && { instanceId }),
+    ...(typeof pid === 'number' && { pid }),
+    ...(typeof heartbeatAt === 'string' && { heartbeatAt }),
+  }
 }

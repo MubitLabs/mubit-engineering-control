@@ -14,7 +14,16 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { Socket } from 'node:net'
 import { extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { Effects, HealthBoard, HealthName, Json, ProviderId, Store, StoreDoc } from '@mec/contracts'
+import type {
+  DomainEvent,
+  Effects,
+  HealthBoard,
+  HealthName,
+  Json,
+  ProviderId,
+  Store,
+  StoreDoc,
+} from '@mec/contracts'
 import { matchesSecret } from '@mec/contracts'
 import { WORK_ITEM_TERMINAL, type WorkItemState } from '@mec/domain'
 import type { LiveWork } from '@mec/meta'
@@ -59,7 +68,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { type BackupControl, liveSlot, registerConfigRoutes, repositoryRevision } from './config-routes'
 import { buildDoctorReport } from './doctor'
 import type { HealthSnapshot, PartEntry } from './health'
-import { registerInspectionRoutes } from './inspection'
+import { hostIsLoopback, registerInspectionRoutes, scrub } from './inspection'
 import { type CardEvent, LoginCardManager } from './login-cards'
 import { metaSlotRefusal } from './readiness'
 import {
@@ -219,6 +228,10 @@ const MIME_TYPES: Record<string, string> = {
 }
 
 const SSE_POLL_MS = 500
+/** Events one stream may write in one flush: the store's page limit. */
+export const EVENT_FLUSH_CAP = 100
+/** Events a client may be behind on one stream before it is told to take a fresh snapshot. */
+export const EVENT_BACKLOG_CAP = 10_000
 
 let idCounter = 0
 
@@ -395,10 +408,16 @@ function slotDocOf(store: Store, id: string): ApiSlotDoc | undefined {
  * live from boards that expose `names()`/`entry()` (the `HealthBoardImpl` the composition
  * root uses does): the contracts interface deliberately carries no snapshot seam, so nothing
  * is added to it here. A board without that surface contributes no parts — what the server
- * cannot see is reported as unknown, never healthy (§21.2).
+ * cannot see is reported as unknown, never healthy (§21.2). `answering` is true only because this
+ * code is running: `observedAt` says when, and it claims nothing about any later moment.
  */
-export function buildHealthSnapshot(store: Store, health: HealthBoard): HealthSnapshot {
+export function buildHealthSnapshot(
+  store: Store,
+  health: HealthBoard,
+  now: Date = new Date(),
+): HealthSnapshot {
   return {
+    observedAt: now.toISOString(),
     runtime: { state: processingOf(store).paused ? 'paused' : 'ready', instances: 1, answering: true },
     parts: partsOf(health),
     setup: {
@@ -1724,7 +1743,12 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   })
 
   app.get('/api/events', (request, reply) => {
-    const query = (request.query ?? {}) as { stream?: string; after?: string }
+    // No header check here: `EventSource` can't set one. A rebound page still arrives with its Host.
+    if (!hostIsLoopback(request.headers.host)) {
+      reply.code(403).send({ error: 'forbidden_host' })
+      return
+    }
+    const query = (request.query ?? {}) as { stream?: string; after?: string; compact?: string }
     const streamParam = typeof query.stream === 'string' ? query.stream : ''
     if (streamParam === '') {
       reply.code(400).send({ error: 'stream is required' })
@@ -1744,8 +1768,17 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       const after = afters[i] ?? Number.NaN
       cursors.set(name, Number.isFinite(after) && after >= 0 ? after : 0)
     })
-    const stream = streams[0] ?? ''
-    let cursor = cursors.get(stream) ?? 0
+    const compact = query.compact === '1'
+    const tail = (name: string, after: number): DomainEvent[] =>
+      deps.inspection?.pageEvents(name, { after, limit: EVENT_FLUSH_CAP }).rows ??
+      store.events.read(name, after).slice(0, EVENT_FLUSH_CAP)
+    const newest = (name: string): number =>
+      deps.inspection?.cursors([name])[name] ?? store.events.read(name).at(-1)?.seq ?? 0
+    const frameOf = (name: string, event: DomainEvent): string => {
+      const { seq, type, at } = event
+      const data = compact ? { stream: name, seq, type, at } : scrub(event)
+      return `id: ${name}:${seq}\ndata: ${JSON.stringify(data)}\n\n`
+    }
 
     reply.hijack()
     const raw = reply.raw
@@ -1755,16 +1788,58 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       connection: 'keep-alive',
       'x-accel-buffering': 'no',
     })
+    // A connection never holds more than the socket takes: `waiting` stops every write until `drain`.
+    let waiting = false
+    let ended = false
+    let timer: NodeJS.Timeout | undefined
+    let more: NodeJS.Immediate | undefined
+    const stop = (): void => {
+      ended = true
+      clearInterval(timer)
+      clearImmediate(more)
+    }
+    /** Past the cap a replay is no use: one frame, then the client reads a fresh snapshot. */
+    const reset = (behind: string): void => {
+      stop()
+      raw.write(`event: reset\ndata: ${JSON.stringify({ reason: 'backlog', stream: behind })}\n\n`)
+      raw.end()
+      // A socket that stopped reading would never take the end either, and would hold this open.
+      if (waiting) raw.destroy()
+    }
     const flush = (): void => {
-      for (const name of streams) {
-        let at = cursors.get(name) ?? 0
-        for (const event of store.events.read(name, at)) {
-          raw.write(`id: ${name}:${event.seq}\ndata: ${JSON.stringify(event)}\n\n`)
-          at = event.seq
-        }
-        cursors.set(name, at)
+      if (ended) return
+      const behind = streams.find((name) => newest(name) - (cursors.get(name) ?? 0) > EVENT_BACKLOG_CAP)
+      if (behind !== undefined) {
+        reset(behind)
+        return
       }
-      cursor = cursors.get(stream) ?? cursor
+      if (waiting) return
+      let full = false
+      for (const name of streams) {
+        const events = tail(name, cursors.get(name) ?? 0)
+        full ||= events.length === EVENT_FLUSH_CAP
+        for (const event of events) {
+          waiting = !raw.write(frameOf(name, event))
+          cursors.set(name, event.seq)
+          if (waiting) {
+            raw.once('drain', () => {
+              waiting = false
+              pass()
+            })
+            return
+          }
+        }
+      }
+      // A capped stream has more now: the next pass need not wait for the poll.
+      if (full && raw.socket instanceof Socket) more = setImmediate(pass)
+    }
+    /** A read must never kill the loop; the next pass tries again. */
+    const pass = (): void => {
+      try {
+        flush()
+      } catch {
+        // Tried again at the next tick. A closing store ends with the connection.
+      }
     }
     raw.on('error', () => {})
     flush()
@@ -1775,16 +1850,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       raw.end()
       return
     }
-    const timer = setInterval(() => {
-      try {
-        flush()
-      } catch {
-        // A read must never kill the poll loop; the next pass tries again.
-      }
-    }, SSE_POLL_MS)
+    timer = setInterval(pass, SSE_POLL_MS)
     timer.unref()
     raw.on('close', () => {
-      clearInterval(timer)
+      stop()
       raw.end()
     })
   })

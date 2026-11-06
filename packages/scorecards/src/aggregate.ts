@@ -5,9 +5,10 @@
  * Unknown-handling (§19: missing data is unknown, not zero):
  * - `avgCostUsd` averages the costs that were reported; attempts with `'unknown'` cost leave
  *   the divisor, not a silent 0. With no reported cost at all it is `'unknown'`.
- * - `failed` counts every attempt whose result is not `'completed'` — including `'unknown'`,
- *   which is not known to have completed — so `completed + failed` always reconciles to
- *   `attempts`.
+ * - `processCompleted` is how the process ended and nothing more; `validated` is the count whose
+ *   checks passed on the exact head. `processFailed` counts every attempt whose result is not
+ *   `'completed'` — including `'unknown'`, which is not known to have completed — so
+ *   `processCompleted + processFailed` always reconciles to `attempts`.
  * - `messagesSent` sums `turns`: each finished turn ends in one assistant message, and the
  *   outcome record carries no separate message counter.
  * - The utilisation ledger takes the maximum `utilization` each window actually reported and
@@ -19,8 +20,9 @@ import type { AttemptOutcome } from './project'
 export type RoleSummary = {
   role: string
   attempts: number
-  completed: number
-  failed: number
+  processCompleted: number
+  processFailed: number
+  validated: number
   quotaParks: number
   avgCostUsd: number | 'unknown'
   messagesSent: number
@@ -42,8 +44,9 @@ export function summariseByRole(outcomes: readonly AttemptOutcome[]): RoleSummar
     return {
       role,
       attempts: bucket.length,
-      completed: bucket.filter((outcome) => outcome.result === 'completed').length,
-      failed: bucket.filter((outcome) => outcome.result !== 'completed').length,
+      processCompleted: bucket.filter((outcome) => outcome.result === 'completed').length,
+      processFailed: bucket.filter((outcome) => outcome.result !== 'completed').length,
+      validated: bucket.filter((outcome) => outcome.validation === 'passed').length,
       quotaParks: bucket.reduce((sum, outcome) => sum + outcome.quotaParks, 0),
       avgCostUsd:
         knownCosts.length === 0

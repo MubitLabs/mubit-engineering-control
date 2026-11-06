@@ -18,7 +18,14 @@
  */
 import type { Store, StoreDoc } from '@mec/contracts'
 import type { Caps, ModelAvailability, ModelTier, SlotModelsView, TierTableLike } from '@mec/domain'
-import { availableTiersOnSlot, tableEntries, WORK_ITEM_TERMINAL, type WorkItemState } from '@mec/domain'
+import {
+  availableTiersOnSlot,
+  stageOf,
+  tableEntries,
+  WORK_ITEM_TERMINAL,
+  type WorkItemState,
+  workViewOf,
+} from '@mec/domain'
 import { loadPolicy } from '../../policy/src/policy'
 import type { AttemptOutcome } from '../../scorecards/src/project'
 import { hintsFor, projectTiers } from '../../scorecards/src/tiers'
@@ -492,6 +499,28 @@ export function modelRowsFromTable(
  * Budgets read off task docs when they carry one — no budget ledger exists yet, so
  * absence prints unknown, never a made-up number.
  */
+/** The facts of §10's stage, joined as Work joins them: a card only by a stored id or its mandate. */
+function stageFacts(store: Store, doc: StoreDoc, now: string): Parameters<typeof workViewOf>[1] {
+  const id = String(doc.id)
+  const mandateId = (doc.mandate as { id?: unknown } | undefined)?.id
+  return {
+    openQuestions: store.engines
+      .list()
+      .filter((q) => String(q.id).startsWith('question/') && q.status === 'open' && q.workItemId === id)
+      .length,
+    awaitingConfirmation: store.confirmations
+      .list({ status: 'pending' })
+      .filter((card) => String(card.expiresAt ?? '') > now)
+      .some(
+        (card) =>
+          card.workItemId === id ||
+          (card.workItemId === undefined && mandateId !== undefined && card.mandateId === mandateId),
+      ),
+    attempts: store.attempts.list({ workItemId: id }),
+    merged: store.engines.get(`delivery/${id}`)?.stage === 'merged',
+  }
+}
+
 export function plannerContextFromStore(
   store: Store,
   opts: {
@@ -508,9 +537,11 @@ export function plannerContextFromStore(
      * item, so a legacy row is out of the planner's reach. Absent means every repository.
      */
     repoScope?: { repoId?: string; workItemId?: string }
+    now?: () => string
   },
 ): PlannerContextInput {
   const scope = opts.repoScope
+  const now = (opts.now ?? (() => new Date().toISOString()))()
   const inScope = (doc: StoreDoc): boolean => {
     if (scope === undefined) return true
     if (scope.repoId !== undefined) return doc.repoId === scope.repoId
@@ -564,7 +595,7 @@ export function plannerContextFromStore(
     return {
       id,
       state: String(doc.state ?? ''),
-      stage: String(doc.stage ?? doc.state ?? 'unknown'),
+      stage: stageOf(workViewOf(doc, stageFacts(store, doc, now))).label,
       tasks,
       openQuestions: store.engines
         .list()

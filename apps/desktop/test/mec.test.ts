@@ -21,7 +21,10 @@ function makeIo(overrides: { readSnapshotText?: () => string; initialized?: bool
   const dataDir = mkdtempSync(join(tmpdir(), 'mec-cli-data-'))
   tempDirs.push(markerDir, dataDir)
   const io = {
-    readSnapshotText: overrides.readSnapshotText ?? (() => normalBoardText),
+    // A live writer's snapshot: `mec status` reads the heartbeat against the clock (§21.2).
+    readSnapshotText:
+      overrides.readSnapshotText ??
+      (() => JSON.stringify({ ...JSON.parse(normalBoardText), heartbeatAt: new Date().toISOString() })),
     initialized: () => overrides.initialized ?? true,
     markerDir,
     dataDir,

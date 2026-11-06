@@ -18,6 +18,8 @@ function board(overrides: {
     runtime: { state: 'ready', instances: 1, answering: true, ...overrides.runtime },
     parts: overrides.parts ?? {},
     setup: { has_slot: true, has_repository: true, ...overrides.setup },
+    // §21.2: a healthy board has a live writer; the heartbeat rows are in health-freshness.test.ts.
+    heartbeatAt: new Date().toISOString(),
   }
 }
 
@@ -138,7 +140,8 @@ describe('statusFromSnapshot', () => {
       it(`${file} maps to code ${code}`, () => {
         const snapshot = parseHealthSnapshot(readFileSync(join(fixtureDir, file), 'utf8'))
         expect(snapshot).not.toBeNull()
-        const result = statusFromSnapshot(snapshot, { initialized: true })
+        const live = snapshot === null ? null : { ...snapshot, heartbeatAt: new Date().toISOString() }
+        const result = statusFromSnapshot(live, { initialized: true })
         expect(result.code).toBe(code)
       })
     }

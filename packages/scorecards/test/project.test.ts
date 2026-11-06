@@ -53,6 +53,9 @@ describe('projectAttempt — happy path', () => {
       resolvedModel: null, // no runtime resolution and no session_started echo
       tierDegraded: null,
       spend: 0.06, // cumulative default: the last usage reading is the total
+      spendCoverage: 'total',
+      validation: 'unknown', // a clean exit is not validation evidence
+      delivery: 'unknown',
       utilisationDelta: null, // one five_hour reading — no genuine pair, never a fake 0
     })
   })

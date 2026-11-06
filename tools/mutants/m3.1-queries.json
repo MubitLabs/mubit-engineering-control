@@ -4,356 +4,461 @@
     "file": "apps/desktop/src/inspection.ts",
     "find": "      limit,\n      ...(repoId !== undefined && { equals: { repoId } }),\n    })\n    const rows = this.workRows(",
     "replace": "      limit,\n    })\n    const rows = this.workRows(",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "drop the page limit",
     "file": "packages/store/src/inspection.ts",
     "find": "      options.onRow?.()\n      if (rows.length === limit) {",
     "replace": "      options.onRow?.()\n      if (false) {",
-    "tests": ["packages/store/test/inspection.test.ts", "apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "packages/store/test/inspection.test.ts",
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "skip cursor validation",
     "file": "packages/store/src/inspection.ts",
     "find": "  if (v !== 1) throw new CursorError('cursor version is not supported')\n",
     "replace": "",
-    "tests": ["packages/store/test/inspection.test.ts", "apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "packages/store/test/inspection.test.ts",
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "serve task text without redact",
     "file": "apps/desktop/src/inspection.ts",
     "find": "const redactText = (text: string): string => redact(text, [], [])",
     "replace": "const redactText = (text: string): string => text",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "restore held-first stage order",
     "file": "packages/domain/src/stages.ts",
     "find": "    match: (w) => w.openQuestions > 0,\n    label: () => 'Needs your answer',",
     "replace": "    match: (w) => w.holdStatus === 'held',\n    label: () => 'Held by you',",
-    "tests": ["packages/domain/test/stages.test.ts", "apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "packages/domain/test/stages.test.ts",
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "make a missing record coverage true",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "      usage: some((a) => num(a.costUsd) !== null),",
+    "find": "      usage: some((a) => num(a.costUsd) !== null || obj(a.usage) !== null),",
     "replace": "      usage: true,",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "join a card by branch name",
     "file": "apps/desktop/src/inspection.ts",
     "find": "      const workItemId =\n        str(doc.workItemId) ?? (mandateId === null ? null : (byMandate.get(mandateId) ?? null))\n",
     "replace": "      const workItemId =\n        str(doc.workItemId) ??\n        (mandateId === null ? null : (byMandate.get(mandateId) ?? null)) ??\n        str(this.#reads.docsByField('work_item', 'branch', [String(obj(doc.payload)?.branch)])[0]?.id)\n",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "treat absent repoId as readOnly false",
     "file": "apps/desktop/src/inspection.ts",
     "find": "        readOnly: repoId === null,",
     "replace": "        readOnly: false,",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "stop the open walk at 200",
     "file": "apps/desktop/src/inspection.ts",
     "find": "    } while (cursor !== null)\n    return rows\n",
     "replace": "    } while (cursor !== null && rows.length < 200)\n    return rows.slice(0, 200)\n",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "needs never returns a cursor",
     "file": "apps/desktop/src/inspection.ts",
     "find": "        last !== undefined && served.length < rows.length\n          ? served.length > open.length\n            ? encodeCursor(last.rowid, true, {\n                at: last.settledAt,\n                served: servedBefore + served.length - open.length,\n              })\n            : encodeCursor(last.rowid)\n          : null,",
     "replace": "        null,",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "recent ignores its repo scope",
     "file": "apps/desktop/src/inspection.ts",
     "find": "(repoId === undefined || item.repoId === repoId) &&\n      (after === null",
     "replace": "(after === null",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "diff files uncapped",
     "file": "apps/desktop/src/inspection.ts",
     "find": "const files = takeWithin(allFiles, DIFF_FILE_CAP, DIFF_BYTES)",
     "replace": "const files = allFiles",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "checks uncapped",
     "file": "apps/desktop/src/inspection.ts",
     "find": "const checks = takeWithin(allChecks, CHECK_CAP, CHECK_BYTES)",
     "replace": "const checks = allChecks",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "attempts uncapped",
     "file": "apps/desktop/src/inspection.ts",
     "find": "const views = takeWithin(built.reverse(), ATTEMPT_CAP, ATTEMPT_BYTES).reverse()",
     "replace": "const views = built",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "needs page ignores the byte cap",
     "file": "apps/desktop/src/inspection.ts",
     "find": "      if (served.length > 0 && bytes + size > MAX_PAGE_BYTES) break\n      bytes += size\n      served.push(row)",
     "replace": "      bytes += size\n      served.push(row)",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "needs cursor loses a row",
     "file": "apps/desktop/src/inspection.ts",
     "find": ".filter((row) => row.rowid > at.r)",
     "replace": ".filter((row) => row.rowid > at.r + 1)",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "needs cursor ignores the rowid",
     "file": "apps/desktop/src/inspection.ts",
     "find": ".filter((row) => row.rowid > at.r)",
     "replace": ".slice(at.r === 0 ? 0 : 48)",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "recent keyset ignored",
     "file": "apps/desktop/src/inspection.ts",
     "find": "at.recent ? { at: at.at ?? '', r: at.r } : null,",
     "replace": "null,",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "recent cursor loses its phase",
     "file": "apps/desktop/src/inspection.ts",
     "find": "encodeCursor(last.rowid, true, {",
     "replace": "encodeCursor(last.rowid, false, {",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "recent rows not merged newest first",
     "file": "apps/desktop/src/inspection.ts",
     "find": "      .sort(bySettledDesc)\n      .slice(0, room)",
     "replace": "      .slice(0, room)",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "open rows not merged by rowid",
     "file": "apps/desktop/src/inspection.ts",
     "find": "      .sort((a, b) => a.rowid - b.rowid)\n",
     "replace": "\n",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "dependsOn uncapped",
     "file": "apps/desktop/src/inspection.ts",
     "find": "const dependsOn = takeWithin(allDepends, DEPENDS_CAP, DEPENDS_BYTES)",
     "replace": "const dependsOn = allDepends",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "cursors uncapped",
     "file": "apps/desktop/src/inspection.ts",
     "find": "      CURSOR_CAP,\n      CURSOR_BYTES,\n",
     "replace": "      Number.MAX_SAFE_INTEGER,\n      Number.MAX_SAFE_INTEGER,\n",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "tasks truncated count dropped",
     "file": "apps/desktop/src/inspection.ts",
     "find": "tasksTruncated: allTasks.length - tasks.length,",
     "replace": "tasksTruncated: 0,",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "list byte budget ignored",
     "file": "apps/desktop/src/inspection.ts",
     "find": "    if (used > bytes) break\n    kept.push(entry)",
     "replace": "    kept.push(entry)",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "card cls uncut",
     "file": "apps/desktop/src/inspection.ts",
     "find": "cls: cutText(str(doc.cls) ?? '', CLS_CAP),",
     "replace": "cls: str(doc.cls) ?? '',",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "card payload repo uncut",
     "file": "apps/desktop/src/inspection.ts",
     "find": "(payloadRepo === null ? null : cutText(payloadRepo, LABEL_CAP)),",
     "replace": "payloadRepo,",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "card expiry uncut",
     "file": "apps/desktop/src/inspection.ts",
     "find": "expiresAt: shortText(expiresAt),",
     "replace": "expiresAt,",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "work scalars uncut",
     "file": "apps/desktop/src/inspection.ts",
     "find": "const shortText = (text: string): string => cutText(text, SHORT_CAP)",
     "replace": "const shortText = (text: string): string => redactText(text)",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "cursor phase unchecked",
     "file": "packages/store/src/inspection.ts",
     "find": "  if (p !== undefined && p !== 'recent') throw new CursorError('cursor phase is not valid')\n",
     "replace": "",
-    "tests": ["packages/store/test/inspection.test.ts"]
+    "tests": [
+      "packages/store/test/inspection.test.ts"
+    ]
   },
   {
     "name": "ceiling far too high",
     "file": "apps/desktop/src/inspection.ts",
     "find": "Buffer.byteLength(json) > MAX_PAGE_BYTES",
     "replace": "Buffer.byteLength(json) > MAX_PAGE_BYTES * 3",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "ceiling measures characters",
     "file": "apps/desktop/src/inspection.ts",
     "find": "Buffer.byteLength(json) > MAX_PAGE_BYTES",
     "replace": "json.length > MAX_PAGE_BYTES",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "ceiling off by one",
     "file": "apps/desktop/src/inspection.ts",
     "find": "Buffer.byteLength(json) > MAX_PAGE_BYTES",
     "replace": "Buffer.byteLength(json) >= MAX_PAGE_BYTES",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "ceiling answers 200",
     "file": "apps/desktop/src/inspection.ts",
     "find": "          reply.code(500)\n          return { error: 'response_too_large'",
     "replace": "          return { error: 'response_too_large'",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "ceiling error code changed",
     "file": "apps/desktop/src/inspection.ts",
     "find": "error: 'response_too_large'",
     "replace": "error: 'server_error'",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "served answer not typed as JSON",
     "file": "apps/desktop/src/inspection.ts",
     "find": "        reply.type('application/json; charset=utf-8')\n",
     "replace": "",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "recent ordered by rowid",
     "file": "apps/desktop/src/inspection.ts",
     "find": "a.settledAt === b.settledAt ? b.rowid - a.rowid : a.settledAt < b.settledAt ? 1 : -1",
     "replace": "b.rowid - a.rowid",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "settle-time tie not broken by rowid",
     "file": "apps/desktop/src/inspection.ts",
     "find": "a.settledAt === b.settledAt ? b.rowid - a.rowid :",
     "replace": "a.settledAt === b.settledAt ? 0 :",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "recent walk stops at the first page",
     "file": "apps/desktop/src/inspection.ts",
     "find": "    } while (cursor !== null)\n    return found",
     "replace": "    } while (false)\n    return found",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "recent walk stops once it has room",
     "file": "apps/desktop/src/inspection.ts",
     "find": "    } while (cursor !== null)\n    return found",
     "replace": "    } while (cursor !== null && found.length < room)\n    return found",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "recent cursor drops the settle time",
     "file": "apps/desktop/src/inspection.ts",
     "find": "settledAt < after.at || (settledAt === after.at && rowid < after.r)",
     "replace": "rowid < after.r",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "recent cursor drops the tiebreak",
     "file": "apps/desktop/src/inspection.ts",
     "find": "(settledAt === after.at && rowid < after.r)",
     "replace": "false",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "recent cap is per page",
     "file": "apps/desktop/src/inspection.ts",
     "find": "Math.max(0, RECENT_CAP - servedBefore)",
     "replace": "RECENT_CAP",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "spent recent cursor wraps the cap",
     "file": "apps/desktop/src/inspection.ts",
     "find": "Math.max(0, RECENT_CAP - servedBefore)",
     "replace": "RECENT_CAP - servedBefore",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "question settle time is when asked",
     "file": "apps/desktop/src/inspection.ts",
     "find": "str(doc.answeredAt) ?? str(doc.askedAt) ?? ''",
     "replace": "str(doc.askedAt) ?? ''",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "card settle time ignores resolvedAt",
     "file": "apps/desktop/src/inspection.ts",
     "find": "(lapsed ? expiresAt : str(doc.resolvedAt))",
     "replace": "(lapsed ? expiresAt : null)",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "lapsed card has no expiry key",
     "file": "apps/desktop/src/inspection.ts",
     "find": "(lapsed ? expiresAt : str(doc.resolvedAt))",
     "replace": "str(doc.resolvedAt)",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "settle time leaves unredacted",
     "file": "apps/desktop/src/inspection.ts",
     "find": "settledAt: shortText(str(doc.answeredAt) ?? str(doc.askedAt) ?? '')",
     "replace": "settledAt: str(doc.answeredAt) ?? str(doc.askedAt) ?? ''",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "repositories truncated count dropped",
     "file": "apps/desktop/src/inspection.ts",
     "find": "repositoriesTruncated: repositories.truncated,",
     "replace": "repositoriesTruncated: 0,",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "repositories uncapped",
     "file": "apps/desktop/src/inspection.ts",
     "find": "const rows = all.slice(0, MAX_PAGE_LIMIT)",
     "replace": "const rows = all",
-    "tests": ["apps/desktop/test/inspection.test.ts"]
+    "tests": [
+      "apps/desktop/test/inspection.test.ts"
+    ]
   },
   {
     "name": "settled cursor fields unchecked",
     "file": "packages/store/src/inspection.ts",
     "find": "  if (typeof t !== 'string' || typeof n !== 'number' || !Number.isSafeInteger(n) || n < 0)\n    throw new CursorError('cursor position is not valid')\n",
     "replace": "",
-    "tests": ["packages/store/test/inspection.test.ts"]
+    "tests": [
+      "packages/store/test/inspection.test.ts"
+    ]
   }
 ]

@@ -59,6 +59,9 @@ importers:
       '@mec/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
+      '@mec/scorecards':
+        specifier: workspace:*
+        version: link:../../packages/scorecards
       '@mec/slots':
         specifier: workspace:*
         version: link:../../packages/slots

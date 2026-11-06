@@ -5,8 +5,8 @@
  * the composition server. Every seam above is a landed package; this module only wires
  * them and owns their lifetimes.
  */
-import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { randomBytes, randomUUID } from 'node:crypto'
+import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { HealthBoard, LaunchSpec, Store, StoreDoc } from '@mec/contracts'
@@ -298,15 +298,18 @@ export async function startServer(opts: {
   if (!paused) metaAgent?.enqueueResumes()
 
   // The §21.2 snapshot writer: `mec status` reads <dataDir>/health.json (B0's main reads
-  // ~/.mec/health.json — the dataDir IS that root). Rewritten when the board changes and at
-  // least every 2s, so a stale file can only ever be one tick old.
+  // ~/.mec/health.json — the dataDir IS that root). Rewritten every tick, whatever changed: the
+  // heartbeat is what tells a dead server from a quiet one, and only a live process can write it.
+  // By rename, because a reader now always has a write to race.
   const healthPath = join(opts.dataDir, 'health.json')
-  let lastHealthText = ''
+  const healthDraft = `${healthPath}.${process.pid}.tmp`
+  const instanceId = randomUUID()
   const writeHealth = (): void => {
-    const text = JSON.stringify(buildHealthSnapshot(store, health), null, 2)
-    if (text === lastHealthText) return
-    lastHealthText = text
-    writeFileSync(healthPath, `${text}\n`)
+    const now = new Date()
+    const snapshot = buildHealthSnapshot(store, health, now)
+    const live = { ...snapshot, instanceId, pid: process.pid, heartbeatAt: now.toISOString() }
+    writeFileSync(healthDraft, `${JSON.stringify(live, null, 2)}\n`)
+    renameSync(healthDraft, healthPath)
   }
   writeHealth()
   const healthTimer = setInterval(writeHealth, PASS_INTERVAL_MS)

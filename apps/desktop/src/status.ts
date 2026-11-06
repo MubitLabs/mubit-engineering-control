@@ -12,9 +12,18 @@ export type StatusCode = 0 | 1 | 2 | 3
 
 export type StatusResult = { code: StatusCode; lines: string[] }
 
+/** §21.2 sets no figure: five of the writer's two-second ticks. */
+export const HEARTBEAT_STALE_MS = 10_000
+
+/** A heartbeat that is missing, unreadable or from the future proves nothing is alive. */
+function heartbeatIsFresh(heartbeatAt: string | undefined, now: Date): boolean {
+  const at = heartbeatAt === undefined ? Number.NaN : Date.parse(heartbeatAt)
+  return Math.abs(now.getTime() - at) <= HEARTBEAT_STALE_MS
+}
+
 export function statusFromSnapshot(
   snapshot: HealthSnapshot | null,
-  opts: { initialized: boolean },
+  opts: { initialized: boolean; now?: Date },
 ): StatusResult {
   if (snapshot === null) {
     return opts.initialized
@@ -29,6 +38,9 @@ export function statusFromSnapshot(
     return { code: 1, lines: [`running twice (${runtime.instances} instances)`] }
   }
   if (!runtime.answering) return { code: 1, lines: ['not answering'] }
+  if (!heartbeatIsFresh(snapshot.heartbeatAt, opts.now ?? new Date())) {
+    return { code: 1, lines: ['not answering'] }
+  }
   if (runtime.state === 'error') {
     const lines = ['runtime error (a restart may fix it)']
     const runtimePart = parts.runtime

@@ -20,6 +20,10 @@ function row(overrides: Partial<AttemptOutcome> & Pick<AttemptOutcome, 'role' | 
     errors: 0,
     coverage: { lifecycle: true, usage: true, rateLimit: false },
     ...overrides,
+    // The success rate reads validation now (§19); here a row's checks went the way its exit did.
+    spendCoverage: 'unknown',
+    delivery: 'unknown',
+    validation: overrides.result === 'completed' ? 'passed' : 'failed',
   }
 }
 

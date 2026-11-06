@@ -251,7 +251,7 @@ export class InspectionReads {
     kind: string,
     fields: readonly string[],
     text: string,
-    options: { limit: number; equals?: Record<string, Scalar> } = { limit: 20 },
+    options: { limit: number; equals?: Record<string, Scalar>; excludeIdPrefix?: string } = { limit: 20 },
   ): StoreDoc[] {
     const limit = checkLimit(options.limit)
     const paths = fields.map(checkField)
@@ -270,6 +270,10 @@ export class InspectionReads {
         clauses.push('json_extract(json, ?) = ?')
         params.push(path, value)
       }
+    }
+    if (options.excludeIdPrefix !== undefined) {
+      clauses.push("id NOT LIKE ? ESCAPE '\\'")
+      params.push(`${likeEscape(options.excludeIdPrefix)}%`)
     }
     params.push(limit)
     const rows = this.#prepare(
@@ -322,6 +326,14 @@ export class InspectionReads {
     }
     const last = rows.at(-1)
     return { rows, nextCursor: more && last !== undefined ? encodeCursor(last.seq) : null }
+  }
+
+  /** A stream's events of one type, oldest first, for a caller that reads only that type. */
+  eventsOfType(stream: string, type: string, limit: number): EventRow[] {
+    const rows = this.#prepare(
+      'SELECT stream, seq, at, type, body FROM events WHERE stream = ? AND type = ? ORDER BY seq LIMIT ?',
+    ).all(stream, type, limit) as (Omit<EventRow, 'body'> & { body: string | null })[]
+    return rows.map((row) => ({ ...row, body: row.body === null ? null : (JSON.parse(row.body) as Json) }))
   }
 
   /** The highest seq of each stream; a stream with no events reads 0. */

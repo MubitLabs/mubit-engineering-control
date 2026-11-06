@@ -34,12 +34,3 @@ export function EmptyState({ title, body, children }: { title: string; body: str
     </div>
   )
 }
-
-/** Plain navigation back: the classic shell needs no state from here. */
-export function ReturnToClassic() {
-  return (
-    <a className="btn btn-default" href={`?ui=classic${window.location.hash}`}>
-      Return to the classic workbench
-    </a>
-  )
-}

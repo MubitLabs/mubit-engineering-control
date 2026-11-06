@@ -2,10 +2,10 @@ import { tmpdir } from 'node:os'
 import { defineConfig, devices } from '@playwright/test'
 
 /**
- * The screenshot suite (04_UI_DESIGN_SPEC.md §10): every route in both themes,
- * the context pane and the login sheet, the keyboard-only walkthrough, the old
- * deep links, and the §23 worked example — all against the mocks in
- * test/mocks.ts served through page.route, so the app speaks its real API shapes.
+ * The screenshot suite: every surface at each width in both themes, the keyboard-only
+ * walkthrough, the old deep links and the §23 worked example, on the sample harnesses in
+ * test/fixtures or on route mocks served through page.route, so the app speaks its real API
+ * shapes.
  *
  * Deliberately NOT wired into CI (`pnpm check` never runs it): run it with
  * `pnpm test:screens`. Baselines land in test/__screenshots__; run artifacts

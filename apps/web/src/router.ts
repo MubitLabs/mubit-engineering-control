@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 
 /**
- * The six screens of the workbench (04_UI_DESIGN_SPEC.md §4). The hash is the
- * prototype's `#chat` form; the scaffold's older `#/wizard` and `#/inbox`
- * deep links stay working as aliases so nothing already shared breaks.
+ * The six screens of the workbench. The hash is the `#chat` form; the older `#/wizard` and
+ * `#/inbox` deep links stay working as aliases so nothing already shared breaks.
  */
 export type Route = 'chat' | 'needs' | 'work' | 'slots' | 'setup' | 'settings'
 

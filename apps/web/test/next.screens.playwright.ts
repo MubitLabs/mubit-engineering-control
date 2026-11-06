@@ -1,8 +1,8 @@
 import { expect, type Page, test } from '@playwright/test'
 
 /**
- * The next shell, the default: `?ui=next` runs the live path against route mocks here (the
- * real server is the verifier's job), and fixtures/next-harness.html renders the same components
+ * The next shell: `/` runs the live path against route mocks here (the real server is the
+ * verifier's job), and fixtures/next-harness.html renders the same components
  * with synthetic props. The numbers in
  * the test names are the prototype defects this shell must not repeat (the design audit).
  * Axe and Lighthouse live in a11y.screens.playwright.ts.
@@ -147,7 +147,7 @@ async function mockServer(
 
 async function live(page: Page, hash = 'chat'): Promise<void> {
   await mockServer(page)
-  await page.goto(`/?ui=next#${hash}`)
+  await page.goto(`/#${hash}`)
   await expect(page.locator('.shell')).toBeVisible()
 }
 
@@ -228,41 +228,26 @@ test.describe('the flag', () => {
     await expect(page.locator('.shell h1')).toHaveText('Setup')
   })
 
-  test('?ui=classic applies, strips the param, keeps the hash and survives a reload', async ({ page }) => {
+  test('the old deep link for the inbox opens Needs you', async ({ page }) => {
+    await mockServer(page)
+    await page.goto('/#/inbox')
+    await expect(page.locator('.shell h1')).toHaveText('Needs you')
+  })
+
+  test('an old ?ui=classic or stored classic choice is ignored', async ({ page }) => {
+    await mockServer(page)
+    await page.addInitScript(() => localStorage.setItem('mec-ui-shell', 'classic'))
     await page.goto('/?ui=classic#work')
-    await expect(page.locator('.rail-item').first()).toBeVisible()
-    expect(new URL(page.url()).search).toBe('')
-    expect(new URL(page.url()).hash).toBe('#work')
-    await page.reload()
-    await expect(page.locator('.rail-item').first()).toBeVisible()
+    await expect(page.locator('.shell h1')).toHaveText('Work')
+    await expect(page.locator('.rail-item')).toHaveCount(0)
   })
 
-  test('?ui=next applies, strips the param, keeps the hash and survives a reload', async ({ page }) => {
-    await page.goto('/?ui=next#work')
-    await expect(page.locator('.shell h1')).toHaveText('Work')
-    expect(new URL(page.url()).search).toBe('')
-    expect(new URL(page.url()).hash).toBe('#work')
-    await page.reload()
-    await expect(page.locator('.shell h1')).toHaveText('Work')
-  })
-
-  test('the way back: Return to the classic workbench sticks through a reload', async ({ page }) => {
+  test('no way back to a classic shell is offered', async ({ page }) => {
     await live(page)
-    await page.getByRole('link', { name: 'Return to the classic workbench' }).click()
-    await expect(page.locator('.rail-item').first()).toBeVisible()
-    await page.reload()
-    await expect(page.locator('.rail-item').first()).toBeVisible()
-  })
-
-  test('the palette carries the way back to classic, and it sticks', async ({ page }) => {
-    await mockServer(page, { repositories: [REPO_A] })
-    await page.goto('/#chat')
-    await expect(composerBox(page)).toBeVisible()
+    await expect(page.getByRole('link', { name: /classic/i })).toHaveCount(0)
     await page.keyboard.press('Control+k')
-    await page.getByRole('option', { name: 'Return to the classic workbench' }).click()
-    await expect(page.locator('.rail-item').first()).toBeVisible()
-    await page.reload()
-    await expect(page.locator('.rail-item').first()).toBeVisible()
+    await expect(page.getByRole('option').first()).toBeVisible()
+    await expect(page.getByRole('option', { name: /classic/i })).toHaveCount(0)
   })
 
   test('throwing storage gives next, even when ?ui=classic asks', async ({ page }) => {
@@ -278,7 +263,7 @@ test.describe('the flag', () => {
   })
 })
 
-test.describe('?ui=next is honest with no repository', () => {
+test.describe('the shell is honest with no repository', () => {
   for (const hash of ['chat', 'work', 'needs', 'slots', 'setup', 'settings']) {
     test(`#${hash}: reads only, no sample, no false reassurance`, async ({ page }) => {
       const writes: string[] = []
@@ -286,9 +271,9 @@ test.describe('?ui=next is honest with no repository', () => {
         if (request.method() !== 'GET') writes.push(new URL(request.url()).pathname)
       })
       await live(page, hash)
-      // M3.3: Connections, Setup and Settings are live here, so only these three still send you back.
+      // Connections, Setup and Settings are live here; the other three point at Setup.
       if (['chat', 'work', 'needs'].includes(hash)) {
-        await expect(page.getByRole('link', { name: 'Return to the classic workbench' })).toBeVisible()
+        await expect(page.getByRole('link', { name: 'Open Setup' })).toBeVisible()
       } else {
         await expect(page.locator('.page h1')).toBeVisible()
       }
@@ -316,7 +301,7 @@ test.describe('?ui=next is honest with no repository', () => {
     await page.getByRole('link', { name: 'Open Setup' }).click()
     await expect(page.locator('.shell h1')).toHaveText('Setup')
     expect(new URL(page.url()).search).toBe('')
-    expect(await page.evaluate(() => localStorage.getItem('mec-ui-shell'))).toBe('next')
+    expect(await page.evaluate(() => localStorage.getItem('mec-ui-shell'))).toBeNull()
   })
 
   test('a failed read ends in Retry, not endless loading', async ({ page }) => {
@@ -994,6 +979,19 @@ test.describe('the shell', () => {
     await expect(details.getByRole('heading', { level: 2 })).toHaveText('Understand the sample code')
     await expect(details.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true')
     await expect(page.locator('.task-row[aria-current="true"]')).toContainText('Understand the sample code')
+  })
+
+  test('a view that throws while drawing is contained to its pane', async ({ page }) => {
+    await harness(page, 'state=throws')
+    await expect(page.getByRole('heading', { name: 'This view could not be shown' })).toBeVisible()
+    await expect(page.getByRole('alert')).toContainText('Conversation hit an error while drawing')
+    await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible()
+    await expect(page.getByText('sample boom')).toHaveCount(0)
+
+    // The rest of the shell still works, and leaving the route clears the failure.
+    await page.getByRole('button', { name: 'Needs you' }).click()
+    await expect(page.getByRole('heading', { name: 'Needs you', level: 1 })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'This view could not be shown' })).toHaveCount(0)
   })
 
   test('7: the empty state has no inspector to open', async ({ page }) => {

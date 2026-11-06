@@ -23,6 +23,7 @@ import { Sidebar, type SidebarProps } from './Sidebar'
 import { Toolbar } from './Toolbar'
 import type { ThemeChoice } from './theme'
 import { THEME_LABELS } from './theme'
+import { ViewBoundary } from './ViewBoundary'
 
 const DRAWER_QUERY = '(max-width: 760px)'
 const OVERLAY_INSPECTOR_QUERY = '(max-width: 1149.98px)'
@@ -381,7 +382,7 @@ export function Shell({
                 // biome-ignore lint/a11y/noNoninteractiveTabindex: the only scroller on the page
                 tabIndex={0}
               >
-                {children}
+                <ViewBoundary label={ROUTE_LABELS[route]}>{children}</ViewBoundary>
               </section>
               {canCompose && composer && <ComposerFrame {...composer} textareaRef={textarea} />}
             </main>

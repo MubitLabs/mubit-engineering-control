@@ -123,6 +123,13 @@ test('Sign in again that fails to start says so and keeps no waiting card', asyn
   await expect(page.getByRole('button', { name: 'Cancel sign-in' })).toHaveCount(0)
 })
 
+test('Sign in again that starts shows its card', async ({ page }) => {
+  await open(page, 'slots')
+  await connection(page, 'sample-expired').getByRole('button', { name: 'Sign in again' }).click()
+  await expect(page.getByText('Waiting for the sign-in command…')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Cancel sign-in' })).toBeVisible()
+})
+
 test('trust arms and disarms', async ({ page }) => {
   await open(page, 'settings')
   await page.getByRole('button', { name: 'Repositories' }).click()
@@ -158,6 +165,16 @@ test('settings failure leaves navigation usable', async ({ page }) => {
   await expect(page.getByRole('alert').getByText('Could not load the policy')).toBeVisible()
   await page.getByRole('button', { name: 'Backups' }).click()
   await expect(page.getByRole('button', { name: 'Back up now' })).toBeEnabled()
+  await page.getByRole('navigation', { name: 'Workspace' }).getByRole('button', { name: 'Work' }).click()
+  await expect(page).toHaveURL(/work$/)
+})
+
+test('a failing prompts or models read ends in an error, and the shell stays usable', async ({ page }) => {
+  await open(page, 'settings', 'fail=/api/prompts,/api/models/text')
+  await page.getByRole('button', { name: 'Prompts' }).click()
+  await expect(page.getByRole('alert').getByText('Could not load', { exact: false })).toBeVisible()
+  await page.getByRole('button', { name: 'Models' }).click()
+  await expect(page.getByRole('alert').getByText('Could not load', { exact: false })).toBeVisible()
   await page.getByRole('navigation', { name: 'Workspace' }).getByRole('button', { name: 'Work' }).click()
   await expect(page).toHaveURL(/work$/)
 })

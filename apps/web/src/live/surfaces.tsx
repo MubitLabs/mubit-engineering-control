@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import type { RepositoryEntry, WorkItem } from '../api'
 import { ChevronIcon } from '../next/primitives'
 import { useShellActions } from '../next/Shell'
-import { EmptyState, ReturnToClassic, StateNotice } from '../next/states'
+import { EmptyState, StateNotice } from '../next/states'
 import { repositoryName } from '../repo-target'
 
 /** The states around the live surfaces: a repository to choose, or one that could not be read. */
@@ -76,7 +76,6 @@ export function NoRepositories() {
       <a className="btn btn-default" href="#setup">
         Open Setup
       </a>
-      <ReturnToClassic />
     </EmptyState>
   )
 }

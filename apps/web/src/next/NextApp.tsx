@@ -3,7 +3,7 @@ import type { Route } from '../router'
 import { PageHeader } from './Conversation'
 import { ROUTE_LABELS } from './routes'
 import { Shell, type ShellProps } from './Shell'
-import { EmptyState, ReturnToClassic } from './states'
+import { EmptyState } from './states'
 
 /**
  * Surfaces with no live path yet say so. Each sentence avoids implying anything about the
@@ -37,11 +37,7 @@ export function NextApp({ children, ...shell }: NextAppProps) {
       {children ?? (
         <div className="page">
           <PageHeader title={ROUTE_LABELS[shell.route]} />
-          {copy && (
-            <EmptyState title={copy.title} body={copy.body}>
-              <ReturnToClassic />
-            </EmptyState>
-          )}
+          {copy && <EmptyState title={copy.title} body={copy.body} />}
         </div>
       )}
     </Shell>

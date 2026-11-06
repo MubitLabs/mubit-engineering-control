@@ -404,6 +404,7 @@ export class MetaAgentService {
       referencesWorkItem: input.referencesWorkItem,
       liveWork: this.#routingWork(input.repoId),
       explicitNew: input.explicitNew,
+      text: input.text,
     })
     switch (routing.action) {
       case 'attach':
@@ -412,6 +413,8 @@ export class MetaAgentService {
         return this.#refuseStopped(input)
       case 'conversation':
         return this.#noteConversation(input)
+      case 'question':
+        return await this.#startNewWork(input, prior, resumed, true)
       case 'new_work':
         return await this.#startNewWork(input, prior, resumed)
     }
@@ -824,6 +827,7 @@ export class MetaAgentService {
     input: MessageTurn,
     prior: StoreDoc | undefined,
     resumed: boolean,
+    questionOnly = false,
   ): Promise<TurnOutcome> {
     const known = typeof prior?.workItemId === 'string' ? prior.workItemId : undefined
     const workItemId = known ?? freshId('wi_')
@@ -833,6 +837,8 @@ export class MetaAgentService {
         this.#store.workItems.save({
           id: workItemId,
           state: 'planning',
+          // On the doc, so a turn a crash cut short resumes as what it was.
+          ...(questionOnly && { questionOnly: true }),
           originMessageId: input.messageId,
           mandate: createMandate({
             id: `mandate_${workItemId}`,
@@ -872,6 +878,8 @@ export class MetaAgentService {
       }
     }
 
+    const answerOnly = this.#store.workItems.get(workItemId)?.questionOnly === true
+    const reason = answerOnly ? QUESTION_WAKE : 'user message'
     let decision: MetaDecision
     const tools = this.#buildTools({ messageId: input.messageId, workItemId }, input.repoId)
     const started = {
@@ -888,13 +896,13 @@ export class MetaAgentService {
           messageText: input.text,
           liveWork: this.#liveForBrain(input.repoId),
           workItemId,
-          wake: { reason: 'user message', detail: input.text.slice(0, 200) },
+          wake: { reason, detail: input.text.slice(0, 200) },
           tools,
           snapshot: this.#buildSnapshot({
             messageId: input.messageId,
             repoId: input.repoId,
             workItemId,
-            turn: { wake: 'user message', detail: input.text.slice(0, 200) },
+            turn: { wake: reason, detail: input.text.slice(0, 200) },
           }),
         }),
       )
@@ -906,6 +914,7 @@ export class MetaAgentService {
       return this.#failTurn(input, workItemId, error instanceof Error ? error.message : String(error))
     }
 
+    if (answerOnly) return this.#ackOnlyTurn(input, workItemId, answerOf(decision, workItemId))
     const plan = 'plan' in decision ? decision.plan : undefined
     if (plan === undefined) return this.#ackOnlyTurn(input, workItemId, decision)
     return this.#commitPlan(input, workItemId, plan, decision)
@@ -1613,6 +1622,24 @@ export class MetaAgentService {
 
 /** Two askings of the same words: case and spacing are not a different decision (§12.6). */
 const sameWords = (text: string): string => text.trim().replace(/\s+/g, ' ').toLowerCase()
+
+const QUESTION_WAKE =
+  'a question beside running work: answer it with report_result. A plan, a stop or a spawn from this turn is dropped'
+
+/**
+ * What a question's turn may keep: its words, and what it asks the person. It has no authority over
+ * the running work (§12.1), so a report lands on the question's own item.
+ */
+function answerOf(decision: MetaDecision, workItemId: string): MetaDecision {
+  const { ack, questions, reports, escalated, protocolIncomplete } = decision
+  return {
+    ack,
+    ...(questions !== undefined && { questions }),
+    ...(reports !== undefined && { reports: reports.map((report) => ({ ...report, workItemId })) }),
+    ...(escalated !== undefined && { escalated }),
+    ...(protocolIncomplete !== undefined && { protocolIncomplete }),
+  }
+}
 
 /** The furthest the planner has got: a card or a question outranks the plan it came with. */
 function phaseOf(journal: PlannerTurnJournal): MetaTurnPhase {

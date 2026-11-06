@@ -131,5 +131,68 @@
     "find": "options.length > 2",
     "replace": "options.length > 3",
     "tests": ["apps/web/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "q: a question beside live work is context again",
+    "file": "packages/meta/src/routing.ts",
+    "find": "  return isQuestion(input.text ?? '') ? { action: 'question' } : { action: 'conversation' }\n",
+    "replace": "  return { action: 'conversation' }\n",
+    "tests": ["packages/meta/test/routing.test.ts"]
+  },
+  {
+    "name": "q: every note gets a turn",
+    "file": "packages/meta/src/routing.ts",
+    "find": "export const isQuestion = (text: string): boolean => text.includes('?') || ASKS.test(text.trim())\n",
+    "replace": "export const isQuestion = (_text: string): boolean => true\n",
+    "tests": ["packages/meta/test/routing.test.ts"]
+  },
+  {
+    "name": "q: only a question mark counts",
+    "file": "packages/meta/src/routing.ts",
+    "find": "text.includes('?') || ASKS.test(text.trim())",
+    "replace": "text.includes('?')",
+    "tests": ["packages/meta/test/routing.test.ts"]
+  },
+  {
+    "name": "q: only an asking word counts",
+    "file": "packages/meta/src/routing.ts",
+    "find": "text.includes('?') || ASKS.test(text.trim())",
+    "replace": "ASKS.test(text.trim())",
+    "tests": ["packages/meta/test/routing.test.ts"]
+  },
+  {
+    "name": "q: a question turn is not marked",
+    "file": "packages/meta/src/service.ts",
+    "find": "      case 'question':\n        return await this.#startNewWork(input, prior, resumed, true)\n",
+    "replace": "      case 'question':\n        return await this.#startNewWork(input, prior, resumed, false)\n",
+    "tests": ["packages/meta/test/service.test.ts"]
+  },
+  {
+    "name": "q: the turn keeps its plan and its stops",
+    "file": "packages/meta/src/service.ts",
+    "find": "    if (answerOnly) return this.#ackOnlyTurn(input, workItemId, answerOf(decision, workItemId))\n",
+    "replace": "",
+    "tests": ["packages/meta/test/service.test.ts"]
+  },
+  {
+    "name": "q: a report lands on the running work",
+    "file": "packages/meta/src/service.ts",
+    "find": "reports: reports.map((report) => ({ ...report, workItemId }))",
+    "replace": "reports",
+    "tests": ["packages/meta/test/service.test.ts"]
+  },
+  {
+    "name": "q: a resumed turn forgets it was a question",
+    "file": "packages/meta/src/service.ts",
+    "find": "    const answerOnly = this.#store.workItems.get(workItemId)?.questionOnly === true\n",
+    "replace": "    const answerOnly = questionOnly\n",
+    "tests": ["packages/meta/test/service.test.ts"]
+  },
+  {
+    "name": "q: the planner is not told",
+    "file": "packages/meta/src/service.ts",
+    "find": "    const reason = answerOnly ? QUESTION_WAKE : 'user message'\n",
+    "replace": "    const reason = 'user message'\n",
+    "tests": ["packages/meta/test/service.test.ts"]
   }
 ]

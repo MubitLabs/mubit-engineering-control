@@ -24,6 +24,12 @@
 - Unassigned blocked work stays listed and leaves every count, on the server and the page: it cannot be cleared there. This replaces the `delivery-surfaces` decision that it counts.
 - Every string in `tools/mutants/*.json` matches exactly once. Three chat mutants of the dropped reply path are gone; core's cover the same lines. `tools/mutants/core-ship.json` holds the mutants for what was resolved by hand.
 
+## §12.1 amended by the owner
+
+A question sent while work is running in that repository gets a real planner turn and its answer in chat, not "Noted as context". A note beside live work stays context, as before. `isQuestion` in `packages/meta/src/routing.ts` is the test: a `?` anywhere, or a sentence opening with an asking word. It leans to a turn, so a note like "Do the rest later" costs a turn and changes nothing.
+
+The turn runs on its own work item, marked `questionOnly` so a resume after a crash keeps it. It keeps only its words, its reports and what it asks the person: a plan, stop, cancel, spawn, route or card from it is dropped before anything is written, and a report aimed at the running work lands on the question's item. `docs/plan/spec.md` §12.1 and `docs/DECISIONS.md` are not edited here; the decision record is the coordinator's.
+
 ## Limits
 
 - An item from before this build, whose answer sits only in `result_reported`, reads No answer: nothing joins that report to a message but its time. The report is still in the stored events.

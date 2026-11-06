@@ -27,6 +27,33 @@ describe('routeMessage (plan §12.1)', () => {
     expect(routeMessage({ liveWork: [work('wi-1')] })).toEqual({ action: 'conversation' })
   })
 
+  it.each([
+    'Why is it blocked?',
+    'what is it doing',
+    'The build looks odd. Is that expected',
+    'how far along\nis it?',
+  ])('a question beside live work gets a turn (§12.1, owner ruling): %s', (text) => {
+    expect(routeMessage({ liveWork: [work('wi-1')], text })).toEqual({ action: 'question' })
+  })
+
+  it.each(['By the way, the demo is Friday', 'Thanks', 'the logo is in the shared drive.'])(
+    'a note beside live work stays context: %s',
+    (text) => {
+      expect(routeMessage({ liveWork: [work('wi-1')], text })).toEqual({ action: 'conversation' })
+    },
+  )
+
+  it('a question that names live work still goes to that work', () => {
+    expect(routeMessage({ referencesWorkItem: 'wi-1', liveWork: [work('wi-1')], text: 'Why?' })).toEqual({
+      action: 'attach',
+      workItemId: 'wi-1',
+    })
+  })
+
+  it('a question with nothing live is new work, as any message is', () => {
+    expect(routeMessage({ liveWork: [work('wi-1', true)], text: 'Why?' })).toEqual({ action: 'new_work' })
+  })
+
   it('explicitNew starts new work with live work present', () => {
     expect(routeMessage({ explicitNew: true, liveWork: [work('wi-1')] })).toEqual({ action: 'new_work' })
   })

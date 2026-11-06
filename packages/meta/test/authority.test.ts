@@ -740,6 +740,16 @@ describe('authority fence', () => {
       },
     )
 
+    it('a policy change still blocks the work of an attempt that keeps its capacity', async () => {
+      const { store, id, payload } = await planned()
+      const attempt = store.attempts.get(payload.attempt_id)!
+      store.atomic(() => {
+        store.attempts.save({ ...attempt, reconcile_refused: 'unprovable' })
+        refuseLaunch(store, payload, 'policy_changed', NOW)
+      })
+      expect(store.workItems.get(id)).toMatchObject({ state: 'blocked', blockedReason: 'policy_changed' })
+    })
+
     it('a stale row for an attempt queued again leaves that attempt alone', async () => {
       const { store, id, payload } = await planned()
       store.atomic(() => refuseLaunch(store, payload, 'attempt_not_queued', NOW))

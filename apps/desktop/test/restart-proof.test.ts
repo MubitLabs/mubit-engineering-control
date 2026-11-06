@@ -4,7 +4,7 @@
  * cases a healthy one never reaches.
  */
 import { type ChildProcess, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { processStart } from '@mec/runtime'
@@ -122,7 +122,8 @@ describe('the proof', () => {
   it('a lock and a snapshot that name different pids prove nothing', async () => {
     fresh()
     const { pid } = await standIn()
-    claim(pid, { started: processStart(pid), heartbeatAt: nowIso() }, `${process.pid}\n`)
+    const other = await standIn()
+    claim(pid, { started: processStart(other.pid), heartbeatAt: nowIso() }, `${other.pid}\n`)
     expect(findServer(dataDir).status).toBe('unproven')
   })
 
@@ -165,6 +166,40 @@ describe('what it says when it cannot finish', () => {
     expect(child.signalCode).toBeNull()
   })
 
+  it('the new server starts only after the old pid has gone', async () => {
+    fresh()
+    const slow = join(scratch, 'bin', 'mec.js')
+    const ready = join(dataDir, 'ready')
+    const seen = join(dataDir, 'seen')
+    writeFileSync(
+      slow,
+      `process.on('SIGTERM', () => setTimeout(() => process.exit(0), 1000))
+require('node:fs').writeFileSync(process.argv[2], '')
+setInterval(() => {}, 1000)
+`,
+    )
+    const child = spawn(process.execPath, [slow, ready], { stdio: 'ignore' })
+    children.push(child)
+    while (!existsSync(ready)) await sleep(10)
+    const pid = child.pid as number
+    claim(pid, { started: processStart(pid), heartbeatAt: nowIso() })
+    const launcher = join(scratch, 'watching-launcher.js')
+    writeFileSync(
+      launcher,
+      `let state = 'gone'
+try {
+  process.kill(${pid}, 0)
+  state = 'alive'
+} catch {}
+require('node:fs').writeFileSync(${JSON.stringify(seen)}, state)
+`,
+    )
+
+    await restartServer({ dataDir, binPath: launcher })
+
+    expect(readFileSync(seen, 'utf8')).toBe('gone')
+  })
+
   it('a start that ends says so, with no claim of a server', async () => {
     fresh()
     const failing = join(scratch, 'failing-launcher.js')
@@ -175,6 +210,24 @@ describe('what it says when it cannot finish', () => {
     expect(outcome.started).toBe(false)
     expect(outcome.lines.join('\n')).toContain('no server was started')
     expect(outcome.lines.join('\n')).toContain('exit 1')
+  })
+
+  it('the new server opens no browser, whatever this command was given', async () => {
+    fresh()
+    const seen = join(dataDir, 'seen')
+    const recorder = join(scratch, 'recording-launcher.js')
+    writeFileSync(
+      recorder,
+      `require('node:fs').writeFileSync(${JSON.stringify(seen)}, String(process.env.MEC_NO_OPEN))\n`,
+    )
+    const given = process.env.MEC_NO_OPEN
+    delete process.env.MEC_NO_OPEN
+    try {
+      await restartServer({ dataDir, binPath: recorder })
+    } finally {
+      if (given !== undefined) process.env.MEC_NO_OPEN = given
+    }
+    expect(readFileSync(seen, 'utf8')).toBe('1')
   })
 
   it('a start that does not answer within the bound is not called a success', async () => {

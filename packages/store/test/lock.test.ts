@@ -52,6 +52,11 @@ describe('directory lock', () => {
     expect(() => DirLock.acquire(dir)).toThrow(`mec: another process owns ${dir}`)
   })
 
+  it('a lockfile that only starts with a dead pid proves nothing, so it is treated as held', () => {
+    writeFileSync(lockPath(dir), '99999999x\n')
+    expect(() => DirLock.acquire(dir)).toThrow('another process owns')
+  })
+
   it('a lockfile with unreadable content cannot be proven stale, so it is treated as held', () => {
     writeFileSync(lockPath(dir), 'not-a-pid\n')
     expect(() => DirLock.acquire(dir)).toThrow(`mec: another process owns ${dir}`)

@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { processStart } from '@mec/runtime'
 import { afterEach, describe, expect, it } from 'vitest'
 import { startServer } from '../src/composition'
 import { type HealthSnapshot, parseHealthSnapshot } from '../src/health'
@@ -162,6 +163,20 @@ describe('the writer', () => {
     } finally {
       process.off('uncaughtException', onCrash)
       renameSync(`${dataDir}.gone`, dataDir)
+      await handle.close()
+      delete process.env.MEC_FAKE_ENGINE
+    }
+  })
+
+  it('the snapshot says which process wrote it and where it listens', async () => {
+    process.env.MEC_FAKE_ENGINE = '1'
+    const dataDir = scratch()
+    const handle = await startServer({ dataDir })
+    try {
+      const snapshot = readHealth(dataDir)
+      expect(snapshot.started).toBe(processStart(process.pid))
+      expect(snapshot.port).toBe(handle.port)
+    } finally {
       await handle.close()
       delete process.env.MEC_FAKE_ENGINE
     }

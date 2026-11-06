@@ -963,7 +963,9 @@ describe('the push card (§13: git push always confirms)', () => {
     expect(store.confirmations.get(card.confirmationId)?.payload).toMatchObject({ repo: REPO })
     // Any branch but a cache branch still has no directory to push from.
     const without = { ...deps, pushSource: () => undefined }
-    await expect(openPushCard(without, { repoId: 'repo_a', branch: 'feat/x' })).rejects.toThrow('repo_not_local')
+    await expect(openPushCard(without, { repoId: 'repo_a', branch: 'feat/x' })).rejects.toThrow(
+      'repo_not_local',
+    )
   })
 
   it('default branch still refused', async () => {

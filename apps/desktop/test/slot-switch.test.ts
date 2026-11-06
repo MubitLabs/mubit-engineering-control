@@ -284,7 +284,10 @@ describe('switch slot', { timeout: 40_000 }, () => {
       expect(store.events.read(`work:${WORK}`).map((event) => event.type)).not.toContain(
         'slot_switch_refused',
       )
-
+      // A hold that lands during the apply itself leaves the card for the lift as well.
+      const raced = { workItemId: WORK, toSlot: 'slot_b', reason: 'quota', confirmationId: id }
+      expect(await applySwitch(deps, raced)).toBe('held')
+      expect(store.confirmations.get(id)?.applied).toBeUndefined()
       store.workItems.save({ ...work, hold: { reason: 'wait', at: 'then', liftedAt: NOW } as never })
       await applyApprovedSwitches(deps)
       expect(store.confirmations.get(id)?.applied).toBe(true)

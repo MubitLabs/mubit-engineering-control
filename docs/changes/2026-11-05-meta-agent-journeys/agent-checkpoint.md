@@ -1,6 +1,6 @@
 # Meta-agent journey checkpoint
 
-Updated 5 November 2026, reconciled with `origin/main` at `c842f4f`. **Execution authorized by the owner and in progress (5 November 2026).** Authority is bounded by the Execution contract below and `docs/DECISIONS.md` #14-40.
+Updated 6 November 2026, reconciled with `origin/main` at `1900dcb`. **Execution authorized by the owner and in progress (5 November 2026).** Authority is bounded by the Execution contract below and `docs/DECISIONS.md` #14-46.
 
 ## Goal and decisions
 
@@ -8,7 +8,7 @@ One meta counterpart coordinates coding agents for repo-attached tasks, with com
 
 ## Current state
 
-- Source: `/Users/shankhadutta/code/mubit-engineering-control`. `origin/main` is `c842f4f`; the overhaul started from base `a102313` (history). Implementation is under way and merged (see State on main). Dirty sibling `/Users/shankhadutta/code/mec` untouched.
+- Source: `/Users/shankhadutta/code/mubit-engineering-control`. `origin/main` is `1900dcb` (#47); the overhaul started from base `a102313` (history). Implementation is under way and merged (see State on main). Dirty sibling `/Users/shankhadutta/code/mec` untouched.
 - Plan: CHANGE.md; full design: UI-OVERHAUL.md; interactive synthetic preview: ui-overhaul-preview.html; status: agent-progress.html; evidence/commands: VERIFICATION.md; research-user-journey.md, research-orchestration.md, research-observability.md.
 - Older `2026-11-05-journey-ux` plan/report/checkpoint superseded; earlier evidence retained.
 - Source proves non-fake launch no-op, potential global task ID overwrite, missing authority fencing before real workers, mismatched real HTTP/client contracts and incomplete observations. Source finding is not a failing test run. Installed UI observation is separately labelled; no saved screenshots.
@@ -36,7 +36,7 @@ Owner-authorized, 5 November 2026 (`docs/DECISIONS.md` #14-18; binds this overha
 
 ## Exact next action
 
-Land this records PR, then keep the in-progress lanes (21, 22, 23 B, 23 A, 30 S2) moving and land each as soon as it is verified (#39). After those: 31 C, 32 Stage B, 33 B, 33 D, release 0.3.0, install and verify, 33 C, 33 D, 0.3.1. No release, tag, install or flag change until 33 B is verified.
+The combined PR (#47) is merged. 33 B and real Claude runs are in progress on a release candidate (the installed-copy and real-engine checks that #41 moved there). When 33 B is verified: 33 D, release 0.3.0, install and verify, then 33 C, 33 D and 0.3.1. No release, tag, install or flag change has happened; none happens until 33 B is verified. 0.3.0 is held if a worker can reach the approval route in the real test (#44).
 
 ## Latest design steering
 
@@ -53,40 +53,41 @@ Live deliverable preview: `http://127.0.0.1:54318/ui-overhaul-preview.html`; par
 
 Wave 0 scouting completed at base a102313 (history). Baseline: `pnpm check` has one environment failure only (node-pty spawn-helper lacks execute bit in fresh installs); `test:screens` 21 passed. Scout finding: the card path did not work, because UI approve burned cards without running gh, push had no card, and cards hid their payload; the bootstrap PR therefore repairs the whole path, not only the squash flag. Decisions #19-22 answered four open spec questions. Wave 1 running on local branches, nothing pushed: `fix/release-cards` (bootstrap, carries blockers-only review), `fix/http-recovery` (M1.1), `feat/visual-foundation` (VF0, default off). Next: the operator resolves cards by script on a scratch server running the unmerged fix (#23). M1.4a gets one blockers-only review because it changes who holds authority. Waves 1 and 2 are verified on local branches; decisions #24-36 are recorded; the five base branches are landing serially through scripted cards.
 
-## State on main (reconciled 5 November 2026)
+## State on main (reconciled 6 November 2026)
 
-**Merged on main**, each with 9/9 required checks, through journalled cards: #24 card path, #25 effects, #26 visual foundation, #27 M1.1, #28 records, #29 M1.2, #30 a11y runner, #31 work surfaces on fixtures, #32 M1.4a authority fence, #33 main-gaps fixes, #34 M1.3, #35 M3.1 stage 1, #36 records, #37 M1.4b durable commands, #38 M3.2 stage B (31 B, live Work, Conversation and Needs you), #39 M2.1 real specialist slice (handoff 20), #40 M3.3 stage A (handoff 32 A). The test diagnostics PR is not on main.
+**Merged on main** at `1900dcb`, each through journalled cards: #24 card path, #25 effects, #26 visual foundation, #27 M1.1, #28 records, #29 M1.2, #30 a11y runner, #31 work surfaces on fixtures, #32 M1.4a authority fence, #33 main-gaps fixes, #34 M1.3, #35 M3.1 stage 1, #36 records, #37 M1.4b durable commands, #38 M3.2 stage B (31 B), #39 M2.1 real specialist slice (handoff 20), #40 M3.3 stage A (32 A), #42 records, #43 two bounded timing waits, #44 vendor login from an installed package and a package with no catalogue refused, #45 five gaps before the new shell is default, #46 `mec backup` and `mec restore` with redaction, and #47 the combined M2 ship PR (the replayed 21, 22, 23 A, 23 B, 30 S2, 31 C and 32 stage B work, per its commit list). (#41 is not in this list.)
 
-**Wave status:** merged: 10, 11, 12, 20, 30 S1, 31 A, 31 B, 32 A, 33 A. In progress: 21, 22, 23 B, 23 A, 30 S2. Remaining after those: 31 C, 32 Stage B, 33 B, 33 D, release 0.3.0, install and verify, 33 C, 33 D, 0.3.1.
+**Not on main:** nothing from the combined PR. Release candidate work for 33 B is not on main.
 
-**Evidence labels:** source: the findings above. Synthetic: builders' failing-then-passing tests and 9/9 checks on each merged PR. Real-engine: handoff 20's slice ran a real Claude worker, and its verifier run 3 found a sibling-ref overwrite in the shared clone, fixed in #39 by denying the clone (#40); a real Claude run on 8d1bc80 on macOS then saw the sandbox refuse those writes, and it remains untested on Linux. Installed: none.
+**Wave status:** merged: 10, 11, 12, 20, 21, 22, 23 A, 23 B, 30 S1, 30 S2, 31 A, 31 B, 31 C, 32 A, 32 B, 33 A, plus the fixes in #44-46. In progress: 33 B (33 B and real Claude runs on a candidate). Remaining after it: 33 D, release 0.3.0, install and verify, 33 C, 33 D, 0.3.1.
 
-**Not done:** no release, tag, install or flag change. `classic` stays the default UI.
+**Evidence labels:** source: the findings above. Synthetic: builders' failing-then-passing tests and the required checks on each merged PR. Real-engine: handoff 20's slice ran a real Claude worker, and its verifier run 3 found a sibling-ref overwrite in the shared clone, fixed in #39 by denying the clone (#40); a real Claude run on 8d1bc80 on macOS then saw the sandbox refuse those writes, and it remains untested on Linux. Installed: none.
+
+**Not done:** nothing is released, tagged or installed. No flag has changed. `classic` stays the default UI.
 
 **Real-engine runs spent:** Claude 15 of 20, Codex 4 of 10, OpenCode 4 of 10 (as counted by the coordinator under #24).
 
-**Next:** see Exact next action. Decisions #39 (land and release as soon as verified, #15 limits stay) and #40 (shared clone denied to a specialist) are recorded.
+**Unproven, stated plainly:**
+- No real-engine run of 22 or 23 A. Their reserved verifier runs are unspent (#41); that evidence moves to 33 B and the installed checks.
+- No separate verifier has looked at any change since the owner's ruling (#41). Routine work shipped on the builder's tests and mutants.
+- The worker loopback route has not been exercised by a real run.
+- Codex and OpenCode have not run on the final build. Their proof follows the release (#42); 0.3.0 is proven on Claude only.
+- Nothing has been checked on an installed copy.
 
 **Working method:** stacked branches are started on verified branches. `land.py` takes `ONTO=<old base>` for a stacked rebase. Every landing runs in the coordinator session.
 
+**Decisions since 5 November:** #38 (no inspection index or SQL migration), #39 (land and release as soon as verified), #40 (shared clone denied to a specialist), #41 (pace, reviews and the restart port), #42 (one PR, Claude-only proof) and #43 (a `slot_class` hint is a preference), #44 (owner answers: queued capacity, approval route, `mec restart`, J/A/G W in 0.3.1), #45 (a process group that refuses to die: 0.3.0 ships as built, 0.3.1 holds capacity) and #46 (#44-47 merged, `login-cards` no longer a permitted baseline failure).
+
 **Records not yet applied:** the spec lines proposed by #32 for §6 and §12.5 are not applied. Handoff 12's Stage A/B notes: the flip's revert-alone criterion was waived because squash merges can't keep it.
 
-**Decision #38 (5 November 2026):** no inspection index or SQL migration for now. Read costs are recorded in `docs/known-limits.md`.
-
-**Open items:**
-- Direct `POST /api/inbox/:id/resolve` still settles a no-evidence non-release card (about 3 lines, 422).
-- `#persistExtras` stores planner operation/evidence unredacted (spec 13 invariant 3).
-- `cardDetail` doesn't redact field names or class.
-- The toast says "agent was told to continue" on a planner card that runs nothing.
+**Open items:** the full list is in `docs/known-limits.md`. Summary:
+- Assigned to handoff 21, whose work is in #47 (the #47 commit list names fixes for the no-evidence 422, planner-write redaction and a pause-time wake; not re-checked item by item here): direct `POST /api/inbox/:id/resolve` still settles a no-evidence non-release card; `#persistExtras` stores planner operation and evidence unredacted (spec §13 invariant 3); `cardDetail` does not redact field names or class; the toast says "agent was told to continue" on a planner card that runs nothing; a late wake after a pause.
 - A `{class}`-only `request_confirmation` is deny-only.
 - next/work-model `canApprove` must map absent to null when wired (31 B).
-- The server logged "stopping on SIGTERM" but stayed alive after a planner turn (handoff 23?).
-- Blocker for release: the real tarball previously had empty models and prompts.
-- One oversized record makes its inspection route answer 500 `response_too_large` until removed (known limit, #38).
-- Late wake after a pause: assigned to handoff 21, with the direct-resolve gap, `#persistExtras` redaction, `cardDetail` key redaction and the misleading toast.
-- Raw ISO time in a held row (`inspection.ts:597`), wake rows in search (`inspection.ts:895-905`), and second-tab 409 wording that says "was not sent" though it was sent and refused: for 31 C.
+- The server logged "stopping on SIGTERM" but stayed alive after a planner turn (handoff 23?). Not reproduced or fixed.
+- The cause of the earlier empty real tarball (empty models and prompts) is unknown. The package fix is on main (#44), so it is no longer a known blocker; the release build is still checked for it.
+- For 31 C (merged in #47; not re-checked since): raw ISO time in a held row (`inspection.ts:597`), wake rows in search (`inspection.ts:895-905`), and second-tab 409 wording that says "was not sent" though it was sent and refused.
 - Restart on a new port leaves an open tab stale: owner ruling needed.
-- `mec backup`/restore CLI doesn't exist though the spec promises it; check in 33 B whether an engine transcript under `engines/claude/<slot>/` can hold `MEC_TOOLS_TOKEN`. Commit 7f2601f cites §12 for "no credential in a backup"; the rule is spec line 558 and §5.7.
-- Owner question: should a repository edit stop admitted work at its next launch (`repo_profile_changed`)? Current behaviour kept.
+- Check in 33 B whether an engine transcript under `engines/claude/<slot>/` can hold `MEC_TOOLS_TOKEN` (spec line 558, §5.7). Commit 7f2601f cites §12 for "no credential in a backup"; the rule is spec line 558 and §5.7. `mec backup` and `mec restore` exist since #46, with the limits in `docs/known-limits.md`.
 - `bundle.test.ts` 6 s health wait can flake under load. The handoff 11 real-run step moved to 20.
 - Rule stands: kill processes by PID only (a flaky-test agent's `pkill` was denied; nothing was killed).

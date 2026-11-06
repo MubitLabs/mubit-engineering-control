@@ -5,8 +5,9 @@
  * credentials were excluded at backup time, so every listed slot must re-probe (plan §5.8)
  * before the scheduler may use it again.
  */
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import Database from 'better-sqlite3'
 import { DB_NAME, MANIFEST_NAME, runTar, scanForCredentialFiles, sha256File } from './backup'
 
 export type RestoreInput = { archivePath: string; targetDir: string }
@@ -15,15 +16,16 @@ export type RestoreResult = { restoredDb: string; slotsToReprobe: string[] }
 
 export type DrillResult = { ok: boolean; checks: Record<string, boolean> }
 
+function assertEmptyOrAbsent(targetDir: string): void {
+  if (existsSync(targetDir) && readdirSync(targetDir).length > 0) {
+    throw new Error(`restore target ${targetDir} is not empty — restore refuses to overwrite`)
+  }
+}
+
 export function restore(input: RestoreInput): RestoreResult {
   if (!existsSync(input.archivePath)) throw new Error(`archive not found: ${input.archivePath}`)
-  if (existsSync(input.targetDir)) {
-    if (readdirSync(input.targetDir).length > 0) {
-      throw new Error(`restore target ${input.targetDir} is not empty — restore refuses to overwrite`)
-    }
-  } else {
-    mkdirSync(input.targetDir, { recursive: true })
-  }
+  assertEmptyOrAbsent(input.targetDir)
+  mkdirSync(input.targetDir, { recursive: true })
   runTar(['-xzf', input.archivePath, '-C', input.targetDir])
 
   const dbPath = join(input.targetDir, DB_NAME)
@@ -38,6 +40,49 @@ export function restore(input: RestoreInput): RestoreResult {
     )
   }
   return { restoredDb: dbPath, slotsToReprobe: slotNames(input.targetDir) }
+}
+
+/** What a data dir calls the database that an archive calls `DB_NAME`. */
+const STORE_NAME = 'mec.db'
+
+/**
+ * `mec restore`: the archive becomes a data dir the next server opens. It is staged beside the
+ * target and verified there, so a damaged archive never reaches the target. The final rename
+ * refuses an occupied target by itself (ENOTEMPTY), so a store that appears after the first
+ * check still survives; only the staging directory this call made is ever removed.
+ */
+export function restoreStore(input: { archivePath: string; dataDir: string }): RestoreResult {
+  if (!existsSync(input.archivePath)) throw new Error(`archive not found: ${input.archivePath}`)
+  assertEmptyOrAbsent(input.dataDir)
+  mkdirSync(dirname(input.dataDir), { recursive: true })
+  const staging = mkdtempSync(`${input.dataDir}.restore-`)
+  try {
+    const { restoredDb, slotsToReprobe } = restore({ archivePath: input.archivePath, targetDir: staging })
+    renameSync(restoredDb, join(staging, STORE_NAME))
+    requireReprobe(join(staging, STORE_NAME))
+    renameSync(staging, input.dataDir)
+    return { restoredDb: join(input.dataDir, STORE_NAME), slotsToReprobe }
+  } finally {
+    rmSync(staging, { recursive: true, force: true })
+  }
+}
+
+/** §20: the scheduler and the launcher take only a `healthy` slot, so none may stay one unprobed. */
+function requireReprobe(dbPath: string): void {
+  const db = new Database(dbPath)
+  try {
+    const rows = db.prepare("SELECT id, json FROM docs WHERE kind = 'slot'").all() as {
+      id: string
+      json: string
+    }[]
+    const save = db.prepare('UPDATE docs SET json = ? WHERE id = ?')
+    for (const row of rows) {
+      const doc = JSON.parse(row.json) as { state?: unknown }
+      if (doc.state === 'healthy') save.run(JSON.stringify({ ...doc, state: 'home_ready' }), row.id)
+    }
+  } finally {
+    db.close()
+  }
 }
 
 function parseManifestSha(path: string): string {

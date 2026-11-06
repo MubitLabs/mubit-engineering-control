@@ -56,6 +56,8 @@ restart         start the server again (--respect-stop honours an intentional st
 doctor          probe engines, sandbox and store; print a redacted report
 slot            add | list | probe | retire — local slot state (never a running server)
 update          version + the internal reinstall path (no network, by design)
+backup          write a redacted archive of the store and state dir (--out <dir>)
+restore         restore an archive into an empty data dir (--target <dir>, --drill)
 
 docs: https://github.com/MubitLabs/mubit-engineering-control — README → guide
 `

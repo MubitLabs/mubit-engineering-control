@@ -4,7 +4,7 @@ The surfaces a user or script touches, exactly as they exist in the tree. The `m
 
 ## The `mec` CLI
 
-What the router recognises today (`runCli` in `apps/desktop/src/mec.ts`; usage line: `mec <status|stop|restart|doctor|slot|update> [flags]`):
+What the router recognises today (`runCli` in `apps/desktop/src/mec.ts`; usage line: `mec <status|stop|restart|doctor|setup|slot|update|backup|restore> [flags]`):
 
 | Command | What it does |
 | --- | --- |
@@ -17,6 +17,9 @@ What the router recognises today (`runCli` in `apps/desktop/src/mec.ts`; usage l
 | `mec slot list` | Lists slots with their state. |
 | `mec slot probe <label>` | Probes a slot with the vendor's own `--version`/`--help`/auth-status commands (§5.8). |
 | `mec slot retire <label>` | Shreds the slot's keystore and marks the slot retired. |
+| `mec backup [--out <dir>]` | Writes a redacted archive of the store and state dir, by default to `<data dir>/backups`. `--out` can name any folder, including the data dir or a parent of it: only the backup's own archives and staging folder stay out of the archive. Reads the store through a read-only connection, so it needs no server and works beside a running one. Prints counts of files redacted and left out. |
+| `mec restore <archive> [--target <dir>]` | Restores an archive into the data dir, or `--target`. Refuses a target holding anything at all and deletes nothing: move a damaged data dir aside yourself first. The archive is verified in a staging directory beside the target. Every `healthy` slot comes back `home_ready` and must re-probe before it can be scheduled. |
+| `mec restore --drill <archive>` | Restores into a scratch dir, prints each check and removes the scratch dir. Touches no store. Exit 1 if a check fails. |
 | `mec update` | Reports the installed version and the internal reinstall path (git repo or `MEC_REGISTRY`); no network check and no auto-update by design. |
 
 `mec status` exit codes (first match wins, `apps/desktop/src/status.ts`):
@@ -28,7 +31,7 @@ What the router recognises today (`runCli` in `apps/desktop/src/mec.ts`; usage l
 | 2 | A part other than the runtime reports an error — a restart will not fix it; output names the part |
 | 3 | Waiting for setup (no slot, no repository, not initialised) |
 
-Planned §21 surfaces not yet in the router — `backup`, `restore`, `migrate` — are documented as gaps in [`docs/fault-suite.md`](fault-suite.md); the backup/restore engines exist as modules (`apps/desktop/src/backup.ts`, `restore.ts`), and the slot subcommands above plus the HTTP API below are the live slot surface.
+The planned §21 surface not yet in the router, `migrate`, is documented as a gap in [`docs/fault-suite.md`](fault-suite.md); the slot subcommands above plus the HTTP API below are the live slot surface.
 
 ## HTTP API
 
@@ -102,7 +105,7 @@ Readiness is read from saved facts: walking through Setup changes none of them. 
 | GET | `/api/models/text` | — | `{ yaml, sha256, source }`: the words a `PUT /api/models` replaces. |
 | PATCH | `/api/repositories/:id` | `{ base_revision, bootstrapCmds?, checkCmds?, trusted? }` | Edits a repository under the argv rules and appends `repository_updated` to the `repositories` stream. `base_revision` comes from `GET /api/repositories`. Work already admitted keeps its pin. |
 | GET | `/api/backups` | — | `{ lastAt?, archive?, note, excluded }`. Served only with a backup seam. |
-| POST | `/api/backups` | — | Takes one backup into `<data dir>/backups` with `VACUUM INTO`: `{ status, lastAt, archive }`. It runs on the request and blocks the server until it finishes. A failure answers 500 `backup_failed` and records nothing. |
+| POST | `/api/backups` | — | Takes one backup into `<data dir>/backups` with `VACUUM INTO`, the same redacted backup as `mec backup`: `{ status, lastAt, archive }`. It runs on the request and blocks the server until it finishes. A failure answers 500 `backup_failed` and records nothing. |
 
 `POST /api/wizard/meta-slot` refuses a retired, non-Claude, API-key or unhealthy slot with the reason. `GET /api/status` also carries `capabilities`: `{ switchWork, drain, backups, isolationEdit, pause }`.
 

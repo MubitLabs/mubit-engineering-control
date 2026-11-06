@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { issueToken } from '@mec/mec-tools'
 import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { backup, DB_NAME, scanForCredentialFiles } from '../src/backup'
@@ -25,6 +26,45 @@ afterEach(() => {
 const json = { 'content-type': 'application/json' }
 
 describe('the backups route on a composed server', () => {
+  // Settings takes the same backup as the CLI: the live store's copy is swept, the live store is not.
+  it('no token reaches the archive from the database or a transcript', async () => {
+    vi.stubEnv('MEC_FAKE_ENGINE', '1')
+    const dataDir = fresh()
+    const token = issueToken({
+      attemptId: 'att_route',
+      generation: 1,
+      role: 'specialist',
+      secret: 'synthetic',
+    })
+    const transcript = join(dataDir, 'engines', 'claude', 'max-1', 'session.jsonl')
+    mkdirSync(dirname(transcript), { recursive: true })
+    writeFileSync(transcript, `{"env":"MEC_TOOLS_TOKEN=${token}"}\n`)
+
+    const server = await startServer({ dataDir })
+    try {
+      const writer = new Database(join(dataDir, 'mec.db'))
+      writer
+        .prepare('INSERT INTO docs (id, kind, json, updated_at) VALUES (?, ?, ?, ?)')
+        .run('card_token', 'card', JSON.stringify({ evidence: token }), '2026-11-06T10:00:00.000Z')
+      writer.close()
+
+      const post = await fetch(`${server.url}/api/backups`, { method: 'POST', headers: json, body: '{}' })
+      expect(post.status).toBe(200)
+      const { archive } = (await post.json()) as { archive: string }
+
+      const out = fresh()
+      execFileSync('tar', ['-xzf', join(dataDir, 'backups', archive), '-C', out])
+      const files = readdirSync(out, { recursive: true, withFileTypes: true }).filter((e) => e.isFile())
+      expect(files.length).toBeGreaterThan(1)
+      for (const file of files) {
+        expect(readFileSync(join(file.parentPath, file.name)).toString('latin1')).not.toContain(token)
+      }
+      expect(readFileSync(transcript, 'utf8')).toContain(token)
+    } finally {
+      await server.close()
+    }
+  })
+
   it('the archive carries no credential file', async () => {
     vi.stubEnv('MEC_FAKE_ENGINE', '1')
     const dataDir = fresh()

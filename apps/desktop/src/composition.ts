@@ -34,7 +34,7 @@ import { DirLock, HealthBoardImpl, InspectionReads, MIGRATIONS_v1, migrate, Sqli
 import { FakeEngine } from '@mec/testkit'
 import Database from 'better-sqlite3'
 import { AttemptLauncher } from './attempt-launch'
-import { backup } from './backup'
+import { backupStore } from './backup-cli'
 import { StoreFacts } from './core-facts'
 import { plannerPlacement } from './planner-placement'
 import { savedPolicyText } from './policy-store'
@@ -272,18 +272,8 @@ export async function startServer(opts: {
     // The data dir is the keystore root (§5.4), so a scratch server never reads real state.
     keystoreRoot: opts.dataDir,
     ...(metaAgent !== undefined && { metaAgent }),
-    // §20: an on-demand backup of the live store. `VACUUM INTO` copies a WAL database consistently.
-    backups: {
-      take: () =>
-        backup({
-          dbPath: join(opts.dataDir, 'mec.db'),
-          stateDir: opts.dataDir,
-          outDir: join(opts.dataDir, 'backups'),
-          copyDb: (_from, to) => {
-            db.prepare('VACUUM INTO ?').run(to)
-          },
-        }),
-    },
+    // §20: an on-demand backup of the live store.
+    backups: { take: () => backupStore(db, opts.dataDir, join(opts.dataDir, 'backups')) },
     ...(process.env.MEC_FAKE_ENGINE === '1' && { setupDecide: scriptedSetupDecide }),
   })
   await app.listen({ port: 0, host: '127.0.0.1' })

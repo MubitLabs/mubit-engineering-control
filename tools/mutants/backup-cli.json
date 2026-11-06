@@ -1,0 +1,354 @@
+[
+  {
+    "name": "files skip redaction",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "const clean = redactForBackup(text, input.fingerprints)",
+    "replace": "const clean = text",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "files skip the fingerprint sweep",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "const clean = redactForBackup(text, input.fingerprints)",
+    "replace": "const clean = redactForBackup(text)",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "NUL files count as text",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "    if (bytes.includes(0)) return null\n",
+    "replace": "",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "invalid UTF-8 counts as text",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "{ fatal: true, ignoreBOM: true }",
+    "replace": "{ fatal: false, ignoreBOM: true }",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "tools token shape not matched",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "pattern: /\\beyJ[",
+    "replace": "pattern: /\\bnoJ[",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "bearer shape not matched",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "pattern: /\\bBearer\\s+",
+    "replace": "pattern: /\\bBaerer\\s+",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "clones are archived",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "  if (segments[0] === 'repos') return 'repo-clone'\n",
+    "replace": "",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "drill calls a clone a credential",
+    "file": "apps/desktop/src/backup.ts",
+    "find": " && entry.kind !== 'repo-clone'",
+    "replace": "",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "archive keeps the umask",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "    chmodSync(archivePath, 0o600) // chat, journals and work: the owner's, whatever the umask says\n",
+    "replace": "",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "file modes dropped",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "writeFileSync(dest, clean, { mode: statSync(entry.abs).mode & 0o777 })",
+    "replace": "writeFileSync(dest, clean)",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "database copy not redacted",
+    "file": "apps/desktop/src/backup-cli.ts",
+    "find": "      redactDbCopy(to)\n",
+    "replace": "",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "freed pages stay in the copy",
+    "file": "apps/desktop/src/backup-cli.ts",
+    "find": "    if (changed) copy.exec('VACUUM')\n",
+    "replace": "",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "backup creates a missing store",
+    "file": "apps/desktop/src/backup-cli.ts",
+    "find": "{ readonly: true, fileMustExist: true }",
+    "replace": "{}",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "unknown flags accepted",
+    "file": "apps/desktop/src/backup-cli.ts",
+    "find": "if (!flags.includes(arg) || value === undefined",
+    "replace": "if (value === undefined",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "failed drill exits 0",
+    "file": "apps/desktop/src/backup-cli.ts",
+    "find": "return ok ? 0 : 1",
+    "replace": "return 0",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "restore skips the first check",
+    "file": "apps/desktop/src/restore.ts",
+    "find": "  assertEmptyOrAbsent(input.dataDir)\n",
+    "replace": "",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "restore clears the target",
+    "file": "apps/desktop/src/restore.ts",
+    "find": "    renameSync(staging, input.dataDir)\n",
+    "replace": "    rmSync(input.dataDir, { recursive: true, force: true })\n    renameSync(staging, input.dataDir)\n",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "slots stay healthy",
+    "file": "apps/desktop/src/restore.ts",
+    "find": "    requireReprobe(join(staging, STORE_NAME))\n",
+    "replace": "",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "retired slots revive",
+    "file": "apps/desktop/src/restore.ts",
+    "find": "if (doc.state === 'healthy') save.run",
+    "replace": "if (doc.state !== undefined) save.run",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "database keeps its archive name",
+    "file": "apps/desktop/src/restore.ts",
+    "find": "    renameSync(restoredDb, join(staging, STORE_NAME))\n    requireReprobe(join(staging, STORE_NAME))\n",
+    "replace": "    requireReprobe(restoredDb)\n",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "staging left behind",
+    "file": "apps/desktop/src/restore.ts",
+    "find": "  } finally {\n    rmSync(staging, { recursive: true, force: true })\n  }\n}\n\n/** §20: the scheduler",
+    "replace": "  } finally {\n  }\n}\n\n/** §20: the scheduler",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "empty targets refused wrongly open",
+    "file": "apps/desktop/src/restore.ts",
+    "find": "if (existsSync(targetDir) && readdirSync(targetDir).length > 0) {",
+    "replace": "if (existsSync(targetDir) && readdirSync(targetDir).length > 1) {",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/restore.test.ts"
+    ]
+  },
+  {
+    "name": "JSON escapes not cut",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "const JSON_SEPARATOR = /(\\\\u[0-9a-fA-F]{4}|\\\\[nrtbf]|\\\\|\")/",
+    "replace": "const JSON_SEPARATOR = /(\\\\u[0-9a-fA-F]{4}|\\\\|\")/",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  },
+  {
+    "name": "unicode escapes not cut",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "const JSON_SEPARATOR = /(\\\\u[0-9a-fA-F]{4}|\\\\[nrtbf]|\\\\|\")/",
+    "replace": "const JSON_SEPARATOR = /(\\\\[nrtbf]|\\\\|\")/",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  },
+  {
+    "name": "lone backslash not cut",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "const JSON_SEPARATOR = /(\\\\u[0-9a-fA-F]{4}|\\\\[nrtbf]|\\\\|\")/",
+    "replace": "const JSON_SEPARATOR = /(\\\\u[0-9a-fA-F]{4}|\\\\[nrtbf]|\")/",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  },
+  {
+    "name": "quote not cut",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "const JSON_SEPARATOR = /(\\\\u[0-9a-fA-F]{4}|\\\\[nrtbf]|\\\\|\")/",
+    "replace": "const JSON_SEPARATOR = /(\\\\u[0-9a-fA-F]{4}|\\\\[nrtbf]|\\\\)/",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  },
+  {
+    "name": "shortest secret off by one",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "const SHORTEST_SECRET = 20",
+    "replace": "const SHORTEST_SECRET = 21",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  },
+  {
+    "name": "separators swept instead of pieces",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "index % 2 === 1 || piece.length",
+    "replace": "index % 2 === 0 || piece.length",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  },
+  {
+    "name": "--out skips the whole folder again",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "  return first === '' || first.startsWith(STAGING_PREFIX) || ARCHIVE_NAME.test(first)",
+    "replace": "  return !first.startsWith('..')",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  },
+  {
+    "name": "own staging archived",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "  return first === '' || first.startsWith(STAGING_PREFIX) || ARCHIVE_NAME.test(first)",
+    "replace": "  return first === '' || ARCHIVE_NAME.test(first)",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  },
+  {
+    "name": "earlier archives carried",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "  return first === '' || first.startsWith(STAGING_PREFIX) || ARCHIVE_NAME.test(first)",
+    "replace": "  return first === '' || first.startsWith(STAGING_PREFIX)",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  },
+  {
+    "name": "archive folder itself carried",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "  return first === '' || first.startsWith(STAGING_PREFIX) || ARCHIVE_NAME.test(first)",
+    "replace": "  return first.startsWith(STAGING_PREFIX) || ARCHIVE_NAME.test(first)",
+    "tests": [
+      "apps/desktop/test/backup-cli.test.ts",
+      "apps/desktop/test/backup.test.ts",
+      "apps/desktop/test/backups-route.test.ts"
+    ]
+  }
+]

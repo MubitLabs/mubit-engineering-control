@@ -1,18 +1,28 @@
 // M2.2's permission widening (§13): a specialist can obtain a permission by card, and nothing but
 // a person's answer gives it. The tools run on the real server with real tokens over real HTTP.
-import type { Operation, StoreDoc } from '@mec/contracts'
+import type { KeyFingerprint, Operation, StoreDoc } from '@mec/contracts'
 import { issueToken, MecToolsServer } from '@mec/mec-tools'
 import { FollowUps, settleSpecialistCard } from '@mec/meta'
 import { loadPolicy, type PolicyDoc } from '@mec/policy'
+import { redactEvent } from '@mec/runtime'
 import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, describe, expect, it } from 'vitest'
-import { StoreFacts } from '../src/core-facts'
+import { type Cleaner, StoreFacts } from '../src/core-facts'
 import { type CardDeps, decideOperation, specialistBridge, specialistTools } from '../src/specialist-tools'
 
 const SECRET = 'specialist-cards-test-secret'
 const NO_POLICY = loadPolicy('{"preAuthorised":{}}')
 const KEY = `sk-ant-${'a1B2c3D4'.repeat(6)}`
 const EVIDENCE = { raw: {}, worktree: '/tmp/w' }
+/** A slot key of no known shape: only the last-four sweep can catch it. */
+const UNPATTERNED_KEY = `zQ9-${'mK7xVt2w'.repeat(3)}-Rp4T`
+const FINGERPRINT: KeyFingerprint = { provider: 'anthropic-api', last4: 'Rp4T', hash: 'c'.repeat(64) }
+
+/** The cleaner composition.ts gives both the facts and the cards. */
+const cleaner =
+  (exacts: string[]): Cleaner =>
+  <T>(_attemptId: string, value: T): T =>
+    redactEvent(value as never, [FINGERPRINT], exacts) as T
 
 const shell = (command: string): Operation => ({
   kind: 'shell',
@@ -36,7 +46,7 @@ function rig(policy: PolicyDoc = NO_POLICY, extra: Partial<CardDeps> = {}) {
     })
   })
   const followups = new FollowUps({ store, effects: store.effects })
-  const cards: CardDeps = { followups, policy, pollMs: 2, ...extra }
+  const cards: CardDeps = { followups, policy, pollMs: 2, clean: cleaner([]), ...extra }
   const attempt = () => store.attempts.get('att_1') as StoreDoc
   const pending = () => store.confirmations.list({ status: 'pending' })
   const settle = (status: string) => {
@@ -173,6 +183,14 @@ describe('confirm with a card (§13)', () => {
     await decideOperation(h.store, h.cards, h.attempt(), shell(`pnpm add ${KEY}`))
     expect(JSON.stringify(h.store.confirmations.list())).not.toContain(KEY)
   })
+
+  it('the attempt token on a card it was not meant for is redacted before the write', async () => {
+    const token = issueToken({ attemptId: 'att_1', generation: 1, role: 'specialist', secret: SECRET })
+    const h = rig(NO_POLICY, { waitMs: 5, clean: cleaner([token]) })
+    await decideOperation(h.store, h.cards, h.attempt(), shell(`pnpm add ${token}`))
+    expect(h.store.confirmations.list({ status: 'expired' })).toHaveLength(1)
+    expect(JSON.stringify(h.store.snapshot())).not.toContain(token)
+  })
 })
 
 describe('what a person’s answer does (§13)', () => {
@@ -207,7 +225,8 @@ describe('the tools (§6)', () => {
   })
 
   async function tools(policy: PolicyDoc = NO_POLICY) {
-    const h = rig(policy, { waitMs: 60_000 })
+    const token = issueToken({ attemptId: 'att_1', generation: 1, role: 'specialist', secret: SECRET })
+    const h = rig(policy, { waitMs: 60_000, clean: cleaner([token]) })
     const followups = new FollowUps({ store: h.store, effects: h.store.effects })
     const facts = new StoreFacts(h.store, (_attemptId, value) => value, undefined, { followups })
     const server = new MecToolsServer({
@@ -217,7 +236,6 @@ describe('the tools (§6)', () => {
     })
     servers.push(server)
     const { url } = await server.start()
-    const token = issueToken({ attemptId: 'att_1', generation: 1, role: 'specialist', secret: SECRET })
     const call = async (tool: string, args: unknown) => {
       const response = await fetch(url, {
         method: 'POST',
@@ -236,6 +254,7 @@ describe('the tools (§6)', () => {
     }
     return {
       ...h,
+      token,
       call,
       answer: (rpc: Awaited<ReturnType<typeof call>>) => JSON.parse(rpc.result?.content[0]?.text ?? 'null'),
     }
@@ -253,6 +272,68 @@ describe('the tools (§6)', () => {
       notify: true,
       attemptId: 'att_1',
     })
+  })
+
+  it('a card holds neither the attempt token nor a key of no known shape (§22)', async () => {
+    const h = await tools()
+    const printenv = `MEC_TOOLS_TOKEN=${h.token}\nSLOT_KEY=${UNPATTERNED_KEY}\nHOME=/h`
+    const body = h.answer(
+      await h.call('request_confirmation', {
+        operation: { class: 'install', command: `curl -H ${h.token}`, args: [UNPATTERNED_KEY] },
+        evidence: {
+          auth: h.token,
+          key: UNPATTERNED_KEY,
+          env: { printenv, [h.token]: 'under a key', [UNPATTERNED_KEY]: 'under a key' },
+        },
+      }),
+    )
+    const stored = JSON.stringify(h.store.snapshot())
+    expect(stored).not.toContain(h.token)
+    expect(stored).not.toContain(UNPATTERNED_KEY)
+    // Field by field: what is not a secret still reads, and the card stays an object.
+    expect(h.store.confirmations.get(body.confirmation_id)?.payload).toMatchObject({
+      evidence: {
+        auth: '[redacted:exact]',
+        key: '[redacted:exact]',
+        env: {
+          // The sweep takes the whole run of non-space, name included: it errs toward hiding.
+          printenv: 'MEC_TOOLS_TOKEN=[redacted:exact]\n[redacted:exact]\nHOME=/h',
+          '[redacted:exact]': 'under a key',
+        },
+      },
+    })
+  })
+
+  it('a class that carries a secret is stored without it', async () => {
+    const h = await tools()
+    const rpc = await h.call('request_confirmation', {
+      operation: { class: h.token },
+      evidence: { reason: 'r' },
+    })
+    expect(h.answer(rpc)).toMatchObject({ ok: true, status: 'pending' })
+    expect(JSON.stringify(h.store.snapshot())).not.toContain(h.token)
+  })
+
+  it('a handback reason is redacted on the message and in the planner wake', async () => {
+    const h = await tools()
+    h.store.atomic(() => {
+      h.store.messages.save({
+        id: 'msg_1',
+        ownerAttemptId: 'att_1',
+        owned: true,
+        workItemId: 'wi_1',
+        text: 'please look',
+      })
+    })
+    const reason = `not mine: ${h.token} ${UNPATTERNED_KEY}`
+    expect(h.answer(await h.call('handback', { message_id: 'msg_1', reason }))).toEqual({ ok: true })
+    expect(h.store.messages.get('msg_1')?.handback).toMatchObject({
+      reason: 'not mine: [redacted:exact] [redacted:exact]',
+    })
+    const stored = JSON.stringify(h.store.snapshot())
+    expect(stored).toContain('follow-up handed back')
+    expect(stored).not.toContain(h.token)
+    expect(stored).not.toContain(UNPATTERNED_KEY)
   })
 
   it('an always-confirm class is refused to a worker', async () => {

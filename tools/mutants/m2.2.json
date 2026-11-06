@@ -528,5 +528,33 @@
     "find": "return realpathSync(resolve(path, target))",
     "replace": "return target",
     "tests": ["packages/git/test/repos-worktrees.test.ts"]
+  },
+  {
+    "name": "handback reason not cleaned",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "const clean = cards.clean(String(attempt.id), reason)",
+    "replace": "const clean = reason",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  },
+  {
+    "name": "card class not cleaned",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "cls: cards.clean(attemptId, cls),",
+    "replace": "cls,",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  },
+  {
+    "name": "card field names not cleaned",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "[cards.clean(attemptId, name), scrub(entry)]",
+    "replace": "[name, scrub(entry)]",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
+  },
+  {
+    "name": "card field values not cleaned",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": "typeof value !== 'object' || value === null) return cards.clean(attemptId, value)",
+    "replace": "typeof value !== 'object' || value === null) return value",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts"]
   }
 ]

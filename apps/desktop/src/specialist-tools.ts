@@ -37,8 +37,7 @@ import {
   policyPreAuthorises,
   resolveConfirmation,
 } from '@mec/policy'
-import { redact } from '@mec/slots'
-import { checkDocId, reportDocId } from './core-facts'
+import { type Cleaner, checkDocId, reportDocId } from './core-facts'
 
 /** §6: a text page is 4,000 characters by default. */
 const PAGE_CHARS = 4000
@@ -222,6 +221,8 @@ function scopeOf(attempt: StoreDoc): AttemptScope | undefined {
 export type CardDeps = {
   followups: Pick<FollowUps, 'openCard' | 'handback'>
   policy: PolicyDoc
+  /** The attempt's redaction, the one the facts use: its token, every key's last four, the patterns. */
+  clean: Cleaner
   waitMs?: number
   pollMs?: number
   /** Ends every wait: a closing server answers no more cards. */
@@ -249,20 +250,24 @@ export async function decideOperation(
   }
   const now = cards.now ?? (() => new Date())
   const waitMs = cards.waitMs ?? CARD_WAIT_MS
+  const attemptId = String(attempt.id)
   const card = store.atomic(() =>
     cards.followups.openCard(
       attempt,
       {
         cls: verdict.card as string,
-        operation: cleanFields({ summary: operation.summary, command: operation.command ?? [] }),
-        evidence: cleanFields({ why: verdict.reason, attempt: String(attempt.id) }),
+        operation: cleanFields(cards, attemptId, {
+          summary: operation.summary,
+          command: operation.command ?? [],
+        }),
+        evidence: cleanFields(cards, attemptId, { why: verdict.reason, attempt: attemptId }),
         expiresAt: new Date(now().getTime() + waitMs).toISOString(),
         notify: false,
       },
       now().toISOString(),
     ),
   )
-  return awaitCard(store, cards, String(attempt.id), String(card.id), verdict)
+  return awaitCard(store, cards, attemptId, String(card.id), verdict)
 }
 
 function workRepo(store: Store, attempt: StoreDoc): string | undefined {
@@ -310,8 +315,23 @@ function expireCard(store: Store, cardId: string, at: string): void {
   })
 }
 
-function cleanFields(fields: Record<string, unknown>): Record<string, Json> {
-  return JSON.parse(redact(JSON.stringify(fields), [], [])) as Record<string, Json>
+/**
+ * Field by field, names included: a worker chooses these names, and the last-four sweep reads one
+ * token at a time, so a whole serialised object would be one token that hides every key inside it.
+ */
+function cleanFields(
+  cards: CardDeps,
+  attemptId: string,
+  fields: Record<string, unknown>,
+): Record<string, Json> {
+  const scrub = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(scrub)
+    if (typeof value !== 'object' || value === null) return cards.clean(attemptId, value)
+    return Object.fromEntries(
+      Object.entries(value).map(([name, entry]) => [cards.clean(attemptId, name), scrub(entry)]),
+    )
+  }
+  return scrub(fields) as Record<string, Json>
 }
 
 /** The same rule for an adapter that calls the bridge in-process; a missing doc denies. */
@@ -418,7 +438,8 @@ function handback(deps: SpecialistToolsDeps, attempt: StoreDoc, input: Record<st
   const reason = typeof input.reason === 'string' ? input.reason.trim() : ''
   if (messageId === '' || reason === '') throw new Error('mec-tools: handback needs a message and a reason')
   const at = new Date().toISOString()
-  const given = store.atomic(() => cards.followups.handback(attempt, messageId, redact(reason, [], []), at))
+  const clean = cards.clean(String(attempt.id), reason)
+  const given = store.atomic(() => cards.followups.handback(attempt, messageId, clean, at))
   if (!given.ok) throw new Error(`mec-tools: handback refused: ${given.reason}`)
   return { ok: true }
 }
@@ -453,13 +474,14 @@ function requestConfirmation(
     return { ok: true, status: 'approved', pre_authorised: true }
   }
   const now = cards.now ?? (() => new Date())
+  const attemptId = String(attempt.id)
   const card = store.atomic(() =>
     cards.followups.openCard(
       attempt,
       {
-        cls: redact(cls, [], []),
-        operation: cleanFields(operation as Record<string, unknown>),
-        evidence: cleanFields(evidence),
+        cls: cards.clean(attemptId, cls),
+        operation: cleanFields(cards, attemptId, operation as Record<string, unknown>),
+        evidence: cleanFields(cards, attemptId, evidence),
         expiresAt: new Date(now().getTime() + (cards.waitMs ?? CARD_WAIT_MS)).toISOString(),
         notify: true,
       },

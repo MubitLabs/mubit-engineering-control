@@ -92,3 +92,7 @@ So `send` resolves on `queued`, or the replay on a version without lifecycle lin
 - **A turn can still be fenced for up to one pass.** `guardTurn` reads `owned`, and only the sweep clears it, so a turn in the gap of up to 2 s after an attempt ends is refused. The release wake that follows gives the planner its turn. This holds for every ended attempt, not only no-checks ones.
 - **A check stopped by a close also reads as no verdict.** `checksSkipped` writes `checks_note` on a stop as well, so an attempt stopped mid-check releases its messages. Crash and restart recovery is M2.4's.
 - **Every pass scans docs.** `list` loads a kind whole; `known-limits` has the numbers for reads, and passes add to them every 2 s.
+
+## Found by the fourth review, fixed here
+
+- **A worker's card or handback could store its own bearer token.** `request_confirmation` and `handback` redacted with `redact(text, [], [])`, the pattern layer alone, and the attempt token matches no pattern, so `evidence: { auth: <token> }` went into the confirmations row and a handback reason into the message and the planner wake (§22, the Redaction row of §26). `CardDeps` now requires `clean`, the attempt cleaner the facts already use, and every card and handback write goes through it. Fields are cleaned one by one, names included: the old `redact` over the serialised object would have read the whole object as one long token, and the last-four sweep would never have seen a key inside it.

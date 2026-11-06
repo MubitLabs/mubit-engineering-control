@@ -36,7 +36,7 @@ import { FakeEngine } from '@mec/testkit'
 import Database from 'better-sqlite3'
 import { AttemptLauncher } from './attempt-launch'
 import { backupStore } from './backup-cli'
-import { StoreFacts } from './core-facts'
+import { type Cleaner, StoreFacts } from './core-facts'
 import { plannerPlacement } from './planner-placement'
 import { savedPolicyText } from './policy-store'
 import { buildHealthSnapshot, buildServer } from './server'
@@ -242,15 +242,14 @@ export async function startServer(opts: {
   // attempt-scoped token per launch (plan §6). `MEC_REAL_RUNNER=1` grants no authority: mandate,
   // hold and repo checks run on every launch, with or without it.
   const toolsSecret = randomBytes(32).toString('hex')
-  const facts = new StoreFacts(
-    store,
-    <T>(attemptId: string, value: T): T =>
-      redactEvent(value as never, launcher?.fingerprints() ?? [], launcher?.exactsFor(attemptId) ?? []) as T,
-    undefined,
-    { followups, changed: () => setImmediate(schedulerPass) },
-  )
+  const clean: Cleaner = <T>(attemptId: string, value: T): T =>
+    redactEvent(value as never, launcher?.fingerprints() ?? [], launcher?.exactsFor(attemptId) ?? []) as T
+  const facts = new StoreFacts(store, clean, undefined, {
+    followups,
+    changed: () => setImmediate(schedulerPass),
+  })
   const closing = new AbortController()
-  const cards = { followups, policy, signal: closing.signal }
+  const cards = { followups, policy, clean, signal: closing.signal }
   const tools = new MecToolsServer({
     secret: toolsSecret,
     bridge: DENY_BRIDGE,

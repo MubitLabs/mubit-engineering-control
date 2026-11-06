@@ -830,11 +830,13 @@ class Inspector {
         openQuestions: mine.filter((item) => item.kind === 'question').length,
         awaitingConfirmation: mine.some((item) => item.kind === 'card'),
       }
+      const delivery = this.#deliveryOf(doc).stage
       const stage = stageOf(
         workViewOf(doc, {
           ...facts,
           attempts: attempts.get(id) ?? [],
-          merged: this.#deliveryOf(doc).stage === 'merged',
+          merged: delivery === 'merged',
+          deliveryReady: delivery === 'pr-ready',
         }),
       )
       const byStatus = counts[id] ?? {}

@@ -28,6 +28,8 @@ export type WorkItemView = {
   queued?: boolean
   /** The pull request is confirmed merged (never assumed). */
   merged?: boolean
+  /** The delivery is at `pr-ready`: a person has the pull request to review (§10). */
+  deliveryReady?: boolean
 }
 
 /** What a stage reads beyond the work doc. Each caller gathers these from its own store reads. */
@@ -36,6 +38,8 @@ export type WorkFacts = {
   awaitingConfirmation: boolean
   attempts: readonly Record<string, unknown>[]
   merged: boolean
+  /** The delivery stage is `pr-ready`; absent where the caller reads no delivery. */
+  deliveryReady?: boolean
 }
 
 export type Stage = {
@@ -90,7 +94,7 @@ export const STAGE_TABLE: readonly StageRow[] = [
   {
     key: 'person/review',
     waitingOn: 'person',
-    match: (w) => w.latestReport === 'ready',
+    match: (w) => w.latestReport === 'ready' || w.deliveryReady === true,
     label: () => 'Ready for review',
   },
   {
@@ -199,5 +203,6 @@ export function workViewOf(doc: Record<string, unknown>, facts: WorkFacts): Work
       typeof hold === 'object' && hold !== null && text(hold.liftedAt) === undefined ? 'held' : 'free',
     ...(parked && { quotaWait: resets[0] === undefined ? {} : { resetAt: resets[0] } }),
     merged: facts.merged,
+    ...(facts.deliveryReady === true && { deliveryReady: true }),
   }
 }

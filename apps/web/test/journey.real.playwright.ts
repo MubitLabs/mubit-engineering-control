@@ -154,9 +154,6 @@ test('one request reaches a tested PR on the scratch lane', async ({ page }) => 
 
 test('a delivery ready for review says so on its Work row', async ({ page }) => {
   test.skip(mode === 'real', ONE_REAL_PASS)
-  // Known gap, spec §10's stage table: the row reads Working, because `stageOf` only looks at a
-  // worker's `ready` report and never at the delivery. Remove this line when that is fixed.
-  test.fail()
   rig.plannerTurns(planTurn([{ id: 'hello', objective: REQUEST }]))
   await ask(page)
   await open(page, 'Needs you')

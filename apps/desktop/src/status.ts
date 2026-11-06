@@ -50,20 +50,30 @@ export function statusFromSnapshot(
     return { code: 1, lines }
   }
 
+  // Past the checks above a live server answers, so where it listens is worth saying in every code.
+  const moved = snapshot.portMoved
+  const port =
+    moved === undefined
+      ? []
+      : [`port ${moved.from} is taken, so mec moved to ${moved.to}: reopen http://127.0.0.1:${moved.to}`]
+
   const errored = Object.entries(parts).filter(([, part]) => part.state === 'error')
   if (errored.length > 0) {
     return {
       code: 2,
-      lines: errored.map(
-        ([name, part]) => `part error: ${name}: ${part.detail ?? 'no detail'} (a restart will not fix it)`,
-      ),
+      lines: [
+        ...errored.map(
+          ([name, part]) => `part error: ${name}: ${part.detail ?? 'no detail'} (a restart will not fix it)`,
+        ),
+        ...port,
+      ],
     }
   }
 
   const waiting: string[] = []
   if (!setup.has_slot) waiting.push('waiting for setup: no slot')
   if (!setup.has_repository) waiting.push('waiting for setup: no repository')
-  if (waiting.length > 0) return { code: 3, lines: waiting }
+  if (waiting.length > 0) return { code: 3, lines: [...waiting, ...port] }
 
   const lines = [runtime.state === 'paused' ? 'paused' : 'running normally']
   for (const [name, part] of Object.entries(parts)) {
@@ -71,7 +81,7 @@ export function statusFromSnapshot(
       lines.push(`part degraded: ${name}: ${part.detail ?? 'no detail'}`)
     }
   }
-  return { code: 0, lines }
+  return { code: 0, lines: [...lines, ...port] }
 }
 
 export function formatStatus(result: StatusResult): string {

@@ -25,6 +25,8 @@ export type HealthSnapshot = {
   instanceId?: string
   pid?: number
   heartbeatAt?: string
+  /** This start could not have its last port. Also only in `health.json`. */
+  portMoved?: { from: number; to: number }
 }
 
 /** `null` = no snapshot on disk: the server has never run (or died without writing one). */
@@ -42,7 +44,7 @@ export function parseHealthSnapshot(text: string): HealthSnapshot | null {
   ) {
     return null
   }
-  const { runtime, parts, setup, observedAt, instanceId, pid, heartbeatAt } = value
+  const { runtime, parts, setup, observedAt, instanceId, pid, heartbeatAt, portMoved } = value
   if (
     !['starting', 'ready', 'paused', 'error'].includes(runtime.state) ||
     typeof runtime.instances !== 'number' ||
@@ -61,5 +63,6 @@ export function parseHealthSnapshot(text: string): HealthSnapshot | null {
     ...(typeof instanceId === 'string' && { instanceId }),
     ...(typeof pid === 'number' && { pid }),
     ...(typeof heartbeatAt === 'string' && { heartbeatAt }),
+    ...(typeof portMoved?.from === 'number' && typeof portMoved.to === 'number' && { portMoved }),
   }
 }

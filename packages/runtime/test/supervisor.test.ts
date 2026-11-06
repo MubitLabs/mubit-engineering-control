@@ -259,8 +259,13 @@ describe('Supervisor', () => {
     supervisor.spawn({
       attemptId,
       generation: 1,
-      cmd: '/bin/sh',
-      args: ['-c', `set -m; /bin/sh -c '${inner}' & wait`],
+      // Node, not `set -m`: dash without a terminal keeps a background job in its own group, so
+      // on Linux the stray would never leave.
+      cmd: process.execPath,
+      args: [
+        '-e',
+        `require('node:child_process').spawn('/bin/sh', ['-c', ${JSON.stringify(inner)}], { detached: true, stdio: 'ignore' })`,
+      ],
       cwd: workdir,
       env,
     })

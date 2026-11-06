@@ -28,6 +28,8 @@ const REQUEST = 'Add a file named hello.txt that contains the word hello, and no
 const SLOW = mode === 'real' ? 300_000 : 90_000
 /** Longer than the server's two-second pass, so anything queued would have started. */
 const SEVERAL_PASSES = 6_000
+/** With holds off, work moved 6.9 s after a SIGKILL restart: this has to outlast that. */
+const AFTER_A_CRASH = 15_000
 const QUIET_TIME = { timeout: SLOW }
 
 interface WorkDetail {
@@ -201,11 +203,15 @@ test('hold survives restart', async ({ page }) => {
 
   // The first task runs out and is accepted; the hold keeps its integration and the second back.
   await expect.poll(taskStatuses, QUIET_TIME).toEqual(['accepted', 'ready'])
+  await page.waitForTimeout(SEVERAL_PASSES)
+  expect(await taskStatuses()).toEqual(['accepted', 'ready'])
+  expect(rig.launched()).toHaveLength(1)
+
   await rig.restart('SIGKILL')
   await page.goto(`${rig.url}/?ui=next#repo/${rig.repoId}/work`)
   await page.locator('.work-row').first().click()
   await expect(page.getByRole('button', { name: /^Lift hold/ })).toBeVisible(QUIET_TIME)
-  await page.waitForTimeout(SEVERAL_PASSES)
+  await page.waitForTimeout(AFTER_A_CRASH)
   expect(rig.launched()).toHaveLength(1)
   expect(await pendingClasses()).toEqual([])
 

@@ -35,7 +35,7 @@ Each classic test in `test/screens.playwright.ts` and its equal in the next suit
 | `screen slots light/dark` | `config.screens` `baselines in light/dark` (`config-slots`) |
 | `screen setup light/dark` | `config.screens` `baselines in light/dark` (`config-setup`) |
 | `screen settings light/dark` | `config.screens` `baselines in light/dark` (`config-settings`) |
-| `context pane light/dark` | `next.screens` `inspector` baselines; `work-live` `inspecting a card opens the card’s own evidence`. The pane's "If you approve" text is now `Consequences` on the card |
+| `context pane light/dark` | `next.screens` `inspector` baselines; `work-live` `inspecting a card opens the card’s own evidence`. The pane's "If you approve" text is now "On approve" on the card itself |
 | `login sheet light/dark` | No sheet any more: an inline card. `config.screens` `a sign-in that starts shows its card`, new `Sign in again that starts shows its card`, `config-slots` baselines. "Never reads the token" is now "MEC never sees the token" in `ConnectionForm.tsx` |
 | `§23 worked example` | New `work-live` `§23 worked example: the request, the plan, a question, a decision and its evidence`. Tier and slot moved from the plan card to the inspector (`work.screens` `requested and actual stay apart`). The parked-slot notice was a chat line; a status line stands for it |
 | `a card the server has no evidence for…` | `work-live` `a card whose evidence is 404 cannot be approved, and can be denied` |

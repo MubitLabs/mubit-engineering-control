@@ -312,7 +312,14 @@ export async function startServer(opts: {
     renameSync(healthDraft, healthPath)
   }
   writeHealth()
-  const healthTimer = setInterval(writeHealth, PASS_INTERVAL_MS)
+  // A tick that can't write must not take the server down: the heartbeat goes stale, which is true.
+  const healthTimer = setInterval(() => {
+    try {
+      writeHealth()
+    } catch (error) {
+      console.error(`[health] snapshot not written: ${String(error)}`)
+    }
+  }, PASS_INTERVAL_MS)
   healthTimer.unref()
 
   // mec-tools (A3) on an ephemeral port with a per-process secret; the launcher mints an

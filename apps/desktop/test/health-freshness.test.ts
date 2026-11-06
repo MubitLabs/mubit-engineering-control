@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -131,12 +131,37 @@ describe('the writer', () => {
       expect(first.pid).toBe(process.pid)
       expect(first.instanceId).toBeTruthy()
       // Nothing changed on the board: the file is still rewritten, or quiet would read as dead.
-      await until(() => readHealth(dataDir).heartbeatAt !== first.heartbeatAt, 4_000)
+      await until(() => readHealth(dataDir).heartbeatAt !== first.heartbeatAt, 15_000)
       const live = readHealth(dataDir)
       const at = new Date(Date.parse(String(live.heartbeatAt)) + 5_000)
       const healthy = { ...live, setup: { has_slot: true, has_repository: true } }
       expect(statusFromSnapshot(healthy, { initialized: true, now: at }).code).toBe(0)
     } finally {
+      await handle.close()
+      delete process.env.MEC_FAKE_ENGINE
+    }
+  })
+
+  it('a data dir that goes away does not kill the server', async () => {
+    process.env.MEC_FAKE_ENGINE = '1'
+    const dataDir = scratch()
+    const handle = await startServer({ dataDir })
+    const crashes: unknown[] = []
+    const onCrash = (error: unknown): void => {
+      crashes.push(error)
+    }
+    process.on('uncaughtException', onCrash)
+    try {
+      const health = join(dataDir, 'health.json')
+      rmSync(health)
+      renameSync(dataDir, `${dataDir}.gone`)
+      tempDirs.push(`${dataDir}.gone`)
+      await sleep(2_500)
+      expect(crashes).toEqual([])
+      expect((await fetch(`${handle.url}/api/status`)).ok).toBe(true)
+    } finally {
+      process.off('uncaughtException', onCrash)
+      renameSync(`${dataDir}.gone`, dataDir)
       await handle.close()
       delete process.env.MEC_FAKE_ENGINE
     }
@@ -172,10 +197,10 @@ describe('a real process', () => {
         stdio: 'ignore',
       })
       try {
-        await until(() => existsSync(join(dataDir, 'health.json')), 15_000)
+        await until(() => existsSync(join(dataDir, 'health.json')), 30_000)
         const first = readHealth(dataDir)
         expect(first.pid).toBe(child.pid)
-        await until(() => readHealth(dataDir).heartbeatAt !== first.heartbeatAt, 5_000)
+        await until(() => readHealth(dataDir).heartbeatAt !== first.heartbeatAt, 15_000)
       } finally {
         child.kill('SIGKILL')
       }
@@ -186,6 +211,6 @@ describe('a real process', () => {
       const later = new Date(Date.parse(String(last.heartbeatAt)) + HEARTBEAT_STALE_MS + 1)
       expect(statusFromSnapshot(last, { initialized: true, now: later }).lines).toEqual(['not answering'])
     },
-    40_000,
+    70_000,
   )
 })

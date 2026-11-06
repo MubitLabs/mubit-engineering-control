@@ -189,6 +189,13 @@
     "tests": ["apps/desktop/test/health-freshness.test.ts"]
   },
   {
+    "name": "a failed tick takes the server down",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    try {\n      writeHealth()\n    } catch (error) {\n      console.error(`[health] snapshot not written: ${String(error)}`)\n    }\n",
+    "replace": "    writeHealth()\n",
+    "tests": ["apps/desktop/test/health-freshness.test.ts"]
+  },
+  {
     "name": "one instance id for ever",
     "file": "apps/desktop/src/composition.ts",
     "find": "  const instanceId = randomUUID()\n",

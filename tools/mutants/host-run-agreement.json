@@ -109,14 +109,14 @@
     "file": "apps/desktop/src/attempt-launch.ts",
     "find": "        () => entry.reason ?? this.#withheld(work),\n",
     "replace": "        () => entry.reason,\n",
-    "tests": ["apps/desktop/test/host-run-agreement.test.ts"]
+    "tests": ["apps/desktop/test/host-run-agreement.test.ts", "-t", "a withdrawal during a second look"]
   },
   {
     "name": "withheld checks get no row",
     "file": "apps/desktop/src/core-facts.ts",
     "find": "      if (stopped === HOST_RUN_UNAGREED) this.#listener.withheld?.(doc)\n",
     "replace": "",
-    "tests": ["apps/desktop/test/host-run-agreement.test.ts"]
+    "tests": ["apps/desktop/test/host-run-agreement.test.ts", "-t", "checks of an attempt already running"]
   },
   {
     "name": "withheld checks count as stopped",
@@ -130,7 +130,7 @@
     "file": "apps/desktop/src/config-routes.ts",
     "find": "      deps.wakeLaunches?.()\n",
     "replace": "",
-    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+    "tests": ["apps/desktop/test/host-run-agreement.test.ts", "-t", "agreeing makes a waiting row due"]
   },
   {
     "name": "delivery ignores the agreement",

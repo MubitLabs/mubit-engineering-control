@@ -188,6 +188,17 @@ describe('the owner agreeing and withdrawing', { timeout: 120_000 }, () => {
     expect((await post(server, '/api/repositories/settings%2Frepositories/host-run/agree')).status).toBe(404)
   })
 
+  it('agreeing makes a waiting row due at once, not at its next look', async () => {
+    const rig = scratch(STEPS)
+    seedStore(rig, { preUpgrade: true, task: { status: 'active' } })
+    const server = await serve(rig, { probeRun: PROBE_OK, brain: brainThatNeverRuns })
+    await until(() => rowOf(rig, 'att_1:1') === 'waiting', 60_000, 'the row waiting')
+    const before = peek(rig, (store) => store.effects.snapshot('launch', 'att_1:1'))
+    await agree(server)
+    const after = peek(rig, (store) => store.effects.snapshot('launch', 'att_1:1'))
+    if (after !== undefined) expect(after.nextRunAt < String(before?.nextRunAt)).toBe(true)
+  })
+
   it('a withdrawal stops new launches', async () => {
     const rig = scratch(STEPS)
     seedStore(rig, { task: { status: 'active' }, slot: { state: 'degraded' } })

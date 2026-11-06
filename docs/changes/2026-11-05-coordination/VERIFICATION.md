@@ -47,6 +47,16 @@ Gate on these commits, with other worktrees running on the machine: `pnpm typech
 
 Mutants, each of the 75 in `m2.2.json`, killed: the two runs of `run.py` that hold them come to 73, and `no pass after effects` and `follow-up names no ids` ran past the runner's 300 s bound and read `INVALID`, so they now run only the tests written for them, and both are killed. `plan wall clock ignored` ran alone, because the baseline of its two suites also passed that bound under load. `m2.1.json`: 51 of 53 killed, and `durable-commands.json`: 51 of 54. The two and the three not run have a `find` that was already gone at 03c44e4, so `run.py` refuses those specs whole; `--only` ran the rest.
 
+## The fourth round of fixes
+
+Cards and handbacks through the attempt cleaner. The four new tests in `specialist-cards.test.ts` were run failing first: 4 failed, 21 passed, the stored row holding the token verbatim on each. After the fix all 25 pass. One new assertion was wrong on the first green run and was corrected to what the sweep does: `SLOT_KEY=<key>` is one run of non-space, so the whole of it is replaced, name included.
+
+Gate on this commit: `vitest run apps/desktop` 645 passed, 6 skipped, 1 failed, the `login-cards.test.ts` baseline. `tsc --noEmit` in `apps/desktop` and `biome` on the changed files clean. Other packages were not rerun: none changed. No engine ran.
+
+Mutants: the four new entries in `m2.2.json`, 4 of 4 killed. The other entries were not rerun.
+
+Not closed here: the composition wiring is held by the required `clean` field and `tsc`, not by a test with a live launcher. `shownSafe` in `release.ts` stays pattern-only, so a card stored before this commit shows what it holds.
+
 ## Assertions changed on purpose
 
 - `service.test.ts` "attach": a follow-up with no attempt now queues one `relay`.

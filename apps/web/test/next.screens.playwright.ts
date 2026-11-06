@@ -256,7 +256,12 @@ test.describe('?ui=next is honest with no repository', () => {
         if (request.method() !== 'GET') writes.push(new URL(request.url()).pathname)
       })
       await live(page, hash)
-      await expect(page.getByRole('link', { name: 'Return to the classic workbench' })).toBeVisible()
+      // M3.3: Connections, Setup and Settings are live here, so only these three still send you back.
+      if (['chat', 'work', 'needs'].includes(hash)) {
+        await expect(page.getByRole('link', { name: 'Return to the classic workbench' })).toBeVisible()
+      } else {
+        await expect(page.locator('.page h1')).toBeVisible()
+      }
       await expect(page.getByText('No repository', { exact: true }).first()).toBeVisible()
       const text = await page.locator('body').innerText()
       expect(text).not.toMatch(/sample|nothing is waiting|healthy|checks passed/i)

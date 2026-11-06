@@ -279,8 +279,10 @@ export class HttpError extends Error {
   readonly status: number
   /** The server's own `{error}` text when it sent one — the exact 400 reason, shown inline. */
   readonly reason?: string
+  /** The server's `{detail}` when it sent one: why, where `reason` is often only a code. */
+  readonly detail?: string
 
-  constructor(path: string, status: number, reason?: string) {
+  constructor(path: string, status: number, reason?: string, detail?: string) {
     super(
       reason === undefined
         ? `${path} failed with HTTP ${status}`
@@ -290,6 +292,7 @@ export class HttpError extends Error {
     this.path = path
     this.status = status
     this.reason = reason
+    if (detail !== undefined) this.detail = detail
   }
 }
 
@@ -335,22 +338,28 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { ...(init?.headers as Record<string, string> | undefined), 'x-mec-client': '1' },
   }
   const response = await fetch(path, withHeader)
-  if (!response.ok) throw new HttpError(path, response.status, await errorOf(response))
+  if (!response.ok) {
+    const { error, detail } = await errorOf(response)
+    throw new HttpError(path, response.status, error, detail)
+  }
   return (await response.json()) as T
 }
 
-/** The body's `error` text when the server sent one; never throws. */
-async function errorOf(response: Response): Promise<string | undefined> {
+const text = (value: unknown): string | undefined =>
+  typeof value === 'string' && value !== '' ? value : undefined
+
+/** The body's `error` and `detail` text when the server sent them; never throws. */
+async function errorOf(response: Response): Promise<{ error?: string; detail?: string }> {
   try {
     const body: unknown = await response.json()
     if (typeof body === 'object' && body !== null) {
-      const error = (body as { error?: unknown }).error
-      if (typeof error === 'string' && error !== '') return error
+      const { error, detail } = body as { error?: unknown; detail?: unknown }
+      return { error: text(error), detail: text(detail) }
     }
   } catch {
     // A non-JSON error body carries no reason worth showing.
   }
-  return undefined
+  return {}
 }
 
 /** Reads a not-yet-served endpoint; a 404 (route absent) becomes NotServedError. */

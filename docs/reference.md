@@ -77,9 +77,34 @@ Additive routes for the overhaul's views; `/api/work` and the other routes above
 | Method | Path | Body | What it does |
 | --- | --- | --- | --- |
 | GET | `/api/slots` | — | All slots — fingerprints only, never keys. |
+| GET | `/api/connections` | — | `{ rows, options }`: one row per live slot from saved facts (engine version, identity, state and reason, last check). `usage`, `pin` and `pair` are `null` until something records them. `options` lists each engine's real add paths: `link`, `sign_in`, `api_key`. |
+| POST | `/api/slots/dedicated` | `{ engine, label }` | Creates the slot a sign-in fills, `home_ready`, for `claude` or `codex`. 409 for a label in use. |
+| POST | `/api/slots/:id/probe` | — | A signed-in slot's local status command in its own environment, at no token cost: `{ ok, state, reason? }`. Records version and non-secret identity. API-key slots use `validate`. 409 and no write if the slot is retired, even while the check runs. |
+| GET | `/api/slots/:id/impact` | — | `{ slotId, label, running, queued, metaSlot, keyStored }`: what a retire touches, from saved docs. |
+| POST | `/api/slots/:id/key` | `{ key }` | Replaces the key in place (same shape gate as `api-key`), then re-probes. Answers `{ id, fingerprint, probe }`, never the key. 400 for a slot with no key, 409 for a retired one. A retire during the re-probe keeps the 200, with `probe: { ok: false, reason: 'slot is retired' }`. |
 | POST | `/api/slots/api-key` | `{ label, provider, key }` | The only way an API key enters MEC: key goes from the request straight into the slot keystore (0600); the store keeps the fingerprint; provider must be `anthropic-api` in v0. |
-| POST | `/api/slots/:id/validate` | — | Zero-token validity probe (`GET /v1/models`): 200 → healthy; 401 → degraded `key_rejected`; network failure → `provider_unreachable`, state unchanged. |
-| POST | `/api/slots/:id/retire` | — | Shreds the slot's keystore file and marks the slot retired. |
+| POST | `/api/slots/:id/validate` | — | Zero-token validity probe (`GET /v1/models`): 200 → healthy; 401 → degraded `key_rejected`; network failure → `provider_unreachable`, state unchanged. 409 and no write if the slot is retired, even while the check runs. |
+| POST | `/api/slots/:id/retire` | `{ label }` | Shreds the slot's keystore file and marks the slot retired. The body must repeat the slot's exact label, or it answers 400 `label_mismatch` and destroys nothing. `mec slot retire` is the owner's own terminal and takes no such step. |
+
+### Setup and configuration
+
+Readiness is read from saved facts: walking through Setup changes none of them. A step is `done`, `missing` or `skipped`, and a skip is never done. Every save that replaces something names the version it was drafted against; a stale one is 409 `stale_base`, nothing is written and the screen keeps the draft.
+
+| Method | Path | Body | What it does |
+| --- | --- | --- | --- |
+| GET | `/api/setup/readiness` | — | The five steps with their next action, the engines found, `metaCandidates` with the server's verdict on each, `finish`, and `completion` naming the repository and meta slot once the first four steps hold. |
+| POST | `/api/setup/skip` | `{ step, skipped? }` | Notes that the owner moved on. A saved fact outranks it. |
+| GET | `/api/setup/drafts` | — | Setup-agent proposals. A pending policy, models or prompts proposal carries `preview`: `{ base, changes: [{ label, before, after }] }`, the current text and the text Apply would save. `base` is the version `before` was read at. A repository proposal has none, and neither does one whose stored text no longer loads. A repository proposal that carried `trust` has `trustIgnored: true`: applying one always stores it untrusted. |
+| POST | `/api/setup/drafts/:id/apply` | `{ base }` | Applies a proposal through the manual save's validation and stale check. `base` is the hash or revision the owner was looking at, which is `preview.base` when there is one; a repository draft needs none. |
+| POST | `/api/setup/drafts/:id/dismiss` | — | Marks it `denied`. It can never apply. |
+| GET | `/api/policy` | — | `{ text, sha256, revision, source, activeSha256, restartRequired, updatedAt? }`. |
+| PUT | `/api/policy` | `{ text, base_sha256 }` | Validates with `loadPolicy`, so an always-confirm class is refused, and writes revision `n+1` to `settings/policy` with a `policy_updated` event on the `policy` stream. It applies to new work after the next restart. Work admitted under the old version has its queued launches blocked `policy_changed` by the launch gate. |
+| GET | `/api/models/text` | — | `{ yaml, sha256, source }`: the words a `PUT /api/models` replaces. |
+| PATCH | `/api/repositories/:id` | `{ base_revision, bootstrapCmds?, checkCmds?, trusted? }` | Edits a repository under the argv rules and appends `repository_updated` to the `repositories` stream. `base_revision` comes from `GET /api/repositories`. Work already admitted keeps its pin. |
+| GET | `/api/backups` | — | `{ lastAt?, archive?, note, excluded }`. Served only with a backup seam. |
+| POST | `/api/backups` | — | Takes one backup into `<data dir>/backups` with `VACUUM INTO`: `{ status, lastAt, archive }`. It runs on the request and blocks the server until it finishes. A failure answers 500 `backup_failed` and records nothing. |
+
+`POST /api/wizard/meta-slot` refuses a retired, non-Claude, API-key or unhealthy slot with the reason. `GET /api/status` also carries `capabilities`: `{ switchWork, drain, backups, isolationEdit, pause }`.
 
 ### Login (OAuth terminal cards, §5.6)
 

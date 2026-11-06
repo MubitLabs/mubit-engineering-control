@@ -2,7 +2,8 @@
  * `mec backup` (plan §20, Database-corruption row): a tar of the state directory plus the
  * database, with slot credential files and keystores excluded by exact path rules
  * (plan §5.4, §5.7): `keys` directories anywhere under `engines`, `.credentials.json`,
- * `auth.json`, `opencode.db`, `*.key`, `.salt`, the state-dir lock and lockfiles. Excluded
+ * `auth.json`, `opencode.db`, `*.key`, `.salt`, the state-dir lock and lockfiles, and each
+ * attempt worktree's `.mec/` (§12). Excluded
  * entries are reported by name only — no code path here reads or embeds their contents.
  *
  * The SQLite online-backup step is a hook: `copyDb` defaults to a plain file copy for this
@@ -35,6 +36,7 @@ export type ExcludedKind =
   | 'key-file'
   | 'salt'
   | 'lock'
+  | 'attempt-files'
 
 /** First matching rule wins; the order is the plan's list (§5.7) followed by the lock rule. */
 export function exclusionKindFor(relPath: string): ExcludedKind | null {
@@ -47,6 +49,9 @@ export function exclusionKindFor(relPath: string): ExcludedKind | null {
   if (name.endsWith('.key')) return 'key-file'
   if (name === '.salt') return 'salt'
   if (isLockPath(segments, name)) return 'lock'
+  // A worktree's `.mec/` holds the running attempt's bearer token, and a live server can back up.
+  // On a case-folding volume the launcher's `.mec/` lands in a tracked `.MEC/`, so case never counts.
+  if (segments[0] === 'work' && segments[2]?.toLowerCase() === '.mec') return 'attempt-files'
   return null
 }
 
@@ -167,7 +172,7 @@ export function backup(input: BackupInput): { archivePath: string; excluded: str
     const dbAbs = resolve(input.dbPath)
     const liveDbFiles = new Set([dbAbs, `${dbAbs}-wal`, `${dbAbs}-shm`, `${dbAbs}-journal`])
     for (const entry of collectStateTree(input.stateDir)) {
-      if (isAtOrUnder(staging, entry.abs)) continue // outDir inside stateDir must not archive itself
+      if (isAtOrUnder(input.outDir, entry.abs)) continue // outDir inside stateDir must not archive itself
       if (entry.kind !== null) {
         if (!entry.dir) excluded.push(entry.rel)
         continue

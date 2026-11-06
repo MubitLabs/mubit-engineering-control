@@ -67,9 +67,20 @@ const LAUNCHABLE_ENGINES: readonly string[] = ['claude']
 /** The one slot kind whose login needs no key in the environment (§5.2, §5.12). */
 const LAUNCHABLE_KINDS: readonly string[] = ['claude-sub']
 
-/** Whether a launch of this slot could start at all: engine and kind, health aside. */
+/**
+ * §5.3, the probe's rule: a linked slot runs with `CLAUDE_CONFIG_DIR` unset and any other runs
+ * under its home. Without a home it has nowhere to run but the default login, which is not its own.
+ */
+const lacksHome = (slot: StoreDoc): boolean =>
+  slot.linkedDefault !== true && (typeof slot.home !== 'string' || slot.home === '')
+
+/** Whether a launch of this slot could start at all: engine, kind and home, health aside. */
 export function isLaunchableSlot(slot: StoreDoc): boolean {
-  return LAUNCHABLE_ENGINES.includes(String(slot.engine)) && LAUNCHABLE_KINDS.includes(String(slot.kind))
+  return (
+    LAUNCHABLE_ENGINES.includes(String(slot.engine)) &&
+    LAUNCHABLE_KINDS.includes(String(slot.kind)) &&
+    !lacksHome(slot)
+  )
 }
 
 /** The engine's own domains (H1's allowance) and nothing else: §14's registry field is unbuilt. */
@@ -256,6 +267,7 @@ export class AttemptLauncher {
     const engine = String(slot.engine)
     if (!LAUNCHABLE_ENGINES.includes(engine)) throw refuse(`engine_not_launchable: ${engine}`)
     if (!LAUNCHABLE_KINDS.includes(String(slot.kind))) throw refuse(`slot_kind_unsupported: ${slot.kind}`)
+    if (lacksHome(slot)) throw refuse(`slot_home_missing: ${fields.slotId} is not linked and has no home`)
     if (slot.state !== 'healthy') throw new Later(`slot ${fields.slotId} is ${String(slot.state)}`)
     const binary = resolveBinary(engine, process.env.PATH)
     if (binary === undefined) throw refuse(`engine_missing: ${engine} is not on PATH`)
@@ -581,14 +593,19 @@ export class AttemptLauncher {
   }
 }
 
-/** The slot layer is what the slot says: a linked slot says nothing, and runs as `claude` does. */
+/**
+ * The slot layer: what the slot stores, with the home variable by the probe's rule. A linked slot
+ * runs as `claude` does. A slot saved before its env was recorded has only its home, and that is enough.
+ */
 function slotEnv(slot: StoreDoc): Record<string, string> {
   const env = slot.env
-  if (typeof env !== 'object' || env === null || Array.isArray(env)) return {}
-  return Object.fromEntries(Object.entries(env).filter(([, value]) => typeof value === 'string')) as Record<
-    string,
-    string
-  >
+  const stored = typeof env !== 'object' || env === null || Array.isArray(env) ? {} : env
+  const kept = Object.fromEntries(
+    Object.entries(stored).filter(
+      ([name, value]) => name !== 'CLAUDE_CONFIG_DIR' && typeof value === 'string',
+    ),
+  ) as Record<string, string>
+  return slot.linkedDefault === true ? kept : { ...kept, CLAUDE_CONFIG_DIR: String(slot.home) }
 }
 
 /** `mec/<work-item8>/<task>/a<n>` (§14); n is this attempt's place among the task's attempts. */

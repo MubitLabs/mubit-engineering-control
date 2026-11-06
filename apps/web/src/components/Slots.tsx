@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { api, type SlotEntry, type SlotUsage } from '../api'
+import { api, HttpError, type SlotEntry, type SlotUsage } from '../api'
 import { useWorkbench } from '../workbench'
 import { Btn } from './base'
 import { stateKindOf } from './Work'
@@ -59,8 +59,13 @@ export function SlotCard({ slot }: { slot: SlotEntry }) {
     try {
       await api.retireSlot(slot.id)
       setNote('retired — key file shredded')
-    } catch {
-      setNote('could not reach the runtime — try again')
+    } catch (error) {
+      // §13: the server now needs the label repeated, which only the new workbench asks for.
+      setNote(
+        error instanceof HttpError && error.status === 400
+          ? 'nothing retired — retire from Connections in the new workbench (add ?ui=next)'
+          : 'could not reach the runtime — try again',
+      )
     } finally {
       setBusy(null)
       void wb.refresh()

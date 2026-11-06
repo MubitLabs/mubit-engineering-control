@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { backup, MANIFEST_NAME } from '../src/backup'
+import { backup, MANIFEST_NAME, scanForCredentialFiles } from '../src/backup'
 
 const dirs: string[] = []
 
@@ -113,6 +113,50 @@ describe('backup', () => {
     expect(JSON.stringify(result)).not.toContain('never-to-leave-the-machine')
     expect(JSON.stringify(result)).not.toContain('key-material')
     expect(JSON.stringify(result)).not.toContain('per-install-salt')
+  })
+
+  // §12: a running attempt's bearer token sits in its worktree, and Settings backs up a live server.
+  it("leaves out a running attempt's .mec files and keeps its work", () => {
+    const { stateDir, dbPath } = makeStateDir()
+    const worktree = join(stateDir, 'work/att_1')
+    mkdirSync(join(worktree, '.mec'), { recursive: true })
+    writeFileSync(join(worktree, '.mec/mcp.json'), '{"headers":{"Authorization":"Bearer never-archived"}}')
+    writeFileSync(join(worktree, 'made.txt'), 'made\n')
+
+    const result = backup({ dbPath, stateDir, outDir: freshDir(), now })
+    const tree = extract(result.archivePath)
+
+    expect(existsSync(join(tree, 'work/att_1/.mec/mcp.json'))).toBe(false)
+    expect(readFileSync(join(tree, 'work/att_1/made.txt'), 'utf8')).toBe('made\n')
+    expect(result.excluded).toContain('work/att_1/.mec/mcp.json')
+    expect(JSON.stringify(result)).not.toContain('never-archived')
+    expect(scanForCredentialFiles(tree)).toEqual([])
+  })
+
+  // A repo tracking `.MEC/` on a case-folding volume: the launcher's `.mec/mcp.json` lands in it.
+  it.each(['.MEC', '.Mec'])("leaves out a worktree's %s files, the same directory by another case", (dir) => {
+    const { stateDir, dbPath } = makeStateDir()
+    const worktree = join(stateDir, 'work/att_1')
+    mkdirSync(join(worktree, dir), { recursive: true })
+    writeFileSync(join(worktree, dir, 'mcp.json'), '{"headers":{"Authorization":"Bearer never-archived"}}')
+    writeFileSync(join(worktree, 'made.txt'), 'made\n')
+
+    const result = backup({ dbPath, stateDir, outDir: freshDir(), now })
+    const tree = extract(result.archivePath)
+
+    expect(existsSync(join(tree, `work/att_1/${dir}/mcp.json`))).toBe(false)
+    expect(readFileSync(join(tree, 'work/att_1/made.txt'), 'utf8')).toBe('made\n')
+    expect(result.excluded).toContain(`work/att_1/${dir}/mcp.json`)
+    expect(scanForCredentialFiles(tree)).toEqual([])
+  })
+
+  // The restore drill shares the rule, so it must name what the exclusion would have left out.
+  it("the drill names a token in a worktree's .MEC, as it does in .mec", () => {
+    const tree = freshDir()
+    mkdirSync(join(tree, 'work/att_1/.MEC'), { recursive: true })
+    writeFileSync(join(tree, 'work/att_1/.MEC/mcp.json'), '{}')
+
+    expect(scanForCredentialFiles(tree)).toEqual(['work/att_1/.MEC/mcp.json'])
   })
 
   it('writes a manifest inside the archive whose db_sha256 matches the archived db', () => {

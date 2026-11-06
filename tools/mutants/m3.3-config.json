@@ -1,0 +1,457 @@
+[
+  {
+    "name": "drop the retire label check",
+    "file": "apps/desktop/src/server.ts",
+    "find": "if ((request.body as { label?: unknown } | null | undefined)?.label !== doc.label) {",
+    "replace": "if (false) {",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "shred before the guard",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    // §13: destroying a key is never one stray request. The caller repeats the label it was shown.\n",
+    "replace": "    new SlotKeystore(doc.home).shred(doc.provider)\n",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "return the key in the replace response",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "      fingerprint: { provider: fingerprint.provider, last4: fingerprint.last4 },\n      probe: {",
+    "replace": "      fingerprint: { provider: fingerprint.provider, last4: fingerprint.last4, key },\n      probe: {",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "skip the shape gate on replace",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "    if (!shape.pattern.test(key)) {",
+    "replace": "    if (key === '') {",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "allow an always-confirm class in policy",
+    "file": "packages/policy/src/policy.ts",
+    "find": "    if (ALWAYS_CONFIRM.includes(cls))",
+    "replace": "    if (false)",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "skip the policy stale check",
+    "file": "apps/desktop/src/policy-store.ts",
+    "find": "  if (current.sha256 !== input.baseSha256) return { status: 'stale', currentSha256: current.sha256 }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "apply a draft without validation",
+    "file": "apps/desktop/src/policy-store.ts",
+    "find": "    sha256 = loadPolicy(input.text).versionHash\n",
+    "replace": "    sha256 = input.origin === 'draft' ? 'unchecked' : loadPolicy(input.text).versionHash\n",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "allow a non-Claude meta slot",
+    "file": "apps/desktop/src/readiness.ts",
+    "find": "if (slot.engine !== 'claude')",
+    "replace": "if (slot.engine === 'none')",
+    "tests": ["apps/desktop/test/meta-slot.test.ts"]
+  },
+  {
+    "name": "allow an unhealthy meta slot",
+    "file": "apps/desktop/src/readiness.ts",
+    "find": "if (slot.state !== 'healthy')",
+    "replace": "if (slot.state === 'none')",
+    "tests": ["apps/desktop/test/meta-slot.test.ts"]
+  },
+  {
+    "name": "count skipped as done",
+    "file": "apps/desktop/src/readiness.ts",
+    "find": "    facts[id] ? 'done' : skipped.includes(id) ? 'skipped' : 'missing'",
+    "replace": "    facts[id] || skipped.includes(id) ? 'done' : 'missing'",
+    "tests": ["apps/desktop/test/readiness.test.ts"]
+  },
+  {
+    "name": "registerRepositoryDoc leaves the marker unset",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    store.engines.save({\n      id: SETTINGS_REPOSITORIES_ID,\n      repositories: [...previous, id],\n      updatedAt: at,\n    })\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/readiness.test.ts"]
+  },
+  {
+    "name": "edit rewrites a pinned work item",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "      store.engines.save(next)\n      appendEvent(\n        store,\n        'repositories',",
+    "replace": "      store.engines.save(next)\n      for (const work of store.workItems.list({ repoId: id })) store.workItems.save({ ...work, pin: { repoId: id }, updatedAt: at })\n      appendEvent(\n        store,\n        'repositories',",
+    "tests": ["apps/desktop/test/repository-edit.test.ts"]
+  },
+  {
+    "name": "archive includes a keys directory file",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "  if (segments[0] === 'engines' && segments.includes('keys')) return 'engines-keys'\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/backups-route.test.ts"]
+  },
+  {
+    "name": "omit base_sha256 on models save",
+    "file": "apps/web/src/api-config.ts",
+    "find": "send('/api/models', 'PUT', { yaml, base_sha256: baseSha256 })",
+    "replace": "send('/api/models', 'PUT', { yaml })",
+    "tests": ["apps/web/test/config-api.test.ts"]
+  },
+  {
+    "name": "a stale failure loses the draft",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "  ...editor,\n  save: { kind: 'failed', ...failure },",
+    "replace": "  ...editor,\n  draft: null,\n  save: { kind: 'failed', ...failure },",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "a read moves a draft onto the newer version",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "  if (editor !== undefined && (editor.draft !== null || editor.save.kind === 'saving')) return editor\n",
+    "replace": "",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "an unread capability reads as available",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "  if (capabilities?.[name] === true) return { enabled: true }",
+    "replace": "  if (capabilities?.[name] !== false) return { enabled: true }",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "retire opens on a near match",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "export const canRetire = (typed: string, label: string): boolean => typed === label",
+    "replace": "export const canRetire = (typed: string, label: string): boolean => typed.trim().toLowerCase() === label.toLowerCase()",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "the error reader drops detail",
+    "file": "apps/web/src/api.ts",
+    "find": "throw new HttpError(path, response.status, error, detail)",
+    "replace": "throw new HttpError(path, response.status, error)",
+    "tests": ["apps/web/test/config-api.test.ts"]
+  },
+  {
+    "name": "an empty detail counts as a reason",
+    "file": "apps/web/src/api.ts",
+    "find": "return { error: text(error), detail: text(detail) }",
+    "replace": "return { error: text(error), detail: detail as string }",
+    "tests": ["apps/web/test/config-api.test.ts"]
+  },
+  {
+    "name": "the screen shows only the error code",
+    "file": "apps/web/src/live/config.tsx",
+    "find": "return error.detail === undefined ? reason : `${reason}: ${error.detail}`",
+    "replace": "return reason",
+    "tests": ["apps/web/test/config-contract.test.ts"]
+  },
+  {
+    "name": "detail replaces the error text",
+    "file": "apps/web/src/live/config.tsx",
+    "find": "return error.detail === undefined ? reason : `${reason}: ${error.detail}`",
+    "replace": "return error.detail ?? reason",
+    "tests": ["apps/web/test/config-contract.test.ts"]
+  },
+  {
+    "name": "a policy comparison shows the patch alone",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "after: spaced(proposed) }],",
+    "replace": "after: spaced(JSON.stringify(draft.patch)) }],",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "a compact policy reads as all changed",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "before: spaced(current.text), after",
+    "replace": "before: current.text, after",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "a policy comparison drops its base",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "        base: current.sha256,\n",
+    "replace": "        base: '',\n",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "a models comparison hides the current table",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "            before: readFileSync(provenance.path, 'utf8'),\n            after: draft.patch.yaml,",
+    "replace": "            before: '',\n            after: draft.patch.yaml,",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "a part with no text still previews",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "if (typeof part?.path !== 'string' || typeof part.text !== 'string') return undefined",
+    "replace": "if (typeof part?.path !== 'string') continue",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "a prompts comparison reads the default over an edit",
+    "file": "apps/desktop/src/server.ts",
+    "find": "      prompts.config().parts.find((part) => part.path === path)?.text ??\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "a prompts comparison drops its revision",
+    "file": "apps/desktop/src/server.ts",
+    "find": "promptRevision: () => prompts.config().revision,",
+    "replace": "promptRevision: () => 0,",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "a settled draft keeps a comparison",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "if (status === 'pending') preview = previewDraft(",
+    "replace": "preview = previewDraft(",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "a bad stored text fails the list",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "          // A stored text that no longer loads costs the comparison, never the list of proposals.\n          preview = undefined\n",
+    "replace": "          throw new Error('no comparison')\n",
+    "tests": ["apps/desktop/test/policy-routes.test.ts"]
+  },
+  {
+    "name": "Apply answers for the newest read",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "  draft?.preview?.base ?? newest\n",
+    "replace": "  newest ?? draft?.preview?.base\n",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "the decoder drops the comparison",
+    "file": "apps/web/src/config-decode.ts",
+    "find": "      ...(draft.preview !== undefined && { preview: decodeDraftPreview(path, draft.preview) }),\n",
+    "replace": "",
+    "tests": ["apps/web/test/config-contract.test.ts"]
+  },
+  {
+    "name": "a proposal trusts a repository",
+    "file": "apps/desktop/src/server.ts",
+    "find": "{ url: urlOrPath, bootstrap, checks, trust: false, label, origin: 'setup_agent' }",
+    "replace": "{ url: urlOrPath, bootstrap, checks, trust: patch.trust === true, label, origin: 'setup_agent' }",
+    "tests": ["apps/desktop/test/repository-edit.test.ts"]
+  },
+  {
+    "name": "the card keeps quiet about trust",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "          ...(trustIgnored && { trustIgnored }),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/repository-edit.test.ts"]
+  },
+  {
+    "name": "only a boolean trust reaches the card",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "(patch?.trust ?? false) !== false",
+    "replace": "patch?.trust === true",
+    "tests": ["apps/desktop/test/repository-edit.test.ts"]
+  },
+  {
+    "name": "every repository proposal reads as asking for trust",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "(patch?.trust ?? false) !== false",
+    "replace": "true",
+    "tests": ["apps/desktop/test/repository-edit.test.ts"]
+  },
+  {
+    "name": "the decoder drops the trust note",
+    "file": "apps/web/src/config-decode.ts",
+    "find": "      ...(draft.trustIgnored === true && { trustIgnored: true }),\n",
+    "replace": "",
+    "tests": ["apps/web/test/config-contract.test.ts"]
+  },
+  {
+    "name": "nothing folds",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "if (run.length - head - tail > 1) {",
+    "replace": "if (run.length < 0) {",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "a fold loses its context",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "const DIFF_CONTEXT = 3",
+    "replace": "const DIFF_CONTEXT = 0",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "a fold of one line",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "if (run.length - head - tail > 1) {",
+    "replace": "if (run.length - head - tail > 0) {",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "a leading run keeps context it does not need",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "const head = start === 0 ? 0 : DIFF_CONTEXT",
+    "replace": "const head = DIFF_CONTEXT",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "a fold swallows the change after it",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "      rows.push(lines[at] as DiffLine)\n",
+    "replace": "",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "a check's write ignores a retire",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "  return fresh?.state === STATE_RETIRED ? undefined : fresh\n",
+    "replace": "  return fresh\n",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "a local probe writes without re-reading",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "      const fresh = liveSlot(store, id)\n      if (fresh === undefined) return false\n      const next: StoreDoc = {\n        ...fresh,\n        state: outcome.state,",
+    "replace": "      const fresh = doc\n      const next: StoreDoc = {\n        ...fresh,\n        state: outcome.state,",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "a local probe builds on the captured doc",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "        ...fresh,\n        state: outcome.state,",
+    "replace": "        ...doc,\n        state: outcome.state,",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "a local probe answers 200 on a retired slot",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "    if (!saved) {\n      reply.code(409).send({ error: 'slot is retired' })\n      return\n    }\n    return {\n      ok: outcome.state === 'healthy',",
+    "replace": "    return {\n      ok: outcome.state === 'healthy',",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "a provider check writes without re-reading",
+    "file": "apps/desktop/src/server.ts",
+    "find": "      const fresh = liveSlot(store, id)\n      if (fresh === undefined) return false\n      if (outcome === 'healthy') {",
+    "replace": "      const fresh = doc\n      if (outcome === 'healthy') {",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "a healthy check builds on the captured doc",
+    "file": "apps/desktop/src/server.ts",
+    "find": "const next: StoreDoc = { ...fresh, state: 'healthy', last_probe_at: at, updatedAt: at }",
+    "replace": "const next: StoreDoc = { ...doc, state: 'healthy', last_probe_at: at, updatedAt: at }",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "a provider check answers 200 on a retired slot",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    if (!saved) {\n      reply.code(409).send({ error: 'slot is retired' })\n      return\n    }\n    return outcome === 'healthy' ?",
+    "replace": "    return outcome === 'healthy' ?",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "a key replacement hides that the slot was retired",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "    const reason = verdict.reason ?? verdict.error\n",
+    "replace": "    const reason = verdict.reason\n",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "a rejected check builds on the captured doc",
+    "file": "apps/desktop/src/server.ts",
+    "find": "          ...fresh,\n          state: 'degraded',",
+    "replace": "          ...doc,\n          state: 'degraded',",
+    "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "the launcher takes the boot policy text",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "      policyText,\n      facts,",
+    "replace": "      policyText: opts.policyText ?? DEFAULT_POLICY_TEXT,\n      facts,",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "a dedicated slot saves no env",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "        env: home.env,\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "mec slot add saves no env",
+    "file": "apps/desktop/src/slot-cli.ts",
+    "find": "      env: home.env,\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/slot-cli.test.ts"]
+  },
+  {
+    "name": "a worktree's .mec files enter the backup",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "  if (segments[0] === 'work' && segments[2]?.toLowerCase() === '.mec') return 'attempt-files'\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/backup.test.ts"]
+  },
+  {
+    "name": "the backup drops the whole worktree",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "if (segments[0] === 'work' && segments[2]?.toLowerCase() === '.mec') return 'attempt-files'",
+    "replace": "if (segments[0] === 'work' && segments.length >= 2) return 'attempt-files'",
+    "tests": ["apps/desktop/test/backup.test.ts"]
+  },
+  {
+    "name": "a worktree's .mec match goes by exact case",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "segments[2]?.toLowerCase() === '.mec'",
+    "replace": "segments[2] === '.mec'",
+    "tests": ["apps/desktop/test/backup.test.ts"]
+  },
+  {
+    "name": "a slot with no env runs on the default login",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "  return slot.linkedDefault === true ? kept : { ...kept, CLAUDE_CONFIG_DIR: String(slot.home) }\n",
+    "replace": "  return slot.linkedDefault === true || slot.env === undefined ? kept : { ...kept, CLAUDE_CONFIG_DIR: String(slot.home) }\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "a linked slot is pointed at its home",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "  return slot.linkedDefault === true ? kept : { ...kept, CLAUDE_CONFIG_DIR: String(slot.home) }\n",
+    "replace": "  return { ...kept, CLAUDE_CONFIG_DIR: String(slot.home) }\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "a stored home variable outranks the rule",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "([name, value]) => name !== 'CLAUDE_CONFIG_DIR' && typeof value === 'string'",
+    "replace": "([, value]) => typeof value === 'string'",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "a slot with no home launches",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "    if (lacksHome(slot)) throw refuse(`slot_home_missing: ${fields.slotId} is not linked and has no home`)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "a slot with no home is placed",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "    LAUNCHABLE_KINDS.includes(String(slot.kind)) &&\n    !lacksHome(slot)\n",
+    "replace": "    LAUNCHABLE_KINDS.includes(String(slot.kind))\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "a linked slot needs a home",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "  slot.linkedDefault !== true && (typeof slot.home !== 'string' || slot.home === '')\n",
+    "replace": "  typeof slot.home !== 'string' || slot.home === ''\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "an empty home counts as one",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "(typeof slot.home !== 'string' || slot.home === '')",
+    "replace": "typeof slot.home !== 'string'",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  }
+]

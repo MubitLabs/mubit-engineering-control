@@ -23,6 +23,7 @@ import {
   processingOf,
   RealClaudeBrain,
   refuseLaunch,
+  type SetupDecide,
   saveProcessing,
 } from '@mec/meta'
 import { loadPolicy } from '@mec/policy'
@@ -33,8 +34,10 @@ import { DirLock, HealthBoardImpl, InspectionReads, MIGRATIONS_v1, migrate, Sqli
 import { FakeEngine } from '@mec/testkit'
 import Database from 'better-sqlite3'
 import { AttemptLauncher } from './attempt-launch'
+import { backup } from './backup'
 import { StoreFacts } from './core-facts'
 import { plannerPlacement } from './planner-placement'
+import { savedPolicyText } from './policy-store'
 import { buildHealthSnapshot, buildServer } from './server'
 import { specialistBridge, specialistTools } from './specialist-tools'
 
@@ -75,6 +78,24 @@ export interface RunningServer {
 /** Where the planner's slot is: its home, and whether that home is the linked default. */
 type MetaSlot = { dir: string; linked: boolean }
 
+/**
+ * The fake engine's setup turn: `propose <target> <json patch>` drafts a change and nothing else,
+ * so a scratch server can walk a proposal to Apply without a model. Only under MEC_FAKE_ENGINE.
+ */
+const scriptedSetupDecide: SetupDecide = async ({ text }) => {
+  const match = /^propose (\w+) (.+)$/s.exec(text.trim())
+  if (match === null) return { calls: [], reply: 'The fake engine only understands: propose <target> <json>' }
+  return {
+    calls: [
+      {
+        tool: 'propose_change',
+        args: { target: match[1], reason: 'proposed in setup chat', patch: JSON.parse(match[2] ?? '{}') },
+      },
+    ],
+    reply: 'Drafted. Nothing changes until you apply it in Settings.',
+  }
+}
+
 /** The wizard's persisted meta-slot choice → that slot's home dir. Best-effort: an absent
  *  or dangling choice means "not chosen yet" (undefined), never a crash on startup. */
 function metaSlotFromStore(store: Store): MetaSlot | undefined {
@@ -113,7 +134,9 @@ export async function startServer(opts: {
   const health = new HealthBoardImpl()
   health.claim('runtime').ready('composition root up')
   // Fail fast: a policy that cannot load never starts a server that would enforce it.
-  const policy = loadPolicy(opts.policyText ?? DEFAULT_POLICY_TEXT)
+  // A policy saved from Settings wins (M3.3): it is read here, once, so an edit needs a restart.
+  const policyText = savedPolicyText(store) ?? opts.policyText ?? DEFAULT_POLICY_TEXT
+  const policy = loadPolicy(policyText)
 
   // The relay handler reads this late: rows can wait for a meta agent, and one may never come.
   let metaAgent: MetaAgentService | undefined
@@ -174,7 +197,7 @@ export async function startServer(opts: {
     },
   }
 
-  const planner = composePlanner(store, opts, metaSlot)
+  const planner = composePlanner(store, { ...opts, policyText }, metaSlot)
   metaAgent = planner?.service
   // §20 App crash: a turn the crash cut short resumes through the queue, never inline. While
   // paused, resume does this instead, and it comes after the deadline shift.
@@ -215,7 +238,7 @@ export async function startServer(opts: {
     launcher = new AttemptLauncher({
       store,
       dataDir: opts.dataDir,
-      policyText: opts.policyText ?? DEFAULT_POLICY_TEXT,
+      policyText,
       facts,
       tools: {
         url: toolsUrl,
@@ -244,11 +267,24 @@ export async function startServer(opts: {
     effects: store.effects,
     health,
     inspection: new InspectionReads(db),
-    policyText: opts.policyText ?? DEFAULT_POLICY_TEXT,
+    policyText,
     pauseControl,
     // The data dir is the keystore root (§5.4), so a scratch server never reads real state.
     keystoreRoot: opts.dataDir,
     ...(metaAgent !== undefined && { metaAgent }),
+    // §20: an on-demand backup of the live store. `VACUUM INTO` copies a WAL database consistently.
+    backups: {
+      take: () =>
+        backup({
+          dbPath: join(opts.dataDir, 'mec.db'),
+          stateDir: opts.dataDir,
+          outDir: join(opts.dataDir, 'backups'),
+          copyDb: (_from, to) => {
+            db.prepare('VACUUM INTO ?').run(to)
+          },
+        }),
+    },
+    ...(process.env.MEC_FAKE_ENGINE === '1' && { setupDecide: scriptedSetupDecide }),
   })
   await app.listen({ port: 0, host: '127.0.0.1' })
   const address = app.server.address()
@@ -322,13 +358,19 @@ const NO_ENGINE: PlannerLifetime = { quiesce: () => {}, abort: async () => {}, c
  */
 function composePlanner(
   store: SqliteStore,
-  opts: { dataDir: string; brain?: MetaBrain },
+  opts: { dataDir: string; brain?: MetaBrain; policyText: string },
   metaSlot: MetaSlot | undefined,
 ): ({ service: MetaAgentService } & PlannerLifetime) | undefined {
   const placement = plannerPlacement(store, opts.dataDir)
   if (opts.brain !== undefined) {
     return {
-      service: new MetaAgentService({ store, effects: store.effects, brain: opts.brain, ...placement }),
+      service: new MetaAgentService({
+        store,
+        effects: store.effects,
+        brain: opts.brain,
+        policyText: opts.policyText,
+        ...placement,
+      }),
       ...NO_ENGINE,
     }
   }
@@ -337,6 +379,7 @@ function composePlanner(
       service: new MetaAgentService({
         store,
         effects: store.effects,
+        policyText: opts.policyText,
         brain: fakeBrain({
           ack: 'On it: I will split this into implementation and review tasks.',
           plan: {
@@ -373,6 +416,7 @@ function composePlanner(
     service: new MetaAgentService({
       store,
       effects: store.effects,
+      policyText: opts.policyText,
       ...placement,
       brain: brain.asBrain(),
     }),
@@ -387,7 +431,8 @@ const EFFECT_KINDS = ['launch', 'deliver', 'relay', 'note', 'reply', 'external',
 /**
  * §26 Capability drift: a startup probe degrades the slot before any attempt starts. The
  * probe is the vendor's own --version/--help/auth status (§5.8); MEC_PROBE_SLOT is a
- * dedicated CLAUDE_CONFIG_DIR home.
+ * dedicated CLAUDE_CONFIG_DIR home. The doc records the probe and names no home, so nothing
+ * launches on it.
  */
 async function probeSlotAtStartup(
   store: SqliteStore,

@@ -211,7 +211,9 @@ test.describe('Work', () => {
     await page.getByRole('button', { name: /Lift hold/ }).click()
     await expect(page.getByText('Hold lifted.')).toBeVisible()
     expect(posts.map((post) => post.path)).toEqual(['/api/work/work_held/lift'])
-    await expect(page.getByRole('button', { name: /Pause/ })).toHaveCount(0)
+    // A work item has no pause of its own. The shell's global control (§18, M3.3) is the only one.
+    await expect(page.getByRole('button', { name: 'Pause processing' })).toHaveCount(1)
+    await expect(page.getByRole('button', { name: /Pause(?! processing)/ })).toHaveCount(0)
   })
 
   test('discussing moves to the item’s own repository and names it', async ({ page }) => {

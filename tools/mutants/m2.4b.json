@@ -329,6 +329,20 @@
     "tests": ["packages/runtime/test/supervisor.test.ts"]
   },
   {
+    "name": "a second stop runs on its own",
+    "file": "packages/runtime/src/supervisor.ts",
+    "find": "    if (running !== undefined) return running\n",
+    "replace": "",
+    "tests": ["packages/runtime/test/supervisor.test.ts", "apps/desktop/test/engine-registry.test.ts"]
+  },
+  {
+    "name": "a finished stop is never cleared",
+    "file": "packages/runtime/src/supervisor.ts",
+    "find": "      this.stopping.delete(key)\n",
+    "replace": "",
+    "tests": ["packages/runtime/test/supervisor.test.ts"]
+  },
+  {
     "name": "settled ask ends the stream",
     "file": "packages/engines/src/opencode/adapter.ts",
     "find": "if (ALREADY_SETTLED.test(String(error))) return true",

@@ -20,6 +20,7 @@
  *   {saveToken: true}              copy the bearer token to token.txt beside this file
  *   {command: seconds}             a `sleep` in a process group of its own, as the real one runs
  *                                  each shell command; its pid lands in command.pid
+ *   {stubborn: seconds}            the same, but a shell that ignores SIGTERM
  *   {sleep: ms}                    wait
  *   {complete: 'completed'}        turn/completed with this status
  *   {exit: n}                      exit with this code
@@ -116,6 +117,10 @@ async function turn() {
     else if (step.saveToken === true) writeFileSync(join(here, 'token.txt'), token ?? '')
     else if (step.command !== undefined) {
       const { pid } = spawn('sleep', [String(step.command)], { detached: true, stdio: 'ignore' })
+      writeFileSync(join(here, 'command.pid'), String(pid))
+    } else if (step.stubborn !== undefined) {
+      const script = `trap "" TERM; sleep ${step.stubborn}; sleep ${step.stubborn}`
+      const { pid } = spawn('/bin/sh', ['-c', script], { detached: true, stdio: 'ignore' })
       writeFileSync(join(here, 'command.pid'), String(pid))
     }
     else if (step.sleep !== undefined) await sleep(step.sleep)

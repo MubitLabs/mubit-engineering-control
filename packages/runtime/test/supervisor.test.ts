@@ -3,7 +3,7 @@
 // fast while exercising the real signalling paths.
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import { classifyExit, Supervisor, SupervisorError } from '../src/supervisor'
 
 const workdir = mkdtempSync(join(process.env.TMPDIR ?? '/tmp', 'mec-supervisor-'))
@@ -171,6 +171,68 @@ describe('Supervisor', () => {
       expect(isGone(pid)).toBe(true)
     } finally {
       if (!isGone(pid)) process.kill(pid, 'SIGKILL')
+    }
+  })
+
+  // The attempt runner's monitor stops again as soon as the leader's death ends the event stream.
+  // By then the group is gone and the stray has no parent to find it by: only the first stop knows it.
+  async function strayOutliving(attemptId: string, supervisor: Supervisor): Promise<number> {
+    const pidFile = join(workdir, `${attemptId}.pid`)
+    const inner = `trap "" TERM; echo $$ > ${pidFile}; /bin/sleep 30; /bin/sleep 30`
+    supervisor.spawn({
+      attemptId,
+      generation: 1,
+      cmd: '/bin/sh',
+      args: ['-c', `set -m; /bin/sh -c '${inner}' & wait`],
+      cwd: workdir,
+      env,
+    })
+    return waitForPidFile(pidFile)
+  }
+
+  async function untilGroupGone(attemptId: string, supervisor: Supervisor): Promise<void> {
+    while (supervisor.isAlive(attemptId, 1)) {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 5)
+      })
+    }
+  }
+
+  it('a second stop waits for the first, while a stray ignores SIGTERM (§8.1)', async () => {
+    const supervisor = new Supervisor()
+    const pid = await strayOutliving('overlap', supervisor)
+    try {
+      const first = supervisor.stop('overlap', 1, { graceMs: 800 })
+      await untilGroupGone('overlap', supervisor)
+      const second = supervisor.stop('overlap', 1, { graceMs: 800 })
+      await expect(second).resolves.toBe('escalated')
+      expect(isGone(pid)).toBe(true)
+      await expect(first).resolves.toBe('escalated')
+      expect(supervisor.owns('overlap', 1)).toBe(false)
+    } finally {
+      if (!isGone(pid)) process.kill(pid, 'SIGKILL')
+    }
+  })
+
+  // A process SIGKILL cannot take is the kernel's doing, so only that much is faked: the pid
+  // swallows its signals and keeps answering.
+  it('a stray that survives SIGKILL fails both stops and stays owned (§8.1)', async () => {
+    const supervisor = new Supervisor()
+    const pid = await strayOutliving('refused', supervisor)
+    const kill = process.kill.bind(process)
+    const spy = vi
+      .spyOn(process, 'kill')
+      .mockImplementation((target, signal) => (target === pid ? true : kill(target, signal)))
+    try {
+      const first = supervisor.stop('refused', 1, { graceMs: 300 })
+      const refused = expect(first).rejects.toThrow('refused to die')
+      await untilGroupGone('refused', supervisor)
+      await expect(supervisor.stop('refused', 1, { graceMs: 300 })).rejects.toThrow('refused to die')
+      await refused
+      expect(supervisor.owns('refused', 1)).toBe(true)
+    } finally {
+      spy.mockRestore()
+      kill(pid, 'SIGKILL')
     }
   })
 

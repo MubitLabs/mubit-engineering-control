@@ -21,7 +21,7 @@ import { repoFields } from '@mec/meta'
 import { SlotKeystore } from '@mec/slots'
 import { MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import Database from 'better-sqlite3'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { startServer } from '../src/composition'
 import { bridgeOf, driftOf, ENGINE_ROWS, isLaunchableSlot } from '../src/engine-registry'
 
@@ -397,6 +397,48 @@ describe('Codex through the runner', { timeout: 180_000 }, () => {
       } catch {
         // gone, as it should be
       }
+    }
+  })
+
+  it('interrupted waits for a command that ignores SIGTERM (§8.1)', async () => {
+    const steps = [{ stubborn: 60 }, { sleep: 60_000 }]
+    const { dataDir, repo, bin } = scratch('codex', { steps })
+    seed(dataDir, repo, { slot: CODEX_SLOT, task: { budget: { wall_clock_ms: 3000 } } })
+    const end = await launched(dataDir)
+    const pid = Number(readFileSync(join(bin, 'command.pid'), 'utf8'))
+    try {
+      expect(end.state).toBe('interrupted')
+      expect(() => process.kill(pid, 0)).toThrow()
+    } finally {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        // gone, as it should be
+      }
+    }
+  })
+
+  // SIGKILL that does not take is the kernel's doing, so only that much is faked.
+  it('a command SIGKILL cannot take leaves a failed attempt, not an interrupted one (§8.1)', async () => {
+    const steps = [{ stubborn: 60 }, { sleep: 60_000 }]
+    const { dataDir, repo, bin } = scratch('codex', { steps })
+    seed(dataDir, repo, { slot: CODEX_SLOT, task: { budget: { wall_clock_ms: 1500 } } })
+    const commandPid = (): number | undefined => {
+      const path = join(bin, 'command.pid')
+      return existsSync(path) ? Number(readFileSync(path, 'utf8')) : undefined
+    }
+    const kill = process.kill.bind(process)
+    const spy = vi
+      .spyOn(process, 'kill')
+      .mockImplementation((target, signal) => (target === commandPid() ? true : kill(target, signal)))
+    try {
+      const end = await launched(dataDir)
+      expect(end.state).toBe('failed')
+      expect(String(end.terminal_reason)).toContain('refused to die')
+    } finally {
+      spy.mockRestore()
+      const pid = commandPid()
+      if (pid !== undefined) kill(pid, 'SIGKILL')
     }
   })
 

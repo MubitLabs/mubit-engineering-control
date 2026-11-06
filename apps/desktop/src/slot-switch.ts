@@ -51,8 +51,8 @@ function parkedOn(store: Store, workItemId: string): StoreDoc[] {
 
 const idsOf = (docs: readonly StoreDoc[]): string[] => docs.map((doc) => String(doc.id))
 
-const sameAttempts = (a: readonly StoreDoc[], b: readonly StoreDoc[]): boolean =>
-  JSON.stringify(idsOf(a)) === JSON.stringify(idsOf(b))
+const sameIds = (a: readonly string[], b: readonly string[]): boolean =>
+  JSON.stringify(a) === JSON.stringify(b)
 
 const shaped = (doc: StoreDoc): ParkedAttempt => ({
   attemptId: String(doc.id),
@@ -112,9 +112,11 @@ export async function requestSwitch(
     const moved = await applySwitch(deps, input)
     return moved === undefined ? { status: 200, body: { status: 'switched' } } : refused(moved)
   }
-  const fromSlots = [...new Set(parkedOn(store, workItemId).map((doc) => String(doc.slotId)))]
+  const parked = parkedOn(store, workItemId)
+  const fromSlots = [...new Set(parked.map((doc) => String(doc.slotId)))]
+  const parkedAttempts = idsOf(parked)
   const operationHash = createHash('sha256')
-    .update(JSON.stringify({ cls: 'slot_switch', workItemId, toSlot, fromSlots }), 'utf8')
+    .update(JSON.stringify({ cls: 'slot_switch', workItemId, toSlot, fromSlots, parkedAttempts }), 'utf8')
     .digest('hex')
   const id = `conf_${randomBytes(9).toString('hex')}`
   const expiresAt = new Date(Date.parse(at) + CARD_TTL_MS).toISOString()
@@ -125,8 +127,13 @@ export async function requestSwitch(
       workItemId,
       payload: {
         operation: { class: 'slot_switch', toSlot },
-        evidence: { fromSlots: fromSlots.join(', '), reason: redact(reason, [], []) },
+        evidence: {
+          fromSlots: fromSlots.join(', '),
+          parkedAttempts: parkedAttempts.join(', '),
+          reason: redact(reason, [], []),
+        },
         toSlot,
+        parkedAttempts,
         reason: redact(reason, [], []),
       },
     } as unknown as StoreDoc)
@@ -188,10 +195,17 @@ function nextAttemptId(store: Store): string {
 /** New attempts on the target, after a fresh probe. Returns why not, when it did not happen. */
 export async function applySwitch(
   deps: SwitchDeps,
-  input: { workItemId: string; toSlot: string; reason: string; confirmationId?: string },
+  input: {
+    workItemId: string
+    toSlot: string
+    reason: string
+    confirmationId?: string
+    /** What a card stated: an approval is of exactly this set (§13). */
+    parkedAttempts?: readonly string[]
+  },
 ): Promise<string | undefined> {
   const { store, effects, now, probe } = deps
-  const { workItemId, toSlot, reason, confirmationId } = input
+  const { workItemId, toSlot, reason, confirmationId, parkedAttempts } = input
   const stream = `work:${workItemId}`
   const refuse = (why: string, at: string): string => {
     appendEvent(store, stream, 'slot_switch_refused', { workItemId, toSlot, reason: why, at }, at)
@@ -203,6 +217,9 @@ export async function applySwitch(
   const why = healthy ? refusal(store, workItemId, toSlot, start) : 'target_unhealthy'
   if (why !== undefined) return store.atomic(() => refuse(why, start))
   const parked = parkedOn(store, workItemId)
+  if (parkedAttempts !== undefined && !sameIds(idsOf(parked), parkedAttempts)) {
+    return store.atomic(() => refuse('stale', start))
+  }
   const packs = await Promise.all(parked.map((doc) => packFor(store, doc)))
   const at = now()
   return store.atomic(() => {
@@ -210,7 +227,7 @@ export async function applySwitch(
     const late = refusal(store, workItemId, toSlot, at)
     if (late !== undefined) return refuse(late, at)
     const current = parkedOn(store, workItemId)
-    if (!sameAttempts(current, parked)) return refuse('stale', at)
+    if (!sameIds(idsOf(current), idsOf(parked))) return refuse('stale', at)
     for (const [index, doc] of current.entries()) {
       const pack = packs[index] as Record<string, Json>
       const attemptId = nextAttemptId(store)
@@ -278,12 +295,18 @@ export async function applyApprovedSwitches(deps: SwitchDeps): Promise<void> {
     .list({ status: 'approved' })
     .filter((doc) => doc.cls === 'slot_switch' && doc.applied !== true)
   for (const card of cards) {
-    const { toSlot, reason } = card.payload as { toSlot: string; reason: string }
+    const { toSlot, reason, parkedAttempts } = card.payload as {
+      toSlot: string
+      reason: string
+      parkedAttempts?: string[]
+    }
     await applySwitch(deps, {
       workItemId: String(card.workItemId),
       toSlot,
       reason,
       confirmationId: String(card.id),
+      // A card that names no attempts stated nothing this switch could honour.
+      parkedAttempts: parkedAttempts ?? [],
     })
   }
 }

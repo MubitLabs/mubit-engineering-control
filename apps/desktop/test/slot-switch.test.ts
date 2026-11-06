@@ -289,4 +289,51 @@ describe('switch slot', { timeout: 40_000 }, () => {
     expect(eventsOf(rig, `work:${WORK}`)).toContain('slot_switch_refused')
     expect(eventsOf(rig, `work:${WORK}`)).not.toContain('slot_switched')
   })
+
+  it('an approval moves only the attempts its card stated (§13)', async () => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    const server = await serve(rig, QUIET)
+    const id = await card(server)
+    // The card said att_1 on slot_a. That one resumed; another parked on a slot the owner never saw.
+    peek(rig, (store) => {
+      const slot = { engine: 'claude', kind: 'claude-sub', home: '/nowhere', env: {} }
+      const resets = { state_reason: 'quota_exhausted', resets_at: '2099-01-01T00:00:00.000Z' }
+      store.slots.save({ id: 'slot_c', ...slot, state: 'degraded', ...resets })
+      store.tasks.save({ ...store.tasks.get('task_1'), id: 'task_2' })
+      const first = store.attempts.get('att_1') as Record<string, never>
+      store.attempts.save({ ...first, state: 'running' })
+      const { session_id: _session, ...rest } = first
+      store.attempts.save({ ...rest, id: 'att_2', taskId: 'task_2', slotId: 'slot_c' })
+    })
+    await answer(server, id, 'approve')
+    await until(() => eventsOf(rig, `work:${WORK}`).includes('slot_switch_refused'))
+    const body = peek(rig, (store) =>
+      store.events.read(`work:${WORK}`).find((event) => event.type === 'slot_switch_refused'),
+    )?.body
+    expect(body).toMatchObject({ reason: 'stale' })
+    expect(peek(rig, (store) => store.confirmations.get(id)?.applied)).toBe(true)
+    expect(attemptOf(rig, 'att_2')?.switched_to).toBeUndefined()
+    expect(peek(rig, (store) => store.attempts.list({ workItemId: WORK }))).toHaveLength(2)
+  })
+
+  it('the card states the parked attempts, and its hash binds them', async () => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    const server = await serve(rig, QUIET)
+    const first = await card(server)
+    const hashOf = (id: string): unknown => peek(rig, (store) => store.confirmations.get(id)?.operationHash)
+    expect(peek(rig, (store) => store.confirmations.get(first)?.payload)).toMatchObject({
+      parkedAttempts: ['att_1'],
+      evidence: { parkedAttempts: 'att_1' },
+    })
+    await answer(server, first, 'deny')
+    peek(rig, (store) => {
+      store.attempts.save({ ...store.attempts.get('att_1'), id: 'att_1', state: 'succeeded' })
+      const twin = { ...store.attempts.get('att_1'), id: 'att_2', state: 'quota_wait' }
+      store.attempts.save(twin)
+    })
+    const second = await card(server)
+    expect(hashOf(second)).not.toBe(hashOf(first))
+  })
 })

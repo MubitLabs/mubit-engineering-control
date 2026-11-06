@@ -32,6 +32,7 @@ const scratch = (): string => {
 
 /** A due launch for one queued attempt on repo-bound work, as a plan commit leaves it. */
 const seedLaunch = (store: SqliteStore, work: Record<string, unknown> = {}): void => {
+  store.atomic(() => store.engines.save({ id: 'repo_a', hostRunAgreedAt: '2026-11-05T08:00:00.000Z' }))
   store.atomic(() => {
     store.workItems.save({
       id: 'wi_1',

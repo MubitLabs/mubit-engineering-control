@@ -946,7 +946,7 @@ export class MetaAgentService {
       const quiet = input.wake === true && !asked && this.#hasNoNews(workItemId, input.text)
       if (input.wake === true && !quiet) this.#recordTold(workItemId)
       if (spoken !== undefined) this.#endIfAnswered(workItemId, input.messageId, at)
-      else if (decision.protocolIncomplete === true && !asked) {
+      if (spoken === undefined && decision.protocolIncomplete === true && !asked) {
         // Nothing more runs on this turn, and Work says No answer from it. The record says why.
         const facts = { workItemId, messageId: input.messageId, at }
         this.#appendEvent(`work:${workItemId}`, 'turn_incomplete', facts, at)

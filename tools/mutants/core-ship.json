@@ -114,8 +114,8 @@
   {
     "name": "the service does not read an unfinished protocol",
     "file": "packages/meta/src/service.ts",
-    "find": "      else if (decision.protocolIncomplete === true && !asked) {\n",
-    "replace": "      else if ((false as boolean) && !asked) {\n",
+    "find": "      if (spoken === undefined && decision.protocolIncomplete === true && !asked) {\n",
+    "replace": "      if (spoken === undefined && (false as boolean) && !asked) {\n",
     "tests": ["apps/desktop/test/meta-visibility.test.ts"]
   },
   {

@@ -20,6 +20,7 @@ import { type Continuation, isHeld, mandateOf, revalidateWork } from '@mec/meta'
 import { openConfirmation, type PolicyDoc, policyPreAuthorises } from '@mec/policy'
 import { redact } from '@mec/slots'
 import type { Cleaner } from './core-facts'
+import { lacksHome } from './engine-registry'
 import { mayRun } from './recovery'
 import type { CardBlock } from './release'
 
@@ -102,7 +103,10 @@ function refusal(deps: SwitchDeps, workItemId: string, toSlot: string, at: strin
   const parked = parkedOn(store, workItemId)
   if (parked.length === 0) return 'nothing_parked'
   if (parked.some((doc) => doc.state === 'auth_required')) return 'auth_park_never_switches'
-  if (store.slots.get(toSlot)?.state !== 'healthy') return 'target_unhealthy'
+  const target = store.slots.get(toSlot)
+  if (target?.state !== 'healthy') return 'target_unhealthy'
+  // The launcher's own refusal, said here: the switch would queue an attempt that cannot start.
+  if (lacksHome(target)) return 'target_cannot_launch'
   if (parked.some((doc) => doc.slotId === toSlot)) return 'same_slot'
   const plans = plansFor(store, parked, toSlot, at)
   return plans.every((plan) => plan.action === 'switch') ? undefined : 'not_switchable'

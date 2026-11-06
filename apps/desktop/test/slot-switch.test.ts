@@ -201,6 +201,22 @@ describe('switch slot', { timeout: 40_000 }, () => {
     expect((await ask(server)).status).toBe(409)
   })
 
+  // `probeSlotAtStartup`'s doc reads healthy and names no home, so the launcher would refuse it.
+  it('the startup probe slot is no target: nothing would launch there', async () => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    peek(rig, (store) => {
+      const probe = { label: 'startup probe', engine: 'claude', kind: 'claude-sub', state: 'healthy' }
+      store.slots.save({ id: 'slot_claude_probe', ...probe })
+    })
+    const server = await serve(rig, QUIET)
+    const refused = await ask(server, 'slot_claude_probe')
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toMatchObject({ error: 'target_cannot_launch' })
+    expect(peek(rig, (store) => store.confirmations.list())).toHaveLength(0)
+    expect(attempts(rig)).toHaveLength(1)
+  })
+
   it('a target that fails its re-probe at approval moves nothing', async () => {
     const rig = scratch(STEPS)
     parked(rig)

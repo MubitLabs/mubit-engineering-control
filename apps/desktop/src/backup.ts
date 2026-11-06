@@ -50,7 +50,8 @@ export function exclusionKindFor(relPath: string): ExcludedKind | null {
   if (name === '.salt') return 'salt'
   if (isLockPath(segments, name)) return 'lock'
   // A worktree's `.mec/` holds the running attempt's bearer token, and a live server can back up.
-  if (segments[0] === 'work' && segments[2] === '.mec') return 'attempt-files'
+  // On a case-folding volume the launcher's `.mec/` lands in a tracked `.MEC/`, so case never counts.
+  if (segments[0] === 'work' && segments[2]?.toLowerCase() === '.mec') return 'attempt-files'
   return null
 }
 

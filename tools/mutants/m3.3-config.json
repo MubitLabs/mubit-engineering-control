@@ -387,15 +387,22 @@
   {
     "name": "a worktree's .mec files enter the backup",
     "file": "apps/desktop/src/backup.ts",
-    "find": "  if (segments[0] === 'work' && segments[2] === '.mec') return 'attempt-files'\n",
+    "find": "  if (segments[0] === 'work' && segments[2]?.toLowerCase() === '.mec') return 'attempt-files'\n",
     "replace": "",
     "tests": ["apps/desktop/test/backup.test.ts"]
   },
   {
     "name": "the backup drops the whole worktree",
     "file": "apps/desktop/src/backup.ts",
-    "find": "if (segments[0] === 'work' && segments[2] === '.mec') return 'attempt-files'",
+    "find": "if (segments[0] === 'work' && segments[2]?.toLowerCase() === '.mec') return 'attempt-files'",
     "replace": "if (segments[0] === 'work' && segments.length >= 2) return 'attempt-files'",
+    "tests": ["apps/desktop/test/backup.test.ts"]
+  },
+  {
+    "name": "a worktree's .mec match goes by exact case",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "segments[2]?.toLowerCase() === '.mec'",
+    "replace": "segments[2] === '.mec'",
     "tests": ["apps/desktop/test/backup.test.ts"]
   }
 ]

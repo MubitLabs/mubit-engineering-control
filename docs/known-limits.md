@@ -129,12 +129,12 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
   - The Claude profile does not deny `<data>/work` or `<data>/tmp`, so a sibling's `.mec/mcp.json`
     is readable there. Codex's profile denies both.
 - **Unproven on the way to 0.3.0 (6 November 2026, DECISIONS #41-42).**
-  - No real-engine run of handoffs 22 or 23 A; no separate verifier has looked at any change
-    since the owner's ruling; the worker loopback route has not run under a real engine. The
-    combined PR (#47) is on `main`; 33 B and real Claude runs on a release candidate are in
-    progress.
+  - Handoffs 22 and 23 A have run under real Claude only through the composed journey, with fake
+    `gh` and a fake remote. No separate verifier has looked at any change since the owner's
+    ruling. The worker loopback route was refused under real Claude in one run; the route still
+    takes no token, so the sandbox is the whole fence.
   - 0.3.0 is proven on Claude only. Codex and OpenCode have not run on the final build.
-  - Nothing has been checked on an installed copy, and `classic` is still the default UI.
+  - Nothing has been checked on an installed copy.
 - **A server logged "stopping on SIGTERM" and stayed alive after a planner turn** (handoff 23?).
   Not reproduced and not fixed.
 - **Cause of the earlier empty tarball is unknown.** A real tarball once shipped with empty models

@@ -130,7 +130,7 @@
     "file": "apps/desktop/src/config-routes.ts",
     "find": "      deps.wakeLaunches?.()\n",
     "replace": "",
-    "tests": ["apps/desktop/test/host-run-agreement.test.ts"]
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
   },
   {
     "name": "delivery ignores the agreement",

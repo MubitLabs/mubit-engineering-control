@@ -11,9 +11,10 @@ import type { HealthBoard, HealthClaim, HealthName, Json } from '@mec/contracts'
 import { fakeBrain, integrationDocId, MetaAgentService, type MetaDecision } from '@mec/meta'
 import { InspectionReads, MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import Database from 'better-sqlite3'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { deliveryDocId } from '../src/delivery'
-import { buildServer } from '../src/server'
+import { buildServer, type ServerDeps } from '../src/server'
+import { ownerApproval, ownerHeaders } from './approval-rig'
 
 const AT = '2026-11-05T12:00:00.000Z'
 const LATER = '2026-11-05T12:05:00.000Z'
@@ -32,7 +33,7 @@ let store: SqliteStore
 let app: ReturnType<typeof buildServer>
 let scratch: string[] = []
 
-const serverWith = (decision: MetaDecision) =>
+const serverWith = (decision: MetaDecision, extra: Partial<ServerDeps> = {}) =>
   buildServer({
     store,
     effects: store.effects,
@@ -47,6 +48,7 @@ const serverWith = (decision: MetaDecision) =>
       now: () => AT,
       policyText: '{"preAuthorised":{}}',
     }),
+    ...extra,
   })
 
 const get = async (url: string) => (await app.inject({ method: 'GET', url })).json() as any
@@ -135,6 +137,19 @@ describe('Needs you lists work a person must act on (§18.2)', () => {
     const snapshot = await get('/api/inspect/snapshot')
     expect(snapshot.needsCount).toBe(1)
     expect(snapshot.repositories[0].needsCount).toBe(1)
+  })
+
+  it('agreeing wakes the launches that waited, once', async () => {
+    const wakeLaunches = vi.fn()
+    await app.close()
+    app = serverWith({ ack: 'Noted.' }, { approval: ownerApproval(), wakeLaunches })
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/repositories/repo_a/host-run/agree',
+      headers: { 'x-mec-client': '1', ...ownerHeaders },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(wakeLaunches).toHaveBeenCalledTimes(1)
   })
 
   it('a repository waiting for its agreement has one row, however many items wait', async () => {

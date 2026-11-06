@@ -238,7 +238,7 @@
     "tests": ["apps/desktop/test/meta-visibility.test.ts"]
   },
   {
-    "name": "a stored report leaves unredacted",
+    "name": "a stored report runs past its cap",
     "file": "apps/desktop/src/inspection.ts",
     "find": "    const summary = str(obj(report?.body ?? undefined)?.summary)\n    return summary === null ? null : cutText(summary, ANSWER_CAP)\n",
     "replace": "    return str(obj(report?.body ?? undefined)?.summary)\n",

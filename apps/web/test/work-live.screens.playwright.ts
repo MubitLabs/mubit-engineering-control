@@ -367,7 +367,11 @@ test.describe('Needs you', () => {
     // Evidence loads one card at a time, and a card still waiting for it is neither selector.
     await expect(page.locator('.decision-missing')).toHaveCount(0)
     const shown = await waiting.count()
-    const blocked = await page.locator('.page > .notice-blocked').count()
+    // The notice that a tab has no approval key is about the tab, not one more thing waiting.
+    const blocked = await page
+      .locator('.page > .notice-blocked')
+      .filter({ hasNotText: 'This browser cannot answer yet' })
+      .count()
     await expect(needsLink(page)).toContainText(String(shown + blocked))
   })
 

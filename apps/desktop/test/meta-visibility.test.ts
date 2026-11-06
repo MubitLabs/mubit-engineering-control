@@ -223,6 +223,21 @@ describe('a turn that ended with no plan is not work in progress', () => {
     expect(row.reason).toBeNull()
   })
 
+  it('the answer is what the message the turn named says, whatever else was reported', async () => {
+    seedQuestion('wi_done', 'A later note on this work.')
+    store.atomic(() => {
+      store.workItems.save({ ...store.workItems.get('wi_done')!, state: 'done' })
+      store.messages.save({ ...store.messages.get('msg_wi_done')!, ackText: 'It exports wave(name).' })
+    })
+    event('work:wi_done', 2, 'work_answered', { workItemId: 'wi_done', messageId: 'msg_wi_done', at: AT })
+    expect((await get('/api/inspect/work/wi_done')).answer).toBe('It exports wave(name).')
+  })
+
+  it('a stored report stays within the cap', async () => {
+    seedQuestion('wi_long', 'x'.repeat(20_000))
+    expect((await get('/api/inspect/work/wi_long')).answer.length).toBeLessThanOrEqual(8000)
+  })
+
   it('a stored report carrying a key leaves redacted', async () => {
     seedQuestion('wi_key', 'use sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
     expect((await get('/api/inspect/work/wi_key')).answer).not.toContain('sk-ant-api03')

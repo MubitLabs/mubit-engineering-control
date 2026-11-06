@@ -1,5 +1,6 @@
 // M2.2's permission widening (§13): a specialist can obtain a permission by card, and nothing but
 // a person's answer gives it. The tools run on the real server with real tokens over real HTTP.
+import { createHash } from 'node:crypto'
 import type { KeyFingerprint, Operation, StoreDoc } from '@mec/contracts'
 import { issueToken, MecToolsServer } from '@mec/mec-tools'
 import { FollowUps, settleSpecialistCard } from '@mec/meta'
@@ -204,6 +205,60 @@ describe('confirm with a card (§13)', () => {
     expect(JSON.stringify(h.store.confirmations.list())).not.toContain(KEY)
   })
 
+  it('two commands that differ only in a redacted token get their own cards', async () => {
+    const h = rig()
+    const other = KEY.replaceAll('a1B2', 'z9Y8')
+    const first = decideOperation(h.store, h.cards, h.attempt(), shell(`pnpm add ${KEY}`))
+    await waitForCard(h.pending)
+    h.settle('approved')
+    await expect(first).resolves.toMatchObject({ allow: true })
+
+    const second = decideOperation(h.store, h.cards, h.attempt(), shell(`pnpm add ${other}`))
+    await waitForCard(h.pending)
+    const cards = h.store.confirmations.list()
+    expect(cards).toHaveLength(2)
+    expect(cards[0]?.payload).toEqual(cards[1]?.payload)
+    expect(cards[0]?.operationHash).not.toBe(cards[1]?.operationHash)
+    h.settle('denied')
+    await expect(second).resolves.toMatchObject({ allow: false })
+  })
+
+  it('the same secret-bearing command re-asked is still the one card', async () => {
+    const h = rig()
+    const first = decideOperation(h.store, h.cards, h.attempt(), shell(`pnpm add ${KEY}`))
+    const second = decideOperation(h.store, h.cards, h.attempt(), shell(`pnpm add ${KEY}`))
+    await waitForCard(h.pending)
+    expect(h.pending()).toHaveLength(1)
+    h.settle('denied')
+    await expect(first).resolves.toMatchObject({ allow: false })
+    await expect(second).resolves.toMatchObject({ allow: false })
+    expect(h.store.confirmations.list()).toHaveLength(1)
+  })
+
+  it('a stored hash cannot be tested against a guess at the secret', async () => {
+    const h = rig(NO_POLICY, { waitMs: 5 })
+    const operation = shell(`pnpm add ${KEY}`)
+    await decideOperation(h.store, h.cards, h.attempt(), operation)
+    const raw = { summary: operation.summary, command: operation.command }
+    const guess = createHash('sha256').update(JSON.stringify(raw), 'utf8').digest('hex')
+    const [card] = h.store.confirmations.list()
+    const cleaned = (card?.payload as { operation: unknown }).operation
+    const unkeyed = createHash('sha256').update(JSON.stringify([cleaned, guess]), 'utf8').digest('hex')
+    const stored = JSON.stringify(h.store.snapshot())
+    expect(stored).not.toContain(guess)
+    expect(stored).not.toContain(unkeyed)
+  })
+
+  it('a command with nothing redacted hashes as it always did, so a restart keeps its answer', async () => {
+    const h = rig(NO_POLICY, { waitMs: 5 })
+    const operation = shell('pnpm add x')
+    await decideOperation(h.store, h.cards, h.attempt(), operation)
+    const expected = createHash('sha256')
+      .update(JSON.stringify({ summary: operation.summary, command: operation.command }), 'utf8')
+      .digest('hex')
+    expect(h.store.confirmations.list()[0]?.operationHash).toBe(expected)
+  })
+
   it('the attempt token on a card it was not meant for is redacted before the write', async () => {
     const token = issueToken({ attemptId: 'att_1', generation: 1, role: 'specialist', secret: SECRET })
     const h = rig(NO_POLICY, { waitMs: 5, clean: cleaner([token]) })
@@ -396,6 +451,19 @@ describe('the tools (§6)', () => {
     expect(stored).toContain('pnpm add')
     expect(stored).not.toContain(h.token)
     expect(stored).not.toContain(UNPATTERNED_KEY)
+  })
+
+  it('two requests that differ only in a redacted key are two cards', async () => {
+    const h = await tools()
+    const ask = async (key: string) => {
+      const operation = { class: 'install', command: `curl -H ${key}` }
+      const rpc = await h.call('request_confirmation', { operation, evidence: { reason: 'r' } })
+      return h.answer(rpc).confirmation_id
+    }
+    const first = await ask(UNPATTERNED_KEY)
+    expect(await ask(UNPATTERNED_KEY)).toBe(first)
+    expect(await ask(`x${UNPATTERNED_KEY}`)).not.toBe(first)
+    expect(h.store.confirmations.list()).toHaveLength(2)
   })
 
   it('a card with no evidence is refused', async () => {

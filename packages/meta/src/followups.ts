@@ -551,7 +551,8 @@ export class FollowUps {
    */
   openCard(attempt: StoreDoc, card: SpecialistCard, at: string): StoreDoc {
     const attemptId = String(attempt.id)
-    const operationHash = createHash('sha256').update(JSON.stringify(card.operation), 'utf8').digest('hex')
+    const identity = card.rawDigest === undefined ? card.operation : [card.operation, card.rawDigest]
+    const operationHash = createHash('sha256').update(JSON.stringify(identity), 'utf8').digest('hex')
     const prior = this.#store.confirmations
       .list({ attemptId, operationHash })
       .filter((doc) => doc.status !== 'expired' && doc.status !== 'stale')
@@ -603,6 +604,8 @@ export class FollowUps {
 export type SpecialistCard = {
   cls: string
   operation: Record<string, Json>
+  /** Set when redaction changed `operation`: keeps apart what the cleaned text no longer can. */
+  rawDigest?: string
   evidence: Record<string, Json>
   expiresAt: string
   notify: boolean

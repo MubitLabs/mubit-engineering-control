@@ -12,7 +12,7 @@
  *   the owner's answer on the inbox route does. The sandbox is the boundary; these rules exist so
  *   a push is refused by name, and shell text is only a heuristic.
  */
-import { createHash } from 'node:crypto'
+import { createHash, createHmac, randomBytes } from 'node:crypto'
 import { existsSync, lstatSync, readdirSync, readlinkSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type {
@@ -247,26 +247,23 @@ export async function decideOperation(
   const repoId = typeof attempt.repoId === 'string' ? attempt.repoId : workRepo(store, attempt)
   const now = cards.now ?? (() => new Date())
   const attemptId = String(attempt.id)
+  const raw = { summary: operation.summary, command: operation.command ?? [] }
+  const cleaned = cleanFields(cards, attemptId, raw)
   if (policyPreAuthorises(cards.policy, verdict.card, { ...(repoId !== undefined && { repoId }) })) {
-    const used = cleanFields(cards, attemptId, {
-      summary: operation.summary,
-      command: operation.command ?? [],
-    })
     store.atomic(() =>
-      cards.followups.recordPreAuthorised(attempt, verdict.card as string, used, now().toISOString()),
+      cards.followups.recordPreAuthorised(attempt, verdict.card as string, cleaned, now().toISOString()),
     )
     return { allow: true, reason: `${verdict.card} is pre-authorised by policy` }
   }
   const waitMs = cards.waitMs ?? CARD_WAIT_MS
+  const digest = rawDigest(raw, cleaned)
   const card = store.atomic(() =>
     cards.followups.openCard(
       attempt,
       {
         cls: verdict.card as string,
-        operation: cleanFields(cards, attemptId, {
-          summary: operation.summary,
-          command: operation.command ?? [],
-        }),
+        operation: cleaned,
+        ...(digest !== undefined && { rawDigest: digest }),
         evidence: cleanFields(cards, attemptId, { why: verdict.reason, attempt: attemptId }),
         expiresAt: new Date(now().getTime() + waitMs).toISOString(),
         notify: false,
@@ -320,6 +317,21 @@ function expireCard(store: Store, cardId: string, at: string): void {
     })
     store.confirmations.save(outcome as unknown as StoreDoc)
   })
+}
+
+/**
+ * What redaction took out of an operation, so two that differ only in a token are two questions
+ * (§13). Keyed, and the key never leaves this process: a plain hash would let anyone holding the
+ * store or a backup test a guess at a password. A restart loses the key, so such a command is asked
+ * again, which is the safe direction. With nothing redacted there is no digest, and the hash stays
+ * the cleaned operation's, which a restart keeps.
+ */
+const RAW_DIGEST_KEY = randomBytes(32)
+
+function rawDigest(raw: unknown, cleaned: unknown): string | undefined {
+  const text = JSON.stringify(raw)
+  if (text === JSON.stringify(cleaned)) return undefined
+  return createHmac('sha256', RAW_DIGEST_KEY).update(text, 'utf8').digest('hex')
 }
 
 /**
@@ -477,20 +489,22 @@ function requestConfirmation(
   const repoId = workRepo(store, attempt)
   const now = cards.now ?? (() => new Date())
   const attemptId = String(attempt.id)
+  const cleaned = cleanFields(cards, attemptId, operation as Record<string, unknown>)
   if (
     policyPreAuthorises(cards.policy, cls as ConfirmationClass, { ...(repoId !== undefined && { repoId }) })
   ) {
-    const used = cleanFields(cards, attemptId, operation as Record<string, unknown>)
     const usedCls = cards.clean(attemptId, cls)
-    store.atomic(() => cards.followups.recordPreAuthorised(attempt, usedCls, used, now().toISOString()))
+    store.atomic(() => cards.followups.recordPreAuthorised(attempt, usedCls, cleaned, now().toISOString()))
     return { ok: true, status: 'approved', pre_authorised: true }
   }
+  const digest = rawDigest(operation, cleaned)
   const card = store.atomic(() =>
     cards.followups.openCard(
       attempt,
       {
         cls: cards.clean(attemptId, cls),
-        operation: cleanFields(cards, attemptId, operation as Record<string, unknown>),
+        operation: cleaned,
+        ...(digest !== undefined && { rawDigest: digest }),
         evidence: cleanFields(cards, attemptId, evidence),
         expiresAt: new Date(now().getTime() + (cards.waitMs ?? CARD_WAIT_MS)).toISOString(),
         notify: true,

@@ -111,6 +111,12 @@ export function filterValue(filter: RepoFilter): string {
   return filter.kind === 'repo' ? filter.repoId : filter.kind
 }
 
+/**
+ * With one repository and nothing unassigned, All and that repository are the same list, and the
+ * sidebar already names it. A second repository or Unassigned history is a real choice.
+ */
+export const repoScopeApplies = (options: readonly RepoFilterOption[]): boolean => options.length > 2
+
 export function repoFilterOptions(
   rows: readonly WorkRow[],
   items: readonly NeedItem[],

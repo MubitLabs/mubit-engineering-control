@@ -117,5 +117,19 @@
     "find": "      else if (decision.protocolIncomplete === true && !asked) {\n",
     "replace": "      else if ((false as boolean) && !asked) {\n",
     "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the dropdown shows with one repository",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "options.length > 2",
+    "replace": "options.length > 1",
+    "tests": ["apps/web/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the dropdown hides beside Unassigned history",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "options.length > 2",
+    "replace": "options.length > 3",
+    "tests": ["apps/web/test/meta-visibility.test.ts"]
   }
 ]

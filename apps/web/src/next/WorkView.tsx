@@ -15,6 +15,7 @@ import type {
   WorkGroupView,
   WorkRowView,
 } from './work-model'
+import { repoScopeApplies } from './work-model'
 
 /** A failed read sits above what is kept, and a loading one always has somewhere to end. */
 export function ReadNotice({
@@ -61,8 +62,7 @@ export function RepoScope({
   value: string
   onChange: (option: RepoFilterOption) => void
 }) {
-  // All repositories and one repository are the same list, and the sidebar already names it.
-  if (options.length < 3) return null
+  if (!repoScopeApplies(options)) return null
   return (
     <label className="repo-scope">
       <span>Repository</span>

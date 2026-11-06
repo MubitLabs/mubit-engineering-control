@@ -6,6 +6,8 @@ import {
   conversationView,
   deliveryDetail,
   metaStatus,
+  repoFilterOptions,
+  repoScopeApplies,
   sentAlready,
   workActions,
 } from '../src/next/work-model'
@@ -60,6 +62,24 @@ const delegated: DelegationRow = {
   waiting: null,
   activity: { summary: 'Bash', at: AT },
 }
+
+describe('the Repository dropdown is there when it chooses something', () => {
+  const repo = (id: string) => ({ id, label: id })
+  const applies = (registered: { id: string; label: string }[], rows: WorkRow[] = []) =>
+    repoScopeApplies(repoFilterOptions(rows, [], registered))
+
+  it('one repository: hidden, the sidebar names it', () => {
+    expect(applies([repo('repo_a')])).toBe(false)
+  })
+
+  it('two repositories: shown', () => {
+    expect(applies([repo('repo_a'), repo('repo_b')])).toBe(true)
+  })
+
+  it('one repository and Unassigned history: shown', () => {
+    expect(applies([repo('repo_a')], [row({ id: 'wi_old', repoId: null, repoLabel: null })])).toBe(true)
+  })
+})
 
 describe('the live line', () => {
   it('says what is happening, on which model and connection, and when it last moved', () => {

@@ -362,5 +362,40 @@
     "find": "          ...fresh,\n          state: 'degraded',",
     "replace": "          ...doc,\n          state: 'degraded',",
     "tests": ["apps/desktop/test/slot-sensitive.test.ts"]
+  },
+  {
+    "name": "the launcher takes the boot policy text",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "      policyText,\n      facts,",
+    "replace": "      policyText: opts.policyText ?? DEFAULT_POLICY_TEXT,\n      facts,",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "a dedicated slot saves no env",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "        env: home.env,\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "mec slot add saves no env",
+    "file": "apps/desktop/src/slot-cli.ts",
+    "find": "      env: home.env,\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/slot-cli.test.ts"]
+  },
+  {
+    "name": "a worktree's .mec files enter the backup",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "  if (segments[0] === 'work' && segments[2] === '.mec') return 'attempt-files'\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/backup.test.ts"]
+  },
+  {
+    "name": "the backup drops the whole worktree",
+    "file": "apps/desktop/src/backup.ts",
+    "find": "if (segments[0] === 'work' && segments[2] === '.mec') return 'attempt-files'",
+    "replace": "if (segments[0] === 'work' && segments.length >= 2) return 'attempt-files'",
+    "tests": ["apps/desktop/test/backup.test.ts"]
   }
 ]

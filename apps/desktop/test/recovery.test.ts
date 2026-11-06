@@ -749,6 +749,15 @@ describe('the planner engine', { timeout: 40_000 }, () => {
       const doc = store.engines.get('runtime/planner')
       store.engines.save({ ...doc, id: 'runtime/planner', process: { pid: 4343, started: 'now' } })
     })
+    // The old mark is read again, not forgotten; the new one ended, so only the old one stays.
+    const oldStays = {
+      identify: (seen: { pid: number }) => (seen.pid === 4242 ? 'unprovable' : 'gone'),
+    } as const
+    await peekAsync(rig, (store) => reconcilePlanner(store, oldStays))
+    expect(peek(rig, (store) => store.engines.get('runtime/planner'))?.refused).toEqual([
+      { process: mark, reason: 'unprovable' },
+    ])
+    expect(existsSync(dir)).toBe(true)
     await peekAsync(rig, (store) => reconcilePlanner(store, { identify: () => 'gone' }))
     const doc = peek(rig, (store) => store.engines.get('runtime/planner'))
     expect(doc?.refused).toBeUndefined()

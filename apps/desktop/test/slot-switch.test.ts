@@ -419,4 +419,39 @@ describe('switch slot', { timeout: 40_000 }, () => {
     expect(peek(rig, (store) => store.confirmations.get('conf_forged')?.applied)).toBe(true)
     expect(attempts(rig)).toHaveLength(1)
   })
+
+  it('work stopped while the pack is built refuses the switch', async () => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    const answer = await peekAsync(rig, (store) => {
+      let calls = 0
+      const now = (): string => {
+        calls += 1
+        if (calls === 2) store.workItems.save({ ...store.workItems.get(WORK), id: WORK, state: 'stopped' })
+        return NOW
+      }
+      const input = { workItemId: WORK, toSlot: 'slot_b', reason: 'quota' }
+      return applySwitch({ ...direct(store), now }, input)
+    })
+    expect(answer).toBe('work_ended')
+    expect(attempts(rig)).toHaveLength(1)
+  })
+
+  it('a card that names no attempts stated nothing, and moves nothing', async () => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    peek(rig, (store) => {
+      store.confirmations.save({
+        id: 'conf_bare',
+        cls: 'slot_switch',
+        status: 'approved',
+        workItemId: WORK,
+        payload: { toSlot: 'slot_b', reason: 'quota' },
+      })
+    })
+    await serve(rig, QUIET)
+    await until(() => eventsOf(rig, `work:${WORK}`).includes('slot_switch_refused'))
+    expect(attempts(rig)).toHaveLength(1)
+    expect(peek(rig, (store) => store.confirmations.get('conf_bare')?.applied)).toBe(true)
+  })
 })

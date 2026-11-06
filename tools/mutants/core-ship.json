@@ -42,13 +42,6 @@
     "tests": ["apps/desktop/test/meta-visibility.test.ts"]
   },
   {
-    "name": "the answer on done work is lost",
-    "file": "apps/desktop/src/inspection.ts",
-    "find": "    const said = str(this.#store.messages.get(messageId ?? '')?.ackText)\n",
-    "replace": "    const said = null as string | null\n",
-    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
-  },
-  {
     "name": "the live line reads a blocked row as a card",
     "file": "apps/desktop/src/inspection.ts",
     "find": "    const needs = this.openDecisions()\n    const docs = this.#collect('work_item', {}).map((row) => row.doc)\n",
@@ -194,5 +187,75 @@
     "find": "    const reason = answerOnly ? QUESTION_WAKE : 'user message'\n",
     "replace": "    const reason = 'user message'\n",
     "tests": ["packages/meta/test/service.test.ts"]
+  },
+  {
+    "name": "an agreement is listed twice",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "const OWN_ROW_STAGES = new Set(['person/decision', 'person/agreement'])",
+    "replace": "const OWN_ROW_STAGES = new Set(['person/decision'])",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "the live line hides the agreement",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    if (agreeing !== undefined) return quiet('waiting_you', 'Waiting for your agreement', agreeing)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "b: a retry is offered before the agreement",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (!INTEGRATION_BLOCK.test(reason) || !hostRunAgreed(store, String(work.repoId))) return undefined\n",
+    "replace": "    if (!INTEGRATION_BLOCK.test(reason)) return undefined\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "b: the refusal does not say why",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "error: waits ? HOST_RUN_UNAGREED : 'nothing_to_retry'",
+    "replace": "error: 'nothing_to_retry'",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "an older report reads as No answer",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    return this.#lastReport(doc) === null ? 'no-answer' : 'answered'\n",
+    "replace": "    return 'no-answer'\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the answer on done work is lost",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    return said === null ? this.#lastReport(doc) : cutText(said, ANSWER_CAP)\n",
+    "replace": "    return this.#lastReport(doc) === null ? null : null\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the answer skips the message the turn named",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    return said === null ? this.#lastReport(doc) : cutText(said, ANSWER_CAP)\n",
+    "replace": "    return this.#lastReport(doc)\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "a stored report leaves unredacted",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    const summary = str(obj(report?.body ?? undefined)?.summary)\n    return summary === null ? null : cutText(summary, ANSWER_CAP)\n",
+    "replace": "    return str(obj(report?.body ?? undefined)?.summary)\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "c: a stopped item's question gets a turn",
+    "file": "packages/meta/src/service.ts",
+    "find": "    if (work !== undefined && !isTerminal(work) && mandateOf(work).status !== 'withdrawn') return undefined\n    const at = this.#now()\n    const ended",
+    "replace": "    if (work !== undefined) return undefined\n    const at = this.#now()\n    const ended",
+    "tests": ["packages/meta/test/service.test.ts"]
+  },
+  {
+    "name": "c: a resume runs on stopped work",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "  if (isTerminal(work)) return { verdict: 'drop', reason: 'work_terminal' }\n  const attempt = store.attempts.get(fields.attempt_id)\n",
+    "replace": "  const attempt = store.attempts.get(fields.attempt_id)\n",
+    "tests": ["apps/desktop/test/resume-gate.test.ts"]
   }
 ]

@@ -47,6 +47,7 @@ import {
 import {
   blockTask,
   blockWork,
+  HOST_RUN_UNAGREED,
   hostRunAgreed,
   integrationDocId,
   isHeld,
@@ -129,7 +130,7 @@ export function retryOffer(store: Store, work: StoreDoc): RetryOffer | undefined
   const clean = (text: string): string => redact(text, [], []).slice(0, OFFER_CHARS)
   if (work.state === 'blocked') {
     const reason = String(work.blockedReason ?? '')
-    if (!INTEGRATION_BLOCK.test(reason)) return undefined
+    if (!INTEGRATION_BLOCK.test(reason) || !hostRunAgreed(store, String(work.repoId))) return undefined
     const failed = store.engines.get(integrationDocId(id))?.failed as { repairing?: boolean } | undefined
     if (failed?.repairing === true) return undefined
     const tasks = store.tasks.list({ workItemId: id })
@@ -239,7 +240,10 @@ export class Delivery {
       const authority = revalidateWork(work, at, loadPolicy(this.#policyText).versionHash)
       if (!authority.ok) return { status: 'refused', error: `mandate_${authority.reason}` }
       const offer = retryOffer(this.#store, work)
-      if (offer === undefined) return { status: 'refused', error: 'nothing_to_retry' }
+      if (offer === undefined) {
+        const waits = work.state === 'blocked' && !this.#agreed(work)
+        return { status: 'refused', error: waits ? HOST_RUN_UNAGREED : 'nothing_to_retry' }
+      }
       if (offer.kind === 'integration') this.#resumeIntegration(work, at)
       else this.#askAgain(workItemId, offer.kind)
       this.#workEvent(workItemId, 'retry_requested', { kind: offer.kind })

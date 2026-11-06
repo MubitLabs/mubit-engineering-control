@@ -137,6 +137,22 @@ describe('Needs you lists work a person must act on (§18.2)', () => {
     expect(snapshot.repositories[0].needsCount).toBe(1)
   })
 
+  it('a repository waiting for its agreement has one row, however many items wait', async () => {
+    for (const id of ['wi_one', 'wi_two']) {
+      seedWork(id)
+      store.atomic(() => {
+        store.tasks.save({ id: `task_${id}`, workItemId: id, repoId: 'repo_a', status: 'ready' })
+      })
+    }
+    const items = (await get('/api/inspect/needs')).items
+    expect(items).toEqual([expect.objectContaining({ kind: 'agreement', repoId: 'repo_a', waiting: 2 })])
+    expect((await get('/api/inspect/snapshot')).needsCount).toBe(1)
+    const rows = (await get('/api/inspect/work')).items
+    expect(rows.map((row: any) => row.stage.key)).toEqual(['person/agreement', 'person/agreement'])
+    const [meta] = (await get('/api/inspect/meta')).repositories
+    expect(meta).toMatchObject({ state: 'waiting_you', line: 'Waiting for your agreement' })
+  })
+
   it('a pull request ready for review is a person stage, so it is listed too', async () => {
     seedWork('wi_ready', { state: 'integrating' })
     store.atomic(() => {

@@ -224,6 +224,19 @@ describe('a report on a red head (§10)', () => {
     expect(attemptsOf(store, 'task_a')).toHaveLength(3)
   })
 
+  it('a repair earned in a repository the owner has not agreed to starts nothing', () => {
+    const { store, pass } = rig()
+    repairRanRed(store)
+    saveReport(store, 1, { kind: 'progress', summary: 'tried' })
+    store.atomic(() => {
+      const { hostRunAgreedAt: _agreed, ...unagreed } = store.engines.get(REPO) as StoreDoc
+      store.engines.save(unagreed as StoreDoc)
+    })
+
+    expect(pass()).toEqual([])
+    expect(attemptsOf(store, 'task_a')).toHaveLength(2)
+  })
+
   it('a red head on stopped work earns no repair', () => {
     const { store, pass } = rig()
     repairRanRed(store)

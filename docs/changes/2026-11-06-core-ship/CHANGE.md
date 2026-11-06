@@ -1,6 +1,6 @@
 # Core ship: the fixes for 0.3.1 on one branch
 
-`feat/core-ship`, from `origin/main` at `07000f2`. Replayed by cherry-pick, in this order: `fix/core-coordination` (to `4aa7434`), `fix/integration-bootstrap`, `fix/slot-choice`, `fix/runtime-defaults`, `fix/host-run-agreement` as committed at `c477d1a`, `feat/meta-visibility` (to `b3416da`), `fix/delivery-surfaces`, `fix/walkthrough-polish`. `chore/remove-classic-final` is not on this branch. Each branch keeps its own record under `docs/changes/`. This one covers what they did to each other.
+`feat/core-ship`, from `origin/main` at `07000f2`. Replayed by cherry-pick, in this order: `fix/core-coordination` (to `4aa7434`), `fix/integration-bootstrap`, `fix/slot-choice`, `fix/runtime-defaults`, `fix/host-run-agreement` as committed at `c477d1a` (`85a0ac9` followed, last), `feat/meta-visibility` (to `b3416da`), `fix/delivery-surfaces`, `fix/walkthrough-polish`. `chore/remove-classic-final` is not on this branch. Each branch keeps its own record under `docs/changes/`. This one covers what they did to each other.
 
 ## Where they overlapped
 
@@ -30,8 +30,11 @@ A question sent while work is running in that repository gets a real planner tur
 
 The turn runs on its own work item, marked `questionOnly` so a resume after a crash keeps it. It keeps only its words, its reports and what it asks the person: a plan, stop, cancel, spawn, route or card from it is dropped before anything is written, and a report aimed at the running work lands on the question's item. `docs/plan/spec.md` §12.1 and `docs/DECISIONS.md` are not edited here; the decision record is the coordinator's.
 
+## The host-run agreement in the combined tree
+
+`85a0ac9` came last. One agreement row per repository in Needs you: `person/agreement` has its own row, so `#workNeedRows` leaves it out, and the count takes the row once. The live line says Waiting for your agreement. A blocked integration in an unagreed repository is not offered a retry, and pressing one answers `host_run_unagreed`, because a retry that moved it to integrating would leave it reading Working with nothing to say why.
+
 ## Limits
 
-- An item from before this build, whose answer sits only in `result_reported`, reads No answer: nothing joins that report to a message but its time. The report is still in the stored events.
+- An item from before this build, whose answer sits only in `result_reported`, reads Answered and shows that report in Work. Its chat line stays the acknowledgement. No time join: the report is the last one on the item's own stream.
 - A No answer item stays `planning` in the store, so the planner still sees it as live work.
-- The host-run agreement is not on this branch: `fix/host-run-agreement` has it uncommitted.

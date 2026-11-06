@@ -18,7 +18,7 @@ import {
 import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { commitWork } from '../src/attempt-launch'
-import { Delivery, deliveryDocId } from '../src/delivery'
+import { Delivery, deliveryDocId, retryOffer } from '../src/delivery'
 import {
   createPrBehindCard,
   type GhResult,
@@ -890,6 +890,17 @@ describe('a person retries what blocked (§11: blocked work and failed deliverie
     expect(work(r).state).toBe('blocked')
     expect(String(work(r).blockedReason)).toContain('would be overwritten by merge')
     expect(JSON.stringify([work(r), events(r)])).not.toContain(KEY)
+  })
+
+  it('a retry waits for the agreement: nothing is offered, and nothing moves', async () => {
+    const { r, lock } = await refusedMerge()
+    rmSync(lock)
+    const { hostRunAgreedAt: _agreed, ...unagreed } = r.store.engines.get(REPO) as StoreDoc
+    r.store.atomic(() => r.store.engines.save(unagreed as StoreDoc))
+    expect(retryOffer(r.store, work(r))).toBeUndefined()
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'host_run_unagreed' })
+    expect(work(r).state).toBe('blocked')
+    expect(count(r, 'retry_requested')).toBe(0)
   })
 
   it('a retry runs the integration once more and clears the reason', async () => {

@@ -299,6 +299,39 @@ describe('MetaAgentService (plan §6/§12)', () => {
       expect(seen[0]?.reason).toContain('answer it with report_result')
     })
 
+    it('a question whose item was stopped runs no turn when it resumes', async () => {
+      const store = new MemoryRepositories()
+      live(store)
+      store.atomic(() => {
+        store.workItems.save({ id: 'wi_q', state: 'stopped', questionOnly: true, createdAt: NOW() })
+        store.messages.save({ id: 'msg_1', text: 'Why is it slow?', workItemId: 'wi_q', createdAt: NOW() })
+      })
+      const seen: unknown[] = []
+      const outcome = await asking(store, seen).onUserMessage({ messageId: 'msg_1', text: 'Why is it slow?' })
+      expect(seen).toEqual([])
+      expect(outcome.acknowledged).toContain('stopped')
+      expect(store.workItems.get('wi_q')).toMatchObject({ state: 'stopped' })
+    })
+
+    it('a question on held work is answered, and the hold keeps its item open', async () => {
+      const store = new MemoryRepositories()
+      live(store)
+      store.atomic(() => {
+        store.workItems.save({
+          id: 'wi_q',
+          state: 'planning',
+          questionOnly: true,
+          hold: { at: NOW(), reason: 'wait' },
+          createdAt: NOW(),
+        })
+        store.messages.save({ id: 'msg_1', text: 'Why is it slow?', workItemId: 'wi_q', createdAt: NOW() })
+      })
+      const outcome = await asking(store).onUserMessage({ messageId: 'msg_1', text: 'Why is it slow?' })
+      expect(outcome.acknowledged).toBe('It waits for its second check.')
+      expect(store.workItems.get('wi_q')).toMatchObject({ state: 'planning' })
+      expect(store.tasks.list().map((task) => task.id)).toEqual(['task_live'])
+    })
+
     it('a turn resumed after a crash is still a question', async () => {
       const store = new MemoryRepositories()
       live(store)

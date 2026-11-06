@@ -170,8 +170,8 @@
   {
     "name": "any block is offered",
     "file": "apps/desktop/src/delivery.ts",
-    "find": "    if (!INTEGRATION_BLOCK.test(reason)) return undefined\n",
-    "replace": "",
+    "find": "    if (!INTEGRATION_BLOCK.test(reason) || !hostRunAgreed(store, String(work.repoId))) return undefined\n",
+    "replace": "    if (!hostRunAgreed(store, String(work.repoId))) return undefined\n",
     "tests": ["apps/desktop/test/delivery.test.ts", "-t", "a block a retry cannot answer"]
   },
   {

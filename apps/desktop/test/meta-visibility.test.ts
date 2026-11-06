@@ -52,7 +52,14 @@ beforeEach(() => {
   migrate(db, MIGRATIONS_v1)
   store = new SqliteStore(db, { now: () => new Date(AT) })
   store.atomic(() => {
-    store.engines.save({ id: 'repo_a', url: '/code/alpha', bootstrap: [], checks: [], trust: true })
+    store.engines.save({
+      id: 'repo_a',
+      url: '/code/alpha',
+      bootstrap: [],
+      checks: [],
+      trust: true,
+      hostRunAgreedAt: AT,
+    })
     store.slots.save({ id: 'slot_a', label: 'preflight-a', engine: 'claude', state: 'healthy' })
     store.engines.save({ id: 'settings/meta-slot', slotId: 'slot_a' })
   })
@@ -208,11 +215,17 @@ describe('delegation is read from the attempts', () => {
 })
 
 describe('a turn that ended with no plan is not work in progress', () => {
-  it('an older report with no message to join to reads as no answer, with nothing guessed', async () => {
+  it('an item from before answers ended the work shows the report it has', async () => {
     seedQuestion('wi_q', 'It exports wave(name).')
     const row = await get('/api/inspect/work/wi_q')
-    expect(row.stage).toEqual({ key: 'ended/no-answer', label: 'No answer', waitingOn: 'none' })
-    expect(row.answer).toBeNull()
+    expect(row.stage).toEqual({ key: 'ended/answered', label: 'Answered', waitingOn: 'none' })
+    expect(row.answer).toBe('It exports wave(name).')
+    expect(row.reason).toBeNull()
+  })
+
+  it('a stored report carrying a key leaves redacted', async () => {
+    seedQuestion('wi_key', 'use sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
+    expect((await get('/api/inspect/work/wi_key')).answer).not.toContain('sk-ant-api03')
   })
 
   it('a turn that never finished the protocol: No answer, its record says why, and it ends no work', async () => {
@@ -296,12 +309,6 @@ describe('a turn that ended with no plan is not work in progress', () => {
     const row = await get('/api/inspect/work/wi_new')
     expect(row.turnOutcome).toBeNull()
     expect(row.stage.key).toBe('working')
-  })
-
-  it('a report from another turn is not this message’s answer', async () => {
-    seedQuestion('wi_other')
-    event('work:wi_other', 1, 'result_reported', { summary: 'older', at: LATER }, LATER)
-    expect((await get('/api/inspect/work/wi_other')).answer).toBeNull()
   })
 })
 

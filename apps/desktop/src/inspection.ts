@@ -1159,7 +1159,7 @@ class Inspector {
     if (str(doc.state) === 'done') return 'answered'
     if (str(doc.state) !== 'planning' || !turnEnded) return null
     if (this.#metaTurns().some((turn) => turn.workItemId === String(doc.id))) return null
-    return 'no-answer'
+    return this.#lastReport(doc) === null ? 'no-answer' : 'answered'
   }
 
   /** The row for each doc. Every batch read below is one query for the whole page, not one per row. */
@@ -1348,7 +1348,16 @@ class Inspector {
       .findLast((event) => event.type === 'work_answered')
     const messageId = str(obj(ended?.body ?? undefined)?.messageId)
     const said = str(this.#store.messages.get(messageId ?? '')?.ackText)
-    return said === null ? null : cutText(said, ANSWER_CAP)
+    return said === null ? this.#lastReport(doc) : cutText(said, ANSWER_CAP)
+  }
+
+  /** An older item's answer has only this: its report names no message, but it is what was said. */
+  #lastReport(doc: StoreDoc): string | null {
+    const report = this.#store.events
+      .read(`work:${String(doc.id)}`)
+      .findLast((event) => event.type === 'result_reported')
+    const summary = str(obj(report?.body ?? undefined)?.summary)
+    return summary === null ? null : cutText(summary, ANSWER_CAP)
   }
 
   /** Who holds each task. Only what the attempts record: nothing is copied from the request. */

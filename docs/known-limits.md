@@ -63,11 +63,18 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
     the moment of the ask. A worker's shell can still swap a file for a link after the answer, and
     Claude's own behaviour past an `allow` on a link has not been observed.
 
-- **`mec backup` and restore do not exist, though the spec promises them (spec line 722).** A backup
-  would also carry `work/` and the repo clones, so it can be large. Dedicated-slot workers write
-  engine transcripts under `engines/claude/<slot>/`, which a backup includes. Whether a transcript
-  can hold `MEC_TOOLS_TOKEN` (spec line 558, §5.7) has not been checked with a real run; it is a
-  planned check in handoff 33 B.
+- **`mec backup` and `mec restore` keep less than the whole state dir, and have no schedule.**
+  - Spec §20 says "on schedule", but gives no interval, so only on-demand backups exist. Cron can
+    run `mec backup`.
+  - `repos/` is left out whole and any binary or non-UTF-8 file is left out by name, because
+    redaction cannot read them. So a local `mec/*` commit that was never pushed is not in a
+    backup, a restored worktree's `.git` file dangles until its clone returns, and how recovery
+    treats such a worktree has not been exercised.
+  - Dedicated-slot workers write engine transcripts under `engines/claude/<slot>/`. Text
+    transcripts are redacted by shape. Whether a real transcript holds `MEC_TOOLS_TOKEN` (spec line
+    558, §5.7) has not been checked with a real run; it is a planned check in handoff 33 B.
+  - A token encoded inside text, such as base64, does not match a shape and stays.
+  - A backup taken with `mec backup` does not update the "last backup" in Settings.
 - **Card resolve gaps on `main` (open, assigned to handoff 21).**
   - A direct `POST /api/inbox/:id/resolve` still settles a no-evidence non-release card.
   - `#persistExtras` stores a planner card's operation and evidence unredacted (spec §13

@@ -9,7 +9,7 @@ export {
   type RuntimeState,
 } from './health'
 export { type CliIo, runCli } from './mec'
-export { restore, runRestoreDrill } from './restore'
+export { restore, restoreStore, runRestoreDrill } from './restore'
 export { DEFAULT_RULES, eligibility, planRetention, type RetentionRule } from './retention'
 export { serveMain } from './serve'
 export { buildHealthSnapshot, buildServer, type ServerDeps } from './server'

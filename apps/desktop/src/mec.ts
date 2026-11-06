@@ -10,6 +10,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { runBackupCli, runRestoreCli } from './backup-cli'
 import { buildDoctorJson, buildDoctorReport, defaultVersionRunner } from './doctor'
 import type { HealthSnapshot } from './health'
 import { parseHealthSnapshot } from './health'
@@ -39,7 +40,7 @@ export type CliIo = {
   env?: Record<string, string | undefined>
 }
 
-const USAGE = 'usage: mec <status|stop|restart|doctor|setup|slot|update> [flags]'
+const USAGE = 'usage: mec <status|stop|restart|doctor|setup|slot|update|backup|restore> [flags]'
 
 /** `parseHealthSnapshot` handles '' but not invalid JSON; a corrupt file is "no snapshot". */
 function parseSnapshot(text: string | null): HealthSnapshot | null {
@@ -111,6 +112,9 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
   if (command === 'slot') {
     return runSlotCli(argv.slice(1), { dataDir: io.dataDir, stdout: io.stdout })
   }
+
+  if (command === 'backup') return runBackupCli(argv.slice(1), io)
+  if (command === 'restore') return runRestoreCli(argv.slice(1), io)
 
   if (command === 'update') {
     io.stdout(buildUpdateReport(io))

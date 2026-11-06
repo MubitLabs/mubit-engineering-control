@@ -683,7 +683,8 @@ export function registerConfigRoutes(
   const backups = deps.backups
   if (backups !== undefined) {
     const NOTE = 'Archives stay in the backups folder of the MEC data directory. There is no schedule yet.'
-    const EXCLUDED = 'Slot keys, vendor sign-in files and lock files are left out by rule.'
+    const EXCLUDED =
+      'Slot keys, vendor sign-in files, lock files, repository clones and any file that cannot be redacted are left out by rule.'
 
     app.get('/api/backups', async () => {
       const doc = store.engines.get(BACKUPS_DOC_ID)

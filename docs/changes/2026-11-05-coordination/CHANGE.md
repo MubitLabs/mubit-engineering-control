@@ -60,6 +60,11 @@ So `send` resolves on `queued`, or the replay on a version without lifecycle lin
 3. A specialist reporting `failed` or `blocked`, then exiting 0, was accepted and its dependent ran.
 4. A specialist's question card said "asked by the planner this turn" and dropped its evidence. `GET /api/questions` now names the attempt and serves `evidence.evidenceRef`.
 
+## Found by the second verifier, fixed here
+
+1. On a repository with no checks, a follow-up stayed owned by a stopped attempt and `guardTurn` stripped every later plan on that work. `FollowUps.sweep` now reads `noVerdict`, shared from `authority.ts`, the same test the scheduler uses: handled messages settle and unhandled ones release.
+2. A planner-set wall clock was ignored. Plans store `wallClockMs` and `attempt-launch.ts` read `wall_clock_ms`, so every plan got the 30-minute default. It reads `wallClockMs` first, with `wall_clock_ms` as the fallback for seeded rows. This is its own commit, because the file came with M2.1 and the bug is not M2.2's.
+
 ## Found while building
 
 - **A `_` before a key defeats the secret patterns.** `frontier_sk-ant-…` stays unredacted, because `\bsk-ant-` needs a boundary. `SECRET_PATTERNS` is contracts, out of scope here. Open.
@@ -76,4 +81,6 @@ So `send` resolves on `queued`, or the replay on a version without lifecycle lin
 - **The real run is the verifier's.** Everything above is the stub's behaviour on 2.1.318, not a real model.
 - **`confirm` holds its HTTP call up to 120 s for a card.** Claude's own timeout on a permission tool at that length is unobserved. A timeout reads as a denial.
 - **Shell text is a heuristic.** `CONFIRM_BY_DEFAULT_SHELL` will miss spellings, and the sandbox stays the boundary.
+- **A turn can still be fenced for up to one pass.** `guardTurn` reads `owned`, and only the sweep clears it, so a turn in the gap of up to 2 s after an attempt ends is refused. The release wake that follows gives the planner its turn. This holds for every ended attempt, not only no-checks ones.
+- **A check stopped by a close also reads as no verdict.** `checksSkipped` writes `checks_note` on a stop as well, so an attempt stopped mid-check releases its messages. Crash and restart recovery is M2.4's.
 - **Every pass scans docs.** `list` loads a kind whole; `known-limits` has the numbers for reads, and passes add to them every 2 s.

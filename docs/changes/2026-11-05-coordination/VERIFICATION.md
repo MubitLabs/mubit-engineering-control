@@ -9,7 +9,7 @@ Builder's evidence only. Behaviour verification and the blockers-only review of 
 | `pnpm typecheck`, `biome check` | clean of errors |
 | `pnpm test` | 2454 passed, 15 skipped, 1 failed: `login-cards.test.ts` "drives a real interactive shell through the seam", the pre-existing `posix_spawnp` failure |
 | `pnpm --dir apps/web test:screens` under `/tmp/mec-screens.lock` | exit 0 |
-| `python3 tools/mutants/run.py tools/mutants/m2.2.json` | 55 of 55 killed |
+| `python3 tools/mutants/run.py tools/mutants/m2.2.json` | 59 of 59 killed |
 
 The base run also timed out once on `packages/runtime/test/shims.test.ts` under load. A process start can take 20 s in a full run here, which is why the input tests gate on stdin and the EOF test stands alone.
 
@@ -21,6 +21,15 @@ The base run also timed out once on `packages/runtime/test/shims.test.ts` under 
 ## The verifier's four defects
 
 Each test was run failing first, for its own reason, then passing: the receipt never left `read` and the composed follow-up run timed out, a wall-clock stop left the task `active`, a `failed` report launched the dependent, and the card named the planner. `test:screens` was not rerun for these: nothing in `apps/web` changed. No engine run was spent, so the two-block stdin line has been read only by the fake.
+
+## The second verifier's two defects
+
+Tests came first for both.
+
+- **No-checks follow-ups.** Before the fix, five tests failed: both composed runs in `coordination.test.ts` timed out on `settled` and on the `message released` wake, and three unit tests in `followups.test.ts` failed. The sixth, checks still running keeps the message, passed before and after, and guards the other direction.
+- **Wall clock.** Before the fix, the stored-plan launch test and the composed planner-budget test both timed out at 15 s. The seeded `wall_clock_ms` case passed before and after: the fallback was already right, and `seeded wall clock ignored` proves the test sees it.
+
+New mutants, all killed: `no-checks attempt keeps its follow-ups`, `checks still running count as ended`, `plan wall clock ignored`, `seeded wall clock ignored`. No engine run was spent, and nothing in `apps/web` changed, so `test:screens` was not rerun.
 
 ## Assertions changed on purpose
 

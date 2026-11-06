@@ -19,6 +19,7 @@ import { git, worktreeAdminDir } from '@mec/git'
 import { type Continuation, isHeld, revalidateWork } from '@mec/meta'
 import { openConfirmation, type PolicyDoc, policyPreAuthorises } from '@mec/policy'
 import { redact } from '@mec/slots'
+import type { Cleaner } from './core-facts'
 import { mayRun } from './recovery'
 
 const CARD_TTL_MS = 24 * 60 * 60 * 1000
@@ -31,6 +32,8 @@ export type SwitchDeps = {
   now: () => string
   /** Re-probes the target: true only if it answers healthy now. */
   probe: (slotId: string) => Promise<boolean>
+  /** The attempt cleaner: patterns, key fingerprints and that attempt's own token. */
+  clean: Cleaner
 }
 
 export type SwitchAnswer = { status: number; body: Record<string, Json> }
@@ -79,6 +82,10 @@ function plansFor(store: Store, parked: readonly StoreDoc[], toSlot: string, at:
   })
 }
 
+/** A person's or a pair's words, cleaned for every attempt they will sit beside. */
+const cleaned = (deps: SwitchDeps, parked: readonly StoreDoc[], reason: string): string =>
+  parked.reduce((text, doc) => deps.clean(String(doc.id), text), redact(reason, [], []))
+
 /** Why this work cannot move to this slot, or undefined when it can. */
 function refusal(deps: SwitchDeps, workItemId: string, toSlot: string, at: string): string | undefined {
   const { store, policy } = deps
@@ -104,10 +111,12 @@ export async function requestSwitch(
   input: { workItemId: string; toSlot: string; reason: string },
 ): Promise<SwitchAnswer> {
   const { store, policy, now } = deps
-  const { workItemId, toSlot, reason } = input
+  const { workItemId, toSlot } = input
   const at = now()
   const why = refusal(deps, workItemId, toSlot, at)
   if (why !== undefined) return refused(why)
+  const parked = parkedOn(store, workItemId)
+  const reason = cleaned(deps, parked, input.reason)
   const repoId = store.workItems.get(workItemId)?.repoId
   const scope = typeof repoId === 'string' ? { repoId } : {}
   if (policyPreAuthorises(policy, 'slot_switch', scope)) {
@@ -115,10 +124,9 @@ export async function requestSwitch(
       const body = { workItemId, toSlot, reason, at }
       appendEvent(store, `work:${workItemId}`, 'slot_switch_preauthorised', body, at)
     })
-    const moved = await applySwitch(deps, input)
+    const moved = await applySwitch(deps, { ...input, reason })
     return moved === undefined ? { status: 200, body: { status: 'switched' } } : refused(moved)
   }
-  const parked = parkedOn(store, workItemId)
   const fromSlots = [...new Set(parked.map((doc) => String(doc.slotId)))]
   const parkedAttempts = idsOf(parked)
   const operationHash = createHash('sha256')
@@ -136,11 +144,11 @@ export async function requestSwitch(
         evidence: {
           fromSlots: fromSlots.join(', '),
           parkedAttempts: parkedAttempts.join(', '),
-          reason: redact(reason, [], []),
+          reason,
         },
         toSlot,
         parkedAttempts,
-        reason: redact(reason, [], []),
+        reason,
       },
     } as unknown as StoreDoc)
     const body = { confirmationId: id, cls: 'slot_switch', workItemId, at }
@@ -211,7 +219,7 @@ export async function applySwitch(
   },
 ): Promise<string | undefined> {
   const { store, effects, now, probe } = deps
-  const { workItemId, toSlot, reason, confirmationId, parkedAttempts } = input
+  const { workItemId, toSlot, confirmationId, parkedAttempts } = input
   const stream = `work:${workItemId}`
   const refuse = (why: string, at: string): string => {
     appendEvent(store, stream, 'slot_switch_refused', { workItemId, toSlot, reason: why, at }, at)
@@ -226,6 +234,7 @@ export async function applySwitch(
   if (parkedAttempts !== undefined && !sameIds(idsOf(parked), parkedAttempts)) {
     return store.atomic(() => refuse('stale', start))
   }
+  const reason = cleaned(deps, parked, input.reason)
   const packs = await Promise.all(parked.map((doc) => packFor(store, doc)))
   const at = now()
   return store.atomic(() => {
@@ -268,7 +277,7 @@ export async function applySwitch(
         fromAttempt: String(doc.id),
         fromSlot: String(doc.slotId),
         toSlot,
-        reason: redact(reason, [], []),
+        reason,
         at,
         pack,
         updatedAt: at,

@@ -5,7 +5,7 @@ import { loadPolicy } from '@mec/policy'
 import type { SqliteStore } from '@mec/store'
 import { afterEach, describe, expect, it } from 'vitest'
 import { resumeAuthority } from '../src/recovery'
-import { applySwitch, type SwitchDeps } from '../src/slot-switch'
+import { applySwitch, requestSwitch, type SwitchDeps } from '../src/slot-switch'
 import {
   attemptOf,
   brainThatNeverRuns,
@@ -82,6 +82,7 @@ const direct = (store: SqliteStore): SwitchDeps => ({
   policy: loadPolicy(POLICY),
   now: () => NOW,
   probe: async () => true,
+  clean: (_attemptId, value) => value,
 })
 
 const patchAttempt = (rig: Rig, fields: Record<string, unknown>, id = 'att_1'): void => {
@@ -371,5 +372,26 @@ describe('switch slot', { timeout: 40_000 }, () => {
     await until(() => eventsOf(rig, `work:${WORK}`).includes('slot_switch_refused'))
     expect(attempts(rig)).toHaveLength(1)
     expect(peek(rig, (store) => store.confirmations.get(id)?.applied)).toBe(true)
+  })
+
+  it('a pre-authorised reason is cleaned before any write', async () => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    const clean = <T>(attemptId: string, value: T): T =>
+      (typeof value === 'string' ? value.replaceAll(`token-of-${attemptId}`, '[clean]') : value) as T
+    await peekAsync(rig, async (store) => {
+      const deps = { ...direct(store), policy: loadPolicy(PRE_AUTHORISED), clean }
+      const input = { workItemId: WORK, toSlot: 'slot_b', reason: 'quota token-of-att_1' }
+      expect((await requestSwitch(deps, input)).status).toBe(200)
+    })
+    const written = peek(rig, (store) =>
+      JSON.stringify([
+        store.events.read(`work:${WORK}`),
+        store.attempts.list({ workItemId: WORK }),
+        store.engines.list({ workItemId: WORK }),
+      ]),
+    )
+    expect(written).toContain('quota [clean]')
+    expect(written).not.toContain('token-of-att_1')
   })
 })

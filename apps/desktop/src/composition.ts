@@ -376,6 +376,7 @@ export async function startServer(opts: {
       probing()
         ? probeSlot(store, slotId, probeRun, iso)
         : Promise.resolve(store.slots.get(slotId)?.state === 'healthy'),
+    clean,
   }
   const parkDeps = { store, effects: store.effects, policyHash: policy.versionHash, now: iso }
   // §5.10: switches first, so an attempt that moved does not also resume.

@@ -26,7 +26,15 @@ Builder's evidence, from this branch's worktree. A separate behaviour verificati
 
 ## Screens
 
-Under the lock, in this worktree: `work`, `work-live`, `a11y`, `next` and `keyboard` suites, 462 passed, axe clean at 1440, 1024 and 390 in both themes. The `work-conversation` and `work-inspector` baselines were regenerated for all six cells.
+Under the lock, in this worktree: the whole suite, 936 passed, axe clean at 1440, 1024 and 390 in both themes. The `work-conversation` and `work-inspector` baselines were regenerated for all six cells.
+
+## `pnpm check`
+
+Typecheck and lint pass. The test step did not go green on this shared machine: two full runs gave 69 and then 50 failures, in process-spawning files, with a different set each time (`condition never held`, `attempt never left queued`, worker start timeouts). After fixing one real miss of mine (`sse-resume.test.ts`), running the 14 failing files one at a time gave 310 of 311. `coordination` and `attempt-runner` each passed alone. `recovery.test.ts` still fails alone with a changing set, 1 to 5 tests. On a clean export of `origin/main` it does the same: 2 failed, then 7 failed, in other tests. `packages/runtime` and `packages/engines` have no diff here. A clean run on a quiet machine is still owed.
+
+## Scratch smoke
+
+Built app, scratch `HOME` and `MEC_DATA_DIR`, fake engine. `/api/inspect/meta` answers `connection: null`, then idle with `at: null`, then `waiting_specialist`. The delegated work's detail lists both tasks: one with its placement reason, one with `waiting: dependency`.
 
 ## Not run
 

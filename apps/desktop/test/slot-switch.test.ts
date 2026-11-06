@@ -170,6 +170,7 @@ describe('switch slot', { timeout: 40_000 }, () => {
     await serve(rig, QUIET)
     await settle()
     expect(attempts(rig)).toHaveLength(2)
+    expect(eventsOf(rig, `work:${WORK}`)).not.toContain('slot_switch_refused')
   })
 
   it('an unhealthy target is refused', async () => {

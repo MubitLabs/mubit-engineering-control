@@ -123,6 +123,16 @@ describe('restart gives one authoritative outcome', { timeout: 60_000 }, () => {
     expect(attemptsOf(rig)).toBe(1)
   })
 
+  it('launch row left behind: it waits until reconciliation cleared its engine', async () => {
+    const rig = scratch(STEPS)
+    const pid = orphan()
+    seedStore(rig, { task: { status: 'ready' }, attempt: { process: { pid, started: await started(pid) } } })
+    await serve(rig, { probeRun: PROBE_OK })
+    await reaches(rig, 'work_complete')
+    expect(alive(pid)).toBe(false)
+    expect(attemptsOf(rig)).toBe(1)
+  })
+
   it('event journalled: the fact reaches the store once', async () => {
     const rig = scratch(HOLD_OPEN)
     seedStore(rig, { noRow: true, attempt: running })
@@ -583,6 +593,8 @@ describe('parked work', { timeout: 60_000 }, () => {
     await serve(rig, { brain: brainThatNeverRuns, probeRun: PROBE_DOWN })
     await settle()
     expect(attemptOf(rig)?.state).toBe('quota_wait')
+    expect(attemptOf(rig)?.generation).toBe(1)
+    expect(rig.started()).toBe(false)
   })
 
   it("a hold keeps parked work parked, and the owner's resume does not lift it", async () => {
@@ -666,6 +678,15 @@ describe('an attempt stopped mid-check', { timeout: 60_000 }, () => {
         checks_stopped: 'stop_requested' as never,
       })
     })
+    await peekAsync(rig, (store) =>
+      reconcileProcesses({
+        store,
+        effects: store.effects,
+        dataDir: rig.dataDir,
+        now: () => '2026-11-05T11:00:00.000Z',
+      }),
+    )
+    expect(peek(rig, (store) => store.effects.snapshot('launch', 'att_1:1:recheck'))).toBeUndefined()
     await serve(rig, { probeRun: PROBE_OK })
     await settle()
     expect(attemptOf(rig)?.state).toBe('work_complete')

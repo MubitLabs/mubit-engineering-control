@@ -4,11 +4,7 @@
     "file": "apps/desktop/src/composition.ts",
     "find": "  await reconcileProcesses(processDeps)\n",
     "replace": "  void store.effects.run().catch(() => {})\n  await reconcileProcesses(processDeps)\n",
-    "tests": [
-      "apps/desktop/test/recovery.test.ts",
-      "-t",
-      "orphan group is gone before dispatch|launch claimed"
-    ]
+    "tests": ["apps/desktop/test/recovery.test.ts", "-t", "launch row left behind"]
   },
   {
     "name": "replay without dedupe",

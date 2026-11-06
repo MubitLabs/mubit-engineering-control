@@ -99,6 +99,55 @@ describe('GET /api/questions', () => {
     expect(answered?.answer).toBe('opencode, please')
   })
 
+  it('a specialist’s card names its attempt and serves its evidence', async () => {
+    const { store, app } = makeServer()
+    store.atomic(() => {
+      store.engines.save({
+        id: 'question/q_3',
+        questionId: 'q_3',
+        question: 'Keep the old export?',
+        options: [],
+        attemptId: 'att_1',
+        evidenceRef: 'a.txt',
+        status: 'open',
+        createdAt: AT,
+        updatedAt: AT,
+      })
+    })
+
+    const body = (await (await app.inject({ method: 'GET', url: '/api/questions' })).json()) as Array<
+      Record<string, unknown>
+    >
+    expect(body[0]?.evidence).toEqual({
+      what: 'Keep the old export?',
+      why: 'asked by the specialist on attempt att_1',
+      facts: [],
+      consequences: 'unknown — not recorded in this build',
+      evidenceRef: 'a.txt',
+    })
+  })
+
+  it('a specialist asking about a message keeps both facts', async () => {
+    const { store, app } = makeServer()
+    store.atomic(() => {
+      store.engines.save({
+        id: 'question/q_4',
+        questionId: 'q_4',
+        question: 'Which one?',
+        attemptId: 'att_2',
+        forMessageId: 'msg_9',
+        status: 'open',
+        createdAt: AT,
+        updatedAt: AT,
+      })
+    })
+    const body = (await (await app.inject({ method: 'GET', url: '/api/questions' })).json()) as Array<{
+      evidence: Record<string, unknown>
+    }>
+    expect(body[0]?.evidence.why).toBe('asked by the specialist on attempt att_2 for message msg_9')
+    expect(body[0]?.evidence).not.toHaveProperty('evidenceRef')
+  })
+
   it('an empty store serves an empty list, not an error', async () => {
     const { app } = makeServer()
     const response = await app.inject({ method: 'GET', url: '/api/questions' })

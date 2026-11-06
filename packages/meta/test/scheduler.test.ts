@@ -1,6 +1,6 @@
 // M2.2: the §11 pass, over the memory store. Its effects queue refuses an enqueue outside
 // `atomic`, so a green run also proves a launch row commits with its attempt.
-import type { Json, StoreDoc } from '@mec/contracts'
+import type { Json, Report, StoreDoc } from '@mec/contracts'
 import { DEFAULT_CAPS, type SlotModelsView } from '@mec/domain'
 import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -99,6 +99,18 @@ function task(store: MemoryRepositories, id: string, extra: StoreDoc = {}, workI
 const attemptsOf = (store: MemoryRepositories, taskId: string) => store.attempts.list({ taskId })
 const launchRows = (store: MemoryRepositories) =>
   store.snapshot().effects.filter((row) => row.kind === 'launch')
+
+function attempt(store: MemoryRepositories, fields: StoreDoc): void {
+  store.atomic(() => {
+    store.attempts.save({ id: 'att_1', taskId: 'task_a', workItemId: 'wi_1', slotId: 'slot_a', ...fields })
+  })
+}
+
+function saveReport(store: MemoryRepositories, n: number, report: Report): void {
+  store.atomic(() => {
+    store.engines.save({ id: `report/att_1/${n}`, attemptId: 'att_1', n, report: report as unknown as Json })
+  })
+}
 
 describe('the scheduler pass (§11)', () => {
   it('dependent launches after prerequisite accepted', () => {
@@ -241,6 +253,110 @@ describe('the scheduler pass (§11)', () => {
     pass()
     expect(store.tasks.get('task_a')).toMatchObject({ status: 'blocked' })
     expect(String(store.tasks.get('task_a')?.blockedReason)).toContain('failed its checks on abc')
+  })
+
+  it('an attempt that ran out of its wall clock blocks its task and its dependents', () => {
+    const { store, pass } = rig()
+    work(store)
+    task(store, 'task_a', { status: 'active' })
+    task(store, 'task_b', { dependsOn: ['task_a'] })
+    attempt(store, { state: 'interrupted', terminal_reason: 'wall_clock' })
+
+    expect(pass()).toEqual([])
+    expect(store.tasks.get('task_a')).toMatchObject({
+      status: 'blocked',
+      blockedReason: 'attempt att_1 ran out of its wall clock',
+    })
+    expect(String(store.tasks.get('task_b')?.blockedReason)).toContain('prerequisite a cannot finish')
+    expect(store.workItems.get('wi_1')).toMatchObject({
+      state: 'blocked',
+      blockedReason: 'attempt att_1 ran out of its wall clock',
+    })
+  })
+
+  it('a stopped attempt, or one the server closed on, is not a failure', () => {
+    for (const terminal_reason of ['stop_requested', 'server_closing', undefined]) {
+      const { store, pass } = rig()
+      work(store)
+      task(store, 'task_a', { status: 'active' })
+      attempt(store, { state: 'interrupted', ...(terminal_reason !== undefined && { terminal_reason }) })
+      pass()
+      expect(store.tasks.get('task_a')?.status).toBe('active')
+    }
+  })
+
+  for (const kind of ['failed', 'blocked'] as const) {
+    it(`a specialist that reports ${kind} is not accepted, and its dependent never runs`, () => {
+      const { store, pass } = rig()
+      work(store)
+      task(store, 'task_a', { status: 'awaiting_review' })
+      task(store, 'task_b', { dependsOn: ['task_a'] })
+      attempt(store, { state: 'succeeded', head_sha: 'abc', reports: 1 })
+      saveReport(store, 1, { kind, summary: 'I could not do it' })
+
+      expect(pass()).toEqual([])
+      expect(store.tasks.get('task_a')).toMatchObject({
+        status: 'blocked',
+        blockedReason: `attempt att_1 reported ${kind}: I could not do it`,
+      })
+      expect(store.tasks.get('task_a')?.acceptedHead).toBeUndefined()
+      expect(store.tasks.get('task_b')?.status).toBe('blocked')
+      expect(String(store.tasks.get('task_b')?.blockedReason)).toContain('I could not do it')
+    })
+  }
+
+  it('a dropped report ends the task, and a dependent says why it cannot start', () => {
+    const { store, pass } = rig()
+    work(store)
+    task(store, 'task_a', { status: 'awaiting_review' })
+    task(store, 'task_b', { dependsOn: ['task_a'] })
+    attempt(store, { state: 'succeeded', head_sha: 'abc', reports: 1 })
+    saveReport(store, 1, { kind: 'dropped', summary: 'already done upstream' })
+
+    expect(pass()).toEqual([])
+    expect(store.tasks.get('task_a')).toMatchObject({
+      status: 'cancelled',
+      cancelledReason: 'attempt att_1 dropped it: already done upstream',
+    })
+    expect(store.events.read('work:wi_1').map((event) => event.type)).toContain('task_cancelled')
+    expect(String(store.tasks.get('task_b')?.blockedReason)).toContain('already done upstream')
+  })
+
+  it('only the last report counts: a blocked attempt that recovered is accepted', () => {
+    const { store, pass } = rig()
+    work(store)
+    task(store, 'task_a', { status: 'awaiting_review' })
+    attempt(store, { state: 'succeeded', head_sha: 'abc', reports: 2 })
+    saveReport(store, 1, { kind: 'blocked', summary: 'stuck for a moment' })
+    saveReport(store, 2, { kind: 'ready', summary: 'done' })
+
+    pass()
+    expect(store.tasks.get('task_a')).toMatchObject({ status: 'accepted', acceptedHead: 'abc' })
+  })
+
+  it('a repo with no checks still hears the report: failed blocks, and work_complete stays out', () => {
+    const { store, pass } = rig()
+    work(store)
+    task(store, 'task_a', { status: 'awaiting_review' })
+    attempt(store, { state: 'work_complete', checks_note: 'no checks', reports: 1 })
+    saveReport(store, 1, { kind: 'failed', summary: 'nothing worked' })
+
+    pass()
+    expect(store.tasks.get('task_a')).toMatchObject({
+      status: 'blocked',
+      blockedReason: 'attempt att_1 reported failed: nothing worked',
+    })
+  })
+
+  it('a report settles only a task still waiting on its attempt', () => {
+    const { store, pass } = rig()
+    work(store)
+    task(store, 'task_a', { status: 'accepted', acceptedHead: 'abc' })
+    attempt(store, { state: 'succeeded', head_sha: 'abc', reports: 1 })
+    saveReport(store, 1, { kind: 'failed', summary: 'too late to matter' })
+
+    pass()
+    expect(store.tasks.get('task_a')?.status).toBe('accepted')
   })
 
   it('held work gets zero launches and lift dispatches', () => {

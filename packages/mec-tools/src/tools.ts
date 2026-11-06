@@ -240,7 +240,7 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
   },
   report: {
     description:
-      'Report attempt status in the closed vocabulary (progress, waiting, ready, blocked, failed, dropped), optionally one question',
+      'Report status: progress, waiting, ready, blocked, failed or dropped; optionally one question. List a follow-up you handled in handled_inputs by input id; one you cannot own goes to handback',
     inputSchema: {
       type: 'object',
       properties: {

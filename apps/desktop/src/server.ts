@@ -1767,6 +1767,15 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // that records the user's word and WAKES the planner, and Chat's Setup mode backing
   // (the store-backed default setup agent). Other lanes may append after this block.
 
+  /** Who asked: a question with an attempt is a specialist's, whatever message it is bound to. */
+  const questionWhy = (doc: StoreDoc): string => {
+    const forMessage = typeof doc.forMessageId === 'string' ? `for message ${doc.forMessageId}` : undefined
+    if (typeof doc.attemptId === 'string') {
+      return [`asked by the specialist on attempt ${doc.attemptId}`, forMessage].filter(Boolean).join(' ')
+    }
+    return forMessage === undefined ? 'asked by the planner this turn' : `asked ${forMessage}`
+  }
+
   /**
    * The decision-card evidence mapping (what/why/facts/consequences) from the question
    * record alone: every field is served from what exists, and what does not exist says
@@ -1774,12 +1783,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
    */
   const questionEvidence = (doc: StoreDoc): Record<string, unknown> => ({
     what: typeof doc.question === 'string' ? doc.question : 'unknown',
-    why:
-      typeof doc.forMessageId === 'string'
-        ? `asked for message ${doc.forMessageId}`
-        : 'asked by the planner this turn',
+    why: questionWhy(doc),
     facts: Array.isArray(doc.options) ? doc.options : [],
     consequences: 'unknown — not recorded in this build',
+    ...(typeof doc.evidenceRef === 'string' && { evidenceRef: doc.evidenceRef }),
   })
 
   app.get('/api/questions', async () =>

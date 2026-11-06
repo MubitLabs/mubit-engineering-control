@@ -27,6 +27,7 @@ The base run also timed out once on `packages/runtime/test/shims.test.ts` under 
 - `specialist-tools.test.ts`: with no card path the tools still answer an error, with a different message.
 - `server.test.ts`, `release-cards.test.ts`: approved cards now carry evidence, because an empty one answers 422.
 - `apps/web/test/release-cards.test.ts`, `screens.playwright.ts`: the agent wording needs `continues: true`.
+- `coordination.test.ts` "owned follow-up": `content` is now blocks, and the first is the text, unchanged.
 
 ## Real engine
 

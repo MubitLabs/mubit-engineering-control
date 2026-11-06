@@ -93,7 +93,7 @@ type Rig = ReturnType<typeof scratch> & {
   url: string
   post: (path: string, body: unknown) => Promise<{ status: number; body: Record<string, unknown> }>
   read: <T>(fn: (store: SqliteStore) => T) => T
-  stdin: () => { message: { content: string } }[]
+  stdin: () => { message: { content: string | { type: string; text: string }[] } }[]
 }
 
 async function serve(context: ReturnType<typeof scratch>, brain: MetaBrain): Promise<Rig> {
@@ -254,13 +254,72 @@ describe('continuing coordination (§11, §12)', () => {
     const messageId = String(follow.body.messageId)
 
     await until(() => stageOf(r, messageId) === 'delivered')
-    expect(r.stdin()[1]?.message.content).toBe(text)
+    expect(r.stdin()[1]?.message.content[0]).toEqual({ type: 'text', text })
     await new Promise((resolve) => setTimeout(resolve, 200))
     expect(stageOf(r, messageId)).toBe('delivered')
 
     await until(() => stageOf(r, messageId) !== 'delivered')
     await until(() => attemptIn(r)?.state === 'succeeded')
     expect(stageOf(r, messageId)).toBe('read')
+  }, 60_000)
+
+  // The fake reads `$INPUT_ID` and `$MESSAGE_ID` from the follow-up's own stdin line, as an engine
+  // has to: nothing else tells it either.
+  const followUpRun = async (followUp: unknown[]) => {
+    const steps = [{ init: true }, { waitInput: 2 }, ...WORK.slice(1)]
+    const wakes: string[] = []
+    const plan = planOf(task('first'))
+    const brain: MetaBrain = async (context) => {
+      if (context.wake?.reason !== 'user message') wakes.push(String(context.wake?.reason))
+      return plan(context)
+    }
+    const r = await serve(scratch({ steps, followUp }), brain)
+    const { body } = await r.post('/api/chat/messages', { text: 'go', repoId: REPO })
+    await until(() => attemptIn(r)?.state === 'running')
+    const follow = await r.post('/api/chat/messages', {
+      text: 'also write heron.txt',
+      repoId: REPO,
+      referencesWorkItem: body.workItemId,
+      intent: 'follow_up',
+    })
+    return { r, wakes, messageId: String(follow.body.messageId) }
+  }
+
+  it('a follow-up the specialist acted on reaches settled, and the planner never plans it', async () => {
+    const { r, wakes, messageId } = await followUpRun([
+      { write: { path: 'heron.txt', text: 'heron\n' } },
+      {
+        call: {
+          tool: 'report',
+          args: { kind: 'progress', summary: 'wrote heron.txt', handled_inputs: ['$INPUT_ID'] },
+        },
+      },
+      { result: 'completed' },
+    ])
+
+    await until(() => attemptIn(r)?.state === 'succeeded')
+    await until(() => stageOf(r, messageId) === 'settled')
+    await new Promise((resolve) => setTimeout(resolve, 2200))
+
+    const message = r.read((store) => store.messages.get(messageId))
+    expect(message).toMatchObject({ owned: false, receipt: { stage: 'settled' } })
+    expect(message?.released).toBeUndefined()
+    expect(wakes).toEqual([])
+  }, 60_000)
+
+  it('a follow-up the specialist cannot own is handed back by the id on its stdin line', async () => {
+    const { r, wakes, messageId } = await followUpRun([
+      { call: { tool: 'handback', args: { message_id: '$MESSAGE_ID', reason: 'beyond this task' } } },
+      { result: 'completed' },
+    ])
+
+    await until(() => wakes.includes('follow-up handed back'))
+    await until(() => attemptIn(r)?.state === 'succeeded')
+    await until(() => stageOf(r, messageId) === 'settled')
+    const message = r.read((store) => store.messages.get(messageId))
+    expect(message).toMatchObject({ handback: { reason: 'beyond this task', attemptId: 'att_1' } })
+    expect(message?.released).toBeUndefined()
+    expect(wakes).not.toContain('message released')
   }, 60_000)
 
   it('reserved wake delivers before a queued launch', async () => {

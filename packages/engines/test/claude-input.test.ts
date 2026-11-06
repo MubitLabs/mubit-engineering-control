@@ -140,6 +140,32 @@ describe('claude stream-json input (§9, §12.3)', { timeout: 60_000 }, () => {
     expect(typeof lines[1]?.uuid).toBe('string')
   })
 
+  it('a follow-up keeps its text and names its ids in a second block', async () => {
+    const r = await run([{ init: true }, { waitInput: 2 }, { result: 'completed' }])
+    await waitFor(() => r.events.length > 0)
+
+    const text = 'Keep  the "text"\nunchanged'
+    await r.adapter.send(r.handle, { ...input(text, 'inp_7'), message_id: 'msg_7' })
+    await r.done
+
+    const message = r.stdin()[1]?.message as { content: { type: string; text: string }[] }
+    expect(message.content).toHaveLength(2)
+    expect(message.content[0]).toEqual({ type: 'text', text })
+    expect(message.content[1]?.type).toBe('text')
+    expect(message.content[1]?.text).toContain('input id inp_7')
+    expect(message.content[1]?.text).toContain('message id msg_7')
+    expect(message.content[1]?.text).toContain('handled_inputs')
+    expect(message.content[1]?.text).toContain('mcp__mec__handback')
+  })
+
+  it('an input with no message has nothing to hand back, so it stays plain text', async () => {
+    const r = await run([{ init: true }, { waitInput: 2 }, { result: 'completed' }])
+    await waitFor(() => r.events.length > 0)
+    await r.adapter.send(r.handle, { id: 'inp_8', kind: 'note', text: 'Your card was approved.' })
+    await r.done
+    expect(r.stdin()[1]?.message).toEqual({ role: 'user', content: 'Your card was approved.' })
+  })
+
   it('process exits after stdin closes', async () => {
     const r = await run([{ init: true }, { result: 'completed' }, { waitEof: true }])
     await r.done

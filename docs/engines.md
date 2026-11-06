@@ -37,6 +37,7 @@ No vendor call: a scratch home, a dummy key and `ANTHROPIC_BASE_URL` on a loopba
 - With `--replay-user-messages`, an `isReplay: true` user line with the same `uuid` arrives with the turn's response, not on receipt.
 - A message written mid-turn gets its own turn and `result`. With no tool calls in the stub, joining a turn between tool calls is unobserved.
 - After a `result` the process waits for stdin. EOF exits 0, and a message queued before EOF still runs.
+- A follow-up's `content` is two text blocks: the person's words, then its input id and message id. Only the fake has read this shape on stdin so far; the probe used a plain string.
 
 ## H1 canary learnings (Claude Code 2.1.317, 3 Nov 2026)
 

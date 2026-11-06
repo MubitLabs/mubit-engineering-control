@@ -110,6 +110,25 @@ type Launch = {
 /** How long the engine has to say it took an input before the delivery counts as failed. */
 const INPUT_TIMEOUT_MS = 10_000
 
+type Content = string | { type: 'text'; text: string }[]
+
+/**
+ * A follow-up's words stay exactly the person's. The ids go in a block of their own, because the
+ * engine has no other way to know them, and `handled_inputs` and `handback` need them (§12.3, §12.4).
+ */
+function contentOf(input: Input): Content {
+  if (input.message_id === undefined) return input.text
+  const reference =
+    `MEC follow-up: input id ${input.id}, message id ${input.message_id}. ` +
+    `Once you have handled it, list ${input.id} in handled_inputs on mcp__mec__report. ` +
+    `If it is beyond your task, call mcp__mec__handback once with message_id ${input.message_id} ` +
+    'and a one-sentence reason.'
+  return [
+    { type: 'text', text: input.text },
+    { type: 'text', text: reference },
+  ]
+}
+
 export type ClaudeAdapterDeps = {
   spawnFn?: SpawnFn
   /**
@@ -212,7 +231,7 @@ export class ClaudeAdapter implements EngineAdapter {
     if (!launch) throw new Error(`claude adapter: unknown attempt ${handle.attempt_id}`)
     if (this.deps.streamInput !== true) throw new Error('claude adapter: this launch has no stream input')
     if (!launch.inputOpen) throw new Error('claude adapter: the engine input is closed: its last turn ended')
-    const command = this.#write(launch, input.text, input.id)
+    const command = this.#write(launch, contentOf(input), input.id)
     let timer: NodeJS.Timeout | undefined
     const late = new Promise<never>((_, reject) => {
       timer = setTimeout(
@@ -234,7 +253,7 @@ export class ClaudeAdapter implements EngineAdapter {
     await command?.finished.promise
   }
 
-  #write(launch: Launch, text: string, inputId?: string): Command {
+  #write(launch: Launch, content: Content, inputId?: string): Command {
     const uuid = randomUUID()
     const command: Command = {
       uuid,
@@ -247,7 +266,7 @@ export class ClaudeAdapter implements EngineAdapter {
     launch.commands.set(uuid, command)
     const message = {
       type: 'user',
-      message: { role: 'user', content: text },
+      message: { role: 'user', content },
       parent_tool_use_id: null,
       session_id: launch.handle.session_id,
       uuid,

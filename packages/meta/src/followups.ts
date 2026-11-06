@@ -279,8 +279,12 @@ export class FollowUps {
       return
     }
     this.#move(doc, 'delivered', at, fields)
-    // A short turn can end before this commit: the read waited for it.
+    // A short turn can end before this commit, and a quick report can land: both waited for it.
     const moved = this.#store.messages.get(String(doc.id)) as StoreDoc
+    if (moved.handled_early === input.id) {
+      this.#handled(attemptId, input.id, at)
+      return
+    }
     if (moved.turn_ended === input.id) this.#move(moved, 'read', at)
   }
 
@@ -378,6 +382,10 @@ export class FollowUps {
   #handled(attemptId: string, inputId: string, at: string): void {
     const doc = this.#owned().find((row) => row.inputId === inputId && row.ownerAttemptId === attemptId)
     if (doc === undefined) return
+    if (stageOf(doc) === 'received') {
+      this.#store.messages.save({ ...doc, handled_early: inputId, updatedAt: at })
+      return
+    }
     if (stageOf(doc) === 'delivered') this.#move(doc, 'read', at)
     const fresh = this.#store.messages.get(String(doc.id)) as StoreDoc
     if (stageOf(fresh) === 'read') this.#move(fresh, 'handled', at)

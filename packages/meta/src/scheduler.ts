@@ -12,7 +12,7 @@
  * - **Placement grants, the planner only asks.** A pin is honoured, a model request must resolve
  *   on the slot, and nothing unavailable silently becomes a default (§3, §11).
  */
-import type { Effects, EngineId, Json, Store, StoreDoc } from '@mec/contracts'
+import type { Effects, EngineId, Json, Report, Store, StoreDoc } from '@mec/contracts'
 import { ModelRequest } from '@mec/contracts'
 import type { AttemptState, BasePolicy, Caps, SchedulableTask, SlotModelsView, SlotView } from '@mec/domain'
 import {
@@ -75,12 +75,15 @@ const RELEASES: Readonly<Record<string, string>> = {
 
 const launchKey = (attempt: StoreDoc): string => `${String(attempt.id)}:${Number(attempt.generation ?? 1)}`
 
+/** A repo with no checks leaves its attempt `work_complete` with a note: no verdict is coming. */
+const noVerdict = (attempt: StoreDoc): boolean =>
+  attempt.state === 'work_complete' && typeof attempt.checks_note === 'string'
+
 function occupies(deps: SchedulerDeps, attempt: StoreDoc): boolean {
   const state = String(attempt.state) as AttemptState
   if (!OCCUPYING.includes(state)) return false
   if (state === 'queued') return deps.launchRowState?.(launchKey(attempt)) !== 'failed'
-  // A repo with no checks leaves its attempt `work_complete` with a note: no verdict is coming.
-  return !(state === 'work_complete' && typeof attempt.checks_note === 'string')
+  return !noVerdict(attempt)
 }
 
 /** Numbered ids sort as numbers: `att_10` is later than `att_9`. */
@@ -101,6 +104,10 @@ function failure(deps: SchedulerDeps, attempt: StoreDoc): string | undefined {
   if (state === 'failed')
     return `attempt ${id} failed: ${String(attempt.terminal_reason ?? 'no reason given')}`
   if (state === 'checks_failed') return `attempt ${id} failed its checks on ${String(attempt.head_sha)}`
+  // Stopped work is fenced, and a restart resumes (M2.4). Only the budget ending it is a failure.
+  if (state === 'interrupted' && attempt.terminal_reason === 'wall_clock') {
+    return `attempt ${id} ran out of its wall clock`
+  }
   if (state === 'queued' && deps.launchRowState?.(launchKey(attempt)) === 'failed') {
     return `attempt ${id} could not launch`
   }
@@ -122,6 +129,40 @@ function moveTask(store: Store, task: StoreDoc, event: string, fields: StoreDoc,
   }
   store.tasks.save(moved)
   return moved
+}
+
+/** What the attempt last said of itself (§10). The stored report is redacted. */
+function lastReport(store: Store, attempt: StoreDoc): Pick<Report, 'kind' | 'summary'> | undefined {
+  const doc = store.engines.get(`report/${String(attempt.id)}/${Number(attempt.reports ?? 0)}`)
+  return doc?.report as Pick<Report, 'kind' | 'summary'> | undefined
+}
+
+/**
+ * §10 and §15: an agent ending its turn is not success, and passing checks do not undo what it
+ * said. `failed` and `blocked` block the task with the report's summary, and `dropped` ends it.
+ * Returns whether the report settled the task. Runs before acceptance, on a task still waiting
+ * for this attempt: a late report never takes back an accepted task.
+ */
+function settleOnReport(store: Store, task: StoreDoc, attempt: StoreDoc, at: string): boolean {
+  if (attempt.state !== 'succeeded' && !noVerdict(attempt)) return false
+  if (task.status !== 'active' && task.status !== 'awaiting_review') return false
+  const report = lastReport(store, attempt)
+  const id = String(attempt.id)
+  if (report?.kind === 'failed' || report?.kind === 'blocked') {
+    blockTask(store, task, `attempt ${id} reported ${report.kind}: ${report.summary}`, at)
+    return true
+  }
+  if (report?.kind !== 'dropped') return false
+  const { deferred: _deferred, ...rest } = task
+  moveTask(store, rest, 'cancel', { cancelledReason: `attempt ${id} dropped it: ${report.summary}` }, at)
+  appendEvent(
+    store,
+    `work:${String(task.workItemId)}`,
+    'task_cancelled',
+    { taskId: String(task.id), attemptId: id, at },
+    at,
+  )
+  return true
 }
 
 /**
@@ -167,6 +208,7 @@ function settleTasks(deps: SchedulerDeps, workItemId: string, at: string): void 
     const attempts = store.attempts.list({ taskId: task.id })
     const latest = latestOf(attempts)
     if (latest === undefined) continue
+    if (settleOnReport(store, task, latest, at)) continue
     if (latest.state === 'succeeded') {
       acceptRoutine(store, task, latest, at)
       continue
@@ -199,7 +241,10 @@ function blockDependents(store: Store, workItemId: string, at: string): void {
       })
       if (stuck === undefined) continue
       const prerequisite = byId.get(stuck)
-      const why = prerequisite?.blockedReason ?? `it is ${String(prerequisite?.status)}`
+      const why =
+        prerequisite?.blockedReason ??
+        prerequisite?.cancelledReason ??
+        `it is ${String(prerequisite?.status)}`
       const reason = `prerequisite ${dependencyName(prerequisite, stuck)} cannot finish: ${String(why)}`
       blockTask(store, task, reason, at)
       moved = true

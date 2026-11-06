@@ -16,6 +16,8 @@ A multi-task plan runs to its end with no second message. Each next wave dispatc
 - **Receipts** live on the message doc. `ReceiptLadder` is hydrated per message and written through.
 - **Cards.** `decideOperation` in `specialist-tools.ts` is the one rule behind `confirm` and the in-process bridge. A dependency install or migration generation opens a card, or passes on policy's pre-authorisation, and waits. An always-confirm class stays denied. Expiry goes through the same compare-and-set as an answer. No specialist tool settles anything.
 
+- **Settling.** A pass also reads what an attempt said. An attempt that ran out of its wall clock is a failure. `stop_requested` and `server_closing` are not: stopped work is fenced, and restart is M2.4. On an attempt that finished, a last report of `failed` or `blocked` blocks the task with the report's summary, and `dropped` cancels it with `cancelledReason` (`TASK_MACHINE` has no `dropped` state). This reads #32 as covering work that says it is done, and it runs on a no-checks attempt too, or a `failed` report there would never reach anyone.
+
 ## Stream input on Claude (decision #30)
 
 The objective goes on stdin as the first user message, as §9 writes the argv: `claude -p --verbose --output-format stream-json --input-format stream-json --replay-user-messages`. The attempt launcher asks for this; a planner turn stays one-shot with its prompt on argv.
@@ -27,6 +29,8 @@ Probed on `claude` 2.1.318 (the installed binary; `docs/engines.md` pins 2.1.317
 - A message written mid-turn waits for the next turn, with its own `result`. The stub had no tool calls, so whether a message can join a turn between tool calls is unobserved.
 - `isReplay` user lines carry the same `uuid`, but only arrive with the turn's response.
 - The process stays up after a `result` until stdin closes, then exits 0. A message queued before the close is still processed.
+
+A follow-up's line has two text blocks. The first is the person's words, unchanged. The second names its input id and message id, the only way an engine learns them, so `handled_inputs` and `handback` can be reached at all. An input with no message (an answer, a card note) stays plain text, because it has nothing to hand back.
 
 So `send` resolves on `queued`, or the replay on a version without lifecycle lines, and fails by name after 10 s. That is `delivered`. `read` is the turn that carried the input ending, or a report naming it in `handled_inputs`. A plain report in the same turn is not evidence: the message may still be waiting for its turn. Stdin closes when every line has `completed`, or at once after a result that did not complete.
 
@@ -49,6 +53,13 @@ So `send` resolves on `queued`, or the replay on a version without lifecycle lin
 3. `#persistExtras` redacts questions, cards, routes and reports, field names included, before any write. `cardDetail` redacts labels and the class for rows stored before this.
 4. The toast says what the server says. `continues: true` gives "the agent was told to continue"; otherwise "Approved. Your approval is on record; nothing runs from this click."
 
+## Found by the verifier, fixed here
+
+1. A follow-up the specialist acted on was released as unhandled, and a real planner planned the work again: nothing told the engine the ids. The second content block, the role prompts and the `report` description now do. A report can beat the delivery commit, so `#handled` keeps it as `handled_early` until `#delivered` lands.
+2. A wall-clock stop left its task `active` and its dependents waiting with no reason.
+3. A specialist reporting `failed` or `blocked`, then exiting 0, was accepted and its dependent ran.
+4. A specialist's question card said "asked by the planner this turn" and dropped its evidence. `GET /api/questions` now names the attempt and serves `evidence.evidenceRef`.
+
 ## Found while building
 
 - **A `_` before a key defeats the secret patterns.** `frontier_sk-ant-…` stays unredacted, because `\bsk-ant-` needs a boundary. `SECRET_PATTERNS` is contracts, out of scope here. Open.
@@ -58,6 +69,9 @@ So `send` resolves on `queued`, or the replay on a version without lifecycle lin
 ## Risks
 
 - **A pass picks up any ready task with no attempt**, including one on work planned before this change that never launched. With the runner flag on, an old `executing` item starts engines on boot. The flag stays off for real repositories (#25), but check before turning it on against an existing store.
+- **Content blocks on stdin are the stub-probed path's untested neighbour.** `content` as an array is the Messages API shape, but only the fake has read it on stdin. If a real binary refuses it, every follow-up delivery fails by name and the message is released: the safe direction. The next real run sees it.
+- **A dependent of a `dropped` task blocks.** That was already the rule for a cancelled prerequisite, and it holds even when the drop means "already done". The block says why.
+- **The card serves `evidenceRef`, but the workbench does not show it yet.** `apps/web/src/api-decode.ts` reads `why` only.
 - **`command_lifecycle` is undocumented.** If it goes, the replay still works, later. If both go, every delivery fails by name and the message is released: the safe direction. `REQUIRED_FLAGS` now includes `--replay-user-messages`, so the probe sees it go.
 - **The real run is the verifier's.** Everything above is the stub's behaviour on 2.1.318, not a real model.
 - **`confirm` holds its HTTP call up to 120 s for a card.** Claude's own timeout on a permission tool at that length is unobserved. A timeout reads as a denial.

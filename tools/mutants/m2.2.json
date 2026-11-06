@@ -278,5 +278,110 @@
     "find": "    void store.effects.run().catch(() => {})\n    schedulerPass()\n  }, PASS_INTERVAL_MS)\n",
     "replace": "    void store.effects.run().catch(() => {})\n  }, PASS_INTERVAL_MS)\n",
     "tests": ["apps/desktop/test/coordination.test.ts"]
+  },
+  {
+    "name": "follow-up names no ids",
+    "file": "packages/engines/src/claude/adapter.ts",
+    "find": "  if (input.message_id === undefined) return input.text\n",
+    "replace": "  if (input.message_id !== 'x') return input.text\n",
+    "tests": ["packages/engines/test/claude-input.test.ts", "apps/desktop/test/coordination.test.ts"]
+  },
+  {
+    "name": "ids replace the text",
+    "file": "packages/engines/src/claude/adapter.ts",
+    "find": "    { type: 'text', text: input.text },\n",
+    "replace": "",
+    "tests": ["packages/engines/test/claude-input.test.ts"]
+  },
+  {
+    "name": "wall clock is no failure",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (state === 'interrupted' && attempt.terminal_reason === 'wall_clock') {\n",
+    "replace": "  if (false as boolean) {\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "a stop counts as a failure",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (state === 'interrupted' && attempt.terminal_reason === 'wall_clock') {\n",
+    "replace": "  if (state === 'interrupted') {\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "reports ignored at acceptance",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    if (settleOnReport(store, task, latest, at)) continue\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "blocked report accepted",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (report?.kind === 'failed' || report?.kind === 'blocked') {\n",
+    "replace": "  if (report?.kind === 'failed') {\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "failed report accepted",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (report?.kind === 'failed' || report?.kind === 'blocked') {\n",
+    "replace": "  if (report?.kind === 'blocked') {\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "dropped report accepted",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (report?.kind !== 'dropped') return false\n",
+    "replace": "  if (report !== undefined || report === undefined) return false\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "first report wins",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "`report/${String(attempt.id)}/${Number(attempt.reports ?? 0)}`",
+    "replace": "`report/${String(attempt.id)}/1`",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "a late report takes back acceptance",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (task.status !== 'active' && task.status !== 'awaiting_review') return false\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "no-checks attempt unheard",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (attempt.state !== 'succeeded' && !noVerdict(attempt)) return false\n",
+    "replace": "  if (attempt.state !== 'succeeded') return false\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "dependent loses the drop reason",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "        prerequisite?.cancelledReason ??\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "early report lost",
+    "file": "packages/meta/src/followups.ts",
+    "find": "    if (moved.handled_early === input.id) {\n",
+    "replace": "    if (false as boolean) {\n",
+    "tests": ["packages/meta/test/followups.test.ts"]
+  },
+  {
+    "name": "specialist card names the planner",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    if (typeof doc.attemptId === 'string') {\n      return [`asked by the specialist",
+    "replace": "    if (false as boolean) {\n      return [`asked by the specialist",
+    "tests": ["apps/desktop/test/planner.test.ts"]
+  },
+  {
+    "name": "question evidence dropped",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    ...(typeof doc.evidenceRef === 'string' && { evidenceRef: doc.evidenceRef }),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/planner.test.ts"]
   }
 ]

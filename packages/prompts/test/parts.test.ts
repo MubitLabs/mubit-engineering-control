@@ -29,6 +29,31 @@ const AT = () => new Date('2026-11-04T12:00:00.000Z')
 /** The T4 manifest: 21 markdown parts; models.yaml is the capability table, not a part. */
 const SHIPPED_PARTS = 21
 
+/** Every role an attempt runs: each can be sent a follow-up (§12.3). */
+const SPECIALIST_ROLES = [
+  'code_reviewer',
+  'implementer',
+  'integrator',
+  'pr_reviewer',
+  'release_agent',
+  'repair_agent',
+  'security_checker',
+  'test_author',
+] as const
+
+describe('follow-ups in the specialist prompts (§12.3, §12.4)', () => {
+  it.each(SPECIALIST_ROLES)('%s is told how a handled follow-up is recorded', (role) => {
+    const text = readDefaultPart(`roles/${role}.md`)?.text
+    expect(text).toContain('handled_inputs')
+    expect(text).toContain('mcp__mec__handback')
+  })
+
+  it('the report tool says the same', () => {
+    expect(TOOL_SPECS.report.description).toContain('handled_inputs')
+    expect(TOOL_SPECS.report.description).toContain('handback')
+  })
+})
+
 describe('defaultsRoot: where the shipped tree is', () => {
   const tree = (): string => {
     const dir = mkdtempSync(join(tmpdir(), 'mec-defaults-root-'))

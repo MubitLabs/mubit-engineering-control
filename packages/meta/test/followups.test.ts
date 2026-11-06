@@ -315,6 +315,16 @@ describe('receipts (§12.4)', () => {
     expect(stage(h)).toBe('handled')
   })
 
+  it('a report that beats the delivery commit still counts once the delivery lands', async () => {
+    const h = rig()
+    await send(h)
+    onReport(h, { kind: 'progress', handled_inputs: [inputIdOf(h)] })
+    expect(stage(h)).toBe('received')
+
+    await h.drainDeliver()
+    expect(stage(h)).toBe('handled')
+  })
+
   it('crash between delivered and read keeps the true stage', async () => {
     const h = rig()
     await send(h)

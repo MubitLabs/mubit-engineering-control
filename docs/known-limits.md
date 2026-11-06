@@ -35,7 +35,9 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
 
 - **The attempt runner is on by default since 0.3.1, on any repository.** DECISIONS #25 kept it to
   scratch repositories behind a flag because of the first point below, and that point still holds.
-  `MEC_REAL_RUNNER=0` turns it off. With it on:
+  `MEC_REAL_RUNNER=0` turns it off, but that choice is not saved: `mec restart` passes on the
+  environment of the shell that runs it, so from a shell without the variable an off server comes
+  back on. With it on:
   - Repo checks run agent-written code on the host, unsandboxed, with a scrubbed environment and
     no tools token.
   - The sandbox's network allowlist is the engine's own domains. Repo docs have no registry-domains

@@ -284,7 +284,12 @@
     "file": "packages/engines/src/claude/adapter.ts",
     "find": "  if (input.message_id === undefined) return input.text\n",
     "replace": "  if (input.message_id !== 'x') return input.text\n",
-    "tests": ["packages/engines/test/claude-input.test.ts", "apps/desktop/test/coordination.test.ts", "-t", "names its ids|handed back by the id"]
+    "tests": [
+      "packages/engines/test/claude-input.test.ts",
+      "apps/desktop/test/coordination.test.ts",
+      "-t",
+      "names its ids|handed back by the id"
+    ]
   },
   {
     "name": "ids replace the text",

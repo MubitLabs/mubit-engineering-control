@@ -310,22 +310,54 @@
   {
     "name": "stop does not list descendants",
     "file": "packages/runtime/src/supervisor.ts",
-    "find": "const strays = await descendantsOutside(owned.pid)",
-    "replace": "const strays: number[] = []",
+    "find": "const found = await descendantsOutside(owned.pid)",
+    "replace": "const found: Strays = { pids: [], groups: [] }",
     "tests": ["packages/runtime/test/supervisor.test.ts", "apps/desktop/test/engine-registry.test.ts"]
   },
   {
     "name": "stop does not signal descendants",
     "file": "packages/runtime/src/supervisor.ts",
-    "find": "      for (const pid of strays) signalProcess(pid, signal)\n",
+    "find": "      for (const pid of strays.pids) signalProcess(pid, signal)\n",
     "replace": "",
-    "tests": ["packages/runtime/test/supervisor.test.ts", "apps/desktop/test/engine-registry.test.ts"]
+    "tests": ["packages/runtime/test/supervisor-groups.test.ts"]
   },
   {
     "name": "stop does not confirm descendants",
     "file": "packages/runtime/src/supervisor.ts",
-    "find": "isGroupAlive(owned.pid) || strays.some(isProcessAlive)",
-    "replace": "isGroupAlive(owned.pid)",
+    "find": "isGroupAlive(owned.pid) || strays.groups.some(isGroupAlive) || strays.pids.some(isProcessAlive)",
+    "replace": "isGroupAlive(owned.pid) || strays.groups.some(isGroupAlive)",
+    "tests": ["packages/runtime/test/supervisor-groups.test.ts"]
+  },
+  {
+    "name": "stop does not signal stray groups",
+    "file": "packages/runtime/src/supervisor.ts",
+    "find": "      for (const group of strays.groups) signalGroup(group, signal)\n",
+    "replace": "",
+    "tests": [
+      "packages/runtime/test/supervisor.test.ts",
+      "packages/runtime/test/supervisor-groups.test.ts",
+      "apps/desktop/test/engine-registry.test.ts"
+    ]
+  },
+  {
+    "name": "stop does not confirm stray groups",
+    "file": "packages/runtime/src/supervisor.ts",
+    "find": "isGroupAlive(owned.pid) || strays.groups.some(isGroupAlive) || strays.pids.some(isProcessAlive)",
+    "replace": "isGroupAlive(owned.pid) || strays.pids.some(isProcessAlive)",
+    "tests": ["packages/runtime/test/supervisor.test.ts"]
+  },
+  {
+    "name": "group 0 or 1 reaches kill",
+    "file": "packages/runtime/src/supervisor.ts",
+    "find": ".filter((group) => group > 1)",
+    "replace": "",
+    "tests": ["packages/runtime/test/supervisor-groups.test.ts"]
+  },
+  {
+    "name": "a refused stop forgets its strays",
+    "file": "packages/runtime/src/supervisor.ts",
+    "find": "    this.strays.set(key, strays)\n",
+    "replace": "",
     "tests": ["packages/runtime/test/supervisor.test.ts"]
   },
   {

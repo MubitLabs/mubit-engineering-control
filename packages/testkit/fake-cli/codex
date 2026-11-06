@@ -21,6 +21,9 @@
  *   {command: seconds}             a `sleep` in a process group of its own, as the real one runs
  *                                  each shell command; its pid lands in command.pid
  *   {stubborn: seconds}            the same, but a shell that ignores SIGTERM
+ *   {background: seconds}          the same, but a shell that runs `(sleep &); sleep`, so the job
+ *                                  has no parent left and shares only the group; its pid lands
+ *                                  in command.pid
  *   {sleep: ms}                    wait
  *   {complete: 'completed'}        turn/completed with this status
  *   {exit: n}                      exit with this code
@@ -122,6 +125,10 @@ async function turn() {
       const script = `trap "" TERM; sleep ${step.stubborn}; sleep ${step.stubborn}`
       const { pid } = spawn('/bin/sh', ['-c', script], { detached: true, stdio: 'ignore' })
       writeFileSync(join(here, 'command.pid'), String(pid))
+    }
+    else if (step.background !== undefined) {
+      const script = `(sleep ${step.background} & echo $! > command.pid); sleep ${step.background}`
+      spawn('/bin/sh', ['-c', script], { cwd: here, detached: true, stdio: 'ignore' })
     }
     else if (step.sleep !== undefined) await sleep(step.sleep)
     else if (step.complete !== undefined) {

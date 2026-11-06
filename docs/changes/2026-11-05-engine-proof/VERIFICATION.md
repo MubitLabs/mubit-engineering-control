@@ -21,4 +21,5 @@ Base `feat/m2.1-specialist-slice` at `8b20e97`. Real verifier runs on `40a2426` 
 - No real binary ran on these fixes. The trust override and the Codex read denies rest on the verifier's zero-turn checks; the stop, the 404 path, the live journal and the link refusal rest on the fakes. The deny entries for OpenCode's default home were tested on neither.
 - The cause of the earlier full-run timeouts was not confirmed. They did not recur with the longer bounds.
 - Independent verification of these fixes has not been done.
-- After a refused stop, the runner's monitor stops once more. That stop no longer knows the descendants, so it drops ownership, while the attempt records `failed` with the refusal. A retry after a refusal cannot find them. In the tests only SIGKILL's refusal is faked.
+- In the tests only SIGKILL's refusal is faked.
+- The supervisor keeps a refused stop's pids and groups until a stop confirms them gone, and the only retry today is the monitor's, right after the refusal. A retry much later could signal a recycled id.

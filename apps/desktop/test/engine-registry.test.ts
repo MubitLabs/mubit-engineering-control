@@ -418,6 +418,24 @@ describe('Codex through the runner', { timeout: 180_000 }, () => {
     }
   })
 
+  it('a stop takes a job the command backgrounded, which no parent leads to (§8.1)', async () => {
+    const steps = [{ background: 60 }, { sleep: 60_000 }]
+    const { dataDir, repo, bin } = scratch('codex', { steps })
+    seed(dataDir, repo, { slot: CODEX_SLOT, task: { budget: { wall_clock_ms: 3000 } } })
+    const end = await launched(dataDir)
+    const pid = Number(readFileSync(join(bin, 'command.pid'), 'utf8'))
+    try {
+      expect(end.state).toBe('interrupted')
+      expect(() => process.kill(pid, 0)).toThrow()
+    } finally {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        // gone, as it should be
+      }
+    }
+  })
+
   // SIGKILL that does not take is the kernel's doing, so only that much is faked.
   it('a command SIGKILL cannot take leaves a failed attempt, not an interrupted one (§8.1)', async () => {
     const steps = [{ stubborn: 60 }, { sleep: 60_000 }]
@@ -430,7 +448,9 @@ describe('Codex through the runner', { timeout: 180_000 }, () => {
     const kill = process.kill.bind(process)
     const spy = vi
       .spyOn(process, 'kill')
-      .mockImplementation((target, signal) => (target === commandPid() ? true : kill(target, signal)))
+      .mockImplementation((target, signal) =>
+        Math.abs(target) === commandPid() ? true : kill(target, signal),
+      )
     try {
       const end = await launched(dataDir)
       expect(end.state).toBe('failed')

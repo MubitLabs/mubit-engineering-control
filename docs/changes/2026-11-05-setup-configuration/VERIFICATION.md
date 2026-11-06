@@ -169,3 +169,17 @@ Fixed test first, in `slot-sensitive.test.ts`, with the check held open at a gat
 | `pnpm check` | 1 failed, 2313 passed, 15 skipped. The failure is the permitted `login-cards.test.ts` node-pty case |
 
 Not run: `test:screens`, because no web file changed, and any engine, because the routes are tested with a fake probe and a fake provider.
+
+## After the rebase onto M1.4b, M3.2 stage B and M2.1
+
+6 November 2026, onto `68b9077`. Git conflicted in `composition.ts` and `LiveApp.tsx`, both resolved keeping both sides. The clashes git could not see:
+
+| Clash | Red | Fix |
+| --- | --- | --- |
+| A dedicated slot saved no `env`, and M2.1's launcher reads only `slot.env` | The worker saw `config_dir: null`: the default login, not the slot's home | `/api/slots/dedicated` and `mec slot add` save the home's env |
+| The launcher kept the boot policy text after a saved policy won | `policy_violation` on every launch over an unreadable file | It takes the text in force |
+| A live backup archived `work/<attempt>/.mec/mcp.json`, the attempt's bearer token (§12) | The token was in the archive | A worktree's `.mec/` is excluded |
+| Settings promised admitted work keeps its pin; M2.1 refuses it with `repo_profile_changed` | Read from the code, no test | The screen and the route comment say what happens |
+| #38's "pause is not offered" caught M3.3's global control | The screen test failed | It excludes that control by name and requires it, over the whole page |
+
+`m3.3-config.json` is 57 mutants, five of them new, and all were killed.

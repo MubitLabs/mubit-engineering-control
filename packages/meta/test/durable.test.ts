@@ -689,6 +689,41 @@ describe('shutdown owns the planner (§20)', () => {
     await brain.close()
   })
 
+  it('a question answered by its report alone is a whole turn, with no corrective retry (§12.2)', async () => {
+    const held = heldEngine()
+    const brain = planner(held.engine)
+    const tools = {
+      journal: () => ({ ...EMPTY_JOURNAL, reports: [{ summary: 'It returns hello-world.md.' }] }),
+      execute: () => undefined,
+    } as unknown as PlannerTools
+    const turn = brain.decide({ ...plannerTurn(), tools })
+    await held.untilRunning()
+    held.end()
+    const decision = await turn
+
+    expect(decision.protocolIncomplete).toBeUndefined()
+    expect(held.specs).toHaveLength(1)
+    await brain.close()
+  })
+
+  it('a plan with no acknowledgement is still corrected', async () => {
+    const held = heldEngine()
+    const brain = planner(held.engine)
+    const tools = {
+      journal: () => ({ ...EMPTY_JOURNAL, plan: { tasks: [] } }),
+      execute: () => undefined,
+    } as unknown as PlannerTools
+    const turn = brain.decide({ ...plannerTurn(), tools })
+    await held.untilRunning()
+    held.end()
+    await held.untilLaunches(2)
+    await held.untilRunning()
+    held.end()
+
+    expect((await turn).protocolIncomplete).toBe(true)
+    await brain.close()
+  })
+
   it('a closing brain runs no corrective retry', async () => {
     const held = heldEngine()
     const brain = planner(held.engine)

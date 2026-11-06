@@ -404,6 +404,12 @@ describe('the result path (§14, #11, #12)', () => {
     expect(r.types(`work:${WORK}`)).toContain('local_result')
   })
 
+  it('both delivery cards name their work, so its stage and Needs you can find them', async () => {
+    const r = await approvedPush()
+    expect(r.cards('push')[0]?.workItemId).toBe(WORK)
+    expect(r.cards('pr_create')[0]?.workItemId).toBe(WORK)
+  })
+
   it('integration branch in the cache is readable by the push card', async () => {
     const r = await localComplete()
     const card = r.cards('push')[0] as StoreDoc

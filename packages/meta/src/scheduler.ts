@@ -36,8 +36,9 @@ import {
 import { type ResolvedModel, resolveModel } from '../../runtime/src/model'
 import { repoOf } from './admission'
 import { blockWork, isHeld, isTerminal, mandateOf, noVerdict, processingOf } from './authority'
-import type { FollowUps } from './followups'
+import { enqueueWake, type FollowUps } from './followups'
 import { type Continuation, nextRepair, nextReview, repairLedger } from './repair'
+import { classifyWake } from './wakes'
 import { requiredChecks, verdictsOf } from './work-facts'
 
 /** The capability table `resolveModel` reads; the planner's seam supplies it. */
@@ -151,11 +152,14 @@ function lastReport(store: Store, attempt: StoreDoc): Pick<Report, 'kind' | 'sum
 /**
  * §10 and §15: an agent ending its turn is not success, and passing checks do not undo what it
  * said. `failed` and `blocked` block the task with the report's summary, and `dropped` ends it.
+ * Red checks do not undo it either: a person must act, so no repair runs after a `blocked` or
+ * `failed` report, whatever the head. `dropped` on a red head is no such word, and checks decide.
  * Returns whether the report settled the task. Runs before acceptance, on a task still waiting
  * for this attempt: a late report never takes back an accepted task.
  */
 function settleOnReport(store: Store, task: StoreDoc, attempt: StoreDoc, at: string): boolean {
-  if (attempt.state !== 'succeeded' && !noVerdict(attempt)) return false
+  const passedOrUnjudged = attempt.state === 'succeeded' || noVerdict(attempt)
+  if (attempt.state !== 'checks_failed' && !passedOrUnjudged) return false
   if (task.status !== 'active' && task.status !== 'awaiting_review') return false
   const report = lastReport(store, attempt)
   const id = String(attempt.id)
@@ -163,7 +167,7 @@ function settleOnReport(store: Store, task: StoreDoc, attempt: StoreDoc, at: str
     blockTask(store, task, `attempt ${id} reported ${report.kind}: ${report.summary}`, at)
     return true
   }
-  if (report?.kind !== 'dropped') return false
+  if (report?.kind !== 'dropped' || !passedOrUnjudged) return false
   const { deferred: _deferred, ...rest } = task
   moveTask(store, rest, 'cancel', { cancelledReason: `attempt ${id} dropped it: ${report.summary}` }, at)
   appendEvent(
@@ -321,8 +325,23 @@ function settleAttempt(
           ...target,
           ...(claimed !== undefined && { claimedHead: claimed }),
         })
-  if ('block' in step) blockTask(store, task, step.block, at)
-  else continueTask(store, task, step.next, at)
+  if ('block' in step) {
+    blockTask(store, task, step.block, at)
+    wakeOnUsedUp(deps.effects, task, step.block)
+  } else {
+    continueTask(store, task, step.next, at)
+  }
+}
+
+/**
+ * §6: used-up repairs are work parked with no automatic resolution, and no report may say so. The
+ * key is the task's family, so a task wakes one turn however many checks failed or passes ran.
+ */
+function wakeOnUsedUp(effects: Effects, task: StoreDoc, what: string): void {
+  const workItemId = String(task.workItemId)
+  if (classifyWake({ kind: 'work_parked', workItemId, autoResolvable: false }) !== 'wake') return
+  const root = typeof task.repairOf === 'string' ? task.repairOf : String(task.id)
+  enqueueWake(effects, { causationId: `used-up:${root}`, reason: 'work parked', detail: what, workItemId })
 }
 
 /**
@@ -332,6 +351,7 @@ function settleAttempt(
  */
 export function openRepairTask(
   store: Store,
+  effects: Effects,
   caps: Caps,
   input: { root: StoreDoc; evidence: string; worktree: string; branch: string; id: string; at: string },
 ): void {
@@ -343,6 +363,7 @@ export function openRepairTask(
   if ('block' in step) {
     if (canTransition(TASK_MACHINE, String(root.status), 'block')) blockTask(store, root, step.block, at)
     else blockWork(store, String(root.workItemId), step.block, at)
+    wakeOnUsedUp(effects, root, step.block)
     return
   }
   const number = store.tasks.list({ workItemId: String(root.workItemId) }).length + 1

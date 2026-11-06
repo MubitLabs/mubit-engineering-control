@@ -33,6 +33,7 @@ describe('work item machine', () => {
       'integrating --block--> blocked',
       'integrating --stop--> stopped',
       'integrating --work_done--> done',
+      'planning --answered--> done',
       'planning --block--> blocked',
       'planning --execution_started--> executing',
       'planning --stop--> stopped',

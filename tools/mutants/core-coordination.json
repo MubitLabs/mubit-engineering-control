@@ -1,0 +1,303 @@
+[
+  {
+    "name": "1 a no-plan turn stops speaking its report",
+    "file": "packages/meta/src/service.ts",
+    "find": "const text = spoken === undefined ? decision.ack : redact(spoken, [], [])",
+    "replace": "const text = decision.ack",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "1 a turn that asked speaks its report over its acknowledgement",
+    "file": "packages/meta/src/service.ts",
+    "find": "const spoken = asked ? undefined : scoped.reports?.at(-1)?.summary",
+    "replace": "const spoken = scoped.reports?.at(-1)?.summary",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "1 a fenced report is spoken anyway",
+    "file": "packages/meta/src/service.ts",
+    "find": "const spoken = asked ? undefined : scoped.reports?.at(-1)?.summary",
+    "replace": "const spoken = asked ? undefined : decision.reports?.at(-1)?.summary",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "1 the reply is stored unredacted",
+    "file": "packages/meta/src/service.ts",
+    "find": "const text = spoken === undefined ? decision.ack : redact(spoken, [], [])",
+    "replace": "const text = spoken === undefined ? decision.ack : spoken",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "1 an answered question's work stays planning",
+    "file": "packages/meta/src/service.ts",
+    "find": "if (spoken !== undefined) this.#endIfAnswered(workItemId, input.messageId, at)",
+    "replace": "",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "1 a turn that stopped at its acknowledgement ends its work",
+    "file": "packages/meta/src/service.ts",
+    "find": "if (spoken !== undefined) this.#endIfAnswered(workItemId, input.messageId, at)",
+    "replace": "this.#endIfAnswered(workItemId, input.messageId, at)",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "1 a report ends held work",
+    "file": "packages/meta/src/service.ts",
+    "find": "if (work === undefined || isHeld(work)) return\n    if (!canTransition(WORK_ITEM_MACHINE, String(work.state), 'answered')) return",
+    "replace": "if (work === undefined) return\n    if (!canTransition(WORK_ITEM_MACHINE, String(work.state), 'answered')) return",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "1 a report ends work holding tasks",
+    "file": "packages/meta/src/service.ts",
+    "find": "    if (this.#store.tasks.list({ workItemId }).length > 0) return\n    const open =",
+    "replace": "    const open =",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "1 a report ends work with a question open",
+    "file": "packages/meta/src/service.ts",
+    "find": "    if (open.some((doc) => String(doc.id).startsWith('question/'))) return\n",
+    "replace": "",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "1 a report ends work with a card pending",
+    "file": "packages/meta/src/service.ts",
+    "find": "    if (this.#store.confirmations.list({ workItemId, status: 'pending' }).length > 0) return\n",
+    "replace": "",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "1 a question answered by its report alone needs a corrective retry",
+    "file": "packages/meta/src/brain.ts",
+    "find": "      answered || (journal.acks.length > 0 && (journal.plan !== undefined || journal.questions.length > 0))",
+    "replace": "      journal.acks.length > 0 && (journal.plan !== undefined || journal.questions.length > 0)",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "1 a plan with no acknowledgement passes as complete",
+    "file": "packages/meta/src/brain.ts",
+    "find": "const answered = journal.plan === undefined && journal.reports.length > 0",
+    "replace": "const answered = journal.plan !== undefined || journal.reports.length > 0",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "1 the shipped protocol acknowledges a question again",
+    "file": "packages/prompts/defaults/roles/meta_agent/protocol.md",
+    "find": " If the message is a question, do not acknowledge it: answer it in step 3.",
+    "replace": "",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "2 a blocked report on a red head earns another repair",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "if (attempt.state !== 'checks_failed' && !passedOrUnjudged) return false",
+    "replace": "if (!passedOrUnjudged) return false",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "2 a dropped report on a red head ends the task",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "if (report?.kind !== 'dropped' || !passedOrUnjudged) return false",
+    "replace": "if (report?.kind !== 'dropped') return false",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "3 the push card names no work",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "{ repoId, branch, headSha: head, workItemId: id }",
+    "replace": "{ repoId, branch, headSha: head }",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "3 the PR card names no work",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "        workItemId: id,\n      })\n      this.#patch(id, { stage: 'pr_card'",
+    "replace": "      })\n      this.#patch(id, { stage: 'pr_card'",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "3 the push card drops the work it was given",
+    "file": "apps/desktop/src/release.ts",
+    "find": "      ...(input.workItemId !== undefined && { workItemId: input.workItemId }),\n    })\n    appendEvent(",
+    "replace": "    })\n    appendEvent(",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "3 the PR card drops the work it was given",
+    "file": "apps/desktop/src/release.ts",
+    "find": "      ...(input.workItemId !== undefined && { workItemId: input.workItemId }),\n    })\n    savePrFlow(",
+    "replace": "    })\n    savePrFlow(",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "4 used-up repairs wake nobody",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    wakeOnUsedUp(deps.effects, task, step.block)\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "4 an integration repair past the cap wakes nobody",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    wakeOnUsedUp(effects, root, step.block)\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "4 the wake is not keyed to the task",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "causationId: `used-up:${root}`",
+    "replace": "causationId: `used-up:${root}:${Math.random()}`",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "4 the wake is keyed to all of the work's tasks together",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "const root = typeof task.repairOf === 'string' ? task.repairOf : String(task.id)\n  enqueueWake",
+    "replace": "const root = `${String(task.id)}:${String(task.updatedAt)}`\n  enqueueWake",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "5 the shipped protocol may name a remedy",
+    "file": "packages/prompts/defaults/roles/meta_agent/protocol.md",
+    "find": "Remedies: Never name a remedy, setting or panel unless the turn context shows it exists; ",
+    "replace": "Remedies: ",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "5 the fallback protocol may name a remedy",
+    "file": "packages/meta/src/brain.ts",
+    "find": "  'Never name a remedy, setting or panel unless the turn context shows it exists; the Slots panel takes engine keys only. If unsure, say what is known and what a person must decide.',\n",
+    "replace": "",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "6 a ready report is narrated",
+    "file": "packages/meta/src/wakes.ts",
+    "find": "  'report ready',\n",
+    "replace": "",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "6 a dropped report is narrated",
+    "file": "packages/meta/src/wakes.ts",
+    "find": "  'report dropped',\n",
+    "replace": "",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "6 a specialist's question is narrated beside its card",
+    "file": "packages/meta/src/wakes.ts",
+    "find": "  'specialist question',\n",
+    "replace": "",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "6 any block counts as told",
+    "file": "packages/meta/src/wakes.ts",
+    "find": "return BLOCK_WAKES.has(reason) && work.state === 'blocked' && work.toldBlock === work.blockedReason",
+    "replace": "return BLOCK_WAKES.has(reason) && work.state === 'blocked' && work.toldBlock !== undefined",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "6 a person's wake on a told block goes quiet",
+    "file": "packages/meta/src/wakes.ts",
+    "find": "return BLOCK_WAKES.has(reason) && work.state === 'blocked' && work.toldBlock === work.blockedReason",
+    "replace": "return work.state === 'blocked' && work.toldBlock === work.blockedReason",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "6 a block is never recorded as told",
+    "file": "packages/meta/src/service.ts",
+    "find": "      if (input.wake === true && !quiet) this.#recordTold(workItemId)\n",
+    "replace": "",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "6 a new question on a quiet wake goes quiet too",
+    "file": "packages/meta/src/service.ts",
+    "find": "const quiet = input.wake === true && !asked && this.#hasNoNews(workItemId, input.text)",
+    "replace": "const quiet = input.wake === true && this.#hasNoNews(workItemId, input.text)",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "6 a person's own message can go quiet",
+    "file": "packages/meta/src/service.ts",
+    "find": "const quiet = input.wake === true && !asked && this.#hasNoNews(workItemId, input.text)",
+    "replace": "const quiet = !asked && this.#hasNoNews(workItemId, input.wake === true ? input.text : 'report ready')",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "6 a quiet wake still reaches the chat",
+    "file": "apps/desktop/src/server.ts",
+    "find": "rowsInScope(store.messages, store, request).filter((doc) => doc.quiet !== true)",
+    "replace": "rowsInScope(store.messages, store, request)",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "6 stuck work may re-ask in new words",
+    "file": "packages/meta/src/service.ts",
+    "find": "(doc) => sameWords(String(doc.question)) === words || (stuck && doc.progressMark === mark),",
+    "replace": "(doc) => sameWords(String(doc.question)) === words,",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "6 work that moved is held to the old question",
+    "file": "packages/meta/src/service.ts",
+    "find": "(doc) => sameWords(String(doc.question)) === words || (stuck && doc.progressMark === mark),",
+    "replace": "(doc) => sameWords(String(doc.question)) === words || stuck,",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "6 work that is not stuck loses its second question",
+    "file": "packages/meta/src/service.ts",
+    "find": "(doc) => sameWords(String(doc.question)) === words || (stuck && doc.progressMark === mark),",
+    "replace": "(doc) => sameWords(String(doc.question)) === words || doc.progressMark === mark,",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "6 case and spacing make a new decision",
+    "file": "packages/meta/src/service.ts",
+    "find": "const sameWords = (text: string): string => text.trim().replace(/\\s+/g, ' ').toLowerCase()",
+    "replace": "const sameWords = (text: string): string => text",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "6 an answered decision can be asked again",
+    "file": "packages/meta/src/service.ts",
+    "find": ".filter((doc) => doc.status === 'open' || doc.status === 'answered')",
+    "replace": ".filter((doc) => doc.status === 'open')",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "6 an open decision can be asked again",
+    "file": "packages/meta/src/service.ts",
+    "find": ".filter((doc) => doc.status === 'open' || doc.status === 'answered')",
+    "replace": ".filter((doc) => doc.status === 'answered')",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "6 a replan's question repeats freely",
+    "file": "packages/meta/src/service.ts",
+    "find": "      const decision = this.#withoutRepeats(\n        workItemId,\n        this.#withinRepo(input.messageId, workItemId, unscoped, at),\n        at,\n      )\n",
+    "replace": "      const decision = this.#withinRepo(input.messageId, workItemId, unscoped, at)\n",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "6 a new attempt no longer counts as work moving",
+    "file": "packages/meta/src/service.ts",
+    "find": "const attempts = this.#store.attempts.list({ workItemId }).length",
+    "replace": "const attempts = 0",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  },
+  {
+    "name": "6 the shipped protocol may repeat a decision",
+    "file": "packages/prompts/defaults/roles/meta_agent/protocol.md",
+    "find": "Repeats: Never ask the owner the same decision twice: if it is open or already answered, work with that. ",
+    "replace": "Repeats: ",
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
+  }
+]

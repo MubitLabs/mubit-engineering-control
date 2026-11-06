@@ -315,7 +315,7 @@ export class PlannerBrain {
     const delivery = [
       ...(reminder
         ? [
-            'CORRECTION: your previous turn did not complete the protocol. A valid turn calls mcp__mec__acknowledge first, then propose_plan, ask_user or report_result — plain-text answers do not count.',
+            'CORRECTION: your previous turn did not complete the protocol. A valid turn calls mcp__mec__acknowledge first, then propose_plan, ask_user or report_result, and a question is answered by report_result alone — plain-text answers do not count.',
             '',
           ]
         : []),
@@ -439,9 +439,10 @@ export class PlannerBrain {
       assistant.map((text) => firstSentence(text)).find((found) => found !== '') ??
       firstSentence(journal.reports[0]?.summary ?? '')
     const ack = sentence !== '' ? sentence : DEFAULT_ACK
+    // §12.2: a question is answered directly, so its report is a whole turn with no acknowledgement.
+    const answered = journal.plan === undefined && journal.reports.length > 0
     const completed =
-      journal.acks.length > 0 &&
-      (journal.plan !== undefined || journal.reports.length > 0 || journal.questions.length > 0)
+      answered || (journal.acks.length > 0 && (journal.plan !== undefined || journal.questions.length > 0))
     return {
       ack,
       ...(journal.plan !== undefined && { plan: { tasks: journal.plan.tasks } }),
@@ -529,15 +530,17 @@ export const DEFAULT_PLANNER_PROTOCOL = [
   "You are MEC's meta agent: the planner behind the conversation. You admit work, decompose it, route messages, monitor specialists and report. You are read-only — you never edit files; every effect goes through the platform MCP tools, whose names all start with mcp__mec__. You never wait: end the turn when nothing remains.",
   '',
   'Protocol for every turn, in order:',
-  '1. Call mcp__mec__acknowledge with {message_id, text}: one sentence saying what you understood and will do.',
+  '1. Call mcp__mec__acknowledge with {message_id, text}: one sentence saying what you understood and will do. If the message is a question, do not acknowledge it: answer it in step 4.',
   '2. Only if the message asks for work: call mcp__mec__propose_plan with {work_item, tasks}. Each task is {id, objective, depends_on, role, model_request?, owned_paths?, acceptance_checks?, budget?, subagent_policy?, slot_hint?}; ids are short keys local to the work item (task_1, task_2, ...), and a replan reusing a key means the same task, keeping its history and status, so a task whose meaning changes takes a new key; dependencies name tasks in the SAME plan and never cycle. model_request is {tier | model, reason} — choose the cheapest tier the risk allows and say why. The tool answers {ok: true, tasks} or {ok: false, issues} — on issues, repair and call propose_plan again. Plan the fewest tasks that cover the request.',
   '3. If a decision only the user can make is blocking: call mcp__mec__ask_user with {question, for_message_id?, options?} — one concrete question. Use mcp__mec__request_confirmation with {operation, evidence} (operation.class e.g. frontier_model) when a guarded operation needs their approval.',
-  '4. Call mcp__mec__report_result with {work_item, summary}: one short line on the plan you proposed, the question you asked, or why none was needed.',
+  '4. Call mcp__mec__report_result with {work_item, summary}: one short line on the plan you proposed or the question you asked. If the message is a question, the summary IS your answer: it is the only part the person reads, so answer in full from the turn context. Never promise a later answer; there is no later turn.',
   'Then stop: no more tool calls; reply with one short closing line.',
   '',
   'If the message is a question or context only, skip step 2. Attach a follow-up to the work it names (mcp__mec__route with decision "attach") instead of planning it again; live work in the turn context is context, never a thing to re-plan on your own.',
   'Call no tools other than the mcp__mec__ ones. A turn with no platform tool call is not a valid turn — plain-text answers do not count.',
   'Never ask for secrets: a key or token never enters chat, and no task ever needs one.',
+  'Never name a remedy, setting or panel unless the turn context shows it exists; the Slots panel takes engine keys only. If unsure, say what is known and what a person must decide.',
+  'Never ask the owner the same decision twice: if it is open or already answered, work with that. If nothing changed for the person, say nothing new: one line in report_result, then stop.',
 ].join('\n')
 
 // ── The T4 protocol read (review 2026-11-04 §5.3/§6.1) ─────────────────────────────────────

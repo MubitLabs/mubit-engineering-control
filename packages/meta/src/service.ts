@@ -96,6 +96,7 @@ import { routeMessage } from './routing'
 import { type LaunchRecord, type PlacementTable, type SchedulerDeps, schedulePass } from './scheduler'
 import type { PlannerConfirmationDraft, PlannerQuestionRecord, PlannerTurnJournal } from './tools'
 import { PlannerTools } from './tools'
+import { wakeHasNoNews } from './wakes'
 import { knownChecks, workResultOf } from './work-facts'
 
 /** One planned task as the service persists it: the v0 four fields, plus the §5.2 brief fields. */
@@ -846,39 +847,77 @@ export class MetaAgentService {
   }
 
   /**
-   * Ack-only decision (e.g. the brain asked a question): the item stays `planning` for
-   * the reply, and the decision's questions/confirmations/routes still persist — the
-   * turn's whole write set, not just the words.
+   * A turn with no plan. Its questions/confirmations/routes persist — the turn's whole write
+   * set, not just the words. What it asked waits on the person, so its acknowledgement stands;
+   * otherwise its report is what is spoken (§6), wherever the planner aimed it, and that is the
+   * chat's line for the message that asked (§12.2). A report with nothing asked ends the work,
+   * or it would read as Working and turn every later message into conversation (§12.1). A turn
+   * that stopped at its acknowledgement finished nothing, so its work stays open. A wake's text
+   * is its reason, and a wake with nothing new stays off the chat (§12.7).
    */
   #ackOnlyTurn(input: TurnInput, workItemId: string, decision: MetaDecision): TurnOutcome {
     const fenced = this.#fencedTurn(input, workItemId)
     if (fenced !== undefined) return fenced
     const at = this.#now()
-    this.#store.atomic(() => {
-      this.#persistExtras(
+    const reply = this.#store.atomic(() => {
+      const scoped = this.#withoutRepeats(
         workItemId,
         this.#withinRepo(input.messageId, workItemId, decision, at),
         at,
-        input.wake === true,
       )
+      this.#persistExtras(workItemId, scoped, at, input.wake === true)
+      const asked = (scoped.questions?.length ?? 0) + (scoped.confirmations?.length ?? 0) > 0
+      const spoken = asked ? undefined : scoped.reports?.at(-1)?.summary
+      const text = spoken === undefined ? decision.ack : redact(spoken, [], [])
+      const quiet = input.wake === true && !asked && this.#hasNoNews(workItemId, input.text)
+      if (input.wake === true && !quiet) this.#recordTold(workItemId)
+      if (spoken !== undefined) this.#endIfAnswered(workItemId, input.messageId, at)
       this.#saveMessage(input, {
         routing: 'new_work',
         at,
         workItemId,
-        ackText: decision.ack,
+        ackText: text,
         tasksCreated: 0,
         launches: [],
         escalated: decision.escalated === true,
+        quiet,
       })
+      return text
     })
-    this.#acks.acknowledge(input.messageId, decision.ack)
+    this.#acks.acknowledge(input.messageId, reply)
     return {
-      acknowledged: decision.ack,
+      acknowledged: reply,
       workItemId,
       tasksCreated: 0,
       launchesEnqueued: [],
       escalated: decision.escalated === true,
     }
+  }
+
+  #hasNoNews(workItemId: string, reason: string): boolean {
+    const work = this.#store.workItems.get(workItemId)
+    return work !== undefined && wakeHasNoNews(reason, work)
+  }
+
+  /** The block the chat has now spoken about: the same one is no news next time (§12.7). */
+  #recordTold(workItemId: string): void {
+    const work = this.#store.workItems.get(workItemId)
+    if (work === undefined || String(work.state) !== 'blocked') return
+    this.#store.workItems.save({ ...work, toldBlock: work.blockedReason ?? null })
+  }
+
+  /** §12.2: a turn that planned nothing and waits on nobody is finished. A hold is the owner's. */
+  #endIfAnswered(workItemId: string, messageId: string, at: string): void {
+    const work = this.#store.workItems.get(workItemId)
+    if (work === undefined || isHeld(work)) return
+    if (!canTransition(WORK_ITEM_MACHINE, String(work.state), 'answered')) return
+    if (this.#store.tasks.list({ workItemId }).length > 0) return
+    const open = this.#store.engines.list({ workItemId, status: 'open' })
+    if (open.some((doc) => String(doc.id).startsWith('question/'))) return
+    if (this.#store.confirmations.list({ workItemId, status: 'pending' }).length > 0) return
+    const state = transition(WORK_ITEM_MACHINE, String(work.state), 'answered')
+    this.#store.workItems.save({ ...work, state, updatedAt: at })
+    this.#appendEvent(`work:${workItemId}`, 'work_answered', { workItemId, messageId, at }, at)
   }
 
   /**
@@ -1001,7 +1040,11 @@ export class MetaAgentService {
     // effects.enqueue only runs inside atomic, and this is that atomic).
     const at = this.#now()
     const { launches, ack } = this.#store.atomic(() => {
-      const decision = this.#withinRepo(input.messageId, workItemId, unscoped, at)
+      const decision = this.#withoutRepeats(
+        workItemId,
+        this.#withinRepo(input.messageId, workItemId, unscoped, at),
+        at,
+      )
       const work = this.#store.workItems.get(workItemId)
       const repoId = repoOf(work)
       const planRevision = (typeof work?.planRevision === 'number' ? work.planRevision : 0) + 1
@@ -1242,6 +1285,47 @@ export class MetaAgentService {
     return scoped
   }
 
+  /** What counts as work moving: a new plan or a new attempt. A person's answer alone is neither. */
+  #progressMark(workItemId: string): string {
+    const revision = this.#store.workItems.get(workItemId)?.planRevision
+    const attempts = this.#store.attempts.list({ workItemId }).length
+    return `${typeof revision === 'number' ? revision : 0}:${attempts}`
+  }
+
+  /**
+   * §12.6: the same decision is never requested twice. The same words are the same decision, and
+   * on stuck work so is any question asked since it last moved, however it is worded: nothing
+   * about the block has changed, so neither has what a person is being asked. Planning's
+   * clarifying questions are told apart by their words, so a second real one still gets through.
+   */
+  #withoutRepeats(workItemId: string, decision: MetaDecision, at: string): MetaDecision {
+    const { questions } = decision
+    if (questions === undefined || questions.length === 0) return decision
+    const stuck =
+      String(this.#store.workItems.get(workItemId)?.state) === 'blocked' ||
+      this.#store.tasks.list({ workItemId }).some((task) => task.status === 'blocked')
+    const mark = this.#progressMark(workItemId)
+    const asked = this.#store.engines
+      .list({ workItemId })
+      .filter((doc) => String(doc.id).startsWith('question/'))
+      .filter((doc) => doc.status === 'open' || doc.status === 'answered')
+    const fresh = questions.filter((question) => {
+      const words = sameWords(redact(question.question, [], []))
+      const prior = asked.find(
+        (doc) => sameWords(String(doc.question)) === words || (stuck && doc.progressMark === mark),
+      )
+      if (prior === undefined) return true
+      this.#appendEvent(
+        `work:${workItemId}`,
+        'question_repeat_refused',
+        { workItemId, questionId: String(prior.questionId ?? prior.id), at },
+        at,
+      )
+      return false
+    })
+    return { ...decision, questions: fresh }
+  }
+
   /**
    * Persists the executed-but-not-plan effects of a turn (§5.2), inside the caller's
    * transaction: ask_user questions (served by /api/questions), request_confirmation
@@ -1272,6 +1356,7 @@ export class MetaAgentService {
         ...(question.workItemId !== undefined && { workItemId: question.workItemId }),
         ...(question.workItemId === undefined && { workItemId }),
         ...(typeof planRevision === 'number' && { planRevision }),
+        progressMark: this.#progressMark(workItemId),
         status: 'open',
         askedAt: question.at,
         createdAt: question.at,
@@ -1425,6 +1510,7 @@ export class MetaAgentService {
       tasksCreated?: number
       launches?: LaunchRecord[]
       escalated?: boolean
+      quiet?: boolean
     },
   ): void {
     const prior = this.#store.messages.get(input.messageId)
@@ -1450,9 +1536,13 @@ export class MetaAgentService {
       ...(fields.tasksCreated !== undefined && { tasksCreated: fields.tasksCreated }),
       ...(fields.launches !== undefined && { launches: fields.launches }),
       ...(fields.escalated !== undefined && { escalated: fields.escalated }),
+      ...(fields.quiet === true && { quiet: true }),
     })
   }
 }
+
+/** Two askings of the same words: case and spacing are not a different decision (§12.6). */
+const sameWords = (text: string): string => text.trim().replace(/\s+/g, ' ').toLowerCase()
 
 /** Reads this turn's persisted launch records back off a message doc. */
 function launchRecordsOf(doc: StoreDoc): LaunchRecord[] {

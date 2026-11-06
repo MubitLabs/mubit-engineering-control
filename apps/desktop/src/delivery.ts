@@ -403,7 +403,7 @@ export class Delivery {
     }
     if (effect.kind === 'repair') {
       const root = task(effect.taskId) as StoreDoc
-      openRepairTask(this.#store, this.#caps, {
+      openRepairTask(this.#store, this.#effects, this.#caps, {
         root,
         evidence: integrationEvidence(effect),
         worktree: String(integration.worktree),
@@ -553,7 +553,7 @@ export class Delivery {
           return
         }
       }
-      const card = await openPushCard(this.release, { repoId, branch, headSha: head })
+      const card = await openPushCard(this.release, { repoId, branch, headSha: head, workItemId: id })
       this.#patch(id, { stage: 'push_card', repo, pushCardId: card.confirmationId, error: undefined })
     } catch (error) {
       this.#hold(id, error)
@@ -574,6 +574,7 @@ export class Delivery {
         headSha: String(doc.head),
         title: titleOf(request),
         body: this.#prBody(work, doc, request),
+        workItemId: id,
       })
       this.#patch(id, { stage: 'pr_card', prCardId: card.confirmationId, error: undefined })
     } catch (error) {

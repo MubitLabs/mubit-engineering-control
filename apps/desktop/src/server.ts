@@ -838,8 +838,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   })
 
   app.get('/api/chat/messages', async (request) => {
-    const messages = rowsInScope(store.messages, store, request)
-    return [...messages].sort(
+    // §12.7: a wake with nothing new keeps its receipt, for replay, and stays off the chat.
+    const messages = rowsInScope(store.messages, store, request).filter((doc) => doc.quiet !== true)
+    return messages.sort(
       (a, b) =>
         String(a.createdAt).localeCompare(String(b.createdAt)) || String(a.id).localeCompare(String(b.id)),
     )

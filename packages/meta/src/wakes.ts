@@ -33,6 +33,33 @@ export type CandidateEvent =
 /** Plan §10/§6: only these report kinds reach the meta agent as wakes; `progress` and `waiting` are notes. */
 const WAKE_REPORT_KINDS = new Set<ReportKind>(['ready', 'blocked', 'failed', 'dropped'])
 
+/**
+ * §12.7: speak when the user must act or can use a result. A wake for one of these reasons, whose
+ * turn plans nothing and asks nothing, has nothing to say: the report goes on the record, and a
+ * specialist's question is already its own card (§12.6). `dropped` ends with no message (§10).
+ */
+const NARRATION_WAKES: ReadonlySet<string> = new Set([
+  'report ready',
+  'report dropped',
+  'specialist question',
+])
+
+/** §12.7: these say a person must act, which is news once per block. */
+const BLOCK_WAKES: ReadonlySet<string> = new Set(['report blocked', 'report failed', 'work parked'])
+
+/**
+ * Whether a wake's turn, having planned and asked nothing, has nothing new for the person. A wake
+ * a person caused is always answered. `toldBlock` is the block the chat last spoke about; an
+ * unknown reason speaks, because a lost word is worse than a spare one.
+ */
+export function wakeHasNoNews(
+  reason: string,
+  work: { state?: unknown; blockedReason?: unknown; toldBlock?: unknown },
+): boolean {
+  if (NARRATION_WAKES.has(reason)) return true
+  return BLOCK_WAKES.has(reason) && work.state === 'blocked' && work.toldBlock === work.blockedReason
+}
+
 export function classifyWake(e: CandidateEvent): 'wake' | 'note' | 'ignore' {
   switch (e.kind) {
     case 'user_message':

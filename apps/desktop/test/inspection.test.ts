@@ -3,6 +3,7 @@ import { fakeBrain, MetaAgentService, type MetaDecision } from '@mec/meta'
 import { InspectionReads, MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { openPushCard } from '../src/release'
 import { buildServer } from '../src/server'
 
 /**
@@ -99,6 +100,59 @@ const seedWork = (id: string, extra: Record<string, unknown> = {}): void => {
     store.workItems.save({ id, state: 'executing', createdAt: AT, updatedAt: AT, ...extra })
   })
 }
+
+/** The real card opener: only what git and gh would answer comes from here. */
+const openPushCardFor = async (workItemId: string): Promise<string> => {
+  const viewed = { url: 'https://github.com/acme/alpha', defaultBranchRef: { name: 'main' } }
+  const card = await openPushCard(
+    {
+      store,
+      effects: store.effects,
+      now: () => new Date(AT),
+      run: async () => ({ code: 0, stdout: JSON.stringify(viewed), stderr: '' }),
+      git: async () => ({ code: 0, stdout: `${'a'.repeat(40)}\n`, stderr: '' }),
+      pushSource: () => ({ gitDir: '/cache.git' }),
+    },
+    { repoId: 'repo_a', branch: 'mec/w/integration', workItemId },
+  )
+  return card.confirmationId
+}
+
+describe('the chat holds what was said (§12.7)', () => {
+  it('a wake kept quiet stays off the chat, and a spoken one stays on', async () => {
+    store.atomic(() => {
+      const saved = { routing: 'new_work', createdAt: AT, repoId: 'repo_a', tasksCreated: 0 }
+      store.messages.save({
+        id: 'msg_wake_quiet',
+        text: 'report ready',
+        ackText: 'Noted.',
+        quiet: true,
+        ...saved,
+      })
+      store.messages.save({ id: 'msg_wake_spoken', text: 'report blocked', ackText: 'Blocked.', ...saved })
+    })
+
+    const ids = (await get('/api/chat/messages?repoId=repo_a')).json().map((row: any) => row.id)
+
+    expect(ids).toEqual(['msg_wake_spoken'])
+  })
+})
+
+describe('delivery cards reach their work (§10)', () => {
+  it('a push card opened for work reads Needs your approval, and Needs you lists it there', async () => {
+    seedWork('wi_1', { repoId: 'repo_a', state: 'integrating' })
+    const opened = await openPushCardFor('wi_1')
+
+    const row = (await get('/api/inspect/work?repoId=repo_a'))
+      .json()
+      .items.find((item: any) => item.id === 'wi_1')
+    expect(row.stage).toMatchObject({ key: 'person/decision', label: 'Needs your approval' })
+    const need = (await get('/api/inspect/needs?repoId=repo_a'))
+      .json()
+      .items.find((item: any) => item.id === opened)
+    expect(need.workItemId).toBe('wi_1')
+  })
+})
 
 describe('inspection routes: scope and identity', () => {
   it("repo filter returns no other repository's row", async () => {

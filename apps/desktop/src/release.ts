@@ -482,7 +482,7 @@ const payloadOf = <T>(doc: { payload?: Json }, confirmationId: string): T => {
  */
 export async function createPrBehindCard(
   deps: ReleaseDeps,
-  input: PrCreatePayload & { headSha?: string },
+  input: PrCreatePayload & { headSha?: string; workItemId?: string },
 ): Promise<{ confirmationId: string; prNumber?: number; prUrl?: string }> {
   const at = deps.now().toISOString()
   assertRepo(input.repo)
@@ -506,7 +506,11 @@ export async function createPrBehindCard(
   const payload: Record<string, Json> = { repo: input.repo, branch: input.branch, title, body }
 
   deps.store.atomic(() => {
-    deps.store.confirmations.save({ ...(record as unknown as StoreDoc), payload })
+    deps.store.confirmations.save({
+      ...(record as unknown as StoreDoc),
+      payload,
+      ...(input.workItemId !== undefined && { workItemId: input.workItemId }),
+    })
     savePrFlow(
       deps.store,
       advance(prFlowOf(deps.store, input.repo, input.branch, at), 'integration_complete', at),
@@ -942,7 +946,7 @@ async function localHead(deps: ReleaseDeps, gitDir: string, branch: string): Pro
  */
 export async function openPushCard(
   deps: ReleaseDeps,
-  input: { repoId: string; branch: string; headSha?: string },
+  input: { repoId: string; branch: string; headSha?: string; workItemId?: string },
 ): Promise<{ confirmationId: string; headSha: string }> {
   const at = deps.now().toISOString()
   const target = await pushTarget(deps, input.repoId, input.branch)
@@ -966,7 +970,11 @@ export async function openPushCard(
     branch: input.branch,
   }
   deps.store.atomic(() => {
-    deps.store.confirmations.save({ ...(record as unknown as StoreDoc), payload })
+    deps.store.confirmations.save({
+      ...(record as unknown as StoreDoc),
+      payload,
+      ...(input.workItemId !== undefined && { workItemId: input.workItemId }),
+    })
     appendEvent(
       deps.store,
       `release:${target.repo}:${input.branch}`,

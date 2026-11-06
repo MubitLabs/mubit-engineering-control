@@ -4,7 +4,14 @@ import type { Json, Report, StoreDoc } from '@mec/contracts'
 import { DEFAULT_CAPS, type SlotModelsView } from '@mec/domain'
 import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, describe, expect, it } from 'vitest'
-import { FollowUps, type PlacementTable, repoFields, type SchedulerDeps, schedulePass } from '../src'
+import {
+  FollowUps,
+  openRepairTask,
+  type PlacementTable,
+  repoFields,
+  type SchedulerDeps,
+  schedulePass,
+} from '../src'
 import { holdWorkItem, refuseLaunch, stopWorkItem } from '../src/authority'
 
 const AT = '2026-11-05T12:00:00.000Z'
@@ -129,6 +136,151 @@ function saveReport(store: MemoryRepositories, n: number, report: Report): void 
     store.engines.save({ id: `report/att_1/${n}`, attemptId: 'att_1', n, report: report as unknown as Json })
   })
 }
+
+const wakes = (store: MemoryRepositories) => store.snapshot().effects.filter((row) => row.kind === 'relay')
+
+/** A task whose implementer already spent a repair, and the repair that just ran red. */
+function repairRanRed(store: MemoryRepositories): void {
+  work(store)
+  task(store, 'task_a', { status: 'active' })
+  store.atomic(() => {
+    store.attempts.save({
+      id: 'att_0',
+      taskId: 'task_a',
+      workItemId: 'wi_1',
+      slotId: 'slot_a',
+      state: 'checks_failed',
+      createdAt: '2026-11-05T11:00:00.000Z',
+    })
+  })
+  attempt(store, {
+    state: 'checks_failed',
+    head_sha: 'abc',
+    reports: 1,
+    createdAt: AT,
+    continuation: { kind: 'repair', role: 'repair_agent', evidence: 'red', round: 0 },
+  })
+  verdict(store, 'failed')
+}
+
+describe('a report on a red head (§10)', () => {
+  it.each([['blocked'], ['failed']] as const)(
+    'a repair reporting %s on a red head ends the repairs',
+    (kind) => {
+      const { store, pass } = rig()
+      repairRanRed(store)
+      saveReport(store, 1, { kind, summary: 'a person must issue the stamp' })
+
+      expect(pass()).toEqual([])
+      expect(store.tasks.get('task_a')).toMatchObject({ status: 'blocked' })
+      expect(String(store.tasks.get('task_a')?.blockedReason)).toContain('a person must issue the stamp')
+      expect(store.tasks.get('task_a')?.next).toBeUndefined()
+      expect(attemptsOf(store, 'task_a')).toHaveLength(2)
+      expect(store.workItems.get('wi_1')).toMatchObject({ state: 'blocked' })
+      pass()
+      expect(attemptsOf(store, 'task_a')).toHaveLength(2)
+    },
+  )
+
+  it('a dropped report on a red head is no block: checks still decide', () => {
+    const { store, pass } = rig()
+    repairRanRed(store)
+    saveReport(store, 1, { kind: 'dropped', summary: 'nothing to do' })
+
+    pass()
+    expect(store.tasks.get('task_a')?.status).not.toBe('cancelled')
+    expect(attemptsOf(store, 'task_a')).toHaveLength(3)
+  })
+
+  it('a progress report on a red head still earns its repair', () => {
+    const { store, pass } = rig()
+    repairRanRed(store)
+    saveReport(store, 1, { kind: 'progress', summary: 'tried' })
+
+    pass()
+    expect(attemptsOf(store, 'task_a')).toHaveLength(3)
+  })
+})
+
+describe('used-up repairs wake the planner once (§6)', () => {
+  const noRepairs = { caps: { ...DEFAULT_CAPS, repairAttemptsPerTask: 0 } }
+
+  it('a task that used up its repairs wakes one turn, with what remains', () => {
+    const { store, pass } = rig([slot('slot_a')], noRepairs)
+    work(store)
+    task(store, 'task_a', { status: 'awaiting_review' })
+    attempt(store, { state: 'checks_failed', head_sha: 'abc' })
+    verdict(store, 'failed')
+
+    pass()
+    pass()
+
+    expect(wakes(store)).toHaveLength(1)
+    expect(wakes(store)[0]?.payload).toMatchObject({ reason: 'work parked', workItemId: 'wi_1' })
+    expect(JSON.stringify(wakes(store)[0]?.payload)).toContain('Check unit failed on abc')
+  })
+
+  it('its dependents add no wake of their own', () => {
+    const { store, pass } = rig([slot('slot_a')], noRepairs)
+    work(store)
+    task(store, 'task_a', { status: 'awaiting_review' })
+    task(store, 'task_b', { dependsOn: ['task_a'] })
+    attempt(store, { state: 'checks_failed', head_sha: 'abc' })
+    verdict(store, 'failed')
+
+    pass()
+
+    expect(store.tasks.get('task_b')?.status).toBe('blocked')
+    expect(wakes(store)).toHaveLength(1)
+  })
+
+  it('a failed check with a repair left wakes nobody', () => {
+    const { store, pass } = rig()
+    work(store)
+    task(store, 'task_a', { status: 'awaiting_review' })
+    attempt(store, { state: 'checks_failed', head_sha: 'abc' })
+    verdict(store, 'failed')
+
+    pass()
+
+    expect(wakes(store)).toEqual([])
+  })
+
+  it('a block a specialist reported is its report’s wake, not a second one', () => {
+    const { store, pass } = rig([slot('slot_a')], noRepairs)
+    repairRanRed(store)
+    saveReport(store, 1, { kind: 'blocked', summary: 'a person must act' })
+
+    pass()
+
+    expect(store.tasks.get('task_a')?.status).toBe('blocked')
+    expect(wakes(store)).toEqual([])
+  })
+
+  it('an integration repair past the cap wakes one turn too', () => {
+    const { store, deps } = rig([slot('slot_a')], noRepairs)
+    work(store)
+    task(store, 'task_a', { status: 'integrated' })
+    const root = store.tasks.get('task_a') as StoreDoc
+    const open = () =>
+      store.atomic(() => {
+        openRepairTask(store, store.effects, deps.caps, {
+          root,
+          evidence: 'combined checks red',
+          worktree: '/w',
+          branch: 'b',
+          id: 'task_r',
+          at: AT,
+        })
+      })
+
+    open()
+    open()
+
+    expect(store.workItems.get('wi_1')?.state).toBe('blocked')
+    expect(wakes(store)).toHaveLength(1)
+  })
+})
 
 describe('the scheduler pass (§11)', () => {
   it('dependent launches after prerequisite accepted', () => {

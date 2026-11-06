@@ -233,7 +233,7 @@
   {
     "name": "stdin not held open",
     "file": "packages/runtime/src/owned-spawn.ts",
-    "find": "      stdio: [hooks.stdin === true ? 'pipe' : 'ignore', 'pipe', 'pipe'],\n",
+    "find": "      stdio: [hooks.stdin === false ? 'ignore' : 'pipe', 'pipe', 'pipe'],\n",
     "replace": "      stdio: ['ignore', 'pipe', 'pipe'],\n",
     "tests": ["packages/runtime/test/opencode-client.test.ts"]
   },

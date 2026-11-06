@@ -154,6 +154,8 @@ describe('cliMain finds the server the way the launcher does', () => {
     const snapshot = (detail: string) =>
       JSON.stringify({
         ...(JSON.parse(normalBoardText) as object),
+        // A live writer's snapshot, as above: without a heartbeat `mec status` says not answering.
+        heartbeatAt: new Date().toISOString(),
         parts: { sample: { state: 'error', detail } },
       })
     const home = join(root, 'home')

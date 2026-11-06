@@ -366,12 +366,9 @@ export class AttemptRunner {
       live.plan.seal()
       if (live.stalled === true) return
       await this.#stopGroup(live).catch(() => {})
-      // A group that would not go is a failed stop, not a failed attempt: it may still be running.
+      // A group that would not go stays on the record as a failed stop, and it ended this attempt.
       const { attempt_id, generation } = attempt
-      if (this.#deps.supervisor.owns(attempt_id, generation)) {
-        this.#stopFailed(live, error)
-        return
-      }
+      if (this.#deps.supervisor.owns(attempt_id, generation)) this.#stopFailed(live, error)
       try {
         const detail = error instanceof Error ? error.message : String(error)
         facts.atomic(() => facts.attemptFailed(attempt, this.#clean(live, `monitor_error: ${detail}`)))

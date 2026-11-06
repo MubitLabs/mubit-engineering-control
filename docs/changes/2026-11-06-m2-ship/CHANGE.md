@@ -36,7 +36,7 @@ One linear branch from `origin/main` (#46), landed as one PR by the owner's appr
 
 ## Mutants
 
-43 stale `find` strings were repaired, 25 of them already stale on main. `tools/mutants/m2-ship.json` covers the new gates.
+43 stale `find` strings were repaired, 4 of them already stale on main. `tools/mutants/m2-ship.json` covers the new gates.
 
 ## Unproven
 

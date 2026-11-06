@@ -16,7 +16,7 @@ export type OwnedSpawn = (
 ) => {
   pid: number | undefined
   stdout: AsyncIterable<string>
-  /** Only with the `stdin` hook: an engine that speaks over stdio, or takes stream input. */
+  /** Absent with `stdin: false`: an engine that speaks over stdio, or takes stream input, has it. */
   stdin?: Writable
   exited: Promise<number>
   kill(signal?: string): void
@@ -27,7 +27,7 @@ export type OwnedSpawnHooks = {
   onStderr?: (chunk: string) => void
   /** How long a group may outlive its leader before it is stopped. */
   reapAfterMs?: number
-  /** Keeps stdin as an open pipe. Without it the engine reads an empty stdin. */
+  /** `false` gives the engine an empty stdin. Otherwise it is an open pipe, for stream input or stdio. */
   stdin?: boolean
   /** Called as soon as the group exists, so its identity is stored before anything else can fail. */
   onStart?: (pid: number) => void
@@ -50,7 +50,7 @@ export function ownedSpawn(
       cwd: opts.cwd,
       env: opts.env,
       detached: true,
-      stdio: [hooks.stdin === true ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+      stdio: [hooks.stdin === false ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     })
     // spawn() reports ENOENT and friends through an async 'error' event; without a pid there is
     // no process to own, and the caller hears it as a throw.

@@ -45,7 +45,7 @@ export type ActiveAttempt = {
 /**
  * `confirmation` and `policy` belong to upstream gates (§13); this pass emits `capacity` (caps,
  * the reserved wake unit, or healthy-but-full slots), `slot_unhealthy` (no healthy slot matched
- * the task's pin, class or role pinning) and `model_unavailable` (those that did serve no model
+ * the task's pin or role pinning) and `model_unavailable` (those that did serve no model
  * the task asked for: unavailable never silently becomes a default).
  */
 export type DeferReason = 'capacity' | 'slot_unhealthy' | 'model_unavailable' | 'confirmation' | 'policy'
@@ -112,7 +112,6 @@ export function planDispatches(input: {
 
   const matches = (task: SchedulableTask, slot: SlotView): boolean =>
     (task.slotId === undefined || slot.id === task.slotId) &&
-    (task.slotClass === undefined || slot.slotClass === task.slotClass) &&
     (slot.pinnedRoles.length === 0 || slot.pinnedRoles.includes(task.role))
 
   /** New work only: a slot at/above the ceiling never takes a new attempt; running ones stay. */
@@ -132,7 +131,8 @@ export function planDispatches(input: {
     // Rule 1: one live attempt per task (v1's unique index); a launch made this pass counts too.
     if (activeTaskIds.has(task.taskId) || launchedTaskIds.has(task.taskId)) continue
 
-    // Rules 2 and 4: healthy slots matching the task's pin, slot class and the slot's role pinning.
+    // Rules 2 and 4: healthy slots matching the task's pin and the slot's role pinning. The slot
+    // class is a preference (§10) applied when choosing below, never a filter.
     const matching = input.slots.filter((slot) => slot.state === 'healthy' && matches(task, slot))
     if (matching.length === 0) {
       deferred.push({ taskId: task.taskId, reason: 'slot_unhealthy' })
@@ -170,7 +170,10 @@ export function planDispatches(input: {
 
     // Rule 4 preference: lowest utilisation, then fewest in use, then id for stability. A slot
     // without a reading ranks as least utilised (unknown is not high).
-    const chosen = [...usable].sort(
+    const preferred = usable.filter(
+      (slot) => task.slotClass !== undefined && slot.slotClass === task.slotClass,
+    )
+    const chosen = [...(preferred.length > 0 ? preferred : usable)].sort(
       (a, b) => utilisation(a) - utilisation(b) || load(a) - load(b) || a.id.localeCompare(b.id),
     )[0]!
 

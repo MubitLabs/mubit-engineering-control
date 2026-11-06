@@ -9,7 +9,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { LaunchSpec, Store } from '@mec/contracts'
+import type { HealthBoard, LaunchSpec, Store } from '@mec/contracts'
 import { Later } from '@mec/contracts'
 import { headSha } from '@mec/git'
 import { BridgeImpl, MecToolsServer } from '@mec/mec-tools'
@@ -98,13 +98,20 @@ const scriptedSetupDecide: SetupDecide = async ({ text }) => {
 }
 
 /** The wizard's persisted meta-slot choice → that slot's home dir. Best-effort: an absent
- *  or dangling choice means "not chosen yet" (undefined), never a crash on startup. */
-function metaSlotFromStore(store: Store): MetaSlot | undefined {
+ *  or dangling choice means "not chosen yet" (undefined), never a crash on startup. A retired
+ *  slot is refused by name on the health board: no probe brings one back (§5.5), where a
+ *  degraded slot can recover, and this runs once per start. */
+function metaSlotFromStore(store: Store, health: HealthBoard): MetaSlot | undefined {
   const setting = store.engines.get('settings/meta-slot')
   const slotId = setting !== undefined && typeof setting.slotId === 'string' ? setting.slotId : undefined
   if (slotId === undefined) return undefined
   const slot = store.slots.get(slotId)
   if (slot === undefined || typeof slot.home !== 'string' || slot.home === '') return undefined
+  if (slot.state === 'retired') {
+    const why = `slot ${slotId} is retired, so it cannot run the meta agent: choose another slot`
+    health.claim(`slot:${slotId}`).error(why)
+    return undefined
+  }
   return { dir: slot.home, linked: slot.linkedDefault === true }
 }
 
@@ -130,9 +137,9 @@ export async function startServer(opts: {
   const db = new Database(join(opts.dataDir, 'mec.db'))
   migrate(db, MIGRATIONS_v1)
   const store = new SqliteStore(db)
-  const metaSlot =
-    metaSlotAt(opts.metaSlotDir) ?? metaSlotFromStore(store) ?? metaSlotAt(process.env.MEC_META_SLOT)
   const health = new HealthBoardImpl()
+  const metaSlot =
+    metaSlotAt(opts.metaSlotDir) ?? metaSlotFromStore(store, health) ?? metaSlotAt(process.env.MEC_META_SLOT)
   health.claim('runtime').ready('composition root up')
   // Fail fast: a policy that cannot load never starts a server that would enforce it.
   // A policy saved from Settings wins (M3.3): it is read here, once, so an edit needs a restart.

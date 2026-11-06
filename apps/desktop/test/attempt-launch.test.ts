@@ -320,6 +320,34 @@ describe('a chat request', { timeout: 60_000 }, () => {
       expect(seen.argv).toContain('--restricted')
     })
 
+    it('a retired meta slot never launches, and the status says why', async () => {
+      const { dataDir, repo, bin } = scratch({ steps: [{ init: true }, { result: 'completed' }] })
+      seedSlots(dataDir, repo, [{ ...LINKED, state: 'retired' }])
+      peek(dataDir, (store) => store.engines.save({ id: 'settings/meta-slot', slotId: LINKED.id }))
+      const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 4000 })
+      closers.push(server.close)
+
+      await fetch(`${server.url}/api/chat/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'please add the thing', repoId: 'repo_a' }),
+      })
+
+      expect(existsSync(join(bin, 'seen.json'))).toBe(false)
+      const status = (await (await fetch(`${server.url}/api/status`)).json()) as {
+        parts: Record<string, { state: string; detail?: string }>
+      }
+      expect(status.parts[`slot:${LINKED.id}`]).toEqual({
+        state: 'error',
+        detail: `slot ${LINKED.id} is retired, so it cannot run the meta agent: choose another slot`,
+      })
+    })
+
+    it('a degraded meta slot still plans: a probe can bring it back', async () => {
+      const seen = await plansOn({ ...LINKED, state: 'degraded' })
+      expect(seen.argv).toContain('-p')
+    })
+
     it('a slot with its own home plans under that home', async () => {
       const seen = await plansOn({ ...LINKED, id: 'slot_max', home: '/slots/claude/max' })
       expect(seen.config_dir).toBe('/slots/claude/max')

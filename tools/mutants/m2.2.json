@@ -474,5 +474,26 @@
     "find": "    for (const tool of UNASKED_DENIED) argv.push('--disallowedTools', tool)\n",
     "replace": "",
     "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "retired meta slot launches",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  if (slot.state === 'retired') {\n",
+    "replace": "  if (slot.state === 'never') {\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "retired meta slot refused in silence",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    health.claim(`slot:${slotId}`).error(why)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "degraded meta slot refused",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  if (slot.state === 'retired') {\n",
+    "replace": "  if (slot.state === 'retired' || slot.state === 'degraded') {\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
   }
 ]

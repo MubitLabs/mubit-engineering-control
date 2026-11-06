@@ -296,6 +296,10 @@ describe('the workspace on one connection', () => {
     expect(latest().after()).toBe('9,12')
     workspace.followAttempt({ stream: 'attempt:a', after: 30 })
     expect(latest().after()).toBe('9,12')
+    // A later delivery read cannot skip frames: the next connection still starts from 12.
+    workspace.start()
+    await answer({ repositories: 9 })
+    expect(latest().after()).toBe('9,12')
     workspace.followAttempt(null)
     expect(latest().streams()).toBe('repositories')
     expect(FakeEventSource.open).toHaveLength(1)

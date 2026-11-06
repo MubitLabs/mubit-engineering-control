@@ -112,8 +112,10 @@ describe('activity', () => {
   })
 
   it('coverage false reads no activity', async () => {
-    const { inspection, calls, settle } = rig()
-    inspection.selectTask('task_partial')
+    const { inspection, calls, settle } = rig({
+      taskDetail: async () => ({ ...taskOfId('task_active'), coverage: taskOfId('task_partial').coverage }),
+    })
+    inspection.selectTask('task_active')
     await settle()
     expect(activityCalls(calls)).toEqual([])
     expect(inspection.getState().activity.attemptId).toBeNull()

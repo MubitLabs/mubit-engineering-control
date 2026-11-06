@@ -312,7 +312,12 @@
     "file": "packages/runtime/src/supervisor.ts",
     "find": "const found = await descendantsOutside(owned.pid)",
     "replace": "const found: Strays = { pids: [], groups: [] }",
-    "tests": ["packages/runtime/test/supervisor.test.ts", "apps/desktop/test/engine-registry.test.ts"]
+    "tests": [
+      "packages/runtime/test/supervisor.test.ts",
+      "apps/desktop/test/engine-registry.test.ts",
+      "-t",
+      "descendant|stray|the command backgrounded|a second stop|a stop takes|interrupted waits|SIGKILL cannot take"
+    ]
   },
   {
     "name": "stop does not signal descendants",
@@ -336,7 +341,9 @@
     "tests": [
       "packages/runtime/test/supervisor.test.ts",
       "packages/runtime/test/supervisor-groups.test.ts",
-      "apps/desktop/test/engine-registry.test.ts"
+      "apps/desktop/test/engine-registry.test.ts",
+      "-t",
+      "descendant|stray|the command backgrounded|a second stop|a stop takes|interrupted waits|SIGKILL cannot take"
     ]
   },
   {
@@ -365,7 +372,12 @@
     "file": "packages/runtime/src/supervisor.ts",
     "find": "    if (running !== undefined) return running\n",
     "replace": "",
-    "tests": ["packages/runtime/test/supervisor.test.ts", "apps/desktop/test/engine-registry.test.ts"]
+    "tests": [
+      "packages/runtime/test/supervisor.test.ts",
+      "apps/desktop/test/engine-registry.test.ts",
+      "-t",
+      "descendant|stray|the command backgrounded|a second stop|a stop takes|interrupted waits|SIGKILL cannot take"
+    ]
   },
   {
     "name": "a finished stop is never cleared",

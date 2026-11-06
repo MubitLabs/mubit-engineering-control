@@ -106,6 +106,24 @@ function attempt(store: MemoryRepositories, fields: StoreDoc): void {
   })
 }
 
+/** The repository registers `unit`, and the attempt's stored verdict on `sha` says `status`. */
+function verdict(store: MemoryRepositories, status: 'passed' | 'failed', sha = 'abc'): void {
+  store.atomic(() => {
+    const repo = store.engines.get(REPO) as StoreDoc
+    store.engines.save({ ...repo, checks: [{ name: 'unit', cmd: 'true' }] })
+    const doc = store.attempts.get('att_1') as StoreDoc
+    store.attempts.save({ ...doc, checks: ['unit'] })
+    store.engines.save({
+      id: 'check/att_1/unit',
+      attemptId: 'att_1',
+      name: 'unit',
+      status,
+      log_tail: 'two tests red',
+      sha,
+    })
+  })
+}
+
 function saveReport(store: MemoryRepositories, n: number, report: Report): void {
   store.atomic(() => {
     store.engines.save({ id: `report/att_1/${n}`, attemptId: 'att_1', n, report: report as unknown as Json })
@@ -236,8 +254,8 @@ describe('the scheduler pass (§11)', () => {
     })
   })
 
-  it('checks failing on the head leave no attempts, so the task blocks', () => {
-    const { store, pass } = rig()
+  it('checks failing on the head with no repairs left block the task', () => {
+    const { store, pass } = rig([slot('slot_a')], { caps: { ...DEFAULT_CAPS, repairAttemptsPerTask: 0 } })
     work(store)
     task(store, 'task_a', { status: 'awaiting_review' })
     store.atomic(() => {
@@ -250,9 +268,10 @@ describe('the scheduler pass (§11)', () => {
         head_sha: 'abc',
       })
     })
+    verdict(store, 'failed')
     pass()
     expect(store.tasks.get('task_a')).toMatchObject({ status: 'blocked' })
-    expect(String(store.tasks.get('task_a')?.blockedReason)).toContain('failed its checks on abc')
+    expect(String(store.tasks.get('task_a')?.blockedReason)).toContain('Check unit failed on abc')
   })
 
   it('an attempt that ran out of its wall clock blocks its task and its dependents', () => {
@@ -363,6 +382,7 @@ describe('the scheduler pass (§11)', () => {
     attempt(store, { state: 'succeeded', head_sha: 'abc', reports: 2 })
     saveReport(store, 1, { kind: 'blocked', summary: 'stuck for a moment' })
     saveReport(store, 2, { kind: 'ready', summary: 'done' })
+    verdict(store, 'passed')
 
     pass()
     expect(store.tasks.get('task_a')).toMatchObject({ status: 'accepted', acceptedHead: 'abc' })
@@ -529,7 +549,7 @@ describe('the scheduler pass (§11)', () => {
     })
   })
 
-  it('an interim acceptance moves a succeeded attempt’s task through the machine', () => {
+  it('acceptance moves a succeeded attempt’s task through the machine', () => {
     const { store, pass } = rig()
     work(store)
     task(store, 'task_a', { status: 'active' })
@@ -544,6 +564,7 @@ describe('the scheduler pass (§11)', () => {
         head_sha: 'abc',
       })
     })
+    verdict(store, 'passed')
 
     expect(pass().map((row) => row.taskId)).toEqual(['task_b'])
     expect(store.tasks.get('task_a')).toMatchObject({ status: 'accepted', acceptedHead: 'abc' })

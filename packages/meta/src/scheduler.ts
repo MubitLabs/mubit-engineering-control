@@ -14,19 +14,31 @@
  */
 import type { Effects, EngineId, Json, Report, Store, StoreDoc } from '@mec/contracts'
 import { ModelRequest } from '@mec/contracts'
-import type { AttemptState, BasePolicy, Caps, SchedulableTask, SlotModelsView, SlotView } from '@mec/domain'
+import type {
+  AttemptState,
+  BasePolicy,
+  BoundFinding,
+  Caps,
+  SchedulableTask,
+  SlotModelsView,
+  SlotView,
+} from '@mec/domain'
 import {
   ACTIVE_ATTEMPT_STATES,
+  acceptance,
   canTransition,
   dependencySatisfied,
   planDispatches,
   TASK_MACHINE,
   transition,
+  WORK_ITEM_MACHINE,
 } from '@mec/domain'
 import { type ResolvedModel, resolveModel } from '../../runtime/src/model'
 import { repoOf } from './admission'
 import { blockWork, isHeld, isTerminal, mandateOf, noVerdict, processingOf } from './authority'
 import type { FollowUps } from './followups'
+import { type Continuation, nextRepair, nextReview, repairLedger } from './repair'
+import { requiredChecks, verdictsOf } from './work-facts'
 
 /** The capability table `resolveModel` reads; the planner's seam supplies it. */
 export type PlacementTable = Parameters<typeof resolveModel>[2]
@@ -114,12 +126,6 @@ function failure(deps: SchedulerDeps, attempt: StoreDoc): string | undefined {
   return undefined
 }
 
-/**
- * How many more attempts a failed task may have. Every task has one until bounded repair (M2.3):
- * §11 offers a retry only to a person, never as a loop.
- */
-const attemptsLeft = (_task: StoreDoc, _attempts: readonly StoreDoc[]): number => 0
-
 function moveTask(store: Store, task: StoreDoc, event: string, fields: StoreDoc, at: string): StoreDoc {
   const moved = {
     ...task,
@@ -165,18 +171,89 @@ function settleOnReport(store: Store, task: StoreDoc, attempt: StoreDoc, at: str
   return true
 }
 
+type Target = { worktree?: string; branch?: string }
+
+const lastReportDoc = (store: Store, attempt: StoreDoc): StoreDoc | undefined =>
+  store.engines.get(`report/${String(attempt.id)}/${Number(attempt.reports ?? 0)}`)
+
+const kindOf = (attempt: StoreDoc): unknown => (attempt.continuation as { kind?: unknown } | undefined)?.kind
+
 /**
- * Decision #32, the one rule M2.3 replaces: an attempt that `succeeded` passed the registered
- * checks on its exact head, which accepts a routine task. No reviewer exists before M2.3.
+ * The head a report speaks for. An attempt cannot commit (§8: the clone is read-only to its shell),
+ * so MEC commits the tree it left, after it reported. A claim that named the worktree's real head,
+ * or no claim at all, therefore speaks for that commit. A claim that was false stays false.
  */
-function acceptRoutine(store: Store, task: StoreDoc, attempt: StoreDoc, at: string): void {
+function reportHead(doc: StoreDoc | undefined, attempt: StoreDoc): string | undefined {
+  const claimed = (doc?.report as { head_sha?: string } | undefined)?.head_sha
+  if (claimed === undefined || doc?.head_matches === true) return attempt.head_sha as string | undefined
+  return claimed
+}
+
+/** What a reviewer said, bound to the commit it read (§15): the report's `finding` artifacts. */
+function findingsOf(doc: StoreDoc | undefined, attempt: StoreDoc): BoundFinding[] {
+  const artifacts = (doc?.report as { artifacts?: { kind: string; ref: string }[] } | undefined)?.artifacts
+  return (artifacts ?? []).flatMap((artifact) =>
+    artifact.kind === 'finding' ? [{ text: artifact.ref, sha: String(attempt.head_sha) }] : [],
+  )
+}
+
+/** The commit a reviewer read and found nothing on; a review with no `ready` says nothing. */
+function reviewedSha(store: Store, attempts: readonly StoreDoc[]): string | undefined {
+  const reviews = attempts.filter((doc) => kindOf(doc) === 'review' && doc.state === 'succeeded')
+  const clean = reviews.filter((doc) => {
+    const report = lastReportDoc(store, doc)
+    const ready = (report?.report as Report | undefined)?.kind === 'ready'
+    return ready && findingsOf(report, doc).length === 0
+  })
+  return latestOf(clean)?.head_sha as string | undefined
+}
+
+/** One counter for a task and the repair tasks opened for it (decision #36). */
+function familyOf(store: Store, task: StoreDoc): { attempts: StoreDoc[]; reports: StoreDoc[] } {
+  const root = typeof task.repairOf === 'string' ? task.repairOf : String(task.id)
+  const members = store.tasks
+    .list({ workItemId: String(task.workItemId) })
+    .filter((doc) => doc.id === root || doc.repairOf === root)
+  const attempts = members.flatMap((doc) => store.attempts.list({ taskId: doc.id }))
+  const reports = attempts.flatMap((attempt) =>
+    Array.from({ length: Number(attempt.reports ?? 0) }, (_, index) =>
+      store.engines.get(`report/${String(attempt.id)}/${index + 1}`),
+    ).filter((doc) => doc !== undefined),
+  )
+  return { attempts, reports }
+}
+
+/** Every finding this task's reviewers made. Accepting the task means a later head answered them. */
+function foundOn(store: Store, attempts: readonly StoreDoc[]): { text: string; disposition: string }[] {
+  const found = attempts.flatMap((doc) => findingsOf(lastReportDoc(store, doc), doc))
+  return [...new Set(found.map((finding) => finding.text))].map((text) => ({ text, disposition: 'fixed' }))
+}
+
+function acceptTask(
+  store: Store,
+  task: StoreDoc,
+  attempt: StoreDoc,
+  attempts: readonly StoreDoc[],
+  at: string,
+): void {
   let current = task
   if (canTransition(TASK_MACHINE, String(current.status), 'work_complete')) {
     current = moveTask(store, current, 'work_complete', {}, at)
   }
   if (!canTransition(TASK_MACHINE, String(current.status), 'review_accepted')) return
   const { deferred: _deferred, ...rest } = current
-  moveTask(store, rest, 'review_accepted', { acceptedHead: attempt.head_sha ?? null }, at)
+  const findings = foundOn(store, attempts)
+  moveTask(
+    store,
+    rest,
+    'review_accepted',
+    {
+      acceptedHead: attempt.head_sha ?? null,
+      acceptedBranch: attempt.branch ?? null,
+      ...(findings.length > 0 && { findings }),
+    },
+    at,
+  )
   appendEvent(
     store,
     `work:${String(task.workItemId)}`,
@@ -184,6 +261,77 @@ function acceptRoutine(store: Store, task: StoreDoc, attempt: StoreDoc, at: stri
     { taskId: String(task.id), attemptId: String(attempt.id), head: (attempt.head_sha ?? null) as Json, at },
     at,
   )
+}
+
+/** Queues what comes next on the task; a pass places it through the same caps as any launch. */
+function continueTask(store: Store, task: StoreDoc, next: Continuation, at: string): void {
+  if (next.kind === 'review') {
+    store.tasks.save({ ...task, next: next as unknown as Json, updatedAt: at })
+    return
+  }
+  const event = task.status === 'awaiting_review' ? 'review_sent_back' : 'attempt_failed'
+  moveTask(store, task, event, { next: next as unknown as Json }, at)
+}
+
+/**
+ * §10, §15, decision #32: what a finished attempt's verdicts mean for its task. Reads only what
+ * is stored, so a pass after a restart decides the same. A task with a continuation queued is
+ * waiting for that attempt, and one the machine has moved on from stays where it is.
+ */
+function settleAttempt(
+  deps: SchedulerDeps,
+  task: StoreDoc,
+  attempts: readonly StoreDoc[],
+  latest: StoreDoc,
+  at: string,
+): void {
+  const { store, caps } = deps
+  if (task.next !== undefined || !['active', 'awaiting_review'].includes(String(task.status))) return
+  const report = lastReportDoc(store, latest)
+  const kind = (report?.report as Report | undefined)?.kind
+  const claimed = reportHead(report, latest)
+  const reviewed = reviewedSha(store, attempts)
+  const decided = acceptance({
+    attemptState: String(latest.state),
+    ...(typeof latest.head_sha === 'string' && { head: latest.head_sha }),
+    ...(kind !== undefined && { report: { kind, ...(claimed !== undefined && { headSha: claimed }) } }),
+    required: requiredChecks(task, store.engines.get(String(task.repoId))),
+    verdicts: verdictsOf(store, latest),
+    findings: findingsOf(report, latest),
+    policy: { sensitive: task.sensitive === true, ...(reviewed !== undefined && { reviewedSha: reviewed }) },
+  })
+  if (decided.verdict === 'accepted') acceptTask(store, task, latest, attempts, at)
+  if (decided.verdict === 'blocked') blockTask(store, task, decided.reason, at)
+  if (decided.verdict !== 'repair' && decided.verdict !== 'review') return
+  const target: Target = {
+    ...(typeof latest.worktree === 'string' && { worktree: latest.worktree }),
+    ...(typeof latest.branch === 'string' && { branch: latest.branch }),
+  }
+  const { attempts: family, reports } = familyOf(store, task)
+  const ledger = repairLedger(family, reports)
+  const step =
+    decided.verdict === 'review'
+      ? nextReview(decided.head, ledger, caps, target)
+      : nextRepair(decided, ledger, caps, { ...target, ...(claimed !== undefined && { claimedHead: claimed }) })
+  if ('block' in step) blockTask(store, task, step.block, at)
+  else continueTask(store, task, step.next, at)
+}
+
+/** §10: work reaches `reviewing` with the first finished task and `integrating` with the first accepted. */
+function advanceWork(store: Store, workItemId: string, at: string): void {
+  const statuses = store.tasks.list({ workItemId }).map((task) => String(task.status))
+  const accepted = statuses.some((status) => status === 'accepted' || status === 'integrated')
+  const reviewing = accepted || statuses.includes('awaiting_review')
+  const events = [...(reviewing ? ['review_started'] : []), ...(accepted ? ['integration_started'] : [])]
+  for (const event of events) {
+    const work = store.workItems.get(workItemId) as StoreDoc
+    if (!canTransition(WORK_ITEM_MACHINE, String(work.state), event)) continue
+    store.workItems.save({
+      ...work,
+      state: transition(WORK_ITEM_MACHINE, String(work.state), event),
+      updatedAt: at,
+    })
+  }
 }
 
 function blockTask(store: Store, task: StoreDoc, reason: string, at: string): void {
@@ -209,16 +357,16 @@ function settleTasks(deps: SchedulerDeps, workItemId: string, at: string): void 
     const latest = latestOf(attempts)
     if (latest === undefined) continue
     if (settleOnReport(store, task, latest, at)) continue
-    if (latest.state === 'succeeded') {
-      acceptRoutine(store, task, latest, at)
+    if (['succeeded', 'checks_failed'].includes(String(latest.state)) || noVerdict(latest)) {
+      settleAttempt(deps, task, attempts, latest, at)
       continue
     }
     const failed = failure(deps, latest)
     if (failed === undefined || attempts.some((attempt) => occupies(deps, attempt))) continue
-    if (attemptsLeft(task, attempts) > 0) continue
     if (canTransition(TASK_MACHINE, String(task.status), 'block')) blockTask(store, task, failed, at)
   }
   blockDependents(store, workItemId, at)
+  advanceWork(store, workItemId, at)
   const tasks = store.tasks.list({ workItemId })
   const blocked = tasks.find((task) => task.status === 'blocked')
   const open = tasks.some((task) => ['ready', 'active', 'awaiting_review'].includes(String(task.status)))
@@ -351,9 +499,10 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
     if (String(work.state) === 'blocked') continue
 
     const tasks = store.tasks.list({ workItemId })
-    const startable = tasks.filter(
-      (task) => task.status === 'ready' && store.attempts.list({ taskId: task.id }).length === 0,
-    )
+    const startable = tasks.filter((task) => {
+      if (task.next !== undefined) return task.status === 'ready' || task.status === 'awaiting_review'
+      return task.status === 'ready' && store.attempts.list({ taskId: task.id }).length === 0
+    })
     if (isHeld(work)) {
       const held = { reason: 'held', releases: 'the owner lifts the hold' }
       const changed = startable.map((task) => defer(store, task, held, at)).some(Boolean)
@@ -371,6 +520,7 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
         continue
       }
       const taskId = String(task.id)
+      const next = task.next as Continuation | undefined
       const { modelSlots, resolved } = modelFit(deps, task, views)
       const hint = task.slotHint as { slotClass?: string; slotId?: string } | undefined
       candidates.set(taskId, { doc: task, resolved })
@@ -380,7 +530,7 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
         workItemPinned: false,
         readyAt: Date.parse(String(task.createdAt ?? at)),
         generation: 1,
-        role: String(task.role),
+        role: next?.role ?? String(task.role),
         ...(hint?.slotClass !== undefined && { slotClass: hint.slotClass }),
         ...(hint?.slotId !== undefined && { slotId: hint.slotId }),
         ...(modelSlots !== undefined && { modelSlots }),
@@ -429,8 +579,10 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
   for (const launch of dispatch.launches) {
     const candidate = candidates.get(launch.taskId) as { doc: StoreDoc; resolved: Map<string, ResolvedModel> }
     const task = ready.find((row) => row.taskId === launch.taskId) as SchedulableTask
-    const { deferred: _deferred, ...doc } = candidate.doc
-    if (candidate.doc.deferred !== undefined) store.tasks.save({ ...doc, updatedAt: at })
+    const { deferred: _deferred, next, ...doc } = candidate.doc
+    if (candidate.doc.deferred !== undefined || next !== undefined) {
+      store.tasks.save({ ...doc, updatedAt: at })
+    }
     const model = candidate.resolved.get(launch.slotId)
     const placeable = slots.filter(
       (slot) => slot.state === 'healthy' && (task.modelSlots?.includes(slot.id) ?? true),
@@ -445,6 +597,7 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
       state: 'queued',
       generation: 1,
       placement: rationale(task, launch.slotId, placeable),
+      ...(next !== undefined && { role: task.role, continuation: next }),
       ...(model !== undefined && {
         resolved_model: model.model,
         ...(model.effort !== undefined && { effort: model.effort }),

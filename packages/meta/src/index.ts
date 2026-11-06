@@ -56,6 +56,8 @@ export type { BrainEngine, RealClaudeBrainOptions, RecordedToolCall } from './re
 export { RealClaudeBrain } from './real-brain'
 export type { LiveWork, RoutingDecision } from './routing'
 export { routeMessage } from './routing'
+export type { Continuation, RepairLedger } from './repair'
+export { nextRepair, repairEvidence, repairLedger } from './repair'
 export type { LaunchRecord, PlacementTable, SchedulerDeps } from './scheduler'
 export { schedulePass } from './scheduler'
 export type {
@@ -94,3 +96,4 @@ export type {
 export { decodeToolArgs, PlannerTools } from './tools'
 export type { CandidateEvent } from './wakes'
 export { classifyWake } from './wakes'
+export { integrationDocId, knownChecks, requiredChecks, verdictsOf, workResultOf } from './work-facts'

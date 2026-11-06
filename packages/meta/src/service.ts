@@ -11,10 +11,9 @@
  * - **The brain is injectable.** The real one is the Claude adapter (packages/engines)
  *   given the platform tools; everything here is engine-agnostic and only consumes its
  *   decision. `fakeBrain` scripts one decision for tests and composition wiring.
- * - **No acceptance checks yet.** The validator demands known checks, so every task is
- *   given the single pseudo-check `manual-review` (the only entry in `knownChecks`) — a
- *   plan is never rejected over checks it cannot name yet. Real checks arrive with the
- *   checks registry; until then a human is the acceptance gate.
+ * - **Checks are the repository's.** A plan names registered checks and an unknown one is
+ *   refused by name. `manual-review` only marks a repository with none, and it never passes
+ *   by itself (§15).
  * - **No owned paths from the brain.** Tasks carry no `ownedPaths`, so the path-conflict
  *   signal cannot fire; the graph check still catches cycles, missing dependencies,
  *   unknown roles and budgets.
@@ -53,6 +52,7 @@ import {
   computeImpact,
   createMandate,
   DEFAULT_CAPS,
+  NO_CHECKS_MARKER,
   TASK_MACHINE,
   transition,
   validateGraph,
@@ -94,6 +94,7 @@ import { EscalationCounter } from './escalation'
 import { enqueueWake, FollowUps } from './followups'
 import { routeMessage } from './routing'
 import { type LaunchRecord, type PlacementTable, type SchedulerDeps, schedulePass } from './scheduler'
+import { knownChecks, workResultOf } from './work-facts'
 import type { PlannerConfirmationDraft, PlannerQuestionRecord, PlannerTurnJournal } from './tools'
 import { PlannerTools } from './tools'
 
@@ -109,6 +110,8 @@ export type MetaPlanTask = {
   originalRequestRef?: string
   ownedPaths?: string[]
   acceptanceChecks?: string[]
+  /** Decision #33: the planner says the task touches sensitive ground, so it gets one review. */
+  sensitive?: boolean
   modelRequest?: { tier?: string; model?: string; effort?: string; variant?: string; reason: string }
   slotHint?: { slotClass?: string; slotId?: string }
   budget?: { turns: number; wallClockMs: number; usd?: number }
@@ -184,9 +187,6 @@ type MessageTurn = TurnInput & {
 
 /** A wake's queue key is its cause, and the message it runs as derives from the same cause. */
 export type WakeRequest = { causationId: string; reason: string; detail?: string; workItemId?: string }
-
-/** The v0 pseudo-check standing in for the checks registry (see the module doc). */
-const MANUAL_REVIEW_CHECK = 'manual-review'
 
 /**
  * The honest empty table used when no capability-table seam is wired: no tiers, no models,
@@ -441,6 +441,7 @@ export class MetaAgentService {
         (loadPolicy(this.#policyText).preAuthorised as Record<string, unknown>).frontier_model !== undefined,
       now: () => new Date(this.#now()),
       liveWork: this.#routingWork(repoId),
+      knownChecks: knownChecks(this.#store, repoId),
     })
   }
 
@@ -948,7 +949,8 @@ export class MetaAgentService {
     const fenced = this.#fencedTurn(input, workItemId)
     if (fenced !== undefined) return fenced
     const tasks = plan.tasks
-    // v0: every task gets the pseudo-check (module doc); roles must exist in the registry.
+    // §15: the repository's registered checks; the marker stands in only where it has none.
+    const known = knownChecks(this.#store, repoOf(this.#store.workItems.get(workItemId)) ?? input.repoId)
     const issues = validateGraph(
       tasks.map((task) => ({
         id: task.taskId,
@@ -957,12 +959,12 @@ export class MetaAgentService {
         acceptanceChecks:
           task.acceptanceChecks !== undefined && task.acceptanceChecks.length > 0
             ? [...task.acceptanceChecks]
-            : [MANUAL_REVIEW_CHECK],
+            : known,
         maxAttempts: this.#caps.repairAttemptsPerTask + 1,
         basePolicy: task.basePolicy ?? 'integration',
         role: task.role,
       })),
-      { knownChecks: [MANUAL_REVIEW_CHECK], knownRoles: BUILTIN_ROLE_NAMES },
+      { knownChecks: known, knownRoles: BUILTIN_ROLE_NAMES },
     )
     if (issues.length > 0) {
       const first = issues[0]!
@@ -1039,7 +1041,8 @@ export class MetaAgentService {
           acceptanceChecks:
             task.acceptanceChecks !== undefined && task.acceptanceChecks.length > 0
               ? [...task.acceptanceChecks]
-              : [MANUAL_REVIEW_CHECK],
+              : known,
+          ...((task.sensitive ?? prior?.sensitive) === true && { sensitive: true }),
           // §5.2's brief fields persist verbatim; the runtime's resolveModel reads them.
           originalRequestRef: task.originalRequestRef ?? input.messageId,
           ...(task.ownedPaths !== undefined && { ownedPaths: [...task.ownedPaths] }),
@@ -1089,7 +1092,8 @@ export class MetaAgentService {
           role: spawn.role,
           basePolicy: 'integration',
           status: 'ready',
-          acceptanceChecks: [MANUAL_REVIEW_CHECK],
+          // Names no check, so it is held to what the repository registers (`requiredChecks`).
+          acceptanceChecks: [NO_CHECKS_MARKER],
           originalRequestRef: input.messageId,
           ...(spawn.modelRequest !== undefined && { modelRequest: { ...spawn.modelRequest } }),
           ...(spawn.slotHint !== undefined && { slotHint: { ...spawn.slotHint } }),
@@ -1330,7 +1334,14 @@ export class MetaAgentService {
       this.#appendEvent(
         `work:${report.workItemId}`,
         'result_reported',
-        { workItemId: report.workItemId, summary: report.summary, artifacts: report.artifacts, at },
+        // The reducer's output travels with the words: a planner cannot report what is not so.
+        {
+          workItemId: report.workItemId,
+          summary: report.summary,
+          artifacts: report.artifacts,
+          result: workResultOf(this.#store, report.workItemId) as unknown as Json,
+          at,
+        },
         at,
       )
     }

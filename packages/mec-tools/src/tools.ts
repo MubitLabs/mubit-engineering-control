@@ -86,6 +86,11 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
               original_request_ref: { type: 'string' },
               owned_paths: { type: 'array', items: { type: 'string' } },
               acceptance_checks: { type: 'array', items: { type: 'string' } },
+              sensitive: {
+                type: 'boolean',
+                description:
+                  'True when the task touches secrets, sign-in, permissions, money, deleting or migrating stored data, or a public post: it then gets one read-only review',
+              },
               depends_on: { type: 'array', items: { type: 'string' } },
               role: { type: 'string' },
               base_policy: {
@@ -251,8 +256,16 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
         summary: { type: 'string' },
         head_sha: { type: 'string' },
         checks_run: { type: 'array', items: { type: 'string' } },
-        artifacts: { type: 'array', items: { type: 'object' } },
+        artifacts: {
+          type: 'array',
+          items: { type: 'object' },
+          description: "A reviewer lists each finding as {kind: 'finding', ref: what is wrong and where}",
+        },
         question: { type: 'object' },
+        round: {
+          type: 'object',
+          description: 'The review round from your brief, {count}, so a later attempt continues it',
+        },
         handled_inputs: { type: 'array', items: { type: 'string' } },
       },
       required: ['kind', 'summary'],

@@ -49,6 +49,8 @@ export type PlannerPlanTask = {
   originalRequestRef: string
   ownedPaths: string[]
   acceptanceChecks: string[]
+  /** Decision #33: this task touches sensitive ground. */
+  sensitive?: boolean
   dependsOn: string[]
   role: string
   /** §10, §14: what the task builds on. */
@@ -113,7 +115,7 @@ export type PlannerToolsConfig = {
   slots: SlotModelsView[]
   frontierPreAuthorised?: boolean
   now?: () => Date
-  /** Checks the repository has registered; the v0 pseudo-check stands in (service doc). */
+  /** Checks the repository has registered; `manual-review` stands in only where it has none. */
   knownChecks?: readonly string[]
   /** Routing set (§12.1) — stopped items visible as stopped so a reference is refused. */
   liveWork?: readonly LiveWork[]
@@ -382,8 +384,9 @@ export class PlannerTools {
           ownedPaths: stringArray(task.owned_paths),
           acceptanceChecks: (() => {
             const checks = stringArray(task.acceptance_checks)
-            return checks.length > 0 ? checks : ['manual-review']
+            return checks.length > 0 ? checks : [...(this.#config.knownChecks ?? ['manual-review'])]
           })(),
+          ...(task.sensitive === true && { sensitive: true }),
           dependsOn: stringArray(task.depends_on),
           role: typeof task.role === 'string' && task.role !== '' ? task.role : 'implementer',
           basePolicy: task.base_policy === 'contract' ? 'contract' : 'integration',
@@ -403,7 +406,7 @@ export class PlannerTools {
           id: task.taskId,
           dependsOn: task.dependsOn,
           ownedPaths: task.ownedPaths,
-          acceptanceChecks: task.acceptanceChecks.length > 0 ? task.acceptanceChecks : ['manual-review'],
+          acceptanceChecks: task.acceptanceChecks,
           maxAttempts: caps.repairAttemptsPerTask + 1,
           basePolicy: task.basePolicy,
           role: task.role,

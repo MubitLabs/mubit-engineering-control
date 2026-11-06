@@ -45,12 +45,14 @@ const appendEvent = (store: Store, stream: string, type: string, body: Json, at:
   store.events.append(stream, { stream, seq, at, type, body })
 }
 
+const isParked = (doc: StoreDoc): boolean =>
+  PARKED.includes(String(doc.state)) && doc.switched_to === undefined && doc.resuming !== true
+
+/** Every attempt that waits on a slot, and has not already moved off it or begun to resume. */
+export const parkedAttempts = (store: Store): StoreDoc[] => store.attempts.list().filter(isParked)
+
 function parkedOn(store: Store, workItemId: string): StoreDoc[] {
-  return store.attempts
-    .list({ workItemId })
-    .filter(
-      (doc) => PARKED.includes(String(doc.state)) && doc.switched_to === undefined && doc.resuming !== true,
-    )
+  return store.attempts.list({ workItemId }).filter(isParked)
 }
 
 const idsOf = (docs: readonly StoreDoc[]): string[] => docs.map((doc) => String(doc.id))

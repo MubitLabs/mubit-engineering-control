@@ -453,5 +453,131 @@
     "find": "(typeof slot.home !== 'string' || slot.home === '')",
     "replace": "typeof slot.home !== 'string'",
     "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "offer switch on an auth park",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "  if (siblings.some((other) => other.state === 'auth_required')) {\n",
+    "replace": "  if (siblings.length < 0) {\n",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "show a guessed reset",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": ": 'Reset unknown',",
+    "replace": ": `Resets ${format(new Date().toISOString())}`,",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "an auth park on a sibling does not stop a switch",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "  const siblings = all.filter((other) => other.workItemId === row.workItemId)\n",
+    "replace": "  const siblings = [row]\n",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "offer the slot the work is parked on",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": " && !parkedOn.has(connection.id)",
+    "replace": "",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "offer an unhealthy target",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "connection.state === 'healthy' && ",
+    "replace": "",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "read a card as a move",
+    "file": "apps/web/src/next/config-model.ts",
+    "find": "return `Confirmation opened. Approve it in Needs you to move this work to ${target.label}.`",
+    "replace": "return `Moved to ${target.label}.`",
+    "tests": ["apps/web/test/config-model.test.ts"]
+  },
+  {
+    "name": "switch capability stays off",
+    "file": "apps/desktop/src/server.ts",
+    "find": "switchWork: deps.parked !== undefined,",
+    "replace": "switchWork: false,",
+    "tests": ["apps/desktop/test/parked-route.test.ts"]
+  },
+  {
+    "name": "switch capability always on",
+    "file": "apps/desktop/src/server.ts",
+    "find": "switchWork: deps.parked !== undefined,",
+    "replace": "switchWork: true,",
+    "tests": ["apps/desktop/test/parked-route.test.ts"]
+  },
+  {
+    "name": "a moved attempt still reads as parked",
+    "file": "apps/desktop/src/slot-switch.ts",
+    "find": "  PARKED.includes(String(doc.state)) && doc.switched_to === undefined\n",
+    "replace": "  PARKED.includes(String(doc.state))\n",
+    "tests": ["apps/desktop/test/parked-route.test.ts"]
+  },
+  {
+    "name": "park reason leaves unredacted",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "reason: redact(text(park?.reason) ?? text(doc.terminal_reason) ?? 'No reason was recorded', [], []),",
+    "replace": "reason: text(park?.reason) ?? text(doc.terminal_reason) ?? 'No reason was recorded',",
+    "tests": ["apps/desktop/test/parked-route.test.ts"]
+  },
+  {
+    "name": "an unreported reset passes through",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "resetAt: reset !== undefined && !Number.isNaN(Date.parse(reset)) ? reset : null,",
+    "replace": "resetAt: reset ?? null,",
+    "tests": ["apps/desktop/test/parked-route.test.ts"]
+  },
+  {
+    "name": "the stage ignores the park's reset",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "str(obj(a.parked)?.resets_at) ?? ",
+    "replace": "",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "forget the last port",
+    "file": "apps/desktop/src/server-port.ts",
+    "find": "  if (port !== last) store.atomic(() => store.engines.save({ id: PORT_DOC, port, updatedAt: at }))\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/server-port.test.ts"]
+  },
+  {
+    "name": "remember only the first port",
+    "file": "apps/desktop/src/server-port.ts",
+    "find": "  if (port !== last) store.atomic(",
+    "replace": "  if (last === undefined) store.atomic(",
+    "tests": ["apps/desktop/test/server-port.test.ts"]
+  },
+  {
+    "name": "a taken port stops the server",
+    "file": "apps/desktop/src/server-port.ts",
+    "find": "    taken = true\n    await app.listen({ port: 0, host: HOST })\n",
+    "replace": "    throw error\n",
+    "tests": ["apps/desktop/test/server-port.test.ts"]
+  },
+  {
+    "name": "a moved port is not reported",
+    "file": "apps/desktop/src/server-port.ts",
+    "find": "  return { port, ...(taken && last !== undefined && { moved: { from: last, to: port } }) }\n",
+    "replace": "  return { port }\n",
+    "tests": ["apps/desktop/test/server-port.test.ts"]
+  },
+  {
+    "name": "startup does not say the port moved",
+    "file": "apps/desktop/src/serve.ts",
+    "find": "  return [`mec server listening on ${url}`, ...(moved ? [moved] : [])]\n",
+    "replace": "  return [`mec server listening on ${url}`]\n",
+    "tests": ["apps/desktop/test/server-port.test.ts"]
+  },
+  {
+    "name": "the real entry does not keep its port",
+    "file": "apps/desktop/src/serve.ts",
+    "find": "({ dataDir, reuseLastPort: true })",
+    "replace": "({ dataDir, reuseLastPort: false })",
+    "tests": ["apps/desktop/test/server-port.test.ts"]
   }
 ]

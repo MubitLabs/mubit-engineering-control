@@ -51,6 +51,28 @@ test('retire arms, names the loss and disarms', async ({ page }) => {
   await expect(connection(page, 'sample-key')).toHaveCount(0)
 })
 
+test('parked work states its facts, and a switch names its target and shows the card', async ({ page }) => {
+  await open(page, 'slots', 'parked')
+  const quota = connection(page, 'sample-key').locator('.parked-item')
+  await expect(quota.getByText('Parked: out of quota')).toBeVisible()
+  await expect(quota.getByText('sample rate limit')).toBeVisible()
+  await expect(quota.getByText('Reset unknown')).toBeVisible()
+  await expect(quota.getByText('The worktree is kept')).toBeVisible()
+
+  await quota.getByRole('button', { name: 'Switch work to sample-max' }).click()
+  await expect(quota.getByText('Moves Sample quota work from sample-key to sample-max.')).toBeVisible()
+  await quota.getByRole('button', { name: 'Keep it parked' }).click()
+  await expect(quota.getByText('Moves Sample quota work')).toBeHidden()
+
+  await quota.getByRole('button', { name: 'Switch work to sample-max' }).click()
+  await quota.getByRole('button', { name: 'Switch to sample-max', exact: true }).click()
+  await expect(quota.getByRole('status')).toContainText('Approve it in Needs you')
+
+  const auth = connection(page, 'sample-expired').locator('.parked-item')
+  await expect(auth.getByRole('button', { name: 'Sign in again' })).toBeVisible()
+  await expect(auth.getByRole('button', { name: /Switch work/ })).toHaveCount(0)
+})
+
 test('an expired sign-in offers Sign in again, and Drain says why it is off', async ({ page }) => {
   await open(page, 'slots')
   const row = connection(page, 'sample-expired')

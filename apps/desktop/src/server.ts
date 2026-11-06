@@ -604,7 +604,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     ...buildHealthSnapshot(store, deps.health),
     // What the workbench may offer. False is said before the click, never after it.
     capabilities: {
-      switchWork: false,
+      switchWork: deps.parked !== undefined,
       drain: false,
       backups: deps.backups !== undefined,
       isolationEdit: false,
@@ -2327,6 +2327,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   const applyConfigDraft = registerConfigRoutes(app, {
     store,
     now,
+    workTitle: (doc) => workTitleOf(store, doc),
     keystoreRoot,
     probeCmd,
     policyText: deps.policyText,

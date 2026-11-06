@@ -56,17 +56,11 @@ import {
 import { SetupView } from '../next/SetupView'
 import type { Route } from '../router'
 import type { ConfigStore } from './config-store'
+import { failureText } from './failure'
+import { switchWork } from './parked'
 import { Loading } from './surfaces'
 
-/** Words for a failure: the server's own reason where it gave one. */
-export function failureText(error: unknown): string {
-  if (error instanceof HttpError) {
-    const reason = error.reason ?? `The server answered ${error.status}.`
-    return error.detail === undefined ? reason : `${reason}: ${error.detail}`
-  }
-  if (error instanceof Error && error.name === 'DecodeError') return error.message
-  return 'Could not reach the workbench. Nothing was changed.'
-}
+export { failureText }
 
 function useConfigStore(store: ConfigStore): void {
   useSyncExternalStore(store.subscribe, store.version)
@@ -269,6 +263,7 @@ function ConnectionPanel({
 function ConnectionsSurface({ capabilities }: { capabilities: Capabilities | null }) {
   const [read, refresh] = useRead(() => configApi.connections())
   const [readiness] = useRead(() => configApi.readiness())
+  const [parked, refreshParked] = useRead(() => configApi.parked())
   const flow = useConnectionFlow(refresh)
   const [adding, setAdding] = useState(false)
   const [arm, setArm] = useState<RetireArm | null>(null)
@@ -363,6 +358,18 @@ function ConnectionsSurface({ capabilities }: { capabilities: Capabilities | nul
   return (
     <ConnectionsView
       rows={read.value.rows}
+      parked={parked.value ?? []}
+      parkedCommands={{
+        switchWork: (row, target) =>
+          switchWork(row, target).finally(() => {
+            refresh()
+            refreshParked()
+          }),
+        signIn: (row) => {
+          const connection = read.value?.rows.find((entry) => entry.id === row.slotId)
+          if (connection !== undefined) commands.signIn(connection)
+        },
+      }}
       capabilities={capabilities}
       commands={commands}
       arm={arm}

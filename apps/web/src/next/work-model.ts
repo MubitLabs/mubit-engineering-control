@@ -617,6 +617,7 @@ const CARD_LABELS: Record<string, string> = {
   push: 'Push approval',
   pr_create: 'Pull request approval',
   pr_merge: 'Merge approval',
+  slot_switch: 'Switch approval',
 }
 
 const cardLabel = (cls: string) => CARD_LABELS[cls] ?? 'Approval'

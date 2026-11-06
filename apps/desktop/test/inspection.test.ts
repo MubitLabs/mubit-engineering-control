@@ -528,6 +528,22 @@ describe('inspection routes: stage', () => {
     expect(rows.wi_done.nextAction).toBeNull()
   })
 
+  it('a reset the park recorded reaches the stage', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    const reset = new Date(2026, 10, 5, 16, 30, 0)
+    store.atomic(() => {
+      store.attempts.save({
+        id: 'att_1',
+        workItemId: 'wi_1',
+        taskId: 't',
+        state: 'quota_wait',
+        parked: { state: 'quota_wait', reason: 'rate limit', resets_at: reset.toISOString() },
+      })
+    })
+    const row = (await get('/api/inspect/work')).json().items[0]
+    expect(row.stage.label).toBe('Waiting for quota (resets 16:30)')
+  })
+
   it('an attempt parked on quota shows the reset time', async () => {
     seedWork('wi_1', { repoId: 'repo_a' })
     const reset = new Date(2026, 10, 5, 16, 30, 0)

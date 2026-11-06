@@ -185,7 +185,9 @@ export function workViewOf(doc: Record<string, unknown>, facts: WorkFacts): Work
   const hold = doc.hold as Record<string, unknown> | undefined | null
   const live = facts.attempts.filter((a) => ['queued', 'running', 'quota_wait'].includes(String(a.state)))
   const parked = live.length > 0 && live.every((a) => a.state === 'quota_wait')
-  const resets = live.flatMap((a) => text(a.resetsAt) ?? text(a.resetAt) ?? []).sort()
+  const resets = live
+    .flatMap((a) => text((a.parked as { resets_at?: unknown })?.resets_at) ?? text(a.resetsAt) ?? [])
+    .sort()
   return {
     state: text(doc.state) ?? 'admitted',
     openQuestions: facts.openQuestions,

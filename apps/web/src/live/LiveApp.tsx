@@ -16,6 +16,7 @@ import { ConversationView } from '../next/ConversationView'
 import type { NeedItem } from '../next/inspection-wire'
 import { NeedsView } from '../next/NeedsView'
 import { NextApp } from '../next/NextApp'
+import { ParkedNotices } from '../next/ParkedNotice'
 import { CONFIGURATION_ROUTES, ROUTE_LABELS } from '../next/routes'
 import { SearchSheet } from '../next/SearchSheet'
 import type { RepositoryOption } from '../next/Sidebar'
@@ -54,6 +55,7 @@ import { repositoryName } from '../repo-target'
 import { createConfigStore } from './config-store'
 import { createDrafts, type Intent, resolveIntent } from './drafts'
 import { createInspection, liveInspectionClient } from './inspection'
+import { switchWork, useParked } from './parked'
 import { usePause } from './pause'
 import { createSubmissions, draftScope, type Frozen, type Submission } from './submission'
 import {
@@ -147,6 +149,7 @@ export function LiveApp() {
   useWorkspaceUpkeep(workspace)
   const [configStore] = useState(createConfigStore)
   const pause = usePause()
+  const parked = useParked(address.route === 'work')
 
   const [notice, setNotice] = useState<string | null>(null)
   /** Work and Needs you start on every repository: the first question is whether anything needs you. */
@@ -483,6 +486,18 @@ export function LiveApp() {
           onDiscuss={discuss}
           onRetry={retryRead}
           partialNote={readData(inspected.work)?.nextCursor == null ? null : WORK_CUT}
+          parkedNotice={(workItemId) => (
+            <ParkedNotices
+              rows={parked.rows.filter((row) => row.workItemId === workItemId)}
+              all={parked.rows}
+              connections={parked.connections}
+              capabilities={parked.capabilities}
+              commands={{
+                switchWork: (row, target) => switchWork(row, target).finally(parked.refresh),
+                signIn: () => navigate('slots'),
+              }}
+            />
+          )}
         />
       )
     }

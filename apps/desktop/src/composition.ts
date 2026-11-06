@@ -62,6 +62,7 @@ import {
 } from './recovery'
 import { type CardOutcome, defaultGhRun, defaultGitExec } from './release'
 import { buildHealthSnapshot, buildServer } from './server'
+import { listenEphemeral, listenOnLastPort, type PortMove } from './server-port'
 import { applyApprovedSwitches, autoFailover, requestSwitch, type SwitchDeps } from './slot-switch'
 import { specialistBridge, specialistTools } from './specialist-tools'
 
@@ -101,6 +102,8 @@ const DENY_BRIDGE = new BridgeImpl(async () => 'deny')
 export interface RunningServer {
   url: string
   port: number
+  /** Set when the last port was taken, so an open tab on it has lost this server. */
+  portMoved?: PortMove
   close: () => Promise<void>
   /** §26 Pause: stops new passes; running turns finish; resume shifts waiting deadlines. */
   pause: () => void
@@ -153,6 +156,8 @@ const metaSlotAt = (dir: string | undefined): MetaSlot | undefined =>
 
 export async function startServer(opts: {
   dataDir: string
+  /** Come back on the last port, for a tab left open. Off unless the real entry asks. */
+  reuseLastPort?: boolean
   policyText?: string
   /** The meta agent's slot home. Default: the wizard's persisted choice in the store, then
    *  MEC_META_SLOT as the override (review 2026-11-04 §3.2 — the env var stops being the way). */
@@ -447,11 +452,8 @@ export async function startServer(opts: {
       resumeNow: (workItemId) => resumeParked(parkDeps, { workItemId, explicit: true }),
     },
   })
-  await app.listen({ port: 0, host: '127.0.0.1' })
-  const address = app.server.address()
-  if (address === null || typeof address === 'string') {
-    throw new Error(`unexpected listen address: ${JSON.stringify(address)}`)
-  }
+  const { port, moved } =
+    opts.reuseLastPort === true ? await listenOnLastPort(app, store, iso()) : await listenEphemeral(app)
 
   let closed = false
   const close = async (): Promise<void> => {
@@ -500,8 +502,9 @@ export async function startServer(opts: {
     lock.release()
   }
   return {
-    url: `http://127.0.0.1:${address.port}`,
-    port: address.port,
+    url: `http://127.0.0.1:${port}`,
+    port,
+    ...(moved !== undefined && { portMoved: moved }),
     close,
     pause: pauseControl.pause,
     resume: pauseControl.resume,

@@ -16,6 +16,7 @@ import type {
   DraftView,
   MetaCandidate,
   ModelsText,
+  ParkedRow,
   PolicyView,
   PromptChange,
   PromptPartView,
@@ -210,6 +211,25 @@ export function decodeImpact(raw: unknown): SlotImpact {
     metaSlot: body.metaSlot === true,
     keyStored: body.keyStored === true,
   }
+}
+
+export function decodeParked(raw: unknown): ParkedRow[] {
+  const path = '/api/parked'
+  return arr(path, obj(path, raw, 'the body').rows, 'rows').map((entry, index) => {
+    const label = `rows[${index}]`
+    const row = obj(path, entry, label)
+    return {
+      workItemId: str(path, row.workItemId, `${label}.workItemId`),
+      workTitle: str(path, row.workTitle, `${label}.workTitle`),
+      attemptId: str(path, row.attemptId, `${label}.attemptId`),
+      slotId: str(path, row.slotId, `${label}.slotId`),
+      slotLabel: str(path, row.slotLabel, `${label}.slotLabel`),
+      state: str(path, row.state, `${label}.state`),
+      reason: str(path, row.reason, `${label}.reason`),
+      resetAt: typeof row.resetAt === 'string' ? row.resetAt : null,
+      worktreeKept: row.worktreeKept === true,
+    }
+  })
 }
 
 /** A flag the server did not send, or sent as anything but `true`, is off: never assumed on. */

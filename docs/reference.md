@@ -35,7 +35,7 @@ The planned §21 surface not yet in the router, `migrate`, is documented as a ga
 
 ## HTTP API
 
-Every route in `apps/desktop/src/server.ts`. **Auth model: loopback only** — the server binds `127.0.0.1` with an ephemeral port (`apps/desktop/src/composition.ts`); there are no remote listeners and no tokens in the API. The browser is the intended client.
+Every route in `apps/desktop/src/server.ts`. **Auth model: loopback only** — the server binds `127.0.0.1` with an ephemeral port on first start and the same port after a restart; if that port is taken it takes a new ephemeral one and prints a line saying so (`apps/desktop/src/composition.ts`); there are no remote listeners and no tokens in the API. The browser is the intended client.
 
 ### Chat
 
@@ -85,6 +85,8 @@ Every `/api/inspect/*` route answers 403 `forbidden_host` unless `Host` is loopb
 | --- | --- | --- | --- |
 | GET | `/api/slots` | — | All slots — fingerprints only, never keys. |
 | GET | `/api/connections` | — | `{ rows, options }`: one row per live slot from saved facts (engine version, identity, state and reason, last check). `usage`, `pin` and `pair` are `null` until something records them. `concurrency` and `slotClass` appear only when a slot doc sets them; absent means the scheduler's default. `options` lists each engine's real add paths: `link`, `sign_in`, `api_key`. |
+| GET | `/api/parked` | — | `{ rows }`: each parked attempt that has not moved, with its work item, slot, state, redacted reason, `resetAt` (null when none was reported) and `worktreeKept` (§5.10). |
+| POST | `/api/work/:id/switch-slot` | `{ toSlot, reason? }` | Moves parked work to a healthy slot on a new attempt in the same worktree. 202 `{ status: "confirmation", confirmationId }` opens a `slot_switch` card, unless policy pre-authorises it (200 `{ status: "switched" }`). 409 `{ error }` refuses, and an auth park always does. `capabilities.switchWork` says whether this is served. |
 | POST | `/api/slots/dedicated` | `{ engine, label }` | Creates the slot a sign-in fills, `home_ready`, for `claude` or `codex`. 409 for a label in use. |
 | POST | `/api/slots/:id/probe` | — | A signed-in slot's local status command in its own environment, at no token cost: `{ ok, state, reason? }`. Records version and non-secret identity. API-key slots use `validate`. 409 and no write if the slot is retired, even while the check runs. |
 | GET | `/api/slots/:id/impact` | — | `{ slotId, label, running, queued, metaSlot, keyStored }`: what a retire touches, from saved docs. |

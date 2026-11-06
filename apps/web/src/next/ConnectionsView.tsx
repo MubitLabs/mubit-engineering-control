@@ -7,7 +7,9 @@ import {
   canRetire,
   capabilityGate,
   connectionActions,
+  type ParkedRow,
 } from './config-model'
+import { type ParkedCommands, ParkedNotices } from './ParkedNotice'
 import { Button, Status, type StatusTone } from './primitives'
 
 /** Calls that can fail say how; the row keeps showing what is true until the server has answered. */
@@ -164,12 +166,18 @@ function RetirePanel({
 
 function ConnectionItem({
   row,
+  rows,
+  parked,
+  parkedCommands,
   capabilities,
   commands,
   arm,
   note,
 }: {
   row: ConnectionRow
+  rows: readonly ConnectionRow[]
+  parked: readonly ParkedRow[]
+  parkedCommands: ParkedCommands
   capabilities: Capabilities | null
   commands: ConnectionCommands
   arm: RetireArm | null
@@ -179,6 +187,8 @@ function ConnectionItem({
   const actions = connectionActions(row)
   const drain = capabilityGate(capabilities, 'drain')
   const switchWork = capabilityGate(capabilities, 'switchWork')
+  const parkedHere = parked.filter((entry) => entry.slotId === row.id)
+  const switchReason = switchWork.enabled ? 'Nothing is parked on this connection.' : switchWork.reason
   const identity = [row.identity?.email, row.identity?.plan].filter(Boolean).join(', ')
   return (
     <li className="connection">
@@ -229,17 +239,22 @@ function ConnectionItem({
         <Button variant="quiet" disabled={!drain.enabled} title={drain.enabled ? undefined : drain.reason}>
           Drain
         </Button>
-        <Button
-          variant="quiet"
-          disabled={!switchWork.enabled}
-          title={switchWork.enabled ? undefined : switchWork.reason}
-        >
-          Switch work
-        </Button>
+        {parkedHere.length === 0 && (
+          <Button variant="quiet" disabled title={switchReason}>
+            Switch work
+          </Button>
+        )}
         <Button variant="quiet" aria-expanded={arm !== null} onClick={() => commands.armRetire(row.id)}>
           Retire
         </Button>
       </div>
+      <ParkedNotices
+        rows={parkedHere}
+        all={parked}
+        connections={rows}
+        capabilities={capabilities}
+        commands={parkedCommands}
+      />
       {replacing && (
         <ReplaceKey
           onReplace={(key) => commands.replaceKey(row.id, key)}
@@ -260,6 +275,8 @@ function ConnectionItem({
 
 export function ConnectionsView({
   rows,
+  parked,
+  parkedCommands,
   capabilities,
   commands,
   arm,
@@ -269,6 +286,8 @@ export function ConnectionsView({
   form,
 }: {
   rows: readonly ConnectionRow[]
+  parked: readonly ParkedRow[]
+  parkedCommands: ParkedCommands
   capabilities: Capabilities | null
   commands: ConnectionCommands
   arm: RetireArm | null
@@ -306,6 +325,9 @@ export function ConnectionsView({
             <ConnectionItem
               key={row.id}
               row={row}
+              rows={rows}
+              parked={parked}
+              parkedCommands={parkedCommands}
               capabilities={capabilities}
               commands={commands}
               arm={arm?.id === row.id ? arm : null}

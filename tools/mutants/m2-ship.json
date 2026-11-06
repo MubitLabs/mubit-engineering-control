@@ -1,0 +1,86 @@
+[
+  {
+    "name": "a hold lands an open switch card",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    if (blocked !== undefined && !blocked.withdraw) return { id, status: 'pending', reason: blocked.reason }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/slot-switch.test.ts", "-t", "a hold keeps an open card pending"]
+  },
+  {
+    "name": "a stop does not withdraw a switch card",
+    "file": "apps/desktop/src/slot-switch.ts",
+    "find": "  if (mandateOf(work).status === 'withdrawn') return { reason: 'mandate_withdrawn', withdraw: true }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/slot-switch.test.ts", "-t", "a stop withdraws an open card"]
+  },
+  {
+    "name": "a hold uses up an approved card",
+    "file": "apps/desktop/src/slot-switch.ts",
+    "find": "    if (why !== 'held') markApplied(store, confirmationId)\n",
+    "replace": "    markApplied(store, confirmationId)\n",
+    "tests": ["apps/desktop/test/slot-switch.test.ts", "-t", "a card approved before a hold"]
+  },
+  {
+    "name": "a pass retries a held card",
+    "file": "apps/desktop/src/slot-switch.ts",
+    "find": "    if (work !== undefined && isHeld(work)) continue\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/slot-switch.test.ts", "-t", "a card approved before a hold"]
+  },
+  {
+    "name": "a worker opens a switch card",
+    "file": "apps/desktop/src/specialist-tools.ts",
+    "find": " || cls === 'slot_switch') {\n",
+    "replace": ") {\n",
+    "tests": ["apps/desktop/test/specialist-cards.test.ts", "-t", "a worker cannot open a slot_switch card"]
+  },
+  {
+    "name": "a park reason stays raw",
+    "file": "apps/desktop/src/core-facts.ts",
+    "find": "    const clean = this.#clean(attempt.attempt_id, reason)\n    const parked =",
+    "replace": "    const clean = reason\n    const parked =",
+    "tests": ["apps/desktop/test/core-facts.test.ts"]
+  },
+  {
+    "name": "the handoff pack skips the attempt cleaner",
+    "file": "apps/desktop/src/slot-switch.ts",
+    "find": "  const clean = (text: string): string => deps.clean(String(parked.id), redact(text, [], []))\n",
+    "replace": "  const clean = (text: string): string => redact(text, [], [])\n",
+    "tests": ["apps/desktop/test/slot-switch.test.ts", "-t", "the handoff pack goes through"]
+  },
+  {
+    "name": "a boot reap stops at the group",
+    "file": "packages/runtime/src/supervisor.ts",
+    "find": "  const supervisor = new Supervisor()\n  supervisor.adopt('reap', 1, pid)\n",
+    "replace": "  signalGroup(pid, 'SIGKILL')\n  if (!isGroupAlive(pid)) return 'escalated'\n  const supervisor = new Supervisor()\n  supervisor.adopt('reap', 1, pid)\n",
+    "tests": ["packages/runtime/test/supervisor-groups.test.ts"]
+  },
+  {
+    "name": "the planner keeps Monitor",
+    "file": "packages/engines/src/claude/argv.ts",
+    "find": "  'Monitor',\n",
+    "replace": "",
+    "tests": ["packages/engines/test/argv-classify-probe.test.ts"]
+  },
+  {
+    "name": "a switch card forgets who asked",
+    "file": "apps/desktop/src/slot-switch.ts",
+    "find": "      requestedBy: 'owner',\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/slot-switch.test.ts", "-t", "names its real asker"]
+  },
+  {
+    "name": "an empty data dir is a path to the prompt root",
+    "file": "packages/prompts/src/models.ts",
+    "find": "export const mecRoot = (): string => process.env.MEC_DATA_DIR || join(homedir(), '.mec')",
+    "replace": "export const mecRoot = (): string => process.env.MEC_DATA_DIR ?? join(homedir(), '.mec')",
+    "tests": ["packages/prompts/test/root.test.ts"]
+  },
+  {
+    "name": "a retired slot with no home goes unnamed",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  if (slot === undefined) return undefined\n  if (slot.state === 'retired') {\n",
+    "replace": "  if (slot === undefined || typeof slot.home !== 'string' || slot.home === '') return undefined\n  if (slot.state === 'retired') {\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts", "-t", "a retired meta slot with no home"]
+  }
+]

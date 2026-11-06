@@ -58,8 +58,8 @@
   {
     "name": "skip the stale-repo guard on work rows",
     "file": "apps/web/src/live/workspace.tsx",
-    "find": "const kept = rows.filter((row) => inScope(scope, row))",
-    "replace": "const kept = rows",
+    "find": "        if (!live()) return\n        const kept = rows.filter((row) => inScope(scope, row))\n",
+    "replace": "        if (!live()) return\n        const kept = rows\n",
     "tests": ["apps/web/test/workspace.test.ts"]
   },
   {

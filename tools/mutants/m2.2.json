@@ -156,8 +156,8 @@
   {
     "name": "always-confirm requestable",
     "file": "apps/desktop/src/specialist-tools.ts",
-    "find": "  if ((ALWAYS_CONFIRM as readonly string[]).includes(cls)) {\n    throw new Error(`mec-tools: ${cls} needs the owner's confirmation; a worker cannot request it`)\n  }\n",
-    "replace": "",
+    "find": "  if ((ALWAYS_CONFIRM as readonly string[]).includes(cls) || cls === 'slot_switch') {\n",
+    "replace": "  if (cls === 'slot_switch') {\n",
     "tests": ["apps/desktop/test/specialist-cards.test.ts"]
   },
   {
@@ -268,15 +268,15 @@
   {
     "name": "note handler unsupported",
     "file": "apps/desktop/src/composition.ts",
-    "find": "            : kind === 'note'\n              ? (payload) => followups.runNote(payload)\n              : unsupportedHandler(kind)\n",
-    "replace": "            : unsupportedHandler(kind)\n",
+    "find": "            : kind === 'note'\n              ? (payload) => followups.runNote(payload)\n              : kind === 'probe'\n                ? probeHandler(probe)\n                : unsupportedHandler(kind)\n",
+    "replace": "            : kind === 'probe'\n              ? probeHandler(probe)\n              : unsupportedHandler(kind)\n",
     "tests": ["apps/desktop/test/coordination.test.ts"]
   },
   {
     "name": "no pass after effects",
     "file": "apps/desktop/src/composition.ts",
-    "find": "    void store.effects.run().catch(() => {})\n    schedulerPass()\n    delivery?.kick()\n  }, PASS_INTERVAL_MS)\n",
-    "replace": "    void store.effects.run().catch(() => {})\n    delivery?.kick()\n  }, PASS_INTERVAL_MS)\n",
+    "find": "    parkPass()\n    schedulerPass()\n    if (!paused) delivery?.kick()\n",
+    "replace": "    parkPass()\n    if (!paused) delivery?.kick()\n",
     "tests": ["apps/desktop/test/coordination.test.ts", "-t", "pass places work"]
   },
   {
@@ -343,8 +343,8 @@
   {
     "name": "first report wins",
     "file": "packages/meta/src/scheduler.ts",
-    "find": "`report/${String(attempt.id)}/${Number(attempt.reports ?? 0)}`",
-    "replace": "`report/${String(attempt.id)}/1`",
+    "find": "  const doc = store.engines.get(`report/${String(attempt.id)}/${Number(attempt.reports ?? 0)}`)\n",
+    "replace": "  const doc = store.engines.get(`report/${String(attempt.id)}/1`)\n",
     "tests": ["packages/meta/test/scheduler.test.ts"]
   },
   {
@@ -392,8 +392,8 @@
   {
     "name": "no-checks attempt keeps its follow-ups",
     "file": "packages/meta/src/followups.ts",
-    "find": "  ATTEMPT_TERMINAL.includes(String(attempt.state) as AttemptState) ||\n  noVerdict(attempt)\n",
-    "replace": "  ATTEMPT_TERMINAL.includes(String(attempt.state) as AttemptState)\n",
+    "find": "  attempt.switched_to !== undefined ||\n  noVerdict(attempt)\n",
+    "replace": "  attempt.switched_to !== undefined\n",
     "tests": ["packages/meta/test/followups.test.ts", "apps/desktop/test/coordination.test.ts"]
   },
   {
@@ -441,8 +441,8 @@
   {
     "name": "runner drops the stop reason",
     "file": "packages/runtime/src/attempt-runner.ts",
-    "find": "facts.checksSkipped(attempt, head, skipped, stopReason)",
-    "replace": "facts.checksSkipped(attempt, head, skipped)",
+    "find": "facts.checksSkipped(attempt, head, `stopped ${where}: ${String(reason)}`, reason)",
+    "replace": "facts.checksSkipped(attempt, head, `stopped ${where}: ${String(reason)}`)",
     "tests": ["packages/runtime/test/attempt-runner.test.ts"]
   },
   {

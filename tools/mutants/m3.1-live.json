@@ -44,7 +44,7 @@
   {
     "name": "resolve the artifact ref without realpath",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "    real = realpathSync(join(realRoot, ref))\n",
+    "find": "    real = realpathSync.native(join(realRoot, ref))\n",
     "replace": "    real = join(realRoot, ref)\n",
     "tests": ["apps/desktop/test/inspection-trace.test.ts"]
   },
@@ -65,7 +65,7 @@
   {
     "name": "serve the control directories",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "  if (segments.some((segment) => CONTROL_DIRS.includes(segment))) throw new Refused('a control file')\n",
+    "find": "  if (segments.some((segment) => CONTROL_DIRS.includes(segment.toLowerCase()))) {\n    throw new Refused('a control file')\n  }\n",
     "replace": "",
     "tests": ["apps/desktop/test/inspection-trace.test.ts"]
   },
@@ -86,21 +86,21 @@
   {
     "name": "serve an artifact unredacted",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "text: redactText(text), next:",
-    "replace": "text, next:",
+    "find": "text: redact(text, secrets.fingerprints, secrets.exacts),",
+    "replace": "text,",
     "tests": ["apps/desktop/test/inspection-trace.test.ts"]
   },
   {
     "name": "cut a page inside a key",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "      if (match.index < end && end < match.index + match[0].length) end = match.index\n",
+    "find": "  for (const { start, end } of spans) if (start < at && at < end) at = start\n",
     "replace": "",
     "tests": ["apps/desktop/test/inspection-trace.test.ts"]
   },
   {
     "name": "cut a page inside a character",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "  while (end > 0 && ((chunk[end] as number) & 0xc0) === 0x80) end -= 1\n",
+    "find": "  while (end > start && ((chunk[end] as number) & 0xc0) === 0x80) end -= 1\n",
     "replace": "",
     "tests": ["apps/desktop/test/inspection-trace.test.ts"]
   },
@@ -114,7 +114,7 @@
   {
     "name": "no page limit on artifacts",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "  if (chunk.length <= ARTIFACT_PAGE_BYTES) return chunk.length\n  let end = ARTIFACT_PAGE_BYTES\n",
+    "find": "  if (chunk.length - start <= ARTIFACT_PAGE_BYTES) return chunk.length\n  let end = start + ARTIFACT_PAGE_BYTES\n",
     "replace": "  let end = chunk.length\n",
     "tests": ["apps/desktop/test/inspection-trace.test.ts"]
   },

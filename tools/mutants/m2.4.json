@@ -181,8 +181,8 @@
   {
     "name": "resuming attempt also switches",
     "file": "apps/desktop/src/slot-switch.ts",
-    "find": "doc.switched_to === undefined && doc.resuming !== true,",
-    "replace": "doc.switched_to === undefined,",
+    "find": "doc.switched_to === undefined && doc.resuming !== true\n",
+    "replace": "doc.switched_to === undefined\n",
     "tests": ["apps/desktop/test/slot-switch.test.ts", "-t", "a resuming attempt cannot also switch"]
   },
   {

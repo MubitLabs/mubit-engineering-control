@@ -15,8 +15,8 @@
   },
   {
     "name": "3 launch while held: the held branch falls through to dispatch",
-    "file": "packages/meta/src/service.ts",
-    "find": "    if (isHeld(work)) {\n      this.#appendEvent(`work:${workItemId}`, 'launch_withheld', { workItemId, reason: 'held', at }, at)\n      return []\n    }\n",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    if (isHeld(work)) {\n      const held = { reason: 'held', releases: 'the owner lifts the hold' }\n      const changed = startable.map((task) => defer(store, task, held, at)).some(Boolean)\n      if (changed || workItemId === scoped) {\n        appendEvent(store, `work:${workItemId}`, 'launch_withheld', { workItemId, reason: 'held', at }, at)\n      }\n      continue\n    }\n",
     "replace": "",
     "tests": ["packages/meta/test/authority.test.ts"]
   },
@@ -51,22 +51,22 @@
   {
     "name": "8 launchAuthority drops the attempt-is-queued check",
     "file": "packages/meta/src/authority.ts",
-    "find": "  if (store.attempts.get(attemptId)?.state !== 'queued') return drop('attempt_not_queued')\n",
+    "find": "  if (attempt?.state !== 'queued') return drop('attempt_not_queued')\n",
     "replace": "",
     "tests": ["packages/meta/test/authority.test.ts"]
   },
   {
     "name": "9 close calls drain while paused",
     "file": "apps/desktop/src/composition.ts",
-    "find": "(paused ? store.effects.settle() : store.effects.drain())",
-    "replace": "store.effects.drain()",
+    "find": "Promise.allSettled([app.close(), store.effects.settle()])",
+    "replace": "Promise.allSettled([app.close(), store.effects.drain()])",
     "tests": ["apps/desktop/test/composition.test.ts"]
   },
   {
     "name": "10 first pass ignores paused",
     "file": "apps/desktop/src/composition.ts",
-    "find": "  if (!paused) void store.effects.run().catch(() => {})\n",
-    "replace": "  void store.effects.run().catch(() => {})\n",
+    "find": "      if (pauses && isPaused()) throw new Later('processing is paused')\n",
+    "replace": "",
     "tests": ["apps/desktop/test/composition.test.ts"]
   },
   {
@@ -120,15 +120,15 @@
   },
   {
     "name": "18 dispatch ignores a stop from the same turn",
-    "file": "packages/meta/src/service.ts",
-    "find": "    if (work === undefined || isTerminal(work) || mandateOf(work).status === 'withdrawn') return []\n",
-    "replace": "    if (work === undefined) return []\n",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    if (isTerminal(listed) || mandateOf(listed).status === 'withdrawn') continue\n",
+    "replace": "",
     "tests": ["packages/meta/test/authority.test.ts"]
   },
   {
     "name": "19 dispatch launches blocked work",
-    "file": "packages/meta/src/service.ts",
-    "find": "    if (String(work.state) === 'blocked') return []\n",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    if (String(work.state) === 'blocked') continue\n",
     "replace": "",
     "tests": ["packages/meta/test/authority.test.ts"]
   },

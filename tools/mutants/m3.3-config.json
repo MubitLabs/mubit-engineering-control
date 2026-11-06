@@ -141,14 +141,14 @@
   },
   {
     "name": "the screen shows only the error code",
-    "file": "apps/web/src/live/config.tsx",
+    "file": "apps/web/src/live/failure.ts",
     "find": "return error.detail === undefined ? reason : `${reason}: ${error.detail}`",
     "replace": "return reason",
     "tests": ["apps/web/test/config-contract.test.ts"]
   },
   {
     "name": "detail replaces the error text",
-    "file": "apps/web/src/live/config.tsx",
+    "file": "apps/web/src/live/failure.ts",
     "find": "return error.detail === undefined ? reason : `${reason}: ${error.detail}`",
     "replace": "return error.detail ?? reason",
     "tests": ["apps/web/test/config-contract.test.ts"]
@@ -513,8 +513,8 @@
   {
     "name": "a moved attempt still reads as parked",
     "file": "apps/desktop/src/slot-switch.ts",
-    "find": "  PARKED.includes(String(doc.state)) && doc.switched_to === undefined\n",
-    "replace": "  PARKED.includes(String(doc.state))\n",
+    "find": "  PARKED.includes(String(doc.state)) && doc.switched_to === undefined && doc.resuming !== true\n",
+    "replace": "  PARKED.includes(String(doc.state)) && doc.resuming !== true\n",
     "tests": ["apps/desktop/test/parked-route.test.ts"]
   },
   {
@@ -533,8 +533,8 @@
   },
   {
     "name": "the stage ignores the park's reset",
-    "file": "apps/desktop/src/inspection.ts",
-    "find": "str(obj(a.parked)?.resets_at) ?? ",
+    "file": "packages/domain/src/stages.ts",
+    "find": "text((a.parked as { resets_at?: unknown })?.resets_at) ?? ",
     "replace": "",
     "tests": ["apps/desktop/test/inspection.test.ts"]
   },

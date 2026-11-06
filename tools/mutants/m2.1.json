@@ -30,8 +30,8 @@
   {
     "name": "ack before commit",
     "file": "packages/runtime/src/attempt-runner.ts",
-    "find": "    journal.append(event)\n    facts.atomic(() => {\n      facts.engineEvent(attempt, event)\n      this.#factsOf(live, event)\n    })\n    journal.ack(seq)\n",
-    "replace": "    journal.append(event)\n    journal.ack(seq)\n    facts.atomic(() => {\n      facts.engineEvent(attempt, event)\n      this.#factsOf(live, event)\n    })\n",
+    "find": "    facts.atomic(() => {\n      facts.engineEvent(attempt, event)\n      applyFacts(facts, attempt, plan.slotId, event)\n    })\n    journal.ack(seq)\n",
+    "replace": "    journal.ack(seq)\n    facts.atomic(() => {\n      facts.engineEvent(attempt, event)\n      applyFacts(facts, attempt, plan.slotId, event)\n    })\n",
     "tests": ["packages/runtime/test/attempt-runner.test.ts"]
   },
   {
@@ -65,7 +65,7 @@
   {
     "name": "read anything",
     "file": "apps/desktop/src/specialist-tools.ts",
-    "find": "  if (!inScope(attempt, kind, id) || rest.length > 0) {\n",
+    "find": "  if (!inScope(store, attempt, kind, id) || rest.length > 0) {\n",
     "replace": "  if (rest.length > 0) {\n",
     "tests": ["apps/desktop/test/specialist-tools.test.ts"]
   },
@@ -177,8 +177,8 @@
   {
     "name": "a stopped check still gets a verdict",
     "file": "packages/runtime/src/attempt-runner.ts",
-    "find": "if (live.stopReason !== undefined) return this.#checksStopped(live, head, `during check ${spec.name}`)",
-    "replace": "if (live.stopReason === 'never') return this.#checksStopped(live, head, `during check ${spec.name}`)",
+    "find": "if (stopped() !== undefined) return note(`during check ${spec.name}`)",
+    "replace": "if (stopped() === ('never' as never)) return note(`during check ${spec.name}`)",
     "tests": ["packages/runtime/test/attempt-runner.test.ts"]
   },
   {
@@ -233,8 +233,8 @@
   {
     "name": "dispatch places on an unlaunchable slot",
     "file": "packages/meta/src/service.ts",
-    "find": "    const slotViews = this.#placementSlots()\n",
-    "replace": "    const slotViews = slotViewsFromStore(this.#store, this.#marks?.())\n",
+    "find": "      slots: () => this.#placementSlots(),\n",
+    "replace": "      slots: () => slotViewsFromStore(this.#store, this.#marks?.()),\n",
     "tests": ["apps/desktop/test/attempt-launch.test.ts"]
   },
   {

@@ -49,7 +49,7 @@ Every route in `apps/desktop/src/server.ts`. **Auth model: loopback only** — t
 | Method | Path | Body | What it does |
 | --- | --- | --- | --- |
 | GET | `/api/inbox` | — | Pending confirmation cards (id, class, operation hash, expiry). |
-| POST | `/api/inbox/:id/resolve` | `{ answer: 'approve' \| 'deny' }` | Resolves a card compare-and-set: the first answer wins; a second answer gets `409 already_handled`. `continues: true` says a running specialist was waiting on this approval. An approve of a card with no evidence answers `422 no_evidence`, and one nothing here can run answers `422 no_executor`; both stay pending and can be denied. |
+| POST | `/api/inbox/:id/resolve` | `{ answer: 'approve' \| 'deny' }` | Resolves a card compare-and-set: the first answer wins; a second answer gets `409 already_handled`. `continues: true` says a running specialist was waiting on this approval. An approve of a card with no evidence answers `422 no_evidence`, and one nothing here can run answers `422 no_executor`; both stay pending and can be denied. | For a `slot_switch` card, an approve while the work is held answers `{ status: 'pending', reason: 'held' }` and keeps the card, and an approve of stopped work answers `{ status: 'stale', reason: 'mandate_withdrawn' }`.
 
 ### Work
 

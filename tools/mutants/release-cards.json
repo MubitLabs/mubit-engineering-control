@@ -233,7 +233,7 @@
   {
     "name": "Approve opens with no evidence",
     "file": "apps/web/src/release-cards.ts",
-    "find": "  return detail !== null\n",
+    "find": "  return detail !== null && detail.absent !== true\n",
     "replace": "  return true\n",
     "tests": ["apps/web/test/release-cards.test.ts"]
   }

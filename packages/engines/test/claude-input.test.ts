@@ -61,8 +61,13 @@ async function run(steps: unknown[], extra: Record<string, unknown> = {}): Promi
   })
   const handle = await adapter.launch(launchSpec(dir))
   const events: EngineEvent[] = []
+  // A process that never ends would outlast every assertion, so it fails them instead.
+  const watchdog = setTimeout(() => {
+    adapter.stop(handle).catch(() => {})
+  }, 20_000)
   const done = (async () => {
     for await (const event of adapter.events(handle)) events.push(event)
+    clearTimeout(watchdog)
   })()
   const stdin = () =>
     readFileSync(join(dir, 'stdin.jsonl'), 'utf8')

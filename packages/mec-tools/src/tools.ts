@@ -183,6 +183,7 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
         question: { type: 'string' },
         for_message_id: { type: 'string' },
         options: { type: 'array', items: { type: 'string' } },
+        evidence_ref: { type: 'string' },
       },
       required: ['question'],
     },

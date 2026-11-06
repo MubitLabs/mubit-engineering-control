@@ -327,6 +327,17 @@ describe('receipts (§12.4)', () => {
     expect(stage(h)).toBe('read')
   })
 
+  it('a message released while its row waited is not delivered', async () => {
+    const h = rig()
+    await send(h)
+    h.store.atomic(() => {
+      const doc = h.store.messages.get('msg_1') as StoreDoc
+      h.store.messages.save({ ...doc, owned: false })
+    })
+    await h.drainDeliver()
+    expect(h.delivered).toHaveLength(0)
+  })
+
   it('a row replayed after a crash does not deliver a second copy', async () => {
     const h = rig()
     await send(h)

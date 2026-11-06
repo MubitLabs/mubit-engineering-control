@@ -373,6 +373,20 @@ describe('continuing coordination (§11, §12)', () => {
     await until(() => wakes.length > 0)
     await new Promise((resolve) => setTimeout(resolve, 2200))
     expect(wakes).toEqual(['report ready'])
+    const notes = r.read((store) => store.engines.list().filter((doc) => String(doc.id).startsWith('note/')))
+    expect(notes.map((doc) => doc.text)).toEqual(['att_1 progress: halfway'])
+  }, 60_000)
+
+  it('the timer’s pass places work a slot change freed, with no command to say so', async () => {
+    const r = await serve(scratch({ steps: WORK }, { state: 'degraded' }), planOf(task('first')))
+    await r.post('/api/chat/messages', { text: 'go', repoId: REPO })
+    const waiting = r.read((store) => store.tasks.list({ localKey: 'first' })[0])
+    expect(waiting?.deferred).toMatchObject({ reason: 'slot_unhealthy' })
+
+    r.read((store) => {
+      store.slots.save({ ...(store.slots.get('slot_linked') as StoreDoc), state: 'healthy' })
+    })
+    await until(() => attemptIn(r)?.state === 'succeeded')
   }, 60_000)
 
   it('a pause runs no scheduler pass, and resume does', async () => {

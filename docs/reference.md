@@ -49,13 +49,13 @@ Every route in `apps/desktop/src/server.ts`. **Auth model: loopback only** — t
 | Method | Path | Body | What it does |
 | --- | --- | --- | --- |
 | GET | `/api/inbox` | — | Pending confirmation cards (id, class, operation hash, expiry). |
-| POST | `/api/inbox/:id/resolve` | `{ answer: 'approve' \| 'deny' }` | Resolves a card compare-and-set: the first answer wins; a second answer gets `409 already_handled`. |
+| POST | `/api/inbox/:id/resolve` | `{ answer: 'approve' \| 'deny' }` | Resolves a card compare-and-set: the first answer wins; a second answer gets `409 already_handled`. `continues: true` says a running specialist was waiting on this approval. An approve of a card with no evidence answers `422 no_evidence`, and one nothing here can run answers `422 no_executor`; both stay pending and can be denied. |
 
 ### Work
 
 | Method | Path | Body | What it does |
 | --- | --- | --- | --- |
-| GET | `/api/work` | `?repoId=` | Work items with title (the origin message's first line, 80 characters), state, stage, `held` and task counts by status, or one repository's. `unassigned` returns the rows with no repository, which are read-only. An unknown id is a 400. |
+| GET | `/api/work` | `?repoId=` | Work items with title (the origin message's first line, 80 characters), state, stage, `held`, `blockedReason` when blocked, and task counts by status, or one repository's. `unassigned` returns the rows with no repository, which are read-only. An unknown id is a 400. |
 | POST | `/api/work/:id/hold` | `{ reason? }` | Holds the work: `{ id, status: 'held' }`. A hold survives restart, a plan finishing during it is saved with no launches, and launches already queued wait. 404 unknown, 409 `{ error }`: `terminal`, or `read_only` for legacy Unassigned work. |
 | POST | `/api/work/:id/lift` | — | The only release of a hold. Revalidates the mandate, lifts, and launches saved ready tasks that have no attempt: `{ id, status: 'lifted', launches }`. A launch queued before the hold restarts within 30 s. Work not held answers `status: 'free'` and writes nothing. 404 unknown, 409 `{ error }` with the hold kept: `mandate_withdrawn`, `mandate_expired`, `mandate_policy_changed`, `read_only`, or `no_meta_agent`. |
 | POST | `/api/work/:id/stop` | — | Ends the work, withdraws its mandate, interrupts queued attempts and records an interrupt request for running ones: `{ id, status: 'stopped' }`. Final: only a new request starts the work again. Idempotent, works with no meta agent and on legacy work. 404 unknown, 409 `{ error: 'done' }` on finished work. |

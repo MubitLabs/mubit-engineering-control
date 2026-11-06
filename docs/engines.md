@@ -28,10 +28,20 @@ Recorded against the logged-in `codex-1` slot (`CODEX_HOME=~/.mec/engines/codex/
 - **`mcpServer/startupStatus/updated` carries `error: null` in flight** — parsers must not mistake a null error field for an error notification.
 - **The app-server never exits on its own** after a turn; consumers must stop draining at the `exit` event (or kill the process). Model on the slot: `gpt-5.6-sol`; `thread.cliVersion` is a reliable per-thread engine version.
 
+## Stream input (Claude Code 2.1.318, probed against a local API stub, 5 Nov 2026)
+
+No vendor call: a scratch home, a dummy key and `ANTHROPIC_BASE_URL` on a loopback stub. A real run on the slot is the verifier's.
+
+- `system/init` waits for the first stdin line, then repeats at every turn.
+- Each stdin line `{type:'user', message:{role:'user',content}, parent_tool_use_id:null, session_id, uuid}` gets `{type:'command_lifecycle', command_uuid:<uuid>, state}` lines: `queued` at once, `started`, then `completed` after its `result`.
+- With `--replay-user-messages`, an `isReplay: true` user line with the same `uuid` arrives with the turn's response, not on receipt.
+- A message written mid-turn gets its own turn and `result`. With no tool calls in the stub, joining a turn between tool calls is unobserved.
+- After a `result` the process waits for stdin. EOF exits 0, and a message queued before EOF still runs.
+
 ## H1 canary learnings (Claude Code 2.1.317, 3 Nov 2026)
 
 - `--session-id` requires a UUID (attempt ids like `att_1` are rejected with "Invalid session ID").
-- `-p` with `--input-format stream-json` waits on a stdin user message; one-shot launches must not pass it.
+- `-p` with `--input-format stream-json` waits on a stdin user message and stays up until stdin closes; one-shot launches must not pass it. An attempt launch does, and owns the pipe (see the stream input notes below).
 - `--settings /dev/null` errors — always point at a real file.
 - MCP: the client performs the full handshake; a server that cannot answer `initialize` is dropped ("Available MCP tools: none"). The `mcpServers.<name>` entry `{type:'http', url, headers:{Authorization}}` works on 2.1.317; the server URL includes the `/mcp` path.
 - Sandboxed writes INSIDE `sandbox.filesystem.allowWrite` do not trigger `--permission-prompt-tool`; Bash commands do. The permission-prompt tool response shape is `{behavior:'allow', updatedInput}`.

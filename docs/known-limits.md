@@ -44,6 +44,8 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
   - A linked slot runs under the user's own Claude settings. Allow rules there can answer a Bash ask
     before `mcp__mec__confirm` hears it, so `git push` and `gh` are also refused by engine deny
     rules, and the sandbox stays the boundary.
+  - A confirm-by-default shell class is recognised from the command text, so a spelling the list
+    does not know runs as ordinary shell. Under the sandbox it reaches no network.
   - One data dir holds every attempt's worktree, so a sibling attempt's shell can read
     `.mec/mcp.json` while that attempt runs. The sandbox does not separate attempts from each other.
   - A specialist's shell cannot write to the shared clone. Claude's own sandbox adds a linked

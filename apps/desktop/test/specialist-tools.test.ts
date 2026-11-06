@@ -92,6 +92,15 @@ afterAll(async () => {
 })
 
 describe('read', () => {
+  it('a follow-up routed to this attempt reached it, so it may read it', async () => {
+    store.atomic(() => {
+      store.messages.save({ id: 'msg_follow', text: 'a follow-up', ownerAttemptId: 'att_1' })
+      store.messages.save({ id: 'msg_other', text: 'not yours', ownerAttemptId: 'att_2' })
+    })
+    expect(answer(await call(own, 'read', { resource: 'message/msg_follow' })).text).toContain('a follow-up')
+    expect((await call(own, 'read', { resource: 'message/msg_other' })).result).toBeUndefined()
+  })
+
   it('specialist reads only its own attempt', async () => {
     expect(answer(await call(own, 'read', { resource: 'attempt/att_1' })).text).toContain('att_1')
     expect(answer(await call(own, 'read', { resource: 'task/task_1' })).text).toContain('own task')

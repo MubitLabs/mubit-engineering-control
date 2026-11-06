@@ -474,11 +474,13 @@ function assertLive(attempt: StoreDoc): void {
 }
 
 /** §6: a specialist reads only its own task and attempt, what reached it, and its prompt. */
-function inScope(attempt: StoreDoc, kind: string | undefined, id: string | undefined): boolean {
+function inScope(store: Store, attempt: StoreDoc, kind: string | undefined, id: string | undefined): boolean {
   if (id === undefined) return false
   if (kind === 'attempt') return id === attempt.id
   if (kind === 'task') return id === attempt.taskId
-  if (kind === 'message') return id === attempt.origin_message_id
+  if (kind === 'message') {
+    return id === attempt.origin_message_id || store.messages.get(id)?.ownerAttemptId === attempt.id
+  }
   if (kind === 'prompts') return id === attempt.bundle_revision
   return false
 }
@@ -510,7 +512,7 @@ const REPORT_FIELDS = [
 function read(store: Store, attempt: StoreDoc, input: Record<string, unknown>): Json {
   const resource = typeof input.resource === 'string' ? input.resource : ''
   const [kind, id, part, ...rest] = resource.split('/')
-  if (!inScope(attempt, kind, id) || rest.length > 0) {
+  if (!inScope(store, attempt, kind, id) || rest.length > 0) {
     throw new Error(`mec-tools: ${resource || 'that'} is not readable by this attempt`)
   }
   return page(JSON.stringify(resourceBody(store, attempt, kind as string, id as string, part)), input.cursor)

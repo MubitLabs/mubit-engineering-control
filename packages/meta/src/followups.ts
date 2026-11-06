@@ -241,9 +241,10 @@ export class FollowUps {
     const { attempt_id: attemptId, input } = fields
     if (typeof attemptId !== 'string' || input === undefined) throw new Error('deliver: bad payload')
     const attempt = this.#store.attempts.get(attemptId)
-    const delivered = this.#store.messages.get(input.message_id ?? '')?.delivered_inputs as
-      | string[]
-      | undefined
+    const message = this.#store.messages.get(input.message_id ?? '')
+    // Released, or handed back and routed on, while this row waited: it is no longer this attempt's.
+    if (message !== undefined && (message.owned !== true || message.ownerAttemptId !== attemptId)) return
+    const delivered = message?.delivered_inputs as string[] | undefined
     // A row replayed after a crash: the engine has this copy.
     if (delivered?.includes(input.id) === true) return
     if (attempt?.state === 'queued') throw new Later(`${attemptId} has not started`)

@@ -394,4 +394,29 @@ describe('switch slot', { timeout: 40_000 }, () => {
     expect(written).toContain('quota [clean]')
     expect(written).not.toContain('token-of-att_1')
   })
+
+  it('a card a worker forged names no target, and is refused without stopping the pass', async () => {
+    const rig = scratch(STEPS)
+    parked(rig)
+    peek(rig, (store) => {
+      store.confirmations.save({
+        id: 'conf_forged',
+        cls: 'slot_switch',
+        status: 'approved',
+        requestedBy: 'specialist',
+        workItemId: WORK,
+        attemptId: 'att_1',
+        payload: { operation: { class: 'slot_switch' }, evidence: { why: 'trust me' } },
+      })
+    })
+    // No runner and no probe run: a target of undefined reaches the store, which finds no slot.
+    await serve(rig, { brain: brainThatNeverRuns, real: false })
+    await until(() => eventsOf(rig, `work:${WORK}`).includes('slot_switch_refused'), 8000)
+    const body = peek(rig, (store) =>
+      store.events.read(`work:${WORK}`).find((event) => event.type === 'slot_switch_refused'),
+    )?.body
+    expect(body).toMatchObject({ reason: 'target_unhealthy' })
+    expect(peek(rig, (store) => store.confirmations.get('conf_forged')?.applied)).toBe(true)
+    expect(attempts(rig)).toHaveLength(1)
+  })
 })

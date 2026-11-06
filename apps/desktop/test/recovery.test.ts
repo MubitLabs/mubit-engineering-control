@@ -1,5 +1,6 @@
 // M2.4, §20, §26: what a boot does with what a crash left. Each case is the state on disk at one
 // boundary, with any orphan a real process, then a real boot over it.
+import { type ChildProcess, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -27,7 +28,20 @@ import {
   WORK,
 } from './recovery-rig'
 
-afterEach(cleanUp)
+const members: ChildProcess[] = []
+
+afterEach(async () => {
+  for (const child of members.splice(0)) child.kill('SIGKILL')
+  await cleanUp()
+})
+
+/** A live process in this test's own group: real, and never provably an engine's group leader. */
+const member = async (): Promise<{ child: ChildProcess; mark: { pid: number; started: string } }> => {
+  const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' })
+  members.push(child)
+  const pid = child.pid as number
+  return { child, mark: { pid, started: await started(pid) } }
+}
 
 const STEPS = [{ init: true }, { sh: 'echo made > "$MEC_ATTEMPT_ID.txt"' }, { result: 'completed' }]
 const HOLD_OPEN = [{ init: true }, { forever: true }]
@@ -303,6 +317,63 @@ describe('no orphans', { timeout: 60_000 }, () => {
       db.prepare("SELECT key FROM effects WHERE kind = 'launch' ORDER BY rowid").all(),
     ) as { key: string }[]
     expect(order.map((row) => row.key)).toEqual(['att_0:2', 'att_1:2'])
+  })
+})
+
+describe('a group that would not go', { timeout: 90_000 }, () => {
+  const row = (rig: Rig, generation: number, extra: Record<string, unknown> = {}) => {
+    peek(rig, (store) => {
+      store.atomic(() => {
+        store.effects.enqueue('launch', `att_1:${generation}`, {
+          attempt_id: 'att_1',
+          task_id: 'task_1',
+          work_item_id: WORK,
+          slot_id: 'slot_a',
+          generation,
+          ...extra,
+        } as never)
+      })
+    })
+  }
+
+  /** First boot refuses; the row runs nothing. A later boot proves the group gone; the row runs. */
+  const waitsThenRuns = async (rig: Rig, child: ChildProcess): Promise<void> => {
+    const first = await serve(rig, { probeRun: PROBE_OK, brain: brainThatNeverRuns })
+    await settle(1500)
+    expect(rig.started()).toBe(false)
+    expect(attemptOf(rig)?.reconcile_refused).toBe('unprovable')
+    await first.close()
+    const pid = child.pid as number
+    child.kill('SIGKILL')
+    await until(() => !alive(pid))
+    // A deferred row is due within 30 s anyway; this test need not wait them out.
+    peek(rig, (store) => store.effects.wakeDeferred(['launch']))
+    await serve(rig, { probeRun: PROBE_OK, brain: brainThatNeverRuns })
+    await reaches(rig, 'work_complete')
+    expect(rig.started()).toBe(true)
+    expect(attemptOf(rig)?.reconcile_refused).toBeUndefined()
+  }
+
+  it.each(['interrupted', 'quota_wait'])(
+    'a resume row waits for proof, on an attempt that is %s',
+    async (state) => {
+      const rig = scratch(STEPS)
+      const { child, mark } = await member()
+      seedStore(rig, {
+        noRow: true,
+        attempt: { state, generation: 2, session_id: 'session-1', resuming: true, process: mark },
+      })
+      row(rig, 2, { resume: true, note: 'host restarted' })
+      await waitsThenRuns(rig, child)
+    },
+  )
+
+  it('a launch row waits for proof too', async () => {
+    const rig = scratch(STEPS)
+    const { child, mark } = await member()
+    seedStore(rig, { noRow: true, task: { status: 'ready' }, attempt: { process: mark } })
+    row(rig, 1)
+    await waitsThenRuns(rig, child)
   })
 })
 

@@ -44,7 +44,7 @@ export type LaunchFailureReason = string
 /** What the launch gate decides: `defer` keeps the row, `drop` lets it drain unlaunched. */
 export type LaunchAuthority =
   | { verdict: 'run' }
-  | { verdict: 'defer'; reason: 'held' }
+  | { verdict: 'defer'; reason: 'held' | 'reconcile_refused' }
   | { verdict: 'drop'; reason: LaunchDropReason }
 
 export type HoldOutcome = 'held' | 'missing' | 'terminal' | 'read_only'
@@ -113,7 +113,8 @@ export function launchAuthority(
   const work = store.workItems.get(workItemId)
   if (work === undefined) return drop('work_missing')
   if (isTerminal(work)) return drop('work_terminal')
-  if (store.attempts.get(attemptId)?.state !== 'queued') return drop('attempt_not_queued')
+  const attempt = store.attempts.get(attemptId)
+  if (attempt?.state !== 'queued') return drop('attempt_not_queued')
   const repoId = repoOf(work)
   const pinned = (work.pin as { repoId?: string } | undefined)?.repoId
   if (repoId === undefined || pinned !== repoId || repoOf(store.tasks.get(taskId)) !== repoId) {
@@ -122,7 +123,11 @@ export function launchAuthority(
   const authority = revalidateWork(work, now, policyHash)
   if (!authority.ok && authority.reason !== 'policy_changed') return drop(`mandate_${authority.reason}`)
   if (isHeld(work)) return { verdict: 'defer', reason: 'held' }
-  return authority.ok ? { verdict: 'run' } : drop('policy_changed')
+  if (!authority.ok) return drop('policy_changed')
+  // A group a boot could not prove gone may still be running here (§8.1): nothing goes beside it.
+  return attempt.reconcile_refused === undefined
+    ? { verdict: 'run' }
+    : { verdict: 'defer', reason: 'reconcile_refused' }
 }
 
 /**

@@ -123,8 +123,23 @@ export function replayJournals(facts: AttemptFacts, store: Store, dataDir: strin
   return applied
 }
 
-/** Whether nothing of this group is left, signalling it only if it is provably ours. */
+/**
+ * Whether nothing of this group is left. Refused means `reconcile_refused` on the attempt, which the
+ * launch and resume gates wait on, so a row that survived cannot start beside the group. A later
+ * boot that proves the group gone clears it.
+ */
 async function clearGroup(deps: ProcessDeps, doc: StoreDoc, value: unknown): Promise<boolean> {
+  const cleared = await provablyGone(deps, doc, value)
+  const fresh = deps.store.attempts.get(String(doc.id))
+  if (cleared && fresh?.reconcile_refused !== undefined) {
+    const { reconcile_refused: _refused, ...rest } = fresh
+    deps.store.atomic(() => deps.store.attempts.save({ ...rest, updatedAt: deps.now() }))
+  }
+  return cleared
+}
+
+/** Signals the group only if it is provably ours. */
+async function provablyGone(deps: ProcessDeps, doc: StoreDoc, value: unknown): Promise<boolean> {
   const { store, now } = deps
   const mark = markOf(value)
   if (mark === undefined) return true
@@ -257,7 +272,7 @@ export async function reconcileProcesses(deps: ProcessDeps): Promise<void> {
     if (state === 'running' || state === 'stalled') await reconcileLive(deps, doc)
     else if (state === 'queued') await reconcileQueued(deps, doc)
     else if (state === 'work_complete') await reconcileChecks(deps, doc)
-    else if (state === 'interrupted' && doc.resuming === true) {
+    else if ((state === 'interrupted' || PARKED.includes(String(state))) && doc.resuming === true) {
       // Its row is still there. A crash during that launch may have left an engine.
       await clearGroup(deps, doc, doc.process)
     } else if (state === 'interrupted' && doc.terminal_reason === 'server_closing') {
@@ -420,7 +435,10 @@ export function resumeAuthority(
         [...PARKED, 'interrupted'].includes(String(attempt.state))
   if (!current || !fits) return { verdict: 'drop', reason: 'attempt_not_queued' }
   const mandate = revalidateWork(work, now, policyHash) as MandateCheck
-  return resumeVerdict({ held: isHeld(work), mandate })
+  const verdict = resumeVerdict({ held: isHeld(work), mandate })
+  return verdict.verdict === 'run' && attempt?.reconcile_refused !== undefined
+    ? { verdict: 'defer', reason: 'reconcile_refused' }
+    : verdict
 }
 
 const withoutResuming = (doc: StoreDoc): StoreDoc => {

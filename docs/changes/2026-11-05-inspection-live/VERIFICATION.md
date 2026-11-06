@@ -42,3 +42,14 @@ No full parallel run was green after the fix, and the same load was not measured
 ## Checked against `origin/main`
 
 The decoders in `apps/web/src/inspection-decode.ts` pick fields by name, so `usage.coverage` and `outcome` are safe. `api.ts` sends `x-mec-client: 1` on `request`. `live/events.ts` listens for `reset`. These were read, not run: this base doesn't hold #38.
+
+## Artifact secrets: three blockers
+
+Tests were written first. 7 of the new artifact tests failed on the old code, for the case-sensitive control directories, a cursor inside a key, and a token or slot key with no pattern.
+
+- `--no-file-parallelism` over `apps/desktop` and `packages/slots`: 724 passed, 6 skipped, 1 failed. The failure is `login-cards.test.ts`, the known baseline (`posix_spawnp failed`).
+- `pnpm -r --parallel typecheck` and `biome check` on both packages report no errors.
+- Ten mutants were killed by a named test: no lowercase compare, no start cut, no end cut, no read behind the cursor, no exacts on the page, no fingerprints on the page, the wrong attempt's exacts, no composition wiring, no exact spans, no last-four spans.
+- `next` relative to the window hung the paging test's loop, which never ends. It was stopped by hand, so it has no clean result.
+- `realpathSync.native` for the path, swapped for the JavaScript one, survives: the lowercase compare covers it on this volume. It stays for any folding `toLowerCase` does not match, and that is not proven by a test.
+- No engine ran. The launch test uses the fake CLI.

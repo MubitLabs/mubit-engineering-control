@@ -49,6 +49,6 @@ A client can go from a task to its attempts, exact-head checks, redacted activit
 ## Known limits
 
 - **Classic shell and `reset`.** The classic `subscribeMerged` has no `reset` listener and can open with `after=0`. On a stream over 10,000 events, native `EventSource` reopens every few seconds, gets `reset` each time, and that shell has no live refresh until `33` removes it. `live/events.ts` on `origin/main` handles `reset`.
-- **Redaction here is a second line:** patterns only, with no fingerprints or exact keys. A key of no known shape in a worktree file is served as it stands.
+- **Artifact redaction has edges.** Artifacts get patterns, slot fingerprints and the attempt's exact token, and no page starts or ends inside one, but the search for a key reaches 4 KiB either side of a cut, so a key-shaped string longer than that can still be cut. The fingerprint sweep is `redact`'s: it only sees a key that ends a run of non-space characters, so `"key"` in quotes is not caught. A key of no known shape and no fingerprint is served as it stands. The other inspection routes stay patterns only, because their records were redacted before they were stored.
 - **The write-side gap in `packages/meta`** and the `#appendEvent` stream read stay as the handoff says: unowned, reported.
 - **`/api/events` with no `inspection` dep** falls back to a full `events.read`. Only tests build a server that way.

@@ -432,6 +432,7 @@ export async function startServer(opts: {
     effects: store.effects,
     health,
     inspection: new InspectionReads(db),
+    inspectionExacts: (attemptId) => launcher?.exactsFor(attemptId) ?? [],
     policyText,
     pauseControl,
     // The data dir is the keystore root (§5.4), so a scratch server never reads real state.

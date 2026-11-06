@@ -143,9 +143,10 @@ function seedStore(dataDir: string, repo: string, seed: Seed = {}): void {
   db.close()
 }
 
-async function serve(dataDir: string): Promise<void> {
+async function serve(dataDir: string): Promise<{ url: string }> {
   const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 4000 })
   closers.push(server.close)
+  return server
 }
 
 /** Reads the store as a second connection would, while the server holds it. */
@@ -675,6 +676,31 @@ describe('the launch path', { timeout: 60_000 }, () => {
     const journal = readFileSync(join(dataDir, 'journal', 'att_1', 'events.jsonl'), 'utf8')
     expect(journal).not.toContain(token)
     expect(existsSync(join(dataDir, 'work', 'att_1', '.mec', 'mcp.json'))).toBe(false)
+  })
+
+  it('a token a worker wrote into its worktree is not served as an artifact', async () => {
+    const { dataDir, repo, bin } = scratch({
+      steps: [
+        { init: true },
+        { saveToken: true },
+        { sh: 'printenv MEC_TOOLS_TOKEN > build.log' },
+        { result: 'completed' },
+      ],
+    })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedStore(dataDir, repo)
+    const server = await serve(dataDir)
+    await reaches(dataDir, 'work_complete')
+
+    const token = readFileSync(join(bin, 'token.txt'), 'utf8')
+    expect(readFileSync(join(dataDir, 'work', 'att_1', 'build.log'), 'utf8')).toContain(token)
+    const res = await fetch(`${server.url}/api/inspect/artifacts?attemptId=att_1&ref=build.log`, {
+      headers: { 'x-mec-client': '1' },
+    })
+    expect(res.status).toBe(200)
+    const body = await res.text()
+    expect(body).not.toContain(token)
+    expect(body).toContain('[redacted:exact]')
   })
 
   it('launch returns after engine start, not at exit', async () => {

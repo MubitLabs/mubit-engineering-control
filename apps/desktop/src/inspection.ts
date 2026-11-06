@@ -15,17 +15,19 @@
  *   has a count and a byte budget and says how much it cut. Those are the normal bounds; `serve` is
  *   the hard one: an answer still over 1 MiB is never sent, whatever a record holds.
  * - Every route sits behind `readGate`: a loopback Host, and the client header on a browser request.
- * - An artifact resolves only under its attempt's worktree, by real path, outside `.mec/` and `.git`.
+ * - An artifact resolves only under its attempt's worktree, by real path, outside `.mec/` and `.git`
+ *   in any case: the default macOS volume opens `.MEC/` as `.mec/`.
+ * - An artifact never passed a first line of redaction, so it gets every layer, and no page starts or
+ *   ends inside a secret, whatever cursor a client sends.
  */
 
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
-import type { EngineEvent, Json, Store, StoreDoc } from '@mec/contracts'
-import { SECRET_PATTERNS } from '@mec/contracts'
+import type { EngineEvent, Json, KeyFingerprint, Store, StoreDoc } from '@mec/contracts'
 import { type Stage, stageOf, workViewOf } from '@mec/domain'
 import { assertRepoAdmission } from '@mec/meta'
 import { type AttemptOutcome, type CheckRecord, projectAttempt } from '@mec/scorecards'
-import { redact } from '@mec/slots'
+import { redact, type SecretSpan, secretSpans } from '@mec/slots'
 import {
   CursorError,
   DEFAULT_PAGE_LIMIT,
@@ -197,7 +199,10 @@ export type SearchHit = {
 
 // ── Redaction at the boundary ────────────────────────────────────────────────────────────────
 
-/** The one place text is redacted (§17, §22). No fingerprints or exact keys: a second line of defence. */
+/**
+ * The one place a record's text is redacted (§17, §22). Records were redacted with fingerprints and
+ * exact keys before they were stored, so this is a second line. An artifact was not: see `readArtifact`.
+ */
 const redactText = (text: string): string => redact(text, [], [])
 
 /** Redacts every string in a response, keys excluded. */
@@ -310,7 +315,7 @@ async function readGate(request: FastifyRequest, reply: FastifyReply): Promise<u
 const CONTROL_DIRS = ['.mec', '.git']
 const ARTIFACT_REF_CAP = 1024
 const ARTIFACT_PAGE_BYTES = MAX_PAGE_BYTES
-/** How far past the page a key is looked for, so a cut cannot fall inside one. */
+/** How far either side of a cut a key is looked for, so the cut cannot fall inside one. */
 const ARTIFACT_OVERLAP_BYTES = 4096
 const BINARY_SNIFF_BYTES = 8192
 
@@ -322,33 +327,41 @@ function resolveArtifact(root: string, ref: string): string | undefined {
   let realRoot: string
   let real: string
   try {
-    realRoot = realpathSync(root)
-    real = realpathSync(join(realRoot, ref))
+    // Native: the JavaScript one keeps the case the caller typed, and the volume may ignore it.
+    realRoot = realpathSync.native(root)
+    real = realpathSync.native(join(realRoot, ref))
   } catch {
     return undefined
   }
   const inside = relative(realRoot, real)
   const segments = inside.split(sep)
   if (inside === '' || segments[0] === '..' || isAbsolute(inside)) throw new Refused('outside the attempt')
-  if (segments.some((segment) => CONTROL_DIRS.includes(segment))) throw new Refused('a control file')
+  if (segments.some((segment) => CONTROL_DIRS.includes(segment.toLowerCase()))) {
+    throw new Refused('a control file')
+  }
   return real
 }
 
+/** Everything that says what a secret is for one attempt's files. */
+type ArtifactSecrets = { fingerprints: readonly KeyFingerprint[]; exacts: readonly string[] }
+
+/** `cut`, moved back out of any secret. `spans` run latest first, so a chain of overlaps is followed. */
+function cutOutside(spans: readonly SecretSpan[], cut: number): number {
+  let at = cut
+  for (const { start, end } of spans) if (start < at && at < end) at = start
+  return at
+}
+
 /**
- * Where a page of `chunk` ends: on a character, and never inside a key. A key cut in two matches
- * no pattern on either page, so it would leave in two halves that both pass redaction.
+ * Where a page starting at `start` ends: on a character, and never inside a key. A key cut in two
+ * matches nothing on either page, so it would leave in two halves that both pass redaction.
  */
-function artifactPageEnd(chunk: Buffer): number {
-  if (chunk.length <= ARTIFACT_PAGE_BYTES) return chunk.length
-  let end = ARTIFACT_PAGE_BYTES
-  while (end > 0 && ((chunk[end] as number) & 0xc0) === 0x80) end -= 1
-  const bytes = chunk.toString('latin1')
-  for (const { pattern } of SECRET_PATTERNS) {
-    for (const match of bytes.matchAll(new RegExp(pattern.source, 'g'))) {
-      if (match.index < end && end < match.index + match[0].length) end = match.index
-    }
-  }
-  return end === 0 ? ARTIFACT_PAGE_BYTES : end
+function artifactPageEnd(chunk: Buffer, start: number, spans: readonly SecretSpan[]): number {
+  if (chunk.length - start <= ARTIFACT_PAGE_BYTES) return chunk.length
+  let end = start + ARTIFACT_PAGE_BYTES
+  while (end > start && ((chunk[end] as number) & 0xc0) === 0x80) end -= 1
+  const safe = cutOutside(spans, end)
+  return safe > start ? safe : start + ARTIFACT_PAGE_BYTES
 }
 
 type ArtifactPage = { size: number } & (
@@ -356,7 +369,11 @@ type ArtifactPage = { size: number } & (
   | { binary: false; text: string; next: number | null }
 )
 
-function readArtifact(path: string, offset: number): ArtifactPage | undefined {
+/**
+ * The page at `offset`, which is the client's to choose: a cursor is not signed. So the read starts
+ * before it, and a cursor inside a key gets the page from the start of that key.
+ */
+function readArtifact(path: string, offset: number, secrets: ArtifactSecrets): ArtifactPage | undefined {
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
   try {
     const stat = fstatSync(fd)
@@ -365,17 +382,32 @@ function readArtifact(path: string, offset: number): ArtifactPage | undefined {
     const sniff = Buffer.alloc(Math.min(BINARY_SNIFF_BYTES, size))
     readSync(fd, sniff, 0, sniff.length, 0)
     if (sniff.includes(0)) return { size, binary: true }
-    const left = Math.max(0, size - offset)
-    const chunk = Buffer.alloc(Math.min(left, ARTIFACT_PAGE_BYTES + ARTIFACT_OVERLAP_BYTES))
-    readSync(fd, chunk, 0, chunk.length, offset)
-    const end = artifactPageEnd(chunk)
+    const at = Math.min(offset, size)
+    const from = Math.max(0, at - ARTIFACT_OVERLAP_BYTES)
+    const chunk = Buffer.alloc(
+      Math.min(size - from, at - from + ARTIFACT_PAGE_BYTES + ARTIFACT_OVERLAP_BYTES),
+    )
+    readSync(fd, chunk, 0, chunk.length, from)
+    // Byte positions: one latin1 character is one byte.
+    const spans = secretSpans(
+      chunk.toString('latin1'),
+      secrets.fingerprints,
+      secrets.exacts.map((exact) => Buffer.from(exact).toString('latin1')),
+    ).sort((a, b) => b.start - a.start)
+    const start = cutOutside(spans, at - from)
+    const end = artifactPageEnd(chunk, start, spans)
     let text: string
     try {
-      text = new TextDecoder('utf-8', { fatal: true }).decode(chunk.subarray(0, end))
+      text = new TextDecoder('utf-8', { fatal: true }).decode(chunk.subarray(start, end))
     } catch {
       return { size, binary: true }
     }
-    return { size, binary: false, text: redactText(text), next: offset + end < size ? offset + end : null }
+    return {
+      size,
+      binary: false,
+      text: redact(text, secrets.fingerprints, secrets.exacts),
+      next: from + end < size ? from + end : null,
+    }
   } finally {
     closeSync(fd)
   }
@@ -442,7 +474,13 @@ const DELIVERY_STAGES: Readonly<Record<string, DeliveryView['stage']>> = {
 /** Headroom for the envelope fields around a page's items. */
 const ENVELOPE_BYTES = 1024
 
-type InspectDeps = { store: Store; reads: InspectionReads; now: () => Date }
+type InspectDeps = {
+  store: Store
+  reads: InspectionReads
+  now: () => Date
+  /** The exact secrets of one attempt, which only the launcher holds. */
+  exactsFor: (attemptId: string) => string[]
+}
 
 /** A need with the rowid that keys its page: stable, unlike its position in the list. */
 type NeedRow = { rowid: number; item: NeedItem; settledAt: string }
@@ -455,12 +493,14 @@ class Inspector {
   readonly #store: Store
   readonly #reads: InspectionReads
   readonly #now: () => Date
+  readonly #exactsFor: (attemptId: string) => string[]
   readonly #labels = new Map<string, string | null>()
 
   constructor(deps: InspectDeps) {
     this.#store = deps.store
     this.#reads = deps.reads
     this.#now = deps.now
+    this.#exactsFor = deps.exactsFor
   }
 
   observedAt(): string {
@@ -1179,6 +1219,16 @@ class Inspector {
     return str(this.#reads.getDoc('attempt', attemptId)?.worktree) ?? undefined
   }
 
+  /** From the store, not the launcher: a slot's key can sit in a worktree with no runner up. */
+  artifactSecrets(attemptId: string): ArtifactSecrets {
+    return {
+      fingerprints: this.#store.slots
+        .list()
+        .flatMap((slot) => (slot.fingerprint === undefined ? [] : [slot.fingerprint as KeyFingerprint])),
+      exacts: this.#exactsFor(attemptId),
+    }
+  }
+
   // ── search ──
 
   search(q: string, repoId: string | undefined): SearchHit[] {
@@ -1550,7 +1600,13 @@ export function registerInspectionRoutes(app: FastifyInstance, deps: InspectDeps
       const root = inspector.artifactRoot(attemptId)
       const path = root === undefined ? undefined : resolveArtifact(root, ref)
       const page =
-        path === undefined ? undefined : readArtifact(path, offset === null ? 0 : decodeCursor(offset))
+        path === undefined
+          ? undefined
+          : readArtifact(
+              path,
+              offset === null ? 0 : decodeCursor(offset),
+              inspector.artifactSecrets(attemptId),
+            )
       if (page === undefined) {
         reply.code(404)
         return { error: 'not found' }

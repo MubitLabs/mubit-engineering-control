@@ -15,6 +15,10 @@ import { buildServer } from '../src/server'
 
 const AT = '2026-11-05T12:00:00.000Z'
 const KEY = 'sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+/** The shape `issueToken` mints; no pattern knows it. */
+const TOKEN = 'eyJhdHRlbXB0SWQiOiJhdHRfMSJ9.c2lnbmF0dXJlLW9mLXRoZS10b2tlbg'
+/** A slot key of no known shape: only its fingerprint's last four can find it. */
+const SLOT_KEY = 'zQ7zQ7zQ7zQ7zQ7zQ7zQ7zQ7zQ7zQ7wxyz'
 const HEAD = 'a'.repeat(40)
 const OLD = 'b'.repeat(40)
 const MIB = 1024 * 1024
@@ -32,6 +36,8 @@ let store: SqliteStore
 let app: ReturnType<typeof buildServer>
 let scratch: string
 let worktree: string
+/** Each attempt's own token, as the launcher holds them. */
+let tokens: Record<string, string[]>
 
 const CLIENT = { 'x-mec-client': '1' }
 
@@ -39,6 +45,7 @@ beforeEach(() => {
   db = new Database(':memory:')
   migrate(db, MIGRATIONS_v1)
   store = new SqliteStore(db, { now: () => new Date(AT) })
+  tokens = {}
   app = buildServer({
     store,
     effects: store.effects,
@@ -46,6 +53,7 @@ beforeEach(() => {
     policyText: '{"preAuthorised":{}}',
     now: () => new Date(AT),
     inspection: new InspectionReads(db),
+    inspectionExacts: (attemptId) => tokens[attemptId] ?? [],
   })
   scratch = mkdtempSync(join(tmpdir(), 'mec-trace-'))
   worktree = join(scratch, 'work', 'att_1')
@@ -60,7 +68,7 @@ afterEach(async () => {
   rmSync(scratch, { recursive: true, force: true })
 })
 
-const save = (repo: 'engines' | 'attempts' | 'tasks' | 'workItems', doc: StoreDoc): void => {
+const save = (repo: 'engines' | 'attempts' | 'slots' | 'tasks' | 'workItems', doc: StoreDoc): void => {
   store.atomic(() => store[repo].save(doc))
 }
 
@@ -135,6 +143,10 @@ const get = async (url: string, headers: Record<string, string> = {}) => {
 
 const artifact = (ref: string, extra = '') =>
   get(`/api/inspect/artifacts?attemptId=att_1&ref=${encodeURIComponent(ref)}${extra}`)
+
+/** A cursor nobody issued: base64url JSON is all it takes to make one. */
+const cursorAt = (byte: number): string =>
+  `&cursor=${Buffer.from(JSON.stringify({ v: 1, r: byte })).toString('base64url')}`
 
 describe('the read gate', () => {
   const ROUTES = [
@@ -499,6 +511,20 @@ describe('artifacts', () => {
     }
   })
 
+  it('the control directories are refused in any case', async () => {
+    writeFileSync(join(worktree, '.mec', 'mcp.json'), 'token')
+    writeFileSync(join(worktree, '.git'), 'gitdir: token')
+    // A real mixed-case directory, so a case-sensitive volume sees this refusal too.
+    mkdirSync(join(worktree, 'src', '.MEC'))
+    writeFileSync(join(worktree, 'src', '.MEC', 'mcp.json'), 'token')
+    expect((await artifact('src/.MEC/mcp.json')).status).toBe(403)
+    for (const ref of ['.MEC/mcp.json', '.Mec/mcp.json', '.GIT', '.Git']) {
+      const res = await artifact(ref)
+      expect(res.status, ref).toBeGreaterThanOrEqual(400)
+      expect(res.body, ref).not.toContain('token')
+    }
+  })
+
   it('a directory, a missing file and a missing root are refused', async () => {
     expect((await artifact('src')).status).toBe(404)
     expect((await artifact('none.txt')).status).toBe(404)
@@ -564,6 +590,85 @@ describe('artifacts', () => {
     expect(whole).not.toContain('sk-ant-')
     expect(whole).toContain('[redacted:')
     expect(whole).toContain('tail')
+  })
+
+  it('a client cursor cannot start a page inside a key', async () => {
+    const before = 'line one\n'
+    writeFileSync(join(worktree, 'cut.txt'), `${before}${KEY} tail`)
+    for (let byte = before.length; byte <= before.length + KEY.length; byte += 1) {
+      const res = await artifact('cut.txt', cursorAt(byte))
+      expect(res.status, String(byte)).toBe(200)
+      expect(res.body, String(byte)).not.toContain(KEY.slice(-12))
+      expect(res.body, String(byte)).toContain('tail')
+    }
+    expect((await artifact('cut.txt', cursorAt(before.length + 1))).body).toBe('[redacted:anthropic] tail')
+  })
+
+  it('a client cursor reaches a key at the end of the file too', async () => {
+    writeFileSync(join(worktree, 'last.txt'), KEY)
+    const res = await artifact('last.txt', cursorAt(KEY.length - 1))
+    expect(res.body).toBe('[redacted:anthropic]')
+    expect(res.headers['x-mec-next-cursor']).toBeUndefined()
+  })
+
+  it('a cursor outside any key starts where it says, and one past the end is empty', async () => {
+    writeFileSync(join(worktree, 'plain.txt'), 'alpha beta')
+    expect((await artifact('plain.txt', cursorAt(6))).body).toBe('beta')
+    expect((await artifact('plain.txt', cursorAt(99))).body).toBe('')
+  })
+
+  it("a page after a key's cut keeps paging from where it really started", async () => {
+    const pad = 'a '.repeat(MIB / 2 + 100)
+    writeFileSync(join(worktree, 'walk.txt'), `${KEY} ${pad}`)
+    const first = await artifact('walk.txt', cursorAt(1))
+    expect(first.body.startsWith('[redacted:anthropic] ')).toBe(true)
+    expect(Buffer.byteLength(first.body)).toBeLessThanOrEqual(MIB)
+    const next = first.headers['x-mec-next-cursor'] as string
+    expect((await artifact('walk.txt', `&cursor=${next}`)).body.length).toBeGreaterThan(0)
+    const cut = Buffer.from(next, 'base64url').toString('utf8')
+    expect(JSON.parse(cut).r).toBe(MIB)
+  })
+
+  it("an attempt's token in a worktree file does not leave", async () => {
+    tokens = { att_1: [TOKEN], att_2: ['other-token-of-another-attempt'] }
+    writeFileSync(join(worktree, 'build.log'), `MEC_TOOLS_TOKEN=${TOKEN}\nother-token-of-another-attempt\n`)
+    const res = await artifact('build.log')
+    expect(res.status).toBe(200)
+    expect(res.body).not.toContain(TOKEN)
+    expect(res.body).toContain('[redacted:exact]')
+    // Only this attempt's exacts are asked for.
+    expect(res.body).toContain('other-token-of-another-attempt')
+  })
+
+  it('a token is safe at either edge of a page', async () => {
+    tokens = { att_1: [TOKEN] }
+    const pad = 'a '.repeat(MIB / 2 - 10)
+    writeFileSync(join(worktree, 'edge.txt'), `${pad} ${TOKEN} tail`)
+    const first = await artifact('edge.txt')
+    const second = await artifact('edge.txt', `&cursor=${first.headers['x-mec-next-cursor']}`)
+    const whole = first.body + second.body
+    expect(whole).not.toContain(TOKEN.slice(0, 8))
+    expect(whole).not.toContain(TOKEN.slice(-8))
+    expect(whole).toContain('tail')
+    writeFileSync(join(worktree, 'in.txt'), `x ${TOKEN} tail`)
+    for (const byte of [3, 12, 2 + TOKEN.length - 1]) {
+      expect((await artifact('in.txt', cursorAt(byte))).body, String(byte)).toBe('[redacted:exact] tail')
+    }
+  })
+
+  it('a slot key of no known shape is found by its fingerprint, also at a cut', async () => {
+    save('slots', { id: 'slot_1', fingerprint: { provider: 'anthropic-api', last4: 'wxyz', hash: 'h' } })
+    writeFileSync(join(worktree, 'env.txt'), `key ${SLOT_KEY} tail`)
+    expect((await artifact('env.txt')).body).toBe('key [redacted:exact] tail')
+    for (const byte of [5, 20, 4 + SLOT_KEY.length - 2]) {
+      expect((await artifact('env.txt', cursorAt(byte))).body, String(byte)).toBe('[redacted:exact] tail')
+    }
+    const pad = 'a '.repeat(MIB / 2 - 10)
+    writeFileSync(join(worktree, 'edge.txt'), `${pad} ${SLOT_KEY} tail`)
+    const first = await artifact('edge.txt')
+    const second = await artifact('edge.txt', `&cursor=${first.headers['x-mec-next-cursor']}`)
+    expect(first.body + second.body).not.toContain(SLOT_KEY.slice(0, 8))
+    expect(first.body + second.body).toContain('tail')
   })
 
   it('a character across a page boundary stays whole', async () => {

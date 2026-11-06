@@ -179,6 +179,8 @@ export type ServerDeps = {
   backups?: BackupControl
   /** The setup agent's model seam; absent, it answers from real reads. */
   setupDecide?: SetupDecide
+  /** M3.1: one attempt's exact secrets, for what an artifact read must not serve. */
+  inspectionExacts?: (attemptId: string) => string[]
 }
 
 /** The chat route's setup-mode surface — `SetupAgent` from @mec/meta satisfies it structurally. */
@@ -2316,7 +2318,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   app.get('/api/prompts/changes', async () => ({ changes: prompts.changes() }))
 
   // M3.1 canonical inspection: read-only, bounded, redacted `GET /api/inspect/*`.
-  if (deps.inspection !== undefined) registerInspectionRoutes(app, { store, reads: deps.inspection, now })
+  if (deps.inspection !== undefined) {
+    const exactsFor = deps.inspectionExacts ?? (() => [])
+    registerInspectionRoutes(app, { store, reads: deps.inspection, now, exactsFor })
+  }
 
   // M3.3 setup and configuration: readiness, connections, policy, repository edits, drafts, backups.
   const applyConfigDraft = registerConfigRoutes(app, {

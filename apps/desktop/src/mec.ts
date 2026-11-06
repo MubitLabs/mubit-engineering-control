@@ -173,7 +173,7 @@ function defaultGitRemote(): string | null {
 
 /** §21.1 entry for the `mec <command>` dispatch: exports for bin/mec.js and the bundle. */
 export async function cliMain(): Promise<void> {
-  const home = join(homedir(), '.mec')
+  const home = process.env.MEC_DATA_DIR ?? join(homedir(), '.mec')
   const snapshotPath = join(home, 'health.json')
   process.exitCode = await runCli(process.argv.slice(2), {
     readSnapshotText: () => {

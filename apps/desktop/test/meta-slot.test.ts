@@ -62,6 +62,42 @@ describe('POST /api/wizard/meta-slot', () => {
   })
 })
 
+describe('a slot with no home of its own', () => {
+  // `probeSlotAtStartup` writes this doc. A launch refuses it, so Setup must not count it.
+  const seedProbe = (ctx: ConfigServer): string => {
+    seedSlot(ctx.store, { id: 'slot_claude_probe', label: 'startup probe', home: undefined })
+    return 'slot_claude_probe'
+  }
+
+  it('cannot run the meta agent, by name', async () => {
+    const ctx = server()
+    const slotId = seedProbe(ctx)
+    const res = await ctx.post('/api/wizard/meta-slot', { slotId })
+    expect(res.statusCode).toBe(400)
+    expect((res.json() as { error: string }).error).toContain('startup probe has no home')
+    expect(ctx.store.engines.get('settings/meta-slot')).toBeUndefined()
+  })
+
+  it('is offered with its reason, not as usable', async () => {
+    const ctx = server()
+    seedProbe(ctx)
+    const body = (await ctx.get('/api/setup/readiness')).json() as { metaCandidates: Candidate[] }
+    expect(body.metaCandidates[0]).toMatchObject({ id: 'slot_claude_probe', usable: false })
+  })
+
+  it('an empty home is no home', async () => {
+    const ctx = server()
+    const slotId = seedSlot(ctx.store, { label: 'blank', home: '' })
+    expect((await ctx.post('/api/wizard/meta-slot', { slotId })).statusCode).toBe(400)
+  })
+
+  it('a linked slot runs on the default login and needs none', async () => {
+    const ctx = server()
+    const slotId = seedSlot(ctx.store, { label: 'linked', home: undefined, linkedDefault: true })
+    expect((await ctx.post('/api/wizard/meta-slot', { slotId })).statusCode).toBe(200)
+  })
+})
+
 describe('the setup agent', () => {
   it('meets the same refusal through its own tool', async () => {
     const ctx = makeConfigServer({

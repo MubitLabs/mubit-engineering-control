@@ -198,6 +198,8 @@ function ConnectionItem({
         <Fact term="Key">{row.fingerprint ? `Ends ${row.fingerprint.last4}` : 'None stored'}</Fact>
         <Fact term="Last check">{row.lastProbeAt ? when(row.lastProbeAt) : 'Not checked yet'}</Fact>
         <Fact term="Usage">No reading yet</Fact>
+        <Fact term="Runs at once">{row.concurrency ?? 'Default limit'}</Fact>
+        <Fact term="Slot class">{row.slotClass ?? 'None set'}</Fact>
         <Fact term="Pinned version">Not pinned</Fact>
         <Fact term="Paired with">No pair</Fact>
       </dl>

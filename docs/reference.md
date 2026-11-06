@@ -77,7 +77,7 @@ Additive routes for the overhaul's views; `/api/work` and the other routes above
 | Method | Path | Body | What it does |
 | --- | --- | --- | --- |
 | GET | `/api/slots` | — | All slots — fingerprints only, never keys. |
-| GET | `/api/connections` | — | `{ rows, options }`: one row per live slot from saved facts (engine version, identity, state and reason, last check). `usage`, `pin` and `pair` are `null` until something records them. `options` lists each engine's real add paths: `link`, `sign_in`, `api_key`. |
+| GET | `/api/connections` | — | `{ rows, options }`: one row per live slot from saved facts (engine version, identity, state and reason, last check). `usage`, `pin` and `pair` are `null` until something records them. `concurrency` and `slotClass` appear only when a slot doc sets them; absent means the scheduler's default. `options` lists each engine's real add paths: `link`, `sign_in`, `api_key`. |
 | POST | `/api/slots/dedicated` | `{ engine, label }` | Creates the slot a sign-in fills, `home_ready`, for `claude` or `codex`. 409 for a label in use. |
 | POST | `/api/slots/:id/probe` | — | A signed-in slot's local status command in its own environment, at no token cost: `{ ok, state, reason? }`. Records version and non-secret identity. API-key slots use `validate`. 409 and no write if the slot is retired, even while the check runs. |
 | GET | `/api/slots/:id/impact` | — | `{ slotId, label, running, queued, metaSlot, keyStored }`: what a retire touches, from saved docs. |

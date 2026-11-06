@@ -286,6 +286,17 @@ export function sampleServer({
         return json({ status: 'running' })
       }
       if (route === 'GET /api/chat/messages' || route === 'GET /api/work') return json([])
+      // Only setup mode answers here: the real route refuses any other message with no repoId.
+      if (route === 'POST /api/chat/messages') {
+        if (body.setup !== true || body.repoId !== undefined) return json({ error: 'repo_required' }, 400)
+        const text = String(body.text)
+        return json({
+          mode: 'setup',
+          reply: `Sample setup reply to: ${text}`,
+          drafts: text.startsWith('propose') ? [{ id: 'draft_sample' }] : [],
+          applied: [],
+        })
+      }
       if (route === 'GET /api/repositories') return json(repositories)
       if (route === 'GET /api/setup/readiness') return json(readiness())
       if (route === 'GET /api/connections') return json({ rows: slots, options })

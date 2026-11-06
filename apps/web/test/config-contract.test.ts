@@ -71,6 +71,14 @@ describe('the configuration client against the real routes', () => {
     expect(readiness.completion).toBeNull()
   })
 
+  it('reaches the setup agent with no repository, and a key-shaped paste stays out of its reply', async () => {
+    const answer = await configApi.setupMessage('check my slots')
+    expect(answer.reply).toContain('Setup mode ready')
+    expect(answer.drafts).toBe(0)
+    const guarded = await configApi.setupMessage(`sk-ant-${'x'.repeat(40)}`)
+    expect(guarded.reply).toContain('redacted before storage')
+  })
+
   it('walks a repository and a dedicated connection end to end', async () => {
     const path = join(root, 'repo')
     mkdirSync(path)
@@ -94,6 +102,20 @@ describe('the configuration client against the real routes', () => {
     expect(await configApi.impact('slot_max-1')).toMatchObject({ running: 0, keyStored: false })
     await configApi.retireSlot('slot_max-1', 'max-1')
     expect((await configApi.connections()).rows).toEqual([])
+  })
+
+  it('a slot carries its scheduling fields only when something set them', async () => {
+    await configApi.dedicated('claude', 'unset')
+    await configApi.dedicated('claude', 'set')
+    const doc = store.slots.get('slot_set')
+    store.slots.save({ ...doc, id: 'slot_set', concurrency: 0, slotClass: 'batch' })
+
+    const rows = (await configApi.connections()).rows
+    const unset = rows.find((row) => row.label === 'unset')
+    expect(unset).toBeDefined()
+    expect(unset).not.toHaveProperty('concurrency')
+    expect(unset).not.toHaveProperty('slotClass')
+    expect(rows.find((row) => row.label === 'set')).toMatchObject({ concurrency: 0, slotClass: 'batch' })
   })
 
   it('saves policy, prompts and models through their decoders', async () => {

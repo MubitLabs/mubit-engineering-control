@@ -54,9 +54,17 @@ export interface ConnectionRow {
   identity?: { email?: string; plan?: string }
   lastProbeAt?: string
   fingerprint?: { provider: string; last4: string }
+  /** Absent means unset: the scheduler's own default applies, and the row never invents one. */
+  concurrency?: number
+  slotClass?: string
   usage: null
   pin: null
   pair: null
+}
+/** One answer in the setup chat. `drafts` proposals wait in Settings. */
+export interface SetupAnswer {
+  reply: string
+  drafts: number
 }
 export type ConnectionPath = 'link' | 'sign_in' | 'api_key'
 export interface ConnectionOption {

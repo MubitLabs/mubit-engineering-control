@@ -22,6 +22,34 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('the setup chat', () => {
+  it('asks for the setup agent and names no repository', async () => {
+    const sent = stub(200, { mode: 'setup', reply: 'Setup mode ready', drafts: [], applied: [] })
+    const answer = await configApi.setupMessage('check my slots')
+    expect(sent[0]).toMatchObject({ path: '/api/chat/messages', method: 'POST' })
+    expect(sent[0]?.body).toEqual({ text: 'check my slots', setup: true })
+    expect(answer).toEqual({ reply: 'Setup mode ready', drafts: 0 })
+  })
+
+  it('counts what the agent proposed', async () => {
+    stub(200, { mode: 'setup', reply: 'Drafted', drafts: [{ id: 'a' }, { id: 'b' }], applied: [] })
+    expect((await configApi.setupMessage('change it')).drafts).toBe(2)
+  })
+
+  it('reads the secret guard, whose answer is not a reply', async () => {
+    stub(200, { routing: 'conversation', secretGuard: true, message: 'Add keys in the Slots panel' })
+    expect(await configApi.setupMessage('[key-shaped]')).toEqual({
+      reply: 'Add keys in the Slots panel',
+      drafts: 0,
+    })
+  })
+
+  it('refuses a body with neither', async () => {
+    stub(200, { mode: 'setup' })
+    await expect(configApi.setupMessage('hello')).rejects.toThrow(/reply/)
+  })
+})
+
 describe('saves always name their base', () => {
   it('models carries base_sha256', async () => {
     const sent = stub(200, { provenance: { source: 'user', path: '/x', sha256: 'b' } })

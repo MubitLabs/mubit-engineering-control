@@ -43,6 +43,8 @@ async function addRepository(ctx: ConfigServer, checks: Array<{ name: string; cm
   return res.json() as { id: string; url: string }
 }
 
+const PROBE_DOC = { id: 'slot_claude_probe', label: 'startup probe', home: undefined }
+
 async function complete(ctx: ConfigServer): Promise<void> {
   const slotId = seedSlot(ctx.store, { label: 'max-1' })
   await addRepository(ctx, [{ name: 'test', cmd: 'pnpm test' }])
@@ -122,6 +124,28 @@ describe('GET /api/setup/readiness', () => {
     expect(ctx.store.events.read('repositories').map((event) => event.type)).toContain(
       'repository_registered',
     )
+  })
+
+  it('a healthy slot with no home is not a connection, and a key slot with one is', async () => {
+    const ctx = server()
+    seedSlot(ctx.store, PROBE_DOC)
+    const probeOnly = step(await readiness(ctx), 'connection')
+    expect(probeOnly.status).toBe('missing')
+    expect(probeOnly.detail).toBe('No connection yet.')
+
+    seedSlot(ctx.store, { label: 'api', kind: 'claude-api', provider: 'anthropic-api' })
+    const withKey = step(await readiness(ctx), 'connection')
+    expect(withKey.status).toBe('done')
+    expect(withKey.detail).toBe('1 usable connection.')
+  })
+
+  it('a chosen slot with no home leaves the step open, with the reason', async () => {
+    const ctx = server()
+    seedSlot(ctx.store, PROBE_DOC)
+    ctx.store.engines.save({ id: 'settings/meta-slot', slotId: PROBE_DOC.id })
+    const meta = step(await readiness(ctx), 'meta_slot')
+    expect(meta.status).toBe('missing')
+    expect(meta.detail).toContain('startup probe has no home')
   })
 
   it('a repository with no check profile is incomplete', async () => {

@@ -49,6 +49,12 @@ export type Readiness = {
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
 
 /**
+ * §5.3: a linked slot runs on the default login and any other under its home. Without either,
+ * as with `slot_claude_probe`, the launcher refuses it, so it is no connection.
+ */
+const hasLogin = (slot: StoreDoc): boolean => slot.linkedDefault === true || text(slot.home) !== ''
+
+/**
  * Why this slot cannot run the meta agent, or null when it can. The one predicate: the route
  * refuses with this reason and the screen offers what it allows. The real brain launches Claude
  * with `CLAUDE_CONFIG_DIR` alone, so a slot must be a signed-in Claude home; an API key would
@@ -62,6 +68,7 @@ export function metaSlotRefusal(slot: StoreDoc): string | null {
   if (slot.kind !== 'claude-sub') {
     return `${label} is an API-key slot; the meta agent launches on a signed-in Claude home`
   }
+  if (!hasLogin(slot)) return `${label} has no home of its own, so it cannot launch`
   if (slot.state !== 'healthy')
     return `${label} is not healthy (${text(slot.state_reason) || text(slot.state)})`
   return null
@@ -103,7 +110,8 @@ export function buildReadiness(store: Store, engines: Readiness['engines']): Rea
   const metaReady = chosen !== undefined && metaRefusal === null
 
   const found = engines.filter((engine) => engine.installed)
-  const healthy = slots.filter((slot) => slot.state === 'healthy')
+  const connections = slots.filter(hasLogin)
+  const healthy = connections.filter((slot) => slot.state === 'healthy')
   const firstRequest = store.workItems.list().some((work) => typeof work.repoId === 'string')
 
   const facts: Record<SetupStep, boolean> = {
@@ -132,7 +140,7 @@ export function buildReadiness(store: Store, engines: Readiness['engines']): Rea
       status: statusOf('connection'),
       detail: facts.connection
         ? `${healthy.length} usable ${healthy.length === 1 ? 'connection' : 'connections'}.`
-        : slots.length === 0
+        : connections.length === 0
           ? 'No connection yet.'
           : 'A connection exists, but none has passed a health check.',
       next: facts.connection ? null : { label: 'Open Connections', route: 'slots' },

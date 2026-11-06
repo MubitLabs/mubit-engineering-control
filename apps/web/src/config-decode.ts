@@ -23,6 +23,7 @@ import type {
   Readiness,
   ReadinessStep,
   RepositoryView,
+  SetupAnswer,
   SlotImpact,
   StepRoute,
   StepStatus,
@@ -161,6 +162,8 @@ function decodeRow(path: string, raw: unknown): ConnectionRow {
     ...optional('stateReason', row.stateReason),
     ...optional('engineVersion', row.engineVersion),
     ...optional('lastProbeAt', row.lastProbeAt),
+    ...(typeof row.concurrency === 'number' && { concurrency: row.concurrency }),
+    ...optional('slotClass', row.slotClass),
     ...(identity !== undefined && { identity }),
     ...(fingerprint !== undefined && { fingerprint }),
     usage: null,
@@ -333,6 +336,16 @@ function decodeDraftPreview(path: string, raw: unknown): DraftPreview {
         after: str(path, change.after, 'change.after'),
       }
     }),
+  }
+}
+
+/** POST /api/chat/messages with `setup: true`. The secret guard answers in `message` instead. */
+export function decodeSetupAnswer(raw: unknown): SetupAnswer {
+  const path = '/api/chat/messages'
+  const body = obj(path, raw, 'the body')
+  return {
+    reply: str(path, body.reply ?? body.message, 'reply'),
+    drafts: Array.isArray(body.drafts) ? body.drafts.length : 0,
   }
 }
 

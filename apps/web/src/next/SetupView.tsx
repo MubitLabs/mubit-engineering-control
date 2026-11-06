@@ -1,6 +1,13 @@
 import { type ReactNode, useState } from 'react'
 import { PageHeader } from './Conversation'
-import { metaChoices, openStage, type Readiness, type ReadinessStep, type StepRoute } from './config-model'
+import {
+  metaChoices,
+  openStage,
+  type Readiness,
+  type ReadinessStep,
+  type SetupAnswer,
+  type StepRoute,
+} from './config-model'
 import { Button, Status, type StatusTone } from './primitives'
 
 const TONES: Record<ReadinessStep['status'], StatusTone> = {
@@ -75,6 +82,72 @@ function MetaChoice({
   )
 }
 
+/** The setup agent's own door: it never enters the work planner, so it needs no repository. */
+function SetupChat({
+  onSend,
+  onOpenSettings,
+}: {
+  onSend: (text: string) => Promise<SetupAnswer | { failure: string }>
+  onOpenSettings: () => void
+}) {
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [answer, setAnswer] = useState<SetupAnswer | null>(null)
+  const [failure, setFailure] = useState<string | null>(null)
+
+  const send = async () => {
+    setBusy(true)
+    setFailure(null)
+    const result = await onSend(text.trim())
+    setBusy(false)
+    if ('failure' in result) {
+      setFailure(result.failure)
+      return
+    }
+    setAnswer(result)
+    setText('')
+  }
+
+  return (
+    <section className="config-block" aria-label="Setup chat">
+      <h2>Setup chat</h2>
+      <form
+        className="config-form"
+        onSubmit={(event) => {
+          event.preventDefault()
+          void send()
+        }}
+      >
+        <label className="field">
+          Ask about setup
+          <textarea rows={2} value={text} onChange={(event) => setText(event.target.value)} />
+        </label>
+        <p className="field-note">Never paste a key here. Keys go in Connections.</p>
+        {failure !== null && (
+          <p className="field-error" role="alert">
+            {failure}
+          </p>
+        )}
+        <div className="form-actions">
+          <Button type="submit" variant="primary" disabled={busy || text.trim() === ''}>
+            {busy ? 'Sending…' : 'Send'}
+          </Button>
+        </div>
+      </form>
+      {answer !== null && (
+        <div role="status">
+          <pre className="code-block">{answer.reply}</pre>
+          {answer.drafts > 0 && (
+            <div className="form-actions">
+              <Button onClick={onOpenSettings}>Open Settings</Button>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
 export function SetupView({
   readiness,
   connectionForm,
@@ -85,6 +158,7 @@ export function SetupView({
   onSkip,
   onNavigate,
   onRecheck,
+  onAsk,
 }: {
   readiness: Readiness
   connectionForm: ReactNode
@@ -96,6 +170,7 @@ export function SetupView({
   /** `step` names the stage whose next action this is, so the caller can open the right section. */
   onNavigate: (route: StepRoute, step?: string) => void
   onRecheck: () => void
+  onAsk: (text: string) => Promise<SetupAnswer | { failure: string }>
 }) {
   const current = openStage(readiness.steps)
   const [opened, setOpened] = useState<string | null>(null)
@@ -177,6 +252,7 @@ export function SetupView({
           </Button>
         </div>
       )}
+      <SetupChat onSend={onAsk} onOpenSettings={() => onNavigate('settings')} />
     </div>
   )
 }

@@ -1,9 +1,9 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
-import { runCli } from '../src/mec'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cliMain, runCli } from '../src/mec'
 import { readStopMarker, writeStopMarker } from '../src/stop-marker'
 
 const normalBoardText = readFileSync(
@@ -120,5 +120,66 @@ describe('runCli', () => {
       env: { MEC_REGISTRY: 'https://npm.internal.mubit.example' },
     })
     expect(lines.join('\n')).toContain('registry: https://npm.internal.mubit.example')
+  })
+})
+
+/** Read-only commands only: `stop` and `restart` must never meet a real HOME from a test. */
+describe('cliMain finds the server the way the launcher does', () => {
+  const saved = {
+    home: process.env.HOME,
+    dataDir: process.env.MEC_DATA_DIR,
+    argv: process.argv,
+    exitCode: process.exitCode,
+  }
+  const restore = (key: 'HOME' | 'MEC_DATA_DIR', value: string | undefined) => {
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+  }
+
+  afterEach(() => {
+    restore('HOME', saved.home)
+    restore('MEC_DATA_DIR', saved.dataDir)
+    process.argv = saved.argv
+    process.exitCode = saved.exitCode
+    vi.restoreAllMocks()
+  })
+
+  /** A home and a data dir, each with a snapshot that names which one was read. */
+  function scratch(): { home: string; dataDir: string } {
+    const root = mkdtempSync(join(tmpdir(), 'mec-cli-main-'))
+    tempDirs.push(root)
+    const snapshot = (detail: string) =>
+      JSON.stringify({
+        ...(JSON.parse(normalBoardText) as object),
+        parts: { sample: { state: 'error', detail } },
+      })
+    const home = join(root, 'home')
+    const dataDir = join(root, 'data')
+    mkdirSync(join(home, '.mec'), { recursive: true })
+    mkdirSync(dataDir)
+    writeFileSync(join(home, '.mec', 'health.json'), snapshot('read from HOME'))
+    writeFileSync(join(dataDir, 'health.json'), snapshot('read from MEC_DATA_DIR'))
+    return { home, dataDir }
+  }
+
+  async function status(): Promise<string> {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    process.argv = ['node', 'mec', 'status']
+    await cliMain()
+    return log.mock.calls.join('\n')
+  }
+
+  it('reads MEC_DATA_DIR when it is set', async () => {
+    const { home, dataDir } = scratch()
+    process.env.HOME = home
+    process.env.MEC_DATA_DIR = dataDir
+    expect(await status()).toContain('read from MEC_DATA_DIR')
+  })
+
+  it('reads ~/.mec when it is not', async () => {
+    const { home } = scratch()
+    process.env.HOME = home
+    delete process.env.MEC_DATA_DIR
+    expect(await status()).toContain('read from HOME')
   })
 })

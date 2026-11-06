@@ -130,14 +130,22 @@ export function launchAuthority(
     : { verdict: 'defer', reason: 'reconcile_refused' }
 }
 
+/** A queued attempt behind one of these has lost its only launch. A policy change cancels nothing (§13). */
+const UNRUNNABLE: readonly LaunchDropReason[] = ['mandate_expired', 'mandate_withdrawn', 'repo_mismatch']
+
 /**
  * Records a dropped launch. The mandates module lets work continue after a policy change only
- * once it revalidates clean, so that reason also blocks the work.
+ * once it revalidates clean, so that reason also blocks the work. The row is about to drain, so an
+ * attempt still queued would hold its capacity with nothing left to start it: it fails (§10). A
+ * resume's attempt is parked and keeps its state.
  */
 export function refuseLaunch(store: Store, payload: Json, reason: LaunchDropReason, at: string): void {
   const { work_item_id: workItemId, attempt_id: attemptId } = launchFields(payload)
   appendEvent(store, `work:${workItemId}`, 'launch_refused', { workItemId, attemptId, reason, at }, at)
   if (reason === 'policy_changed') blockWork(store, workItemId, reason, at)
+  if (UNRUNNABLE.includes(reason) && store.attempts.get(attemptId)?.state === 'queued') {
+    failLaunch(store, payload, reason, at)
+  }
 }
 
 /**

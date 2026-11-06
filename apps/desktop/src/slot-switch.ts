@@ -94,7 +94,7 @@ function refusal(deps: SwitchDeps, workItemId: string, toSlot: string, at: strin
   const { store, policy } = deps
   const work = store.workItems.get(workItemId)
   if (work === undefined) return 'unknown_work'
-  // The launch gate's order. Its drop leaves the queued attempt holding the target's capacity.
+  // The launch gate's order. Refused here, no attempt is queued to fail at that gate.
   const mandate = revalidateWork(work, at, policy.versionHash)
   if (!mayRun(work) || (!mandate.ok && mandate.reason !== 'policy_changed')) return 'work_ended'
   if (isHeld(work)) return 'held'

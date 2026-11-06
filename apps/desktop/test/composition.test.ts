@@ -209,6 +209,27 @@ describe('the launch gate (§13, §20)', () => {
     db.close()
   }, 12_000)
 
+  it('a launch whose mandate expired ends its attempt and its row', async () => {
+    process.env.MEC_FAKE_ENGINE = '1'
+    const dataDir = scratch()
+    const { db, store } = openStore(dataDir)
+    seedLaunch(store, {
+      mandate: { originMessageId: 'msg_1', expiresAt: '2020-01-01T00:00:00.000Z', status: 'active' },
+    })
+
+    const handle = await startServer({ dataDir })
+    await handle.close()
+
+    expect(launchRow(db)).toBeUndefined()
+    expect(store.attempts.get('att_1')).toMatchObject({
+      state: 'failed',
+      terminal_reason: 'mandate_expired',
+    })
+    expect(store.events.read('attempt:att_1').map((event) => event.type)).toEqual(['attempt.failed'])
+    expect(store.workItems.get('wi_1')).toMatchObject({ state: 'blocked', blockedReason: 'mandate_expired' })
+    db.close()
+  }, 12_000)
+
   it('a launch that runs keeps the attempt identity', async () => {
     process.env.MEC_FAKE_ENGINE = '1'
     const dataDir = scratch()

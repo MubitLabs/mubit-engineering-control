@@ -2,7 +2,7 @@ import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { loadPolicy } from '../../policy/src/policy'
 import type { MetaBrain, MetaDecision, PlannerTools } from '../src'
-import { fakeBrain, isHeld, launchAuthority, MetaAgentService, mandateOf } from '../src'
+import { fakeBrain, isHeld, launchAuthority, MetaAgentService, mandateOf, refuseLaunch } from '../src'
 
 /**
  * The authority fence (M1.4a, spec §10, §12.5, §13 invariant 4, decisions #20 and #21): a stop
@@ -662,6 +662,48 @@ describe('authority fence', () => {
         verdict: 'drop',
         reason: 'mandate_expired',
       })
+    })
+
+    it('a launch row that drains on an expired mandate settles its attempt', async () => {
+      const { store, id, payload } = await planned()
+      const work = store.workItems.get(id)!
+      store.atomic(() => {
+        store.workItems.save({
+          ...work,
+          mandate: { ...(work.mandate as object), expiresAt: '2026-11-05T11:00:00.000Z' },
+        })
+        refuseLaunch(store, payload, 'mandate_expired', NOW)
+      })
+      expect(store.attempts.get(payload.attempt_id)).toMatchObject({
+        state: 'failed',
+        terminal_reason: 'mandate_expired',
+      })
+      expect(store.workItems.get(id)).toMatchObject({ state: 'blocked', blockedReason: 'mandate_expired' })
+    })
+
+    it('a policy change cancels nothing (§13): the work blocks and the attempt stays', async () => {
+      const { store, id, payload } = await planned()
+      store.atomic(() => refuseLaunch(store, payload, 'policy_changed', NOW))
+      expect(store.attempts.get(payload.attempt_id)?.state).toBe('queued')
+      expect(store.workItems.get(id)).toMatchObject({ state: 'blocked', blockedReason: 'policy_changed' })
+    })
+
+    it('a stale row for an attempt queued again leaves that attempt alone', async () => {
+      const { store, id, payload } = await planned()
+      store.atomic(() => refuseLaunch(store, payload, 'attempt_not_queued', NOW))
+      expect(store.attempts.get(payload.attempt_id)?.state).toBe('queued')
+      expect(store.workItems.get(id)?.state).toBe('executing')
+    })
+
+    it('a refused resume blocks nothing and leaves a parked attempt as it was', async () => {
+      const { store, id, payload } = await planned()
+      const attempt = store.attempts.get(payload.attempt_id)!
+      store.atomic(() => {
+        store.attempts.save({ ...attempt, state: 'quota_wait' })
+        refuseLaunch(store, payload, 'mandate_expired', NOW)
+      })
+      expect(store.attempts.get(payload.attempt_id)?.state).toBe('quota_wait')
+      expect(store.workItems.get(id)?.state).toBe('executing')
     })
 
     it('launchAuthority drops a launch whose repo differs from the pin', async () => {

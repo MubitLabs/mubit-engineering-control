@@ -167,6 +167,20 @@ describe('delegation in the work detail', () => {
     })
   })
 
+  it('a wait the server words as "until" reads as a sentence, and a block says Blocked', () => {
+    const until = {
+      ...delegated,
+      latest: null,
+      attempts: 0,
+      activity: null,
+      waiting: 'until a slot unit comes free',
+    }
+    const blocked = { ...until, status: 'blocked', waiting: 'prerequisite task_1 cannot finish' }
+    const [first, second] = deliveryDetail({ ...base, delegation: [until, blocked] }, null).delegation
+    expect(first?.why).toBe('Waiting until a slot unit comes free')
+    expect(second?.why).toBe('Blocked: prerequisite task_1 cannot finish')
+  })
+
   it('a task with no tier asks for nothing, and an unrecorded model is unknown', () => {
     const latest = { ...delegated.latest!, actual: { model: null, engine: null, slotLabel: 'preflight-a' } }
     const bare = { ...delegated, requested: { tier: null, model: null }, latest }

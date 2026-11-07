@@ -29,6 +29,8 @@ import { git } from '@mec/git'
 import {
   assertRepoAdmission,
   awaitsAgreement,
+  cutAtWord,
+  HOST_RUN_UNAGREED,
   holdsGroup,
   integrationDocId,
   isHeld,
@@ -268,6 +270,8 @@ export type MetaActivity = {
     | 'waiting_you'
     | 'waiting_specialist'
     | 'integrating'
+    /** Past integration: delivery's own stage is in the line. */
+    | 'delivering'
     | 'blocked'
     | 'held'
     | 'between'
@@ -1156,7 +1160,7 @@ class Inspector {
           reason:
             str(doc.blockedReason) === null
               ? 'Blocked'
-              : `Blocked: ${cutText(String(doc.blockedReason), 200)}`,
+              : `Blocked: ${cutAtWord(redactText(String(doc.blockedReason)), 200)}`,
           nextAction: 'Resolve what blocks it',
         }
       case 'person/review':
@@ -1413,10 +1417,31 @@ class Inspector {
         requested: { tier: str(modelRequest?.tier), model: str(modelRequest?.model) },
         attempts: mine.length,
         latest: latest === undefined ? null : this.#attemptView(latest, task, lastAt),
-        waiting: str(deferred?.reason),
+        waiting: this.#waitingWords(task, deferred),
         activity: latest === undefined ? null : this.#lastActivity(String(latest.id)),
       }
     })
+  }
+
+  /**
+   * Why a task is not running, in words: what lets a deferred task go, what blocks a blocked one,
+   * or the work's own block when that is what holds a ready task back. Never a code.
+   */
+  #waitingWords(task: StoreDoc, deferred: Record<string, Json> | null): string | null {
+    const reason = str(deferred?.reason)
+    if (reason === HOST_RUN_UNAGREED)
+      return 'until you agree to run this repository’s commands on this machine'
+    const releases = str(deferred?.releases)
+    if (releases !== null) return `until ${cutAtWord(redactText(releases), 200)}`
+    if (reason !== null) return reason.replaceAll('_', ' ')
+    const blocked = str(task.blockedReason)
+    if (str(task.status) === 'blocked' && blocked !== null) return cutAtWord(redactText(blocked), 200)
+    const work = this.#store.workItems.get(str(task.workItemId) ?? '')
+    const workBlocked = str(work?.blockedReason)
+    if (str(task.status) === 'ready' && str(work?.state) === 'blocked' && workBlocked !== null) {
+      return `the work is blocked: ${cutAtWord(redactText(workBlocked), 200)}`
+    }
+    return null
   }
 
   /** The newest event worth a line. A `tool_call` has finished, so this is never "running now". */

@@ -387,6 +387,19 @@ describe('integration (§14)', () => {
     expect(r.store.workItems.get(WORK)?.state).not.toBe('blocked')
   })
 
+  it('a failed setup command blocks the work and says so in one chat line', async () => {
+    const r = rig({ bootstrap: ['sh -c "echo the environment is down; exit 3"'] })
+    r.accepted('task_a', 'b.txt', 'two\n')
+    await r.passes(3)
+    expect(r.store.workItems.get(WORK)).toMatchObject({ state: 'blocked' })
+    const notes = r.store.snapshot().effects.filter((row) => row.kind === 'note')
+    expect(notes).toHaveLength(1)
+    expect(notes[0]?.payload).toMatchObject({
+      workItemId: WORK,
+      text: expect.stringMatching(/^The integration could not start: .*the environment is down/),
+    })
+  })
+
   it('a withdrawal between two setup commands runs no further one', async () => {
     const marker = join(mkdtempSync(join(tmpdir(), 'mec-marker-')), 'second')
     roots.push(dirname(marker))

@@ -118,4 +118,5 @@ export type {
 export { decodeToolArgs, PlannerTools } from './tools'
 export type { CandidateEvent } from './wakes'
 export { classifyWake } from './wakes'
+export { cutAtWord, TITLE_WORDS } from './words'
 export { integrationDocId, knownChecks, requiredChecks, verdictsOf, workResultOf } from './work-facts'

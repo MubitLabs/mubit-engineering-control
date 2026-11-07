@@ -204,6 +204,24 @@ describe('MetaAgentService (plan §6/§12)', () => {
     expect(store.events.read('work:wi_live').map((event) => event.type)).toEqual(['message_attached'])
   })
 
+  it('the note names the work by a short title, never by the whole request', async () => {
+    const { service, store } = rig(twoTaskPlan)
+    const request =
+      'Add two small JavaScript modules as two separate tasks, the second depending on the first, each with its own test.'
+    store.atomic(() => {
+      store.messages.save({ id: 'msg_0', text: request })
+      store.workItems.save({ id: 'wi_live', state: 'executing', originMessageId: 'msg_0' })
+    })
+    const outcome = await service.onUserMessage({
+      messageId: 'msg_1',
+      text: 'Also cover the export button',
+      referencesWorkItem: 'wi_live',
+    })
+    expect(outcome.acknowledged).toBe(
+      "Noted on “Add two small JavaScript modules as two separate tasks,…”: nothing is running on it, so I'll pick this up.",
+    )
+  })
+
   it('an explicit New request starts a second work item beside live work', async () => {
     const { service, store } = rig({ ack: 'On it', plan: { tasks: [] } } as MetaDecision)
     seedWork(store, 'wi_live', 'executing')

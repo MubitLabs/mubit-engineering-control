@@ -416,6 +416,14 @@ function assignment(row: DelegationRow): string {
   return [where, asked === null ? null : `asked for ${asked}`, ran].filter((part) => part !== null).join(', ')
 }
 
+/** The server words the wait; a blocked task says Blocked, and an "until" reads as a sentence. */
+function waitingWhy(row: DelegationRow): string {
+  const { waiting } = row
+  if (waiting === null || waiting === '') return 'No reason recorded'
+  if (row.status === 'blocked') return `Blocked: ${waiting}`
+  return waiting.startsWith('until ') ? `Waiting ${waiting}` : `Waiting: ${waiting}`
+}
+
 function delegationView(row: DelegationRow): DelegationView {
   const { latest } = row
   return {
@@ -423,11 +431,7 @@ function delegationView(row: DelegationRow): DelegationView {
     title: row.title,
     stateLabel: taskLabel(row.status).label,
     who: assignment(row),
-    why: latest?.placement
-      ? `Why here: ${latest.placement}`
-      : row.waiting
-        ? `Waiting: ${row.waiting}`
-        : 'No reason recorded',
+    why: latest?.placement ? `Why here: ${latest.placement}` : waitingWhy(row),
     attempts:
       latest === null
         ? 'Not started'

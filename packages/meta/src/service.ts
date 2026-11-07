@@ -97,6 +97,7 @@ import { type LaunchRecord, type PlacementTable, type SchedulerDeps, schedulePas
 import type { PlannerConfirmationDraft, PlannerQuestionRecord, PlannerTurnJournal } from './tools'
 import { PlannerTools } from './tools'
 import { wakeHasNoNews } from './wakes'
+import { cutAtWord, TITLE_WORDS } from './words'
 import { knownChecks, workResultOf } from './work-facts'
 
 /** One planned task as the service persists it: the v0 four fields, plus the §5.2 brief fields. */
@@ -790,9 +791,13 @@ export class MetaAgentService {
   #noteAttached(input: TurnInput, workItemId: string): TurnOutcome {
     const at = this.#now()
     const running = this.#followups.ownerOf(workItemId) !== undefined
+    // A short title: the whole request is already on the page, and an id is not for a person.
+    const origin = this.#store.messages.get(String(this.#store.workItems.get(workItemId)?.originMessageId))
+    const first = typeof origin?.text === 'string' ? (origin.text.trim().split('\n', 1)[0] ?? '') : ''
+    const named = first === '' ? workItemId : `“${cutAtWord(redact(first, [], []), TITLE_WORDS)}”`
     const ack = running
-      ? `Noted on ${workItemId}: it lands with the running work.`
-      : `Noted on ${workItemId}: nothing is running on it, so I'll pick this up.`
+      ? `Noted on ${named}: it lands with the running work.`
+      : `Noted on ${named}: nothing is running on it, so I'll pick this up.`
     this.#store.atomic(() => {
       this.#appendEvent(
         `work:${workItemId}`,

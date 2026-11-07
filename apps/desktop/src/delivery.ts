@@ -47,6 +47,7 @@ import {
 import {
   blockTask,
   blockWork,
+  cutAtWord,
   HOST_RUN_UNAGREED,
   hostRunAgreed,
   integrationDocId,
@@ -421,7 +422,23 @@ export class Delivery {
       if (outcome.status !== 'passed') {
         const tail = redact(outcome.logTail, this.#fingerprints(), [])
         const reason = `bootstrap_failed: ${command}: ${tail.slice(-400)}`
-        this.#store.atomic(() => blockWork(this.#store, id, reason, this.#now))
+        this.#store.atomic(() => {
+          const before = this.#store.workItems.get(id)?.state
+          blockWork(this.#store, id, reason, this.#now)
+          if (before === 'blocked' || this.#store.workItems.get(id)?.state !== 'blocked') return
+          // One line in the chat for this block (§12.7): the person sees why nothing moves.
+          const blocks = this.#store.events
+            .read(`work:${id}`)
+            .filter((event) => event.type === 'work_blocked')
+          const cause = `bootstrap_failed/${id}/${blocks.length}`
+          const said = cutAtWord(tail.trim(), 200)
+          this.#effects.enqueue('note', `note:${cause}`, {
+            workItemId: id,
+            cause,
+            text: `The integration could not start: ${command} failed${said === '' ? '.' : `: ${said}`}`,
+            at: this.#now,
+          })
+        })
         return undefined
       }
     }

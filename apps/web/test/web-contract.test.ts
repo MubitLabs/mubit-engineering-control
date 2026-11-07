@@ -2,14 +2,17 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { HealthBoard, HealthClaim, HealthName, Store } from '@mec/contracts'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // Relative on purpose: the web package has no dependency on @mec/*; this contract test is the one place
 // the web client meets the real server, so a drift in either shape fails here (M1.1).
 import { MemoryRepositories } from '../../../packages/testkit/src/index'
+import { ApprovalKey } from '../../desktop/src/approval'
 import { buildServer } from '../../desktop/src/server'
 import { api } from '../src/api'
 
 const AT = new Date('2026-11-05T12:00:00.000Z')
+/** The owner's key, as the page holds it after the approval link: an answer is the owner's word. */
+const OWNER_KEY = 'web-contract-owner-key-'.padEnd(64, '0')
 
 class FakeHealthBoard implements HealthBoard {
   claim(_name: HealthName): HealthClaim {
@@ -36,6 +39,15 @@ beforeEach(() => {
     now: () => AT,
     keystoreRoot: root,
     webDist,
+    approval: { key: new ApprovalKey(OWNER_KEY), link: () => {} },
+  })
+  const held = new Map([['mec.approval-key', OWNER_KEY]])
+  vi.stubGlobal('window', {
+    sessionStorage: {
+      getItem: (name: string) => held.get(name) ?? null,
+      setItem: (name: string, value: string) => held.set(name, value),
+      removeItem: (name: string) => held.delete(name),
+    },
   })
   // The web client's own fetch answers from the REAL server, in-process.
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -50,6 +62,7 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  vi.unstubAllGlobals()
   globalThis.fetch = originalFetch
   await app.close()
   rmSync(root, { recursive: true, force: true })

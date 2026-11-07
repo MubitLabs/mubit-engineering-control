@@ -10,12 +10,13 @@ Real Run 3, `att_1`: the specialist ended its turn with "**Blocked:** the harnes
 - `packages/meta/src/scheduler.ts`: with no report, a turn whose last assistant message opens with `Blocked:` (markdown allowed) blocks the task with its words, as a `blocked` report would. Only the last message counts.
 - `packages/meta/src/repair.ts`: the repair brief says what is missing.
 
-Spec tension, for the owner: §10 says "Waiting-for-a-person is never inferred from free text." The brief asked for this reading. It is narrow (the turn's last message, its first word), and it only ever makes MEC stop, never go on.
+Owner ruling, 7 November 2026: keep this reading. `docs/plan/spec.md` §10 now allows it as a narrow, stop-only exception to "never inferred from free text".
 
 ## D2: specialists ignore the owner's personal instructions, and owned paths hold
 
 - `apps/desktop/src/engine-registry.ts`: the Claude row's hygiene sets `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` for specialist launches. The planner is unchanged.
-- `--setting-sources user` stays. Read from the 2.1.319 binary's text, not run: the user source gates the user `CLAUDE.md`, the user skills dir and `~/.claude/settings.json`, and that settings file carries the auth pins (`apiKeyHelper`, `forceLoginMethod`, `forceLoginOrgUUID`, `env`). MEC reads nothing under `~/.claude`, so it cannot know whether a linked slot's sign-in needs them. Dropping the source could break sign-in, so per the brief this stops at the env switch, which the binary checks only in its `CLAUDE.md` loaders. See the open items.
+- `--setting-sources user` stays. Read from the 2.1.319 binary's text, not run: the user source gates the user `CLAUDE.md`, the user skills dir and `~/.claude/settings.json`, and that settings file carries the auth pins (`apiKeyHelper`, `forceLoginMethod`, `forceLoginOrgUUID`, `env`). MEC reads nothing under `~/.claude`, so it cannot know whether a linked slot's sign-in needs them. Dropping the source could break sign-in, so per the brief this stops at the env switch, which the binary checks only in its `CLAUDE.md` loaders.
+- The repository's own instructions (owner ruling, 7 November 2026, option a): `apps/desktop/src/repo-instructions.ts` reads `CLAUDE.md` and `AGENTS.md` at the task's pinned base from the clone cache (`git show <base>:<file>`), and `attempt-launch.ts` adds them to the specialist's brief as a `repository_instructions` part: labelled as the repository's, redacted before anything else, at most 8000 characters per file with the cut stated. Neither file, no part. No repository settings file loads.
 - Owned paths: `packages/git/src/repos.ts` `changedPaths()` (`git diff --name-only -z --no-renames base..head`), recorded by the runner as `changed_paths` on the attempt (`apps/desktop/src/core-facts.ts`). `acceptance()` sends a commit that changes files outside the task's `ownedPaths` to an `owned_paths` repair naming them. A task with no owned paths owns everything. Reviewer attempts are not judged by either rule.
 
 ## D3: Try again
@@ -49,3 +50,9 @@ Owner ruling. Real Run 3: after the owner's "go ahead", the planner planned `tas
 - A task's wait, from the server, is words: `until <what releases it>`, the agreement in plain words, a never-started blocked task's own reason, or the work's block. The web says "Blocked: …" for a blocked task and "No reason recorded" only when nothing is stored.
 - Blocked lines are cut between words, with an ellipsis.
 - A failed integration bootstrap posts one chat line (a `note` effect keyed per block).
+
+## Owner rulings, 7 November 2026
+
+- Repository instructions in the brief (D2 above).
+- The `Blocked:` reading stays, and spec §10 says so (D1 above).
+- `/api/questions/:id/answer` needs the approval key, like `/resolve`, `/host-run/agree` and `/retry`: an answer is the owner's go-ahead, which can lift a block (D4). A keyless answer gets 403. The web client's two answer paths already send the key.

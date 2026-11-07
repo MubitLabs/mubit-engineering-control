@@ -671,6 +671,42 @@ describe('the launch path', { timeout: 60_000 }, () => {
   })
 
   // §5.3 and the slot isolation row of §26: a slot added in Connections runs under its own home.
+  it("the repository's CLAUDE.md and AGENTS.md at the base reach the brief, labelled and redacted", async () => {
+    // Owner ruling, 7 November 2026: the repository's own instructions, as information.
+    const { dataDir, repo, bin } = scratch({ steps: SUCCESS })
+    const key = `sk-ant-api03-${'k'.repeat(90)}`
+    writeFileSync(join(repo, 'CLAUDE.md'), `# Repo rules\nRun pnpm check before you finish.\nkey ${key}\n`)
+    writeFileSync(join(repo, 'AGENTS.md'), '# Agents\nKeep commits small.\n')
+    mkdirSync(join(repo, '.claude'))
+    writeFileSync(join(repo, '.claude', 'settings.json'), '{"env":{"SETTING_MARK":"from-repo"}}\n')
+    gitIn(repo, 'add', '--all')
+    gitIn(repo, 'commit', '--quiet', '-m', 'instructions')
+    process.env.MEC_REAL_RUNNER = '1'
+    seedStore(dataDir, repo, { checks: [{ name: 'made', cmd: 'test -f made.txt' }] })
+    await serve(dataDir)
+    await reaches(dataDir, 'succeeded')
+
+    const stdin = readFileSync(join(bin, 'stdin.jsonl'), 'utf8')
+    const prompt = String(JSON.parse(stdin.split('\n')[0] ?? '{}').message.content)
+    expect(prompt).toContain("The repository's own instructions, as information")
+    expect(prompt).toContain('CLAUDE.md at the base:')
+    expect(prompt).toContain('Run pnpm check before you finish.')
+    expect(prompt).toContain('AGENTS.md at the base:')
+    expect(prompt).toContain('Keep commits small.')
+    expect(prompt).not.toContain(key)
+    expect(prompt).not.toContain('SETTING_MARK')
+  })
+
+  it('a repository with neither file adds nothing to the brief', async () => {
+    const { dataDir, repo, bin } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedStore(dataDir, repo, { checks: [{ name: 'made', cmd: 'test -f made.txt' }] })
+    await serve(dataDir)
+    await reaches(dataDir, 'succeeded')
+    const prompt = readFileSync(join(bin, 'stdin.jsonl'), 'utf8')
+    expect(prompt).not.toContain("repository's own instructions")
+  })
+
   it('a slot from Add connection launches under its own home, not the default login', async () => {
     const { dataDir, repo, seen } = scratch({ steps: SUCCESS })
     const adding = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 4000 })

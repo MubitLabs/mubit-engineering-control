@@ -604,6 +604,23 @@ const DELIVERY_STAGES: Readonly<Record<string, DeliveryView['stage']>> = {
   ready: 'pr-ready',
   merged: 'merged',
 }
+/** The live line for work past integration, by delivery's stage; none while it integrates. */
+function deliveryLine(delivery: {
+  stage: DeliveryView['stage']
+  prNumber: number | null
+}): string | undefined {
+  const pr = delivery.prNumber === null ? 'The pull request' : `Pull request #${delivery.prNumber}`
+  const words: Partial<Record<DeliveryView['stage'], string>> = {
+    'local-complete': 'Locally complete',
+    'awaiting-push': 'Waiting to push',
+    'awaiting-pr': 'Pushed, waiting to open the pull request',
+    'pr-open': `${pr} is open`,
+    'pr-ready': `${pr} is ready for review`,
+    merged: `${pr} is merged`,
+  }
+  return words[delivery.stage]
+}
+
 /** The record's verdict (`readRequiredChecks`) on the wire. */
 const CI_READINGS: Readonly<Record<string, NonNullable<DeliveryView['ci']>>> = {
   green: 'passing',
@@ -1015,11 +1032,23 @@ class Inspector {
     return doc === undefined ? undefined : this.#store.engines.get(integrationDocId(String(doc.id)))
   }
 
+  /** An integration repair is open only while it can still run; spent, it says so (§14, #36). */
+  #repairWords(doc: StoreDoc, rootId: string | null): string {
+    const repair = this.#store.tasks
+      .list({ workItemId: String(doc.id) })
+      .filter((task) => rootId !== null && task.repairOf === rootId)
+      .at(-1)
+    if (repair?.status !== 'blocked') return ' A repair is open.'
+    return String(repair.blockedReason ?? '').startsWith('repairs used up')
+      ? ' Its repairs are used up.'
+      : ' Its repair is blocked.'
+  }
+
   /** Why delivery stopped: the integration's own failure, then the record's, then what blocked it. */
   #deliveryFailure(doc: StoreDoc, record: StoreDoc | undefined): string | null {
     const failed = obj(this.#integrationRecord(doc)?.failed)
     if (failed !== null) {
-      const repairing = failed.repairing === true ? ' A repair is open.' : ''
+      const repairing = failed.repairing === true ? this.#repairWords(doc, str(failed.taskId)) : ''
       const sha = str(failed.sha)
       const names = Array.isArray(failed.failing)
         ? failed.failing.flatMap((entry) => str(obj(entry)?.name) ?? [])
@@ -1527,6 +1556,11 @@ class Inspector {
     }
     const integrating = open.find((row) => row.state === 'integrating')
     if (integrating !== undefined) {
+      // The work item stays `integrating` through delivery: delivery's own stage says where it is.
+      const doc = this.#store.workItems.get(integrating.id)
+      const delivery = doc === undefined ? undefined : this.#deliveryOf(doc)
+      const words = delivery === undefined ? undefined : deliveryLine(delivery)
+      if (words !== undefined) return quiet('delivering', `${words}: ${titled(integrating)}`, integrating)
       return quiet('integrating', `Integrating ${titled(integrating)}`, integrating)
     }
     const blocked = open.find((row) => row.stage.key === 'person/blocked')

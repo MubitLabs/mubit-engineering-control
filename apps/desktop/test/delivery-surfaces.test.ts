@@ -340,6 +340,32 @@ describe('delivery says what happened (§14)', () => {
     )
   })
 
+  it('a repair whose attempts are used up is not called open', async () => {
+    seedWork('wi_spent')
+    store.atomic(() => {
+      store.engines.save({
+        id: integrationDocId('wi_spent'),
+        workItemId: 'wi_spent',
+        head: 'a'.repeat(40),
+        integrated: {},
+        failed: { taskId: 'task_1', reason: 'checks_failed', sha: 'b'.repeat(40), repairing: true },
+      })
+      store.tasks.save({
+        id: 'task_r',
+        workItemId: 'wi_spent',
+        repoId: 'repo_a',
+        repairOf: 'task_1',
+        status: 'blocked',
+        blockedReason: 'repairs used up (2 of 2). What remains: docs',
+        createdAt: AT,
+        updatedAt: AT,
+      })
+    })
+    expect((await get('/api/inspect/work/wi_spent')).delivery.failure).toBe(
+      'Combined checks failed on bbbbbbb. Its repairs are used up.',
+    )
+  })
+
   it('work blocked by the integration step serves that reason', async () => {
     seedWork('wi_boot', {
       state: 'blocked',

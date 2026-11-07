@@ -446,6 +446,18 @@ describe('GET /api/inspect/meta', () => {
     expect(await metaOf()).toMatchObject({ state: 'integrating', workItemId: WI })
   })
 
+  it("work whose pull request is ready says so, from delivery's stage, not Integrating", async () => {
+    seedDelegated({ state: 'succeeded' })
+    store.atomic(() => {
+      store.workItems.save({ ...store.workItems.get(WI)!, state: 'integrating' })
+      store.engines.save({ id: `delivery/${WI}`, workItemId: WI, stage: 'ready', prNumber: 7 })
+    })
+    const line = await metaOf()
+    expect(line).toMatchObject({ state: 'delivering', workItemId: WI })
+    expect(line.line).toMatch(/^Pull request #7 is ready for review/)
+    expect(line.line).not.toContain('Integrating')
+  })
+
   it('a stored request with no turn running says it has not started', async () => {
     seedQuestion('wi_new')
     withoutAck('wi_new')

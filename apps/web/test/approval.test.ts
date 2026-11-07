@@ -118,7 +118,9 @@ describe('a request', () => {
     stored.set('mec.approval-key', KEY)
     await api.answerQuestion('q_1', 'yes')
     await inspectApi.answer('q_2', 'yes')
-    const headers = sent.map((row) => (row.init?.headers as Record<string, string>)[APPROVAL_HEADER])
+    const headers = sent.map(
+      (row) => (row.init?.headers as Record<string, string> | undefined)?.[APPROVAL_HEADER],
+    )
     expect(sent.map((row) => row.path)).toEqual(['/api/questions/q_1/answer', '/api/questions/q_2/answer'])
     expect(headers).toEqual([KEY, KEY])
   })

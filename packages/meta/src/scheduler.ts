@@ -441,6 +441,8 @@ export function openRepairTask(
     status: 'ready',
     acceptanceChecks: root.acceptanceChecks ?? [],
     originalRequestRef: root.originalRequestRef ?? null,
+    // The tier the planner asked for, and why, holds for the repair of its work too.
+    ...(root.modelRequest !== undefined && { modelRequest: root.modelRequest }),
     next: step.next as unknown as Json,
     createdAt: at,
     updatedAt: at,

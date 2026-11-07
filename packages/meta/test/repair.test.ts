@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import {
   FollowUps,
   holdWorkItem,
+  openRepairTask,
   ownerRepairOffer,
   ownerRetryRepair,
   repairLedger,
@@ -269,6 +270,24 @@ describe("the owner's Try again (owner ruling 2026-11-07)", () => {
     pass()
     expect(work(store).state).toBe('blocked')
     expect(ownerRepairOffer(store, work(store))).toBeUndefined()
+  })
+})
+
+describe('repair tasks from integration (§14, decision #36)', () => {
+  it("carry the root task's model request, so the cheapest tier stays the cheapest tier", () => {
+    const modelRequest = { tier: 'fast', reason: 'the owner asked for the cheapest tier' }
+    const { store } = rig({ status: 'integrated', modelRequest })
+    store.atomic(() =>
+      openRepairTask(store, store.effects, DEFAULT_CAPS, {
+        root: store.tasks.get('task_a') as StoreDoc,
+        evidence: 'Check docs failed on abc',
+        worktree: '/work/integration',
+        branch: 'mec/wi/integration',
+        id: 'task_r',
+        at: AT,
+      }),
+    )
+    expect(store.tasks.get('task_r')).toMatchObject({ repairOf: 'task_a', modelRequest })
   })
 })
 

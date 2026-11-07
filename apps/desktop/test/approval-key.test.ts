@@ -94,6 +94,17 @@ describe('the resolve routes', { timeout: 60_000 }, () => {
     expect([first.status, second.status]).toEqual([404, 404])
   })
 
+  it("Try again needs the key: a repo's check cannot start an attempt by calling loopback", async () => {
+    const rig = scratch([])
+    const server = await started(rig, { approvalKey: KEY })
+    const retry = `${server.url}/api/work/wi_any/retry`
+    const refused = await fetch(retry, { method: 'POST' })
+    expect(refused.status).toBe(403)
+    expect(await refused.json()).toEqual({ error: 'approval_required' })
+    const through = await fetch(retry, { method: 'POST', headers: { [APPROVAL_HEADER]: KEY } })
+    expect(through.status).not.toBe(403)
+  })
+
   it('agreeing needs the key, and withdrawing never does', async () => {
     const rig = scratch([])
     const server = await started(rig, { approvalKey: KEY })

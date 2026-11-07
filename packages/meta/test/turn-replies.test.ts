@@ -516,8 +516,15 @@ describe('what the shipped protocol tells the meta agent', () => {
     expect(protocol).toContain('If nothing changed for the person, say nothing new')
   })
 
+  it('it describes only the re-run the product offers (owner ruling 2026-11-07)', () => {
+    expect(protocol).toContain('MEC never re-runs blocked work by itself')
+    expect(protocol).toContain('Try again, which runs one fresh repair attempt')
+  })
+
   it('the fallback says the same as the shipped text', () => {
     for (const rule of [
+      'MEC never re-runs blocked work by itself',
+      'Try again, which runs one fresh repair attempt',
       'If the message is a question, do not acknowledge it',
       'the summary IS your answer',
       'Never name a remedy, setting or panel unless the turn context shows it',

@@ -386,6 +386,11 @@ describe('repository scope and actions', () => {
       'lift',
       'stop',
     ])
+    const repair = { kind: 'repair' as const, reason: 'repairs used up (2 of 2). What remains: x' }
+    expect(workActions(workRows.blocked, ALL, null, repair)[0]).toMatchObject({
+      kind: 'retry',
+      label: 'Try again in sample-console',
+    })
     const push = { kind: 'push' as const, reason: 'The push card was denied' }
     expect(workActions(workRows.working, ALL, null, push)[0]?.label).toContain('Ask to push again')
     expect(workActions(workRows.completed, ALL, null, push)).toEqual([])

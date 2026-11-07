@@ -247,6 +247,8 @@ const RETRY_LABELS: Record<NonNullable<WorkDetail['retry']>['kind'], string> = {
   integration: 'Retry integration',
   push: 'Ask to push again',
   pr: 'Ask to open the pull request again',
+  // One fresh repair attempt on blocked work: the owner asks, MEC runs it once.
+  repair: 'Try again',
 }
 
 /** §14: only a ready pull request, only asked once, and never on work the owner holds. */
@@ -328,7 +330,7 @@ function deliveryLabel(detail: WorkDetail): string {
   const label = DELIVERY_LABELS[stage]
   const line = prNumber !== null ? `${label}, pull request #${prNumber}` : label
   // A blocked item already shows its reason; a declined card leaves the work in its working group.
-  return detail.retry === null || detail.retry.kind === 'integration'
+  return detail.retry === null || detail.retry.kind === 'integration' || detail.retry.kind === 'repair'
     ? line
     : `${line}. ${detail.retry.reason}`
 }

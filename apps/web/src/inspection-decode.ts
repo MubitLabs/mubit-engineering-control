@@ -356,7 +356,7 @@ export function decodeWorkDetail(raw: unknown): WorkDetail {
       retry === null
         ? null
         : {
-            kind: oneOf(path, retry.kind, 'retry.kind', ['integration', 'push', 'pr']),
+            kind: oneOf(path, retry.kind, 'retry.kind', ['integration', 'push', 'pr', 'repair']),
             reason: str(path, retry.reason, 'retry.reason'),
           },
     coverage: coverage(path, body.coverage, 'coverage'),

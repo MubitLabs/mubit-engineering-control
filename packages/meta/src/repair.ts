@@ -19,6 +19,8 @@ export type Continuation = {
   round: number
   worktree?: string
   branch?: string
+  /** `owner`: the owner's Try again asked for this attempt, past the automatic cap. */
+  origin?: 'owner'
 }
 
 export type RepairLedger = { repairs: number; rounds: number }

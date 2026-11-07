@@ -992,6 +992,64 @@ describe('a person retries what blocked (§11: blocked work and failed deliverie
     expect(r.store.tasks.get('task_a')?.status).toBe('integrated')
   })
 
+  /** A task whose repairs ran out, as the scheduler leaves it: blocked, with an attempt behind it. */
+  const usedUp = (r: Rig): void => {
+    const reason = 'repairs used up (2 of 2). What remains:\nCheck unit failed on abc:\nred'
+    r.store.atomic(() => {
+      r.store.tasks.save({
+        id: 'task_c',
+        localKey: 'task_c',
+        workItemId: WORK,
+        repoId: REPO,
+        role: 'implementer',
+        status: 'blocked',
+        blockedReason: reason,
+        dependsOn: [],
+        basePolicy: 'integration',
+        acceptanceChecks: ['unit'],
+      })
+      r.store.attempts.save({
+        id: 'att_9',
+        taskId: 'task_c',
+        workItemId: WORK,
+        state: 'checks_failed',
+        worktree: '/work/att_9',
+        branch: 'mec/abcdef12/task_c/a1',
+        createdAt: AT,
+      })
+      r.store.workItems.save({ ...work(r), state: 'blocked', blockedReason: reason })
+    })
+  }
+
+  it('used-up repairs offer Try again: one fresh repair, asked once (owner ruling 2026-11-07)', () => {
+    const r = rig()
+    usedUp(r)
+    expect(retryOffer(r.store, work(r))).toMatchObject({ kind: 'repair' })
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'retrying', kind: 'repair' })
+    expect(r.store.tasks.get('task_c')).toMatchObject({
+      status: 'ready',
+      next: { kind: 'repair', origin: 'owner' },
+    })
+    expect(work(r).state).not.toBe('blocked')
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'nothing_to_retry' })
+    expect(count(r, 'retry_requested')).toBe(1)
+  })
+
+  it('Try again honours a hold and waits for the agreement', () => {
+    const held = rig()
+    usedUp(held)
+    held.store.atomic(() => holdWorkItem(held.store, WORK, { reason: 'wait', at: AT }))
+    expect(retryOffer(held.store, work(held))).toBeUndefined()
+    expect(held.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'held' })
+
+    const unagreed = rig()
+    usedUp(unagreed)
+    const { hostRunAgreedAt: _agreed, ...repo } = unagreed.store.engines.get(REPO) as StoreDoc
+    unagreed.store.atomic(() => unagreed.store.engines.save(repo as StoreDoc))
+    expect(unagreed.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'host_run_unagreed' })
+    expect(unagreed.store.tasks.get('task_c')?.status).toBe('blocked')
+  })
+
   it("a repair that ended is the plan's to answer, not a retry's", async () => {
     const r = rig()
     r.accepted('task_a', 'b.txt', 'two\n')

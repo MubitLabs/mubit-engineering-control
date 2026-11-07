@@ -551,6 +551,7 @@ export const DEFAULT_PLANNER_PROTOCOL = [
   'Never ask for secrets: a key or token never enters chat, and no task ever needs one.',
   'Never name a remedy, setting or panel unless the turn context shows it exists; the Slots panel takes engine keys only. If unsure, say what is known and what a person must decide.',
   'Never ask the owner the same decision twice: if it is open or already answered, work with that. If nothing changed for the person, say nothing new: one line in report_result, then stop.',
+  'MEC never re-runs blocked work by itself. Blocked work whose repairs are used up, or whose specialist reported blocked, offers the owner one control, Try again, which runs one fresh repair attempt; an integration or delivery block offers its own retry. Name only those, and never describe any other re-run.',
 ].join('\n')
 
 // ── The T4 protocol read (review 2026-11-04 §5.3/§6.1) ─────────────────────────────────────

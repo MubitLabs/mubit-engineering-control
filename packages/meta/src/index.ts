@@ -72,8 +72,14 @@ export type { Continuation, RepairLedger } from './repair'
 export { nextRepair, repairEvidence, repairLedger } from './repair'
 export type { LiveWork, RoutingDecision } from './routing'
 export { routeMessage } from './routing'
-export type { LaunchRecord, PlacementTable, SchedulerDeps } from './scheduler'
-export { blockTask, openRepairTask, schedulePass } from './scheduler'
+export type {
+  LaunchRecord,
+  OwnerRepairOffer,
+  OwnerRepairOutcome,
+  PlacementTable,
+  SchedulerDeps,
+} from './scheduler'
+export { blockTask, openRepairTask, ownerRepairOffer, ownerRetryRepair, schedulePass } from './scheduler'
 export type {
   MetaBrain,
   MetaDecision,

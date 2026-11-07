@@ -454,6 +454,97 @@ export function openRepairTask(
   )
 }
 
+/** What a person, and only a person, may answer with one more repair (owner ruling 2026-11-07). */
+const OWNER_RETRYABLE = /^(repairs used up |attempt \S+ (reported blocked|ended blocked with no report): )/
+
+export type OwnerRepairOffer = { taskId: string; reason: string }
+export type OwnerRepairOutcome =
+  | { status: 'retrying'; taskId: string }
+  | { status: 'missing' }
+  | { status: 'refused'; error: string }
+
+/**
+ * Blocked work whose task used up its repairs or reported blocked offers the owner "Try again":
+ * one fresh repair attempt in that task's worktree. Held, stopped and ended work offers nothing,
+ * and neither does a repository not agreed to host runs, since the attempt runs its commands. A
+ * task with an attempt still holding its place has nothing to try again yet.
+ */
+export function ownerRepairOffer(store: Store, work: StoreDoc): OwnerRepairOffer | undefined {
+  if (isTerminal(work) || isHeld(work) || mandateOf(work).status === 'withdrawn') return undefined
+  if (work.state !== 'blocked' || !hostRunAgreed(store, repoOf(work))) return undefined
+  const workItemId = String(work.id)
+  const target = store.tasks
+    .list({ workItemId })
+    .filter((task) => task.status === 'blocked' && OWNER_RETRYABLE.test(String(task.blockedReason ?? '')))
+    .sort((a, b) => String(a.updatedAt ?? '').localeCompare(String(b.updatedAt ?? '')))
+    .at(-1)
+  if (target === undefined) return undefined
+  const live = store.attempts.list({ workItemId }).some((attempt) => {
+    const state = String(attempt.state) as AttemptState
+    return state === 'queued' || ACTIVE_ATTEMPT_STATES.includes(state)
+  })
+  return live ? undefined : { taskId: String(target.id), reason: String(target.blockedReason) }
+}
+
+/**
+ * The owner's Try again, inside one transaction so a second press finds nothing. The task goes
+ * back to ready with one repair queued on it, carrying where it stopped; its dependents blocked
+ * on it go back to ready, and the work leaves blocked. The next pass places the attempt through
+ * the same caps and gates as any launch, so a hold or a stop landing first still wins. The
+ * repair counter keeps counting: a failure blocks again with what remains.
+ */
+export function ownerRetryRepair(store: Store, workItemId: string, at: string): OwnerRepairOutcome {
+  return store.atomic((): OwnerRepairOutcome => {
+    const work = store.workItems.get(workItemId)
+    if (work === undefined) return { status: 'missing' }
+    if (mandateOf(work).status === 'withdrawn') return { status: 'refused', error: 'mandate_withdrawn' }
+    if (isHeld(work)) return { status: 'refused', error: 'held' }
+    const offer = ownerRepairOffer(store, work)
+    if (offer === undefined) {
+      const waits = work.state === 'blocked' && !hostRunAgreed(store, repoOf(work))
+      return { status: 'refused', error: waits ? HOST_RUN_UNAGREED : 'nothing_to_retry' }
+    }
+    const task = store.tasks.get(offer.taskId) as StoreDoc
+    const latest = latestOf(store.attempts.list({ taskId: offer.taskId }))
+    const { attempts, reports } = familyOf(store, task)
+    const next: Continuation = {
+      kind: 'repair',
+      role: 'repair_agent',
+      evidence: `The owner asked to try again. Where it stopped:\n${offer.reason}`,
+      round: repairLedger(attempts, reports).rounds,
+      origin: 'owner',
+      ...(typeof latest?.worktree === 'string' && { worktree: latest.worktree }),
+      ...(typeof latest?.branch === 'string' && { branch: latest.branch }),
+    }
+    const { blockedReason: _reason, deferred: _deferred, ...rest } = task
+    moveTask(store, rest, 'unblock', { next: next as unknown as Json }, at)
+    for (const dependent of store.tasks.list({ workItemId })) {
+      if (
+        dependent.status !== 'blocked' ||
+        !String(dependent.blockedReason ?? '').startsWith('prerequisite ')
+      ) {
+        continue
+      }
+      const { blockedReason: _why, ...kept } = dependent
+      moveTask(store, kept, 'unblock', {}, at)
+    }
+    const { blockedReason: _blocked, ...free } = work
+    store.workItems.save({
+      ...free,
+      state: transition(WORK_ITEM_MACHINE, String(work.state), 'resume_executing'),
+      updatedAt: at,
+    })
+    appendEvent(
+      store,
+      `work:${workItemId}`,
+      'retry_requested',
+      { workItemId, kind: 'repair', taskId: offer.taskId, origin: 'owner', at },
+      at,
+    )
+    return { status: 'retrying', taskId: offer.taskId }
+  })
+}
+
 /** §10: work reaches `reviewing` with the first finished task and `integrating` with the first accepted. */
 function advanceWork(store: Store, workItemId: string, at: string): void {
   const statuses = store.tasks.list({ workItemId }).map((task) => String(task.status))

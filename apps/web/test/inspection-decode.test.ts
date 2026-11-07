@@ -112,6 +112,15 @@ describe('inspection decoders', () => {
     expect(() => decodeTaskDetail(noDepends)).toThrow(DecodeError)
   })
 
+  it("the server's Try again offer decodes, and an unknown kind still rejects", () => {
+    const { work_working } = workDetails
+    const repair = { kind: 'repair', reason: 'repairs used up (2 of 2)' }
+    expect(decodeWorkDetail({ ...work_working, retry: repair }).retry).toEqual(repair)
+    expect(() => decodeWorkDetail({ ...work_working, retry: { ...repair, kind: 'rerun' } })).toThrow(
+      DecodeError,
+    )
+  })
+
   it('an absent card detail stays marked absent', () => {
     expect(decodeCardEvidence({ ...cardEvidence.card_pending, absent: true }).absent).toBe(true)
     expect('absent' in decodeCardEvidence(cardEvidence.card_pending)).toBe(false)

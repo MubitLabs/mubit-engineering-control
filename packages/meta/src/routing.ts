@@ -7,7 +7,9 @@
  * reference is refused (`stopped_refused`); stopped mandates never resume silently (§10).
  *
  * **Similarity never binds**: a message that references nothing is conversation when
- * live work exists (context only, no authority) or new work when nothing is live.
+ * live work exists (context only, no authority) or new work when nothing is live. A question
+ * among them gets a turn of its own that can only answer (owner ruling, amending §12.1). The test
+ * is cheap and leans to a turn: a note read as a question costs a turn, and it changes nothing.
  * Resemblance to an existing work item is the meta agent's context, never an attachment;
  * genuine ambiguity is confirmed with the user — cheaply, once (§12.1) — not decided here.
  *
@@ -29,12 +31,19 @@ export type RoutingDecision =
   | { action: 'attach'; workItemId: string }
   | { action: 'new_work' }
   | { action: 'conversation' }
+  | { action: 'question' }
   | { action: 'stopped_refused'; workItemId: string }
+
+const ASKS =
+  /(^|[.!\n]\s*)(what|why|how|when|where|who|whose|which|is|are|was|were|can|could|do|does|did|will|would|should|has|have)\b/i
+
+export const isQuestion = (text: string): boolean => text.includes('?') || ASKS.test(text.trim())
 
 export function routeMessage(input: {
   referencesWorkItem?: string
   liveWork: readonly LiveWork[]
   explicitNew?: boolean
+  text?: string
 }): RoutingDecision {
   const reference = input.referencesWorkItem
   if (reference !== undefined) {
@@ -46,5 +55,6 @@ export function routeMessage(input: {
     }
   }
   if (input.explicitNew === true) return { action: 'new_work' }
-  return input.liveWork.some((w) => !w.stopped) ? { action: 'conversation' } : { action: 'new_work' }
+  if (!input.liveWork.some((w) => !w.stopped)) return { action: 'new_work' }
+  return isQuestion(input.text ?? '') ? { action: 'question' } : { action: 'conversation' }
 }

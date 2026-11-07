@@ -1,4 +1,5 @@
 import { type KeyboardEvent, useId, useRef, useState } from 'react'
+import { commandMatches, searchOffer } from './command-search'
 import { isSubmitEnter } from './keyboard'
 import { Sheet } from './Sheet'
 
@@ -10,22 +11,29 @@ export interface Command {
   run: () => void
 }
 
-/** A filter over routes and actions. It searches commands, not work. */
+/** A filter over routes and actions. Work is not a command: it hands those words to `onSearch`. */
 export function CommandPalette({
   commands,
   onClose,
+  onSearch,
 }: {
   commands: readonly Command[]
   onClose: (after?: () => void) => void
+  /** Present once something can answer a search. */
+  onSearch?: (query: string) => void
 }) {
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)
   const input = useRef<HTMLInputElement>(null)
   const base = useId()
 
-  const matches = commands.filter((command) =>
-    command.label.toLowerCase().includes(query.trim().toLowerCase()),
-  )
+  const offer = searchOffer(query, onSearch !== undefined)
+  const matches: readonly Command[] = [
+    ...commandMatches(commands, query),
+    ...(offer === null
+      ? []
+      : [{ id: 'search-work', label: offer.label, run: () => onSearch?.(offer.query) }]),
+  ]
   const active = Math.min(index, Math.max(0, matches.length - 1))
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -52,12 +60,12 @@ export function CommandPalette({
         className="palette-input"
         type="text"
         role="combobox"
-        aria-label="Search commands"
+        aria-label="Search commands and work"
         aria-expanded="true"
         aria-controls={`${base}-list`}
         aria-autocomplete="list"
         aria-activedescendant={matches.length > 0 ? optionId(active) : undefined}
-        placeholder="Search commands"
+        placeholder="Search commands and work"
         autoComplete="off"
         spellCheck={false}
         value={query}

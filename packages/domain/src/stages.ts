@@ -24,6 +24,8 @@ export type WorkItemView = {
   userMessageSinceReport?: boolean
   /** Every runnable attempt is parked in `quota_wait`; the reset time when it is known. */
   quotaWait?: { resetAt?: string }
+  /** The repository needs the owner's agreement before anything of this item can start. */
+  hostRunUnagreed?: boolean
   /** Tasks are ready and no slot capacity is free. */
   queued?: boolean
   /** The pull request is confirmed merged (never assumed). */
@@ -40,6 +42,10 @@ export type WorkFacts = {
   merged: boolean
   /** The delivery stage is `pr-ready`; absent where the caller reads no delivery. */
   deliveryReady?: boolean
+  /** `plannerTurnEnded`: planning stopped with no plan, so nothing is running on this item. */
+  turnEnded?: boolean
+  /** This item waits for its repository's agreement; absent where the caller does not read it. */
+  hostRunUnagreed?: boolean
 }
 
 export type Stage = {
@@ -123,6 +129,12 @@ export const STAGE_TABLE: readonly StageRow[] = [
     label: () => 'Held by you',
   },
   {
+    key: 'person/agreement',
+    waitingOn: 'person',
+    match: (w) => w.hostRunUnagreed === true,
+    label: () => 'Waiting for your agreement',
+  },
+  {
     key: 'waiting/quota',
     waitingOn: 'system',
     match: (w) => w.quotaWait !== undefined,
@@ -181,9 +193,28 @@ export function stageOf(w: WorkItemView): Stage {
 const text = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
 
 /**
- * The one view of a work doc, so chat and Work cannot disagree (§10). `loginNeeded`, `latestReport`,
- * `userMessageSinceReport` and `queued` are not read yet: an absent fact cannot match its row, so the
- * item is never a person stage by guesswork.
+ * §10's `waiting`: the turn ended with nothing pending. An ack-only turn leaves its item `planning`
+ * for a reply, so this is what tells that from a turn still running: the item's latest message has
+ * its receipt, it came from a planner turn (an attached follow-up can start another), and no answer
+ * has landed since, because an answer's wake is a turn on its way.
+ */
+export function plannerTurnEnded(
+  messages: readonly Record<string, unknown>[],
+  questions: readonly Record<string, unknown>[],
+): boolean {
+  if (messages.length === 0 || messages.some((message) => text(message.ackText) === undefined)) return false
+  const moved = (doc: Record<string, unknown>): string => text(doc.updatedAt) ?? text(doc.createdAt) ?? ''
+  const latest = [...messages].sort((a, b) => moved(a).localeCompare(moved(b))).at(-1)
+  if (latest?.routing !== 'new_work') return false
+  const reached = moved(latest)
+  return !questions.some((question) => (text(question.answeredAt) ?? '') > reached)
+}
+
+/**
+ * The one view of a work doc, so chat and Work cannot disagree (§10). `loginNeeded`,
+ * `userMessageSinceReport` and `queued` are not read yet, and `latestReport` only as far as
+ * `plannerTurnEnded`: an absent fact cannot match its row, so the item is never a person stage by
+ * guesswork.
  */
 export function workViewOf(doc: Record<string, unknown>, facts: WorkFacts): WorkItemView {
   const hold = doc.hold as Record<string, unknown> | undefined | null
@@ -204,5 +235,7 @@ export function workViewOf(doc: Record<string, unknown>, facts: WorkFacts): Work
     ...(parked && { quotaWait: resets[0] === undefined ? {} : { resetAt: resets[0] } }),
     merged: facts.merged,
     ...(facts.deliveryReady === true && { deliveryReady: true }),
+    ...(facts.turnEnded === true && text(doc.state) === 'planning' && { latestReport: 'waiting' as const }),
+    ...(facts.hostRunUnagreed === true && { hostRunUnagreed: true }),
   }
 }

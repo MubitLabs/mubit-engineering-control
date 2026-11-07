@@ -42,6 +42,7 @@ import { RepositoryForm, type RepositoryRequest } from '../next/RepositoryForm'
 import { ROUTE_LABELS } from '../next/routes'
 import {
   BackupsBlock,
+  HostRunControl,
   ModelsBlock,
   PolicyBlock,
   type PromptCompare,
@@ -55,6 +56,7 @@ import {
 } from '../next/SettingsView'
 import { SetupView } from '../next/SetupView'
 import type { Route } from '../router'
+import { ApprovalLink } from './ApprovalLink'
 import type { ConfigStore } from './config-store'
 import { failureText } from './failure'
 import { switchWork } from './parked'
@@ -391,6 +393,9 @@ function ConnectionsSurface({ capabilities }: { capabilities: Capabilities | nul
 
 // ─── Setup ──────────────────────────────────────────────────────────────────────
 
+/** How soon Setup reads again while the engines are being looked for. */
+const ENGINE_RECHECK_MS = 1_000
+
 function SetupSurface({
   store,
   onNavigate,
@@ -400,8 +405,16 @@ function SetupSurface({
   onNavigate: (route: Route) => void
   onRepositories: () => void
 }) {
-  const [readiness, refresh] = useRead(() => configApi.readiness())
+  const [readiness, refresh] = useRead(() => configApi.readiness('known'))
   const [connections, refreshConnections] = useRead(() => configApi.connections())
+  // The look ends at the probe timeout at worst, so this stops by itself.
+  const checking = readiness.value?.steps.some((step) => step.status === 'checking') === true
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each answer starts the next wait.
+  useEffect(() => {
+    if (!checking) return
+    const timer = setTimeout(refresh, ENGINE_RECHECK_MS)
+    return () => clearTimeout(timer)
+  }, [checking, readiness.value, refresh])
   const changed = useCallback(() => {
     refresh()
     refreshConnections()
@@ -411,6 +424,7 @@ function SetupSurface({
   const [repoError, setRepoError] = useState<string | null>(null)
   const [metaBusy, setMetaBusy] = useState(false)
   const [metaError, setMetaError] = useState<string | null>(null)
+  const [repositories, refreshRepositories] = useRead(() => configApi.repositories())
 
   const addRepository = (request: RepositoryRequest) => {
     setRepoBusy(true)
@@ -419,6 +433,7 @@ function SetupSurface({
       .addRepository(request)
       .then(() => {
         refresh()
+        refreshRepositories()
         onRepositories()
       })
       .catch((error: unknown) => setRepoError(failureText(error)))
@@ -446,6 +461,15 @@ function SetupSurface({
         )
       }
       repositoryForm={<RepositoryForm busy={repoBusy} error={repoError} onSubmit={addRepository} />}
+      agreements={(repositories.value ?? [])
+        .filter((repository) => repository.hostRunAgreedAt === null)
+        .map((repository) => (
+          <section key={repository.id} className="config-block" aria-label="Agreement">
+            <h2 className="mono">{repository.url}</h2>
+            <ApprovalLink />
+            <AgreementItem repository={repository} onChanged={refreshRepositories} />
+          </section>
+        ))}
       metaBusy={metaBusy}
       metaError={metaError}
       onChooseMeta={(slotId) => {
@@ -467,7 +491,7 @@ function SetupSurface({
         if (route === 'settings' && step === 'repository') store.section = 'repositories'
         onNavigate(route)
       }}
-      onRecheck={refresh}
+      onRecheck={() => void configApi.readiness().finally(refresh)}
       onAsk={(text) =>
         configApi.setupMessage(text).catch((error: unknown) => ({ failure: failureText(error) }))
       }
@@ -770,6 +794,30 @@ function PromptsSection({ store }: { store: ConfigStore }) {
   )
 }
 
+/** The busy and error state of one repository's agreement, on either page. */
+function useHostRun(repository: RepositoryView, onChanged: () => void) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const settle = (call: Promise<unknown>) => {
+    setBusy(true)
+    setError(null)
+    call
+      .then(onChanged)
+      .catch((failure: unknown) => setError(failureText(failure)))
+      .finally(() => setBusy(false))
+  }
+  return {
+    busy,
+    error,
+    onAgree: () => settle(configApi.agreeHostRun(repository.id)),
+    onWithdraw: () => settle(configApi.withdrawHostRun(repository.id)),
+  }
+}
+
+function AgreementItem({ repository, onChanged }: { repository: RepositoryView; onChanged: () => void }) {
+  return <HostRunControl repository={repository} {...useHostRun(repository, onChanged)} />
+}
+
 function RepositoryItem({
   repository,
   store,
@@ -834,9 +882,11 @@ function RepositoryItem({
   const [trustBusy, setTrustBusy] = useState(false)
   const [trustError, setTrustError] = useState<string | null>(null)
   const isolation = capabilityGate(capabilities, 'isolationEdit')
+  const hostRun = useHostRun(repository, onChanged)
   return (
     <RepositoryEditor
       repository={repository}
+      hostRun={hostRun}
       bootstrap={bootstrapProps}
       checks={checksProps}
       trustBusy={trustBusy}
@@ -911,6 +961,7 @@ function RepositoriesSection({
         />
       }
     >
+      {read.value.some((repository) => repository.hostRunAgreedAt === null) && <ApprovalLink />}
       {read.value.length === 0 && !adding ? (
         <p className="muted">No repositories yet.</p>
       ) : (

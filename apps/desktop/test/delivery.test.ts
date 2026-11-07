@@ -4,14 +4,21 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { StoreDoc } from '@mec/contracts'
 import { DEFAULT_CAPS } from '@mec/domain'
-import { holdWorkItem, integrationDocId, repoFields, stopWorkItem, workResultOf } from '@mec/meta'
+import {
+  holdWorkItem,
+  integrationDocId,
+  repoFields,
+  saveProcessing,
+  stopWorkItem,
+  workResultOf,
+} from '@mec/meta'
 import { MemoryRepositories } from '@mec/testkit'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { commitWork } from '../src/attempt-launch'
-import { Delivery, deliveryDocId } from '../src/delivery'
+import { Delivery, deliveryDocId, retryOffer } from '../src/delivery'
 import {
   createPrBehindCard,
   type GhResult,
@@ -97,7 +104,9 @@ function fakeGh(rig: { bare: () => string }, world: World) {
 const creates = (calls: (readonly string[])[]) => calls.filter((a) => a[0] === 'pr' && a[1] === 'create')
 const merges = (calls: (readonly string[])[]) => calls.filter((a) => a[0] === 'pr' && a[1] === 'merge')
 
-function rig(over: { checks?: { name: string; cmd: string }[]; world?: Partial<World> } = {}) {
+function rig(
+  over: { checks?: { name: string; cmd: string }[]; world?: Partial<World>; bootstrap?: string[] } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), 'mec-delivery-'))
   roots.push(root)
   const dataDir = join(root, 'state')
@@ -125,9 +134,10 @@ function rig(over: { checks?: { name: string; cmd: string }[]; world?: Partial<W
     store.engines.save({
       id: REPO,
       url: clone,
-      bootstrap: [],
+      bootstrap: over.bootstrap ?? [],
       checks: over.checks ?? [{ name: 'unit', cmd: 'test -f a.txt' }],
       trust: false,
+      hostRunAgreedAt: AT,
     })
     store.messages.save({ id: 'msg_1', text: 'Add the audit log', role: 'user' })
     store.workItems.save({
@@ -165,6 +175,7 @@ function rig(over: { checks?: { name: string; cmd: string }[]; world?: Partial<W
     const path = join(root, `wt-${id}`)
     const branch = `mec/abcdef12/${id}/a1`
     gitIn(cache, 'worktree', 'add', '--quiet', '-b', branch, path, from)
+    mkdirSync(dirname(join(path, file)), { recursive: true })
     writeFileSync(join(path, file), text)
     gitIn(path, 'add', '--all')
     gitIn(path, 'commit', '--quiet', '-m', id)
@@ -268,6 +279,30 @@ describe('the commit that ends an attempt (§14)', () => {
     expect(gitIn(worktree, 'show', '--name-only', '--format=', 'HEAD')).toBe('c.txt')
   })
 
+  it("a repair's commit in the integration worktree carries no bootstrap output", async () => {
+    const r = rig({ bootstrap: ['cp a.txt package-lock.json'] })
+    r.accepted('task_a', 'b.txt', 'two\n')
+    await r.delivery.pass()
+    const worktree = String(r.integration().worktree)
+    expect(readFileSync(join(worktree, 'package-lock.json'), 'utf8')).toBe('one\n')
+    writeFileSync(join(worktree, 'fix.txt'), 'fixed\n')
+    await commitWork(worktree, 'm', IDENTITY)
+    expect(gitIn(worktree, 'show', '--name-only', '--format=', 'HEAD')).toBe('fix.txt')
+  })
+
+  it("a repair's merge commit carries no bootstrap output", async () => {
+    const r = rig({ bootstrap: ['cp a.txt package-lock.json'] })
+    r.accepted('task_a', 'a.txt', 'left\n')
+    r.accepted('task_b', 'a.txt', 'right\n')
+    await r.delivery.pass()
+    await r.delivery.pass()
+    const worktree = String(r.integration().worktree)
+    writeFileSync(join(worktree, 'a.txt'), 'both\n')
+    await commitWork(worktree, 'm', IDENTITY)
+    expect(gitIn(worktree, 'rev-parse', 'HEAD^@').split('\n')).toHaveLength(2)
+    expect(gitIn(worktree, 'ls-tree', '-r', '--name-only', 'HEAD')).not.toContain('package-lock.json')
+  })
+
   it('finishes a merge with two parents once the conflict is resolved', async () => {
     const worktree = midMerge()
     writeFileSync(join(worktree, 'a.txt'), 'both\n')
@@ -310,6 +345,60 @@ describe('integration (§14)', () => {
     expect(next.evidence).toContain(String(r.integration().head))
     expect(r.store.tasks.get('task_a')?.status).toBe('accepted')
     expect(workResultOf(r.store, WORK).complete).toBe(false)
+  })
+
+  it('a combined check gets no SSH agent socket', async () => {
+    vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent.sock')
+    const r = rig({ checks: [{ name: 'agent', cmd: 'printenv SSH_AUTH_SOCK' }] })
+    r.accepted('task_a', 'b.txt', 'two\n')
+    await r.passes(2)
+    vi.unstubAllEnvs()
+    expect(r.integration().combined).toMatchObject({ passed: false })
+  })
+
+  it('nothing merges or runs until the owner agrees, and then it does', async () => {
+    const r = rig()
+    r.accepted('task_a', 'b.txt', 'two\n')
+    const agreed = r.store.engines.get(REPO) as StoreDoc
+    const { hostRunAgreedAt: _agreed, ...unagreed } = agreed
+    r.store.atomic(() => r.store.engines.save(unagreed as StoreDoc))
+    await r.passes(2)
+    expect(r.store.engines.get(integrationDocId(WORK))).toBeUndefined()
+    r.store.atomic(() => r.store.engines.save(agreed))
+    await r.passes(2)
+    expect(r.integration().combined).toMatchObject({ passed: true })
+  })
+
+  it('a withdrawal between two checks runs neither the next one nor a verdict', async () => {
+    const r = rig({
+      checks: [
+        { name: 'first', cmd: 'sleep 1' },
+        { name: 'second', cmd: 'test -f a.txt' },
+      ],
+    })
+    r.accepted('task_a', 'b.txt', 'two\n')
+    const agreed = r.store.engines.get(REPO) as StoreDoc
+    const { hostRunAgreedAt: _agreed, ...unagreed } = agreed
+    const pass = r.passes(1)
+    await new Promise((done) => setTimeout(done, 400))
+    r.store.atomic(() => r.store.engines.save(unagreed as StoreDoc))
+    await pass
+    expect(r.store.engines.get(integrationDocId(WORK))?.combined).toBeUndefined()
+    expect(r.store.workItems.get(WORK)?.state).not.toBe('blocked')
+  })
+
+  it('a withdrawal between two setup commands runs no further one', async () => {
+    const marker = join(mkdtempSync(join(tmpdir(), 'mec-marker-')), 'second')
+    roots.push(dirname(marker))
+    const r = rig({ bootstrap: ['sleep 1', `touch ${marker}`] })
+    r.accepted('task_a', 'b.txt', 'two\n')
+    const { hostRunAgreedAt: _agreed, ...unagreed } = r.store.engines.get(REPO) as StoreDoc
+    const pass = r.passes(1)
+    await new Promise((done) => setTimeout(done, 400))
+    r.store.atomic(() => r.store.engines.save(unagreed as StoreDoc))
+    await pass
+    expect(existsSync(marker)).toBe(false)
+    expect(r.store.engines.get(integrationDocId(WORK))).toBeUndefined()
   })
 
   it('a conflict leaves both sides for a repair task, and nothing else merges meanwhile', async () => {
@@ -404,6 +493,12 @@ describe('the result path (§14, #11, #12)', () => {
     expect(r.types(`work:${WORK}`)).toContain('local_result')
   })
 
+  it('both delivery cards name their work, so its stage and Needs you can find them', async () => {
+    const r = await approvedPush()
+    expect(r.cards('push')[0]?.workItemId).toBe(WORK)
+    expect(r.cards('pr_create')[0]?.workItemId).toBe(WORK)
+  })
+
   it('integration branch in the cache is readable by the push card', async () => {
     const r = await localComplete()
     const card = r.cards('push')[0] as StoreDoc
@@ -459,12 +554,52 @@ describe('the result path (§14, #11, #12)', () => {
     expect(merges(r.calls)).toEqual([])
   })
 
+  it('going ready reaches the stream the page follows, once, after the stage moved', async () => {
+    const r = await openPr({ world: { checks: ok('[{"name":"ci","state":"PENDING"}]') } })
+    await r.passes(1)
+    const stream = `work:${WORK}`
+    const told = () => r.store.events.read(stream).filter((event) => event.type === 'pr_ready')
+    expect(told()).toEqual([])
+
+    const { events } = r.store
+    const append = events.append.bind(events)
+    const stageWhenTold: unknown[] = []
+    events.append = (name, event) => {
+      if (name === stream && event.type === 'pr_ready') stageWhenTold.push(r.doc().stage)
+      append(name, event)
+    }
+    r.world.checks = ok('[{"name":"ci","state":"SUCCESS"}]')
+    await r.passes(1)
+    expect(stageWhenTold).toEqual(['ready'])
+    expect(told()[0]?.body).toMatchObject({ workItemId: WORK, prNumber: PR, verdict: 'green' })
+
+    await r.passes(1)
+    expect(told()).toHaveLength(1)
+  })
+
   it('a repository with no required checks is ready with that limit stated (#34)', async () => {
     const r = await openPr({
       world: { checks: { code: 1, stdout: '', stderr: 'no required checks reported' } },
     })
     await r.passes(1)
     expect(r.doc()).toMatchObject({ stage: 'ready', limit: 'no_required_checks' })
+  })
+
+  it('stores what the last read saw of CI, and forgets it when the head moves', async () => {
+    const r = await openPr({ world: { checks: ok('[{"name":"ci","state":"PENDING"}]') } })
+    await r.passes(1)
+    expect(r.doc()).toMatchObject({ stage: 'pr_open', ci: 'ci_pending' })
+    r.world.checks = ok('[{"name":"ci","state":"FAILURE"}]')
+    await r.passes(1)
+    expect(r.doc()).toMatchObject({ stage: 'pr_open', ci: 'ci_failed' })
+    r.world.checks = ok('[{"name":"ci","state":"SUCCESS"}]')
+    await r.passes(1)
+    expect(r.doc()).toMatchObject({ stage: 'ready', ci: 'green' })
+    expect(typeof r.doc().ciAt).toBe('string')
+    r.world.pr = { state: 'OPEN', headRefOid: 'f'.repeat(40) }
+    await r.passes(1)
+    expect(r.doc().stage).toBe('pr_open')
+    expect(r.doc().ci).toBeUndefined()
   })
 
   it('declined push keeps the result and opens nothing', async () => {
@@ -717,5 +852,266 @@ describe('a card speaks only for its own delivery (§14)', () => {
     await resolveReleaseCard(r.delivery.release, other.confirmationId, 'deny')
     await r.delivery.idle()
     expect(r.doc()).toMatchObject({ stage: 'pr_card', prCardId: own })
+  })
+})
+
+describe('a person retries what blocked (§11: blocked work and failed deliveries, never a loop)', () => {
+  const KEY = 'sk-ant-api03-aaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  const LOCK = 'package-lock.json'
+  /** The merge refuses for a reason nothing here can clear: the worktree's index is locked. */
+  const lockIndex = (r: Rig): string => {
+    const lock = join(r.cache, 'worktrees', `integration-${WORK}`, 'index.lock')
+    writeFileSync(lock, '')
+    return lock
+  }
+  async function refusedMerge(over?: Parameters<typeof rig>[0]): Promise<{ r: Rig; lock: string }> {
+    const r = rig(over)
+    r.accepted('task_a', 'b.txt', 'two\n')
+    r.accepted('task_b', 'c.txt', 'three\n')
+    await r.delivery.pass()
+    const lock = lockIndex(r)
+    await r.delivery.pass()
+    return { r, lock }
+  }
+  const work = (r: Rig): StoreDoc => r.store.workItems.get(WORK) as StoreDoc
+  const events = (r: Rig) => r.store.events.read(`work:${WORK}`)
+  const count = (r: Rig, type: string) => r.types(`work:${WORK}`).filter((seen) => seen === type).length
+
+  it("a blocked integration carries git's own words, redacted before the write", async () => {
+    // `.mec/` is the one place making room for a merge does not look, so git really refuses here.
+    const r = rig()
+    r.accepted('task_a', 'b.txt', 'two\n')
+    r.accepted('task_b', `.mec/${KEY}.txt`, 'three\n')
+    await r.delivery.pass()
+    const worktree = String(r.integration().worktree)
+    mkdirSync(join(worktree, '.mec'))
+    writeFileSync(join(worktree, '.mec', `${KEY}.txt`), 'in the way\n')
+    await r.delivery.pass()
+    expect(work(r).state).toBe('blocked')
+    expect(String(work(r).blockedReason)).toContain('would be overwritten by merge')
+    expect(JSON.stringify([work(r), events(r)])).not.toContain(KEY)
+  })
+
+  it('a retry waits for the agreement: nothing is offered, and nothing moves', async () => {
+    const { r, lock } = await refusedMerge()
+    rmSync(lock)
+    const { hostRunAgreedAt: _agreed, ...unagreed } = r.store.engines.get(REPO) as StoreDoc
+    r.store.atomic(() => r.store.engines.save(unagreed as StoreDoc))
+    expect(retryOffer(r.store, work(r))).toBeUndefined()
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'host_run_unagreed' })
+    expect(work(r).state).toBe('blocked')
+    expect(count(r, 'retry_requested')).toBe(0)
+  })
+
+  it('a retry runs the integration once more and clears the reason', async () => {
+    const { r, lock } = await refusedMerge()
+    rmSync(lock)
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'retrying', kind: 'integration' })
+    expect(work(r).state).toBe('integrating')
+    expect(work(r).blockedReason).toBeUndefined()
+    expect(count(r, 'retry_requested')).toBe(1)
+    await r.delivery.idle()
+    await r.passes()
+    expect(r.store.tasks.get('task_b')?.status).toBe('integrated')
+    expect(r.cards('push')).toHaveLength(1)
+  })
+
+  it('a second press of the same retry does nothing', async () => {
+    const { r, lock } = await refusedMerge()
+    rmSync(lock)
+    r.delivery.retry(WORK)
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'nothing_to_retry' })
+    expect(count(r, 'retry_requested')).toBe(1)
+  })
+
+  it('a retry that fails again blocks again with its reason, and nothing retries by itself', async () => {
+    const { r } = await refusedMerge()
+    r.delivery.retry(WORK)
+    await r.delivery.idle()
+    await r.passes()
+    expect(work(r).state).toBe('blocked')
+    expect(String(work(r).blockedReason)).toContain('Unable to write index')
+    expect(count(r, 'work_blocked')).toBe(2)
+  })
+
+  it('held work is not retried, and a hold landing after the retry still holds the pass', async () => {
+    const { r, lock } = await refusedMerge()
+    rmSync(lock)
+    r.store.atomic(() => holdWorkItem(r.store, WORK, { reason: 'wait', at: AT }))
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'held' })
+    expect(work(r).state).toBe('blocked')
+
+    const clean = await refusedMerge()
+    rmSync(clean.lock)
+    expect(clean.r.delivery.retry(WORK).status).toBe('retrying')
+    clean.r.store.atomic(() => holdWorkItem(clean.r.store, WORK, { reason: 'wait', at: AT }))
+    await clean.r.delivery.idle()
+    await clean.r.passes()
+    expect(clean.r.store.tasks.get('task_b')?.status).toBe('accepted')
+    expect(clean.r.cards('push')).toEqual([])
+  })
+
+  it('stopped work and an expired mandate are refused', async () => {
+    const { r } = await refusedMerge()
+    r.store.atomic(() => stopWorkItem(r.store, WORK, { reason: 'no', at: AT }))
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'mandate_withdrawn' })
+
+    const late = await refusedMerge()
+    late.r.store.atomic(() => {
+      const doc = work(late.r)
+      const mandate = { ...(doc.mandate as object), expiresAt: '2020-01-01T00:00:00.000Z' }
+      late.r.store.workItems.save({ ...doc, mandate })
+    })
+    expect(late.r.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'mandate_expired' })
+    expect(work(late.r).state).toBe('blocked')
+  })
+
+  it('a block a retry cannot answer is not offered', async () => {
+    const r = rig()
+    r.accepted('task_a', 'b.txt', 'two\n')
+    r.store.atomic(() => {
+      r.store.workItems.save({ ...work(r), state: 'blocked', blockedReason: 'repo_profile_changed: other' })
+    })
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'nothing_to_retry' })
+    expect(r.delivery.retry('wi_missing')).toEqual({ status: 'missing' })
+  })
+
+  it('a task integration refused goes back to accepted, and only then merges', async () => {
+    const r = rig()
+    r.accepted('task_a', 'b.txt', 'two\n')
+    r.store.atomic(() => {
+      const task = r.store.tasks.get('task_a') as StoreDoc
+      r.store.tasks.save({ ...task, status: 'blocked', blockedReason: 'could not run unit on abc' })
+      r.store.workItems.save({ ...work(r), state: 'blocked', blockedReason: 'could not run unit on abc' })
+    })
+    expect(r.delivery.retry(WORK).status).toBe('retrying')
+    expect(r.store.tasks.get('task_a')).toMatchObject({ status: 'accepted' })
+    expect(r.store.tasks.get('task_a')?.blockedReason).toBeUndefined()
+    await r.delivery.idle()
+    await r.passes(1)
+    expect(r.store.tasks.get('task_a')?.status).toBe('integrated')
+  })
+
+  it("a repair that ended is the plan's to answer, not a retry's", async () => {
+    const r = rig()
+    r.accepted('task_a', 'b.txt', 'two\n')
+    await r.delivery.pass()
+    r.store.atomic(() => {
+      const task = r.store.tasks.get('task_a') as StoreDoc
+      r.store.tasks.save({ ...task, status: 'blocked', blockedReason: 'its repair ended: cancelled' })
+      r.store.workItems.save({ ...work(r), state: 'blocked', blockedReason: 'integration: a repair ended' })
+      r.store.engines.save({
+        ...r.integration(),
+        failed: { taskId: 'task_a', reason: 'checks_failed', repairing: true },
+      })
+    })
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'nothing_to_retry' })
+  })
+
+  it('work blocked by the old build, on its old worktree and task commit, integrates after upgrade', async () => {
+    // What 0.3.0 left: a task commit with the bootstrap's file in it, the same file untracked in
+    // an integration worktree with no record of its bootstrap, and a reason with no git in it.
+    const r = rig({ bootstrap: [`cp a.txt ${LOCK}`] })
+    r.accepted('task_a', LOCK, '{"swept":true}\n')
+    const worktree = join(r.dataDir, 'work', `integration-${WORK}`)
+    gitIn(r.cache, 'worktree', 'add', '--quiet', '-b', BRANCH, worktree, r.base)
+    writeFileSync(join(worktree, LOCK), 'one\n')
+    r.store.atomic(() => {
+      r.store.engines.save({
+        id: integrationDocId(WORK),
+        workItemId: WORK,
+        repoId: REPO,
+        branch: BRANCH,
+        worktree,
+        gitDir: r.cache,
+        head: r.base,
+        integrated: {},
+        updatedAt: AT,
+      })
+      r.store.workItems.save({
+        ...work(r),
+        state: 'blocked',
+        blockedReason: 'integration: merge failed without leaving a merge in progress',
+      })
+    })
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'retrying', kind: 'integration' })
+    await r.delivery.idle()
+    await r.passes()
+    expect(work(r).state).toBe('integrating')
+    expect(r.store.tasks.get('task_a')?.status).toBe('integrated')
+    expect(gitIn(worktree, 'show', `HEAD:${LOCK}`)).toBe('{"swept":true}')
+    expect(r.cards('push')).toHaveLength(1)
+  })
+
+  it('a declined push asks again with one new card, and pushes nothing', async () => {
+    const r = await localComplete()
+    await resolveReleaseCard(r.delivery.release, String(r.cards('push')[0]?.id), 'deny')
+    await r.delivery.idle()
+    await r.passes()
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'retrying', kind: 'push' })
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'nothing_to_retry' })
+    await r.delivery.idle()
+    await r.passes()
+    expect(r.cards('push').map((card) => card.status)).toEqual(['denied', 'pending'])
+    expect(r.doc()).toMatchObject({ stage: 'push_card', pushCardId: r.cards('push')[1]?.id })
+    expect(r.doc().prTarget).toBeUndefined()
+    expect(r.doc().answer).toBeUndefined()
+    expect(r.remote(`refs/heads/${BRANCH}`)).toBeUndefined()
+    expect(count(r, 'local_result')).toBe(1)
+  })
+
+  it('a declined PR card asks again with one new card, and the push is not asked again', async () => {
+    const r = await approvedPush()
+    await resolveReleaseCard(r.delivery.release, String(r.cards('pr_create')[0]?.id), 'deny')
+    await r.delivery.idle()
+    await r.passes()
+    expect(r.doc().stage).toBe('declined')
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'retrying', kind: 'pr' })
+    await r.delivery.idle()
+    await r.passes()
+    expect(r.cards('pr_create').map((card) => card.status)).toEqual(['denied', 'pending'])
+    expect(r.cards('push')).toHaveLength(1)
+    expect(creates(r.calls)).toEqual([])
+  })
+
+  it('a failed push is a new card, never a replay of the spent approval', async () => {
+    const r = await localComplete()
+    const remote = join(r.root, 'github.git')
+    gitIn(r.cache, 'config', '--unset-all', `url.${remote}.insteadOf`)
+    gitIn(r.cache, 'config', `url.${join(r.root, 'nowhere.git')}.insteadOf`, URL_ON_GITHUB)
+    await resolveReleaseCard(r.delivery.release, String(r.cards('push')[0]?.id), 'approve')
+    await r.delivery.idle()
+    await r.passes()
+    expect(r.doc().stage).toBe('failed')
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'retrying', kind: 'push' })
+    // The press itself starts the pass: nothing here waits for the timer.
+    await r.delivery.idle()
+    expect(r.doc().error).toBeUndefined()
+    expect(r.cards('push').map((card) => card.status)).toEqual(['approved', 'pending'])
+  })
+
+  it('a retry while processing is paused waits for the resume', async () => {
+    const r = await localComplete()
+    await resolveReleaseCard(r.delivery.release, String(r.cards('push')[0]?.id), 'deny')
+    await r.delivery.idle()
+    r.store.atomic(() => saveProcessing(r.store, { paused: true }, AT))
+    expect(r.delivery.retry(WORK).status).toBe('retrying')
+    await r.delivery.idle()
+    await r.passes()
+    expect(r.cards('push')).toHaveLength(1)
+    r.store.atomic(() => saveProcessing(r.store, { paused: false }, AT))
+    await r.passes()
+    expect(r.cards('push')).toHaveLength(2)
+  })
+
+  it('a held delivery keeps its declined stage and opens nothing', async () => {
+    const r = await localComplete()
+    await resolveReleaseCard(r.delivery.release, String(r.cards('push')[0]?.id), 'deny')
+    await r.delivery.idle()
+    r.store.atomic(() => holdWorkItem(r.store, WORK, { reason: 'wait', at: AT }))
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'held' })
+    await r.passes()
+    expect(r.doc().stage).toBe('declined')
+    expect(r.cards('push')).toHaveLength(1)
   })
 })

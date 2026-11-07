@@ -1,8 +1,9 @@
-import type { HealthBoard, HealthClaim, HealthName } from '@mec/contracts'
+import type { HealthBoard, HealthClaim, HealthName, StoreDoc } from '@mec/contracts'
 import { fakeBrain, MetaAgentService, type MetaDecision } from '@mec/meta'
 import { InspectionReads, MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { openPushCard } from '../src/release'
 import { buildServer } from '../src/server'
 
 /**
@@ -99,6 +100,59 @@ const seedWork = (id: string, extra: Record<string, unknown> = {}): void => {
     store.workItems.save({ id, state: 'executing', createdAt: AT, updatedAt: AT, ...extra })
   })
 }
+
+/** The real card opener: only what git and gh would answer comes from here. */
+const openPushCardFor = async (workItemId: string): Promise<string> => {
+  const viewed = { url: 'https://github.com/acme/alpha', defaultBranchRef: { name: 'main' } }
+  const card = await openPushCard(
+    {
+      store,
+      effects: store.effects,
+      now: () => new Date(AT),
+      run: async () => ({ code: 0, stdout: JSON.stringify(viewed), stderr: '' }),
+      git: async () => ({ code: 0, stdout: `${'a'.repeat(40)}\n`, stderr: '' }),
+      pushSource: () => ({ gitDir: '/cache.git' }),
+    },
+    { repoId: 'repo_a', branch: 'mec/w/integration', workItemId },
+  )
+  return card.confirmationId
+}
+
+describe('the chat holds what was said (§12.7)', () => {
+  it('a wake kept quiet stays off the chat, and a spoken one stays on', async () => {
+    store.atomic(() => {
+      const saved = { routing: 'new_work', createdAt: AT, repoId: 'repo_a', tasksCreated: 0 }
+      store.messages.save({
+        id: 'msg_wake_quiet',
+        text: 'report ready',
+        ackText: 'Noted.',
+        quiet: true,
+        ...saved,
+      })
+      store.messages.save({ id: 'msg_wake_spoken', text: 'report blocked', ackText: 'Blocked.', ...saved })
+    })
+
+    const ids = (await get('/api/chat/messages?repoId=repo_a')).json().map((row: any) => row.id)
+
+    expect(ids).toEqual(['msg_wake_spoken'])
+  })
+})
+
+describe('delivery cards reach their work (§10)', () => {
+  it('a push card opened for work reads Needs your approval, and Needs you lists it there', async () => {
+    seedWork('wi_1', { repoId: 'repo_a', state: 'integrating' })
+    const opened = await openPushCardFor('wi_1')
+
+    const row = (await get('/api/inspect/work?repoId=repo_a'))
+      .json()
+      .items.find((item: any) => item.id === 'wi_1')
+    expect(row.stage).toMatchObject({ key: 'person/decision', label: 'Needs your approval' })
+    const need = (await get('/api/inspect/needs?repoId=repo_a'))
+      .json()
+      .items.find((item: any) => item.id === opened)
+    expect(need.workItemId).toBe('wi_1')
+  })
+})
 
 describe('inspection routes: scope and identity', () => {
   it("repo filter returns no other repository's row", async () => {
@@ -260,7 +314,7 @@ describe('inspection routes: honesty', () => {
       expect(res.body, url).not.toContain('AAAAAAAA')
     }
     const row = (await get('/api/inspect/work')).json().items[0]
-    expect(row.title.length).toBeLessThanOrEqual(80 + '[redacted:anthropic]'.length)
+    expect(row.title.length).toBeLessThanOrEqual(500 + '[redacted:anthropic]'.length)
     expect(row.title).toContain('[redacted:')
   })
 
@@ -444,7 +498,8 @@ describe('inspection routes: honesty', () => {
     const work = (await get('/api/inspect/work/wi_1')).json()
     expect(work.coverage.delivery).toBe(false)
     expect(work.delivery).toEqual({ stage: 'none', branch: null, headSha: null, prNumber: null, prUrl: null })
-    expect(work.delegation).toEqual([])
+    // A task nothing picked up is still listed: delegation says who holds it, and nobody does yet.
+    expect(work.delegation).toMatchObject([{ taskId: 'task_1', latest: null, attempts: 0 }])
 
     store.atomic(() => {
       store.attempts.save({
@@ -487,6 +542,32 @@ describe('inspection routes: honesty', () => {
     // Checks belong to the exact head they ran on; the stale one is not carried over.
     expect(some.checks.headSha).toBe('abc1234')
     expect(some.checks.results.map((c: any) => c.name)).toEqual(['unit'])
+  })
+})
+
+describe('inspection routes: a held group', () => {
+  it('says on the attempt that its group is still there, and stops once it has gone', async () => {
+    seedWork('wi_1', { repoId: 'repo_a' })
+    store.atomic(() => {
+      store.tasks.save({ id: 'task_1', workItemId: 'wi_1', repoId: 'repo_a', status: 'blocked' })
+      store.attempts.save({
+        id: 'att_1',
+        taskId: 'task_1',
+        workItemId: 'wi_1',
+        state: 'failed',
+        generation: 1,
+        terminal_reason: 'monitor_error: refused to die',
+        held_groups: [{ pid: 4242, started: 'then' }],
+      })
+    })
+    const held = (await get('/api/inspect/tasks/task_1')).json()
+    expect(held.attempts[0].processOutcome).toBe(
+      'monitor_error: refused to die (process group still running, capacity held)',
+    )
+    const { held_groups: _gone, ...rest } = store.attempts.get('att_1') as StoreDoc
+    store.atomic(() => store.attempts.save(rest))
+    const gone = (await get('/api/inspect/tasks/task_1')).json()
+    expect(gone.attempts[0].processOutcome).toBe('monitor_error: refused to die')
   })
 })
 
@@ -565,20 +646,34 @@ describe('inspection routes: stage', () => {
   })
 })
 
+/** An agreement row counts as a need, and these tests count other things. */
+const agreeTo = (...repoIds: string[]): void => {
+  store.atomic(() => {
+    for (const id of repoIds) {
+      store.engines.save({ ...store.engines.get(id), id, hostRunAgreedAt: AT })
+    }
+  })
+}
+
 describe('inspection routes: titles, counts, details, search, snapshot', () => {
-  it('serves a stored title, else the first line of the origin message cut to 80, else null', async () => {
+  it("serves a stored title, else the origin message's first line up to 500, else null", async () => {
     store.atomic(() => {
       store.messages.save({ id: 'msg_1', text: `\n  Add audit log viewing\nmore detail`, createdAt: AT })
-      store.messages.save({ id: 'msg_2', text: 'y'.repeat(200), createdAt: AT })
+      store.messages.save({ id: 'msg_2', text: 'y'.repeat(600), createdAt: AT })
+      store.messages.save({ id: 'msg_3', text: `${'word '.repeat(30)}end`, createdAt: AT })
     })
     seedWork('wi_titled', { title: 'Stored title', originMessageId: 'msg_1' })
     seedWork('wi_msg', { originMessageId: 'msg_1' })
     seedWork('wi_long', { originMessageId: 'msg_2' })
+    seedWork('wi_whole', { originMessageId: 'msg_3' })
+    seedWork('wi_stored', { title: 'z'.repeat(120) })
     seedWork('wi_none')
     const rows = Object.fromEntries((await get('/api/inspect/work')).json().items.map((r: any) => [r.id, r]))
     expect(rows.wi_titled.title).toBe('Stored title')
     expect(rows.wi_msg.title).toBe('Add audit log viewing')
-    expect(rows.wi_long.title).toHaveLength(80)
+    expect(rows.wi_long.title).toHaveLength(500)
+    expect(rows.wi_whole.title).toBe(`${'word '.repeat(30)}end`)
+    expect(rows.wi_stored.title).toHaveLength(120)
     expect(rows.wi_none.title).toBeNull()
   })
 
@@ -718,6 +813,7 @@ describe('inspection routes: titles, counts, details, search, snapshot', () => {
 
   it('snapshot gives repositories, the needs count and cursors read together', async () => {
     const a = await say('repo_a', 'one')
+    agreeTo('repo_a', 'repo_b')
     const snapshot = (await get('/api/inspect/snapshot')).json()
     expect(snapshot.repositories.map((r: any) => ({ id: r.id, label: r.label }))).toEqual([
       { id: 'repo_a', label: 'acme/alpha' },

@@ -4,9 +4,16 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { StoreDoc } from '@mec/contracts'
 import { AttemptJournal, processStart } from '@mec/runtime'
 import { afterEach, describe, expect, it } from 'vitest'
-import { identifyGroup, reconcilePlanner, reconcileProcesses } from '../src/recovery'
+import {
+  identifyGroup,
+  type ProcessDeps,
+  reconcilePlanner,
+  reconcileProcesses,
+  resumeParked,
+} from '../src/recovery'
 import {
   alive,
   attemptOf,
@@ -297,6 +304,11 @@ describe('no orphans', { timeout: 60_000 }, () => {
       ),
     ).toBe('gone')
     expect(identifyGroup(mark, () => ({ started: 'then', pgid: 1 }), groupAlive)).toBe('unprovable')
+  })
+
+  it('a live process that leads no group is not gone because ps could not read it', () => {
+    const mark = { pid: process.pid, started: 'then' }
+    expect(identifyGroup(mark, () => undefined)).toBe('unprovable')
   })
 
   it('oldest work item restarts first', async () => {
@@ -705,6 +717,159 @@ describe('an attempt stopped mid-check', { timeout: 60_000 }, () => {
     await settle()
     expect(attemptOf(rig)?.state).toBe('work_complete')
     expect(eventsOf(rig, 'attempt:att_1')).toContain('attempt.checks_skipped')
+  })
+})
+
+describe('a group that outlived its failed attempt', { timeout: 60_000 }, () => {
+  const failed = (held: { pid: number; started: string }[]) => ({
+    state: 'failed',
+    terminal_reason: 'monitor_error: refused to die',
+    stop_failed: 'refused to die',
+    held_groups: held,
+  })
+
+  const boot = (rig: Rig, seams: Partial<ProcessDeps> = {}): Promise<void> =>
+    peekAsync(rig, (store) =>
+      reconcileProcesses({
+        store,
+        effects: store.effects,
+        dataDir: rig.dataDir,
+        now: () => '2026-11-05T11:00:00.000Z',
+        ...seams,
+      }),
+    )
+
+  it('a restart keeps the hold while it is there, and releases once it has gone', async () => {
+    const rig = scratch(STEPS)
+    const { child, mark } = await member()
+    seedStore(rig, { noRow: true, attempt: failed([mark]) })
+
+    await boot(rig)
+    expect(attemptOf(rig)).toMatchObject({ state: 'failed', held_groups: [mark] })
+    expect(eventsOf(rig, 'attempt:att_1')).not.toContain('attempt.capacity_released')
+    expect(alive(mark.pid)).toBe(true)
+
+    const exited = new Promise((resolve) => child.once('exit', resolve))
+    child.kill('SIGKILL')
+    await exited
+    await boot(rig)
+    expect(attemptOf(rig)?.state).toBe('failed')
+    expect(attemptOf(rig)?.held_groups).toBeUndefined()
+    expect(eventsOf(rig, 'attempt:att_1')).toContain('attempt.capacity_released')
+  })
+
+  it('a real restart stops a group it can prove its own, and the capacity comes back', async () => {
+    const rig = scratch(STEPS)
+    const pid = orphan(IGNORES_TERM)
+    const mark = { pid, started: await started(pid) }
+    await settle(300)
+    seedStore(rig, { noRow: true, task: { status: 'blocked' }, attempt: failed([mark]) })
+    await serve(rig, { probeRun: PROBE_OK })
+    expect(alive(pid)).toBe(false)
+    expect(attemptOf(rig)?.state).toBe('failed')
+    expect(attemptOf(rig)?.held_groups).toBeUndefined()
+  })
+
+  it('a stop still refused keeps it held, and only what has gone leaves the list', async () => {
+    const rig = scratch(STEPS)
+    const ours = { pid: 4242, started: 'then' }
+    const left = { pid: 4343, started: 'then' }
+    seedStore(rig, { noRow: true, attempt: failed([left, ours]) })
+    await boot(rig, {
+      identify: (mark) => (mark.pid === left.pid ? 'gone' : 'ours'),
+      reap: async () => 'refused',
+    })
+    expect(attemptOf(rig)).toMatchObject({ state: 'failed', held_groups: [ours] })
+    expect(eventsOf(rig, 'attempt:att_1')).not.toContain('attempt.capacity_released')
+  })
+
+  it('a group it cannot prove its own is never signalled', async () => {
+    const rig = scratch(STEPS)
+    const mark = { pid: 4242, started: 'then' }
+    seedStore(rig, { noRow: true, attempt: failed([mark]) })
+    await boot(rig, {
+      identify: () => 'unprovable',
+      reap: async () => {
+        throw new Error('an unprovable group is never signalled')
+      },
+    })
+    expect(attemptOf(rig)).toMatchObject({ state: 'failed', held_groups: [mark] })
+  })
+
+  it('a recycled pid means the group has gone', async () => {
+    const rig = scratch(STEPS)
+    seedStore(rig, { noRow: true, attempt: failed([{ pid: 4242, started: 'then' }]) })
+    await boot(rig, {
+      identify: () => 'recycled',
+      reap: async () => 'refused',
+    })
+    expect(attemptOf(rig)?.held_groups).toBeUndefined()
+  })
+
+  it('a queued attempt no owner agreed to does not keep a parked one out of its slot', () => {
+    const rig = scratch(STEPS)
+    seedStore(rig, {
+      noRow: true,
+      attempt: { state: 'provider_down', parked: { state: 'provider_down', at: '2026-11-05T10:00:00.000Z' } },
+      slot: { concurrency: 1, last_probe_at: '2026-11-05T10:30:00.000Z' },
+    })
+    peek(rig, (store) => {
+      store.atomic(() => {
+        store.engines.save({ id: 'repo_b', url: 'nowhere', bootstrap: [], checks: [], trust: false })
+        store.workItems.save({ id: 'wi_other', state: 'executing', repoId: 'repo_b' })
+        store.attempts.save({
+          id: 'att_0',
+          taskId: 'task_0',
+          workItemId: 'wi_other',
+          slotId: 'slot_a',
+          state: 'queued',
+        })
+      })
+    })
+    const resumed = peek(rig, (store) =>
+      resumeParked({
+        store,
+        effects: store.effects,
+        policyHash: 'any',
+        now: () => '2026-11-05T11:00:00.000Z',
+      }),
+    )
+    expect(resumed).toEqual(['att_1'])
+  })
+
+  it('a parked attempt does not resume into a slot a held group fills', () => {
+    const rig = scratch(STEPS)
+    seedStore(rig, {
+      noRow: true,
+      attempt: { state: 'provider_down', parked: { state: 'provider_down', at: '2026-11-05T10:00:00.000Z' } },
+      slot: { concurrency: 1, last_probe_at: '2026-11-05T10:30:00.000Z' },
+    })
+    const resume = (): string[] =>
+      peek(rig, (store) =>
+        resumeParked({
+          store,
+          effects: store.effects,
+          policyHash: 'any',
+          now: () => '2026-11-05T11:00:00.000Z',
+        }),
+      )
+    peek(rig, (store) => {
+      store.atomic(() => {
+        store.attempts.save({
+          id: 'att_0',
+          taskId: 'task_0',
+          workItemId: 'wi_other',
+          slotId: 'slot_a',
+          ...failed([{ pid: 4242, started: 'then' }]),
+        })
+      })
+    })
+    expect(resume()).toEqual([])
+    peek(rig, (store) => {
+      const { held_groups: _gone, ...rest } = store.attempts.get('att_0') as StoreDoc
+      store.atomic(() => store.attempts.save(rest))
+    })
+    expect(resume()).toEqual(['att_1'])
   })
 })
 

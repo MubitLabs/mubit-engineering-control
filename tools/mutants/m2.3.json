@@ -198,8 +198,8 @@
   {
     "name": "auto merge card",
     "file": "apps/desktop/src/delivery.ts",
-    "find": "      this.#patch(id, { stage: 'ready', limit: verdict === 'green' ? undefined : verdict })\n",
-    "replace": "      this.#patch(id, { stage: 'ready', limit: verdict === 'green' ? undefined : verdict })\n      await (await import('./release')).openMergeCard(this.release, { repo, prNumber })\n",
+    "find": "      this.#patch(id, { stage: 'ready', limit: verdict === 'green' ? undefined : verdict, ...seen })\n",
+    "replace": "      this.#patch(id, { stage: 'ready', limit: verdict === 'green' ? undefined : verdict, ...seen })\n      await (await import('./release')).openMergeCard(this.release, { repo, prNumber })\n",
     "tests": ["apps/desktop/test/delivery.test.ts"]
   },
   {

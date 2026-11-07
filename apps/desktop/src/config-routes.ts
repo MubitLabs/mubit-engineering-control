@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Json, ProviderId, Store, StoreDoc } from '@mec/contracts'
-import type { SetupDraftRecord } from '@mec/meta'
+import { agreeHostRun, type SetupDraftRecord, withdrawHostRun } from '@mec/meta'
 import { loadPolicy } from '@mec/policy'
 import { loadModelsTable } from '@mec/prompts'
 import {
@@ -20,7 +20,7 @@ import {
   redact,
   SlotKeystore,
 } from '@mec/slots'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { readPolicy, savePolicy } from './policy-store'
 import { buildReadiness, type Readiness, SETUP_DOC_ID, SETUP_STEPS, type SetupStep } from './readiness'
 import type { ProbeCmd } from './server'
@@ -62,6 +62,8 @@ export type BackupControl = {
 }
 
 export type ConfigDeps = {
+  /** A waiting launch row is due now. Inside the caller's transaction. */
+  wakeLaunches?: () => void
   store: Store
   now: () => Date
   keystoreRoot: string
@@ -192,8 +194,31 @@ export function registerConfigRoutes(
       }),
     )
 
+  /** The last look at what is installed, and the one running. One at a time, whoever asks. */
+  let knownEngines: Readiness['engines'] | null = null
+  let looking: Promise<Readiness['engines']> | null = null
+  const lookForEngines = (): Promise<Readiness['engines']> => {
+    looking ??= engines()
+      .then((found) => {
+        knownEngines = found
+        return found
+      })
+      .finally(() => {
+        looking = null
+      })
+    return looking
+  }
+
   // ─── Readiness ────────────────────────────────────────────────────────────────
-  app.get('/api/setup/readiness', async () => buildReadiness(store, await engines()))
+  // `?engines=known` answers from saved facts now and looks again behind the answer: one engine's
+  // `--version` can take the whole probe timeout, and the other four stages do not depend on it.
+  app.get('/api/setup/readiness', async (request) => {
+    if ((request.query as { engines?: unknown }).engines !== 'known') {
+      return buildReadiness(store, await lookForEngines())
+    }
+    lookForEngines().catch(() => {})
+    return buildReadiness(store, knownEngines)
+  })
 
   app.post('/api/setup/skip', async (request, reply) => {
     const body = (request.body ?? {}) as { step?: unknown; skipped?: unknown }
@@ -414,11 +439,21 @@ export function registerConfigRoutes(
   // `GET /api/models` answers the parsed table; an editor needs the words a save replaces.
   app.get('/api/models/text', async (_request, reply) => {
     try {
-      const { provenance } = loadModelsTable({ userPath: join(keystoreRoot, 'models.yaml') })
+      const { provenance, table } = loadModelsTable({ userPath: join(keystoreRoot, 'models.yaml') })
       return {
         yaml: readFileSync(provenance.path, 'utf8'),
         sha256: provenance.sha256,
         source: provenance.source,
+        summary: {
+          tiers: table.tiers,
+          engines: Object.entries(table.engines).map(([engine, entry]) => ({
+            engine,
+            models: [
+              ...Object.entries(entry.models ?? {}),
+              ...Object.values(entry.providers ?? {}).flatMap((block) => Object.entries(block.models)),
+            ].map(([id, model]) => ({ id, tier: model.tier })),
+          })),
+        },
       }
     } catch (error) {
       reply.code(500).send({
@@ -498,6 +533,25 @@ export function registerConfigRoutes(
     })
     return { id, revision: repositoryRevision(next) }
   })
+
+  // ─── Host-run agreement ───────────────────────────────────────────────────────
+  // The owner's alone, and nothing else writes the field. Two routes, because only agreeing grants
+  // anything: a withdrawal needs no key, so losing the key can never keep work from stopping.
+  const hostRun = (write: typeof agreeHostRun) => async (request: FastifyRequest, reply: FastifyReply) => {
+    const id = String((request.params as { id?: string }).id ?? '')
+    if (!id.startsWith('repo_') || store.engines.get(id) === undefined) {
+      reply.code(404).send({ error: 'repository not found' })
+      return
+    }
+    const at = now().toISOString()
+    store.atomic(() => {
+      write(store, id, at)
+      deps.wakeLaunches?.()
+    })
+    return { id, hostRunAgreedAt: store.engines.get(id)?.hostRunAgreedAt ?? null }
+  }
+  app.post('/api/repositories/:id/host-run/agree', hostRun(agreeHostRun))
+  app.post('/api/repositories/:id/host-run/withdraw', hostRun(withdrawHostRun))
 
   // ─── Setup drafts ─────────────────────────────────────────────────────────────
   const settle = (id: string, doc: StoreDoc, status: 'applied' | 'denied'): void => {

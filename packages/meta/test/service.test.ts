@@ -46,7 +46,14 @@ const REPO = 'repo_main'
 
 const rig = (decision: MetaDecision, store = new MemoryRepositories()) => {
   store.atomic(() => {
-    store.engines.save({ id: REPO, url: 'https://example.test/main', bootstrap: [], checks: [], trust: true })
+    store.engines.save({
+      id: REPO,
+      url: 'https://example.test/main',
+      bootstrap: [],
+      checks: [],
+      trust: true,
+      hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
+    })
   })
   const service = new MetaAgentService({
     store,
@@ -229,6 +236,115 @@ describe('MetaAgentService (plan §6/§12)', () => {
     expect(outcome.acknowledged).toContain('wi_live')
   })
 
+  describe('a question beside running work (§12.1, owner ruling)', () => {
+    const live = (store: MemoryRepositories) => {
+      seedWork(store, 'wi_live', 'executing')
+      store.atomic(() => {
+        store.tasks.save({ id: 'task_live', workItemId: 'wi_live', status: 'active' })
+      })
+    }
+    const everything = (workItemId: string): MetaDecision => ({
+      ...twoTaskPlan,
+      routes: [{ messageId: 'msg_1', decision: 'stop', workItemId: 'wi_live', at: NOW() }] as never,
+      spawns: [{ taskId: 'task_live' }] as never,
+      stops: [{ attemptId: 'att_live' }],
+      cancels: [{ taskId: 'task_live' }],
+      confirmations: [{ operation: { class: 'frontier_model' } }] as never,
+      reports: [{ workItemId, summary: 'It waits for its second check.', artifacts: [] }],
+    })
+    const asking = (store: MemoryRepositories, seen: unknown[] = []) =>
+      new MetaAgentService({
+        store,
+        effects: store.effects,
+        brain: async (input) => {
+          seen.push(input.wake)
+          return everything('wi_live')
+        },
+        now: NOW,
+      })
+
+    it('gets a real turn, and its answer in the chat', async () => {
+      const store = new MemoryRepositories()
+      live(store)
+      const seen: unknown[] = []
+      const outcome = await asking(store, seen).onUserMessage({ messageId: 'msg_1', text: 'Why is it slow?' })
+
+      expect(seen).toHaveLength(1)
+      expect(outcome.acknowledged).toBe('It waits for its second check.')
+      expect(store.messages.get('msg_1')).toMatchObject({ ackText: 'It waits for its second check.' })
+      expect(store.workItems.get(outcome.workItemId as string)).toMatchObject({ state: 'done' })
+    })
+
+    it('starts, stops and changes nothing, whatever the planner tried', async () => {
+      const store = new MemoryRepositories()
+      live(store)
+      const before = structuredClone(store.workItems.get('wi_live'))
+      const outcome = await asking(store).onUserMessage({ messageId: 'msg_1', text: 'Why is it slow?' })
+
+      expect(outcome.tasksCreated).toBe(0)
+      expect(outcome.launchesEnqueued).toEqual([])
+      expect(store.tasks.list().map((task) => task.id)).toEqual(['task_live'])
+      expect(store.tasks.get('task_live')).toMatchObject({ status: 'active' })
+      expect(store.workItems.get('wi_live')).toEqual(before)
+      expect(store.confirmations.list()).toEqual([])
+      expect(store.snapshot().effects.filter((row) => row.kind !== 'reply')).toEqual([])
+      expect(store.events.read('work:wi_live')).toEqual([])
+    })
+
+    it('tells the planner what the turn is for', async () => {
+      const store = new MemoryRepositories()
+      live(store)
+      const seen: { reason: string }[] = []
+      await asking(store, seen).onUserMessage({ messageId: 'msg_1', text: 'Why is it slow?' })
+      expect(seen[0]?.reason).toContain('answer it with report_result')
+    })
+
+    it('a question whose item was stopped runs no turn when it resumes', async () => {
+      const store = new MemoryRepositories()
+      live(store)
+      store.atomic(() => {
+        store.workItems.save({ id: 'wi_q', state: 'stopped', questionOnly: true, createdAt: NOW() })
+        store.messages.save({ id: 'msg_1', text: 'Why is it slow?', workItemId: 'wi_q', createdAt: NOW() })
+      })
+      const seen: unknown[] = []
+      const outcome = await asking(store, seen).onUserMessage({ messageId: 'msg_1', text: 'Why is it slow?' })
+      expect(seen).toEqual([])
+      expect(outcome.acknowledged).toContain('stopped')
+      expect(store.workItems.get('wi_q')).toMatchObject({ state: 'stopped' })
+    })
+
+    it('a question on held work is answered, and the hold keeps its item open', async () => {
+      const store = new MemoryRepositories()
+      live(store)
+      store.atomic(() => {
+        store.workItems.save({
+          id: 'wi_q',
+          state: 'planning',
+          questionOnly: true,
+          hold: { at: NOW(), reason: 'wait' },
+          createdAt: NOW(),
+        })
+        store.messages.save({ id: 'msg_1', text: 'Why is it slow?', workItemId: 'wi_q', createdAt: NOW() })
+      })
+      const outcome = await asking(store).onUserMessage({ messageId: 'msg_1', text: 'Why is it slow?' })
+      expect(outcome.acknowledged).toBe('It waits for its second check.')
+      expect(store.workItems.get('wi_q')).toMatchObject({ state: 'planning' })
+      expect(store.tasks.list().map((task) => task.id)).toEqual(['task_live'])
+    })
+
+    it('a turn resumed after a crash is still a question', async () => {
+      const store = new MemoryRepositories()
+      live(store)
+      store.atomic(() => {
+        store.workItems.save({ id: 'wi_q', state: 'planning', questionOnly: true, createdAt: NOW() })
+        store.messages.save({ id: 'msg_1', text: 'Why is it slow?', workItemId: 'wi_q', createdAt: NOW() })
+      })
+      await asking(store).onUserMessage({ messageId: 'msg_1', text: 'Why is it slow?' })
+      expect(store.tasks.list().map((task) => task.id)).toEqual(['task_live'])
+      expect(store.workItems.get('wi_q')).toMatchObject({ state: 'done' })
+    })
+  })
+
   it('a reference to a stopped work item is refused, never attached or resumed', async () => {
     const { service, store } = rig(twoTaskPlan)
     seedWork(store, 'wi_old', 'stopped')
@@ -406,5 +522,101 @@ describe('MetaAgentService (plan §6/§12)', () => {
     expect(outcome.acknowledged).toContain("names role 'wizard'")
     expect(store.tasks.list()).toHaveLength(0)
     expect(store.workItems.get(outcome.workItemId!)?.state).toBe('stopped')
+  })
+})
+
+describe('an answer reaches chat (§12.2: quick questions are answered directly)', () => {
+  const answered = async (decision: MetaDecision, summary: string) => {
+    const store = new MemoryRepositories()
+    store.atomic(() => {
+      store.engines.save({
+        id: REPO,
+        url: 'https://example.test/main',
+        bootstrap: [],
+        checks: [],
+        trust: true,
+      })
+    })
+    const service = new MetaAgentService({
+      store,
+      effects: store.effects,
+      brain: async (input) => ({
+        ...decision,
+        reports: summary === '' ? [] : [{ workItemId: input.workItemId as string, summary, artifacts: [] }],
+      }),
+      now: NOW,
+    })
+    await service.onUserMessage({ messageId: 'msg_q', text: 'What does it do?', repoId: REPO })
+    return store.messages.get('msg_q')
+  }
+
+  it('stores the reported answer on the message it answers', async () => {
+    const line = await answered({ ack: 'I will answer that here.' }, 'It lists the audit log.')
+    expect(line).toMatchObject({ ackText: 'It lists the audit log.' })
+    expect(line?.replyText).toBeUndefined()
+  })
+
+  it('redacts it before the write', async () => {
+    const key = `sk-ant-${'a1B2c3D4'.repeat(6)}`
+    const line = await answered({ ack: 'Here.' }, `The key is ${key}`)
+    expect(JSON.stringify(line)).not.toContain(key)
+    expect(line?.ackText).toContain('[redacted:')
+  })
+
+  it('a report that only repeats the acknowledgement says nothing new', async () => {
+    const line = await answered({ ack: 'Same words.' }, 'Same words.')
+    expect(line?.ackText).toBe('Same words.')
+    expect(line?.replyText).toBeUndefined()
+  })
+
+  it('a turn that asks a question has its card: the report is not chat', async () => {
+    const line = await answered(
+      { ack: 'One thing first.', questions: [{ id: 'q1', question: 'Which?', options: [], at: NOW() }] },
+      'I asked which one.',
+    )
+    expect(line?.ackText).toBe('One thing first.')
+    expect(line?.replyText).toBeUndefined()
+  })
+
+  it('a plan is not narrated (§12.7)', async () => {
+    const line = await answered(twoTaskPlan, 'Planned two tasks.')
+    expect(line?.ackText).not.toContain('Planned two tasks.')
+    expect(line?.replyText).toBeUndefined()
+  })
+
+  it('a wake speaks its report, because it had something new (§12.7)', async () => {
+    const store = new MemoryRepositories()
+    store.atomic(() => {
+      store.engines.save({
+        id: REPO,
+        url: 'https://example.test/main',
+        bootstrap: [],
+        checks: [],
+        trust: true,
+      })
+    })
+    seedWork(store, 'wi_wake', 'executing')
+    store.atomic(() => {
+      store.workItems.save({ ...store.workItems.get('wi_wake'), repoId: REPO } as never)
+    })
+    const service = new MetaAgentService({
+      store,
+      effects: store.effects,
+      brain: async () => ({
+        ack: 'Noted.',
+        reports: [{ workItemId: 'wi_wake', summary: 'A specialist finished.', artifacts: [] }],
+      }),
+      now: NOW,
+    })
+    await service.onWake({ reason: 'report', workItemId: 'wi_wake', causationId: 'cause_1' })
+    const line = store.messages.list({ workItemId: 'wi_wake' })[0]
+    expect(line?.ackText).toBe('A specialist finished.')
+    expect(line?.replyText).toBeUndefined()
+  })
+
+  it('a turn with no report stores nothing', async () => {
+    const line = await answered({ ack: 'Noted.' }, '')
+    expect(line?.ackText).toBe('Noted.')
+    expect(line?.replyText).toBeUndefined()
   })
 })

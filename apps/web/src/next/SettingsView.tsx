@@ -9,8 +9,10 @@ import {
   foldDiff,
   lineDiff,
   type ModelsText,
+  modelsSummaryLines,
   type PolicyView,
   type PromptPartView,
+  policySummary,
   type RepositoryView,
   saveBar,
 } from './config-model'
@@ -143,22 +145,43 @@ interface EditorProps {
   onUseNewest: () => void
 }
 
-function TextBlock({ label, rows, ...props }: EditorProps & { label: string; rows: number }) {
+function TextBlock({
+  label,
+  rows,
+  advanced = false,
+  ...props
+}: EditorProps & { label: string; rows: number; advanced?: boolean }) {
   const { editor, onEdit, onSave, onDiscard, onUseNewest } = props
   const field = useRef<HTMLTextAreaElement>(null)
+  const [opened, setOpened] = useState(false)
+  const box = (
+    <label className="field">
+      {label}
+      <textarea
+        ref={field}
+        className="code-input"
+        rows={rows}
+        spellCheck={false}
+        value={editor.draft ?? editor.base}
+        onChange={(event) => onEdit(event.target.value)}
+      />
+    </label>
+  )
   return (
     <>
-      <label className="field">
-        {label}
-        <textarea
-          ref={field}
-          className="code-input"
-          rows={rows}
-          spellCheck={false}
-          value={editor.draft ?? editor.base}
-          onChange={(event) => onEdit(event.target.value)}
-        />
-      </label>
+      {advanced ? (
+        // A draft keeps it open: an unsaved edit is never folded out of sight on return.
+        <details
+          className="advanced"
+          open={opened || editor.draft !== null}
+          onToggle={(event) => setOpened(event.currentTarget.open)}
+        >
+          <summary>Advanced</summary>
+          {box}
+        </details>
+      ) : (
+        box
+      )}
       {editor.save.kind === 'saved' && (
         <p className="muted" role="status">
           Saved.
@@ -176,6 +199,18 @@ function TextBlock({ label, rows, ...props }: EditorProps & { label: string; row
 }
 
 const shortHash = (sha: string): string => sha.slice(0, 12)
+
+function PlainSummary({ lines }: { lines: readonly string[] | null }) {
+  if (lines === null)
+    return <p className="muted">The saved text cannot be summarised. Open Advanced to read it.</p>
+  return (
+    <ul className="plain-summary">
+      {lines.map((line) => (
+        <li key={line}>{line}</li>
+      ))}
+    </ul>
+  )
+}
 
 export function PolicyBlock({
   policy,
@@ -210,8 +245,9 @@ export function PolicyBlock({
       ) : (
         <p className="muted">A saved edit applies to new work after the next restart.</p>
       )}
+      <PlainSummary lines={policySummary(editor.editor.base)} />
       {proposals}
-      <TextBlock label="Policy file" rows={12} {...editor} />
+      <TextBlock label="Policy file" rows={12} advanced {...editor} />
     </section>
   )
 }
@@ -228,8 +264,9 @@ export function ModelsBlock({
         {models.source === 'user' ? 'Your table' : 'The shipped table'}, version{' '}
         <span className="mono">{shortHash(models.sha256)}</span>.
       </p>
+      <PlainSummary lines={modelsSummaryLines(models.summary)} />
       {proposals}
-      <TextBlock label="Capability table" rows={18} {...editor} />
+      <TextBlock label="Capability table" rows={18} advanced {...editor} />
     </section>
   )
 }
@@ -422,7 +459,7 @@ function TrustControl({
       <p>
         {repository.trust
           ? 'Trusted: engines honour this repository’s own configuration.'
-          : 'Untrusted: engines ignore this repository’s own configuration.'}
+          : 'Untrusted: engines ignore this repository’s own configuration. Its setup and checks still run on this machine once you agree.'}
       </p>
       {armed ? (
         <form
@@ -441,7 +478,7 @@ function TrustControl({
         >
           <p>
             {next
-              ? 'Engines will honour its hooks, MCP servers, plugins and settings. Those can run commands on this machine.'
+              ? 'Engines will honour its hooks, MCP servers, plugins and settings. Those can run commands on this machine. Its setup and checks run here once you agree, trusted or not.'
               : 'Engines will stop honouring its hooks, MCP servers, plugins and settings.'}
           </p>
           <div className="form-actions">
@@ -460,6 +497,84 @@ function TrustControl({
   )
 }
 
+const waitingWords = (count: number): string => {
+  if (count === 0) return 'No work is waiting on this now.'
+  return count === 1 ? '1 item is waiting and will start.' : `${count} items are waiting and will start.`
+}
+
+/** Set on an open tab that has no approval key: agreeing needs one, withdrawing never does. */
+export interface HostRunControlProps {
+  repository: RepositoryView
+  busy: boolean
+  error: string | null
+  onAgree: () => void
+  onWithdraw: () => void
+}
+
+/** The owner's agreement for one repository, in the words of what it allows. */
+export function HostRunControl({ repository, busy, error, onAgree, onWithdraw }: HostRunControlProps) {
+  const [armed, setArmed] = useState(false)
+  const agreed = repository.hostRunAgreedAt !== null
+  return (
+    <div className="trust">
+      <p>
+        {agreed
+          ? 'Agreed: MEC may run work in this repository.'
+          : 'Waiting for your agreement: nothing runs in this repository.'}
+      </p>
+      {armed ? (
+        <form
+          className="armed-panel armed-danger"
+          onSubmit={(event) => {
+            event.preventDefault()
+            setArmed(false)
+            if (agreed) onWithdraw()
+            else onAgree()
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.stopPropagation()
+              setArmed(false)
+            }
+          }}
+        >
+          {agreed ? (
+            <p>
+              No new work starts here, and queued work waits. An engine already running finishes its turn, and
+              its checks then wait for you.
+            </p>
+          ) : (
+            <>
+              <p>
+                MEC may start engines here, and run this repository’s setup and check commands. Those commands
+                run on this machine as you, outside any sandbox, with your files and your network, whether or
+                not the repository is trusted.
+              </p>
+              <p>{waitingWords(repository.waiting)}</p>
+              <p>You can withdraw this here at any time, and nothing new starts after that.</p>
+            </>
+          )}
+          <div className="form-actions">
+            <Button variant="quiet" onClick={() => setArmed(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={busy}>
+              {agreed ? 'Withdraw agreement' : 'Agree to run here'}
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <Button onClick={() => setArmed(true)}>{agreed ? 'Withdraw…' : 'Review and agree…'}</Button>
+      )}
+      {error !== null && (
+        <p className="field-error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  )
+}
+
 export interface RepositoryEditorProps {
   repository: RepositoryView
   bootstrap: EditorProps
@@ -468,6 +583,7 @@ export interface RepositoryEditorProps {
   trustError: string | null
   isolation: { editable: boolean; reason: string | null }
   onSetTrust: (trust: boolean) => void
+  hostRun: Omit<HostRunControlProps, 'repository'>
 }
 
 export function RepositoryEditor({
@@ -478,6 +594,7 @@ export function RepositoryEditor({
   trustError,
   isolation,
   onSetTrust,
+  hostRun,
 }: RepositoryEditorProps) {
   return (
     <article className="repository">
@@ -489,6 +606,8 @@ export function RepositoryEditor({
       <small className="muted">{BOOTSTRAP_HINT}</small>
       <TextBlock label="Check profile" rows={3} {...checks} />
       <small className="muted">{CHECKS_HINT}</small>
+      <h4>Running on this machine</h4>
+      <HostRunControl repository={repository} {...hostRun} />
       <h4>Trust</h4>
       <TrustControl repository={repository} busy={trustBusy} onSetTrust={onSetTrust} />
       {trustError !== null && (

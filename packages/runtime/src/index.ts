@@ -58,6 +58,7 @@ export type {
 export {
   classifyExit,
   groupAlive,
+  processAlive,
   processStart,
   readProcess,
   reapGroup,

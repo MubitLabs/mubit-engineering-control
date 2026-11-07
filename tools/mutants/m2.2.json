@@ -44,8 +44,8 @@
   {
     "name": "model ignored",
     "file": "packages/meta/src/scheduler.ts",
-    "find": "      const { modelSlots, resolved } = modelFit(deps, task, views)\n",
-    "replace": "      const { resolved } = modelFit(deps, task, views)\n      const modelSlots = undefined as string[] | undefined\n",
+    "find": "      const { modelSlots, degradedSlots, resolved } = modelFit(deps, task, views)\n",
+    "replace": "      const { degradedSlots, resolved } = modelFit(deps, task, views)\n      const modelSlots = undefined as string[] | undefined\n",
     "tests": ["packages/meta/test/scheduler.test.ts"]
   },
   {
@@ -275,8 +275,8 @@
   {
     "name": "no pass after effects",
     "file": "apps/desktop/src/composition.ts",
-    "find": "    parkPass()\n    schedulerPass()\n    if (!paused) delivery?.kick()\n",
-    "replace": "    parkPass()\n    if (!paused) delivery?.kick()\n",
+    "find": "    heldPass()\n    schedulerPass()\n    if (!paused) delivery?.kick()\n",
+    "replace": "    heldPass()\n    if (!paused) delivery?.kick()\n",
     "tests": ["apps/desktop/test/coordination.test.ts", "-t", "pass places work"]
   },
   {
@@ -336,7 +336,7 @@
   {
     "name": "dropped report accepted",
     "file": "packages/meta/src/scheduler.ts",
-    "find": "  if (report?.kind !== 'dropped') return false\n",
+    "find": "  if (report?.kind !== 'dropped' || !passedOrUnjudged) return false\n",
     "replace": "  if (report !== undefined || report === undefined) return false\n",
     "tests": ["packages/meta/test/scheduler.test.ts"]
   },
@@ -357,8 +357,8 @@
   {
     "name": "no-checks attempt unheard",
     "file": "packages/meta/src/scheduler.ts",
-    "find": "  if (attempt.state !== 'succeeded' && !noVerdict(attempt)) return false\n",
-    "replace": "  if (attempt.state !== 'succeeded') return false\n",
+    "find": "  const passedOrUnjudged = attempt.state === 'succeeded' || noVerdict(attempt)\n",
+    "replace": "  const passedOrUnjudged = attempt.state === 'succeeded'\n",
     "tests": ["packages/meta/test/scheduler.test.ts"]
   },
   {

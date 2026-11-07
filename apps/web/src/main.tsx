@@ -1,3 +1,4 @@
+import { startApproval } from './approval'
 import { resolveShell } from './ui-flag'
 
 const container = document.getElementById('root')
@@ -17,7 +18,9 @@ const SHELLS = {
   classic: () => import('./classic-entry'),
 }
 
-SHELLS[shell]()
+// Before a shell reads the address: a link's code is in its fragment, and it is no route.
+startApproval()
+  .then(() => SHELLS[shell]())
   .then(({ mount }) => mount(container))
   .catch(() => {
     container.textContent = 'The workbench could not load. Reload the page to try again.'

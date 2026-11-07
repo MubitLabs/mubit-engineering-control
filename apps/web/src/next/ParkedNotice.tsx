@@ -7,6 +7,7 @@ import {
   parkedMoves,
   switchPlan,
 } from './config-model'
+import { timeLabel } from './format'
 import { Button } from './primitives'
 
 export interface ParkedCommands {
@@ -14,8 +15,6 @@ export interface ParkedCommands {
   switchWork: (row: ParkedRow, target: ConnectionRow) => Promise<string>
   signIn: (row: ParkedRow) => void
 }
-
-const when = (iso: string): string => new Date(iso).toLocaleString()
 
 function ParkedItem({
   row,
@@ -33,7 +32,7 @@ function ParkedItem({
   const [target, setTarget] = useState<ConnectionRow | null>(null)
   const [busy, setBusy] = useState(false)
   const [outcome, setOutcome] = useState<string | null>(null)
-  const facts = parkedFacts(row, when)
+  const facts = parkedFacts(row, timeLabel)
   const moves = parkedMoves(row, all, connections, capabilities)
   const plan = target === null ? null : switchPlan(row, target)
   const send = (chosen: ConnectionRow) => {

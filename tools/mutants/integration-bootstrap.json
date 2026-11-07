@@ -1,0 +1,226 @@
+[
+  {
+    "name": "a commit keeps the bootstrap's files",
+    "file": "packages/git/src/worktrees.ts",
+    "find": "    await unstageBootstrapOutput(path, keepOut)\n",
+    "replace": "",
+    "tests": ["packages/git/test/bootstrap-output.test.ts", "-t", "leaves out what the bootstrap wrote"]
+  },
+  {
+    "name": "a clean tree skips the take-back",
+    "file": "packages/git/src/worktrees.ts",
+    "find": "if (!status.stdout.trim() && keepOut === undefined) return null",
+    "replace": "if (!status.stdout.trim()) return null",
+    "tests": ["packages/git/test/bootstrap-output.test.ts", "-t", "takes back what a specialist committed"]
+  },
+  {
+    "name": "an empty index still commits",
+    "file": "packages/git/src/worktrees.ts",
+    "find": "    if (staged.code === 0) return null\n",
+    "replace": "",
+    "tests": ["packages/git/test/bootstrap-output.test.ts", "-t", "is no commit at all"]
+  },
+  {
+    "name": "a changed file still counts as the bootstrap's",
+    "file": "packages/git/src/bootstrap-output.ts",
+    "find": "if ((await contentOf(join(worktree, path))) === content) paths.push(path)",
+    "replace": "paths.push(path)",
+    "tests": ["packages/git/test/bootstrap-output.test.ts", "-t", "carries a file the specialist changed"]
+  },
+  {
+    "name": "a later bootstrap claims a specialist's draft",
+    "file": "packages/git/src/bootstrap-output.ts",
+    "find": "if (before[path] !== content || prior[path] === content) files[path] = content",
+    "replace": "files[path] = content",
+    "tests": ["packages/git/test/bootstrap-output.test.ts", "-t", "claims nothing an interrupted specialist"]
+  },
+  {
+    "name": "a later bootstrap drops the earlier claim",
+    "file": "packages/git/src/bootstrap-output.ts",
+    "find": "if (before[path] !== content || prior[path] === content) files[path] = content",
+    "replace": "if (before[path] !== content) files[path] = content",
+    "tests": ["packages/git/test/bootstrap-output.test.ts", "-t", "keeps its claim"]
+  },
+  {
+    "name": "a kept-out path reads as a glob",
+    "file": "packages/git/src/bootstrap-output.ts",
+    "find": "output.paths.map((path) => `:(literal)${path}`)",
+    "replace": "output.paths.map((path) => path)",
+    "tests": ["packages/git/test/bootstrap-output.test.ts", "-t", "glob characters"]
+  },
+  {
+    "name": "room is made mid-merge",
+    "file": "packages/git/src/bootstrap-output.ts",
+    "find": "  if (await isMidMerge(worktree)) return []\n",
+    "replace": "",
+    "tests": ["packages/git/test/bootstrap-output.test.ts", "-t", "touches nothing mid-merge"]
+  },
+  {
+    "name": "room clears everything dirty",
+    "file": "packages/git/src/bootstrap-output.ts",
+    "find": "dirty.filter((path) => incoming.some((brought) => collides(path, brought)))",
+    "replace": "dirty",
+    "tests": ["packages/git/test/bootstrap-output.test.ts", "-t", "leaves alone every path"]
+  },
+  {
+    "name": "only an equal path collides",
+    "file": "packages/git/src/bootstrap-output.ts",
+    "find": "left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`)",
+    "replace": "left === right",
+    "tests": ["packages/git/test/bootstrap-output.test.ts", "-t", "the other way round"]
+  },
+  {
+    "name": "a tracked collision is deleted, not restored",
+    "file": "packages/git/src/bootstrap-output.ts",
+    "find": "    if (tracked.has(path))\n",
+    "replace": "    if (tracked.size < 0)\n",
+    "tests": ["packages/git/test/bootstrap-output.test.ts", "-t", "restores a tracked file"]
+  },
+  {
+    "name": "a merge commit carries the bootstrap's files",
+    "file": "packages/git/src/conflict.ts",
+    "find": "      await unstageBootstrapOutput(opts.worktree, { head, paths })\n",
+    "replace": "",
+    "tests": ["packages/git/test/bootstrap-output.test.ts", "-t", "commits two parents without"]
+  },
+  {
+    "name": "a merge commit drops what the merge brought",
+    "file": "packages/git/src/conflict.ts",
+    "find": "opts.keepOut.paths.filter((path) => !brought.has(path))",
+    "replace": "opts.keepOut.paths.filter((path) => path !== '' || brought.size > 0)",
+    "tests": ["packages/git/test/bootstrap-output.test.ts", "-t", "does not drop a path"]
+  },
+  {
+    "name": "a refusal hides git's reason",
+    "file": "packages/git/src/merge.ts",
+    "find": "`merge failed without leaving a merge in progress: ${refusal}`",
+    "replace": "`merge failed without leaving a merge in progress${refusal.slice(0, 0)}`",
+    "tests": ["packages/git/test/bootstrap-output.test.ts", "-t", "names git's own reason"]
+  },
+  {
+    "name": "commitWork ignores the record",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "return commitAll(path, message, identity, keepOut)",
+    "replace": "return commitAll(path, message, identity)",
+    "tests": ["apps/desktop/test/delivery.test.ts", "-t", "commit in the integration worktree carries no"]
+  },
+  {
+    "name": "a merge repair ignores the record",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "    ...(keepOut !== undefined && { keepOut }),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts", "-t", "merge commit carries no bootstrap output"]
+  },
+  {
+    "name": "an attempt's bootstrap is not recorded",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "    if (bootstrap.length > 0) await recordBootstrapOutput(worktree, beforeBootstrap)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery-flow.test.ts", "-t", "reaches no task commit"]
+  },
+  {
+    "name": "integration's bootstrap is not recorded",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (bootstrap.length > 0) await recordBootstrapOutput(worktree, {})\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts", "-t", "commit in the integration worktree carries no"]
+  },
+  {
+    "name": "a merge does not make room",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "const paths = await clearMergePath({ worktree, taskBranch: branch })",
+    "replace": "const paths = [] as string[]",
+    "tests": ["apps/desktop/test/delivery.test.ts", "-t", "work blocked by the old build"]
+  },
+  {
+    "name": "git's reason is written raw",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "const reason = redact(detail, this.#fingerprints(), [])",
+    "replace": "const reason = detail",
+    "tests": ["apps/desktop/test/delivery.test.ts", "-t", "redacted before the write"]
+  },
+  {
+    "name": "a retry passes a hold",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      if (isHeld(work)) return { status: 'refused', error: 'held' }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts", "-t", "held work is not retried"]
+  },
+  {
+    "name": "an offer ignores a hold",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "if (isTerminal(work) || isHeld(work) || mandateOf(work).status === 'withdrawn') return undefined\n  const id = String(work.id)\n  const clean",
+    "replace": "if (isTerminal(work) || mandateOf(work).status === 'withdrawn') return undefined\n  const id = String(work.id)\n  const clean",
+    "tests": ["apps/desktop/test/delivery-flow.test.ts", "-t", "the retry route opens one new card"]
+  },
+  {
+    "name": "a retry passes a stop",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      if (mandateOf(work).status === 'withdrawn') return { status: 'refused', error: 'mandate_withdrawn' }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts", "-t", "stopped work and an expired mandate"]
+  },
+  {
+    "name": "a retry skips the mandate",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      if (!authority.ok) return { status: 'refused', error: `mandate_${authority.reason}` }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts", "-t", "stopped work and an expired mandate"]
+  },
+  {
+    "name": "any block is offered",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (!INTEGRATION_BLOCK.test(reason) || !hostRunAgreed(store, String(work.repoId))) return undefined\n",
+    "replace": "    if (!hostRunAgreed(store, String(work.repoId))) return undefined\n",
+    "tests": ["apps/desktop/test/delivery.test.ts", "-t", "a block a retry cannot answer"]
+  },
+  {
+    "name": "a retry runs over a repair",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (failed?.repairing === true) return undefined\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts", "-t", "a repair that ended"]
+  },
+  {
+    "name": "work stays blocked after a retry",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    this.#store.workItems.save({ ...rest, state, updatedAt: at })\n  }\n\n  /** Back to the step",
+    "replace": "    void rest\n    void state\n  }\n\n  /** Back to the step",
+    "tests": ["apps/desktop/test/delivery.test.ts", "-t", "a second press of the same retry"]
+  },
+  {
+    "name": "a refused task stays refused",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": ".filter(refusedTask)) {",
+    "replace": ".filter(() => false)) {",
+    "tests": ["apps/desktop/test/delivery.test.ts", "-t", "a task integration refused"]
+  },
+  {
+    "name": "a declined PR goes back to the push",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "stage: kind === 'pr' ? 'pushed' : 'local_complete',",
+    "replace": "stage: 'local_complete',",
+    "tests": ["apps/desktop/test/delivery.test.ts", "-t", "a declined PR card asks again"]
+  },
+  {
+    "name": "the press waits for the timer",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (outcome.status === 'retrying') this.kick()\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts", "-t", "a failed push is a new card"]
+  },
+  {
+    "name": "a retry leaves no record",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      this.#workEvent(workItemId, 'retry_requested', { kind: offer.kind })\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts", "-t", "a retry runs the integration once more"]
+  },
+  {
+    "name": "the action shows beside a hold",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "...(retry === null || held",
+    "replace": "...(retry === null",
+    "tests": ["apps/web/test/work-model.test.ts", "-t", "waits for a hold to lift"]
+  }
+]

@@ -24,7 +24,14 @@ const plan = (...keys: [string, string[]][]): MetaDecision => ({
 
 const seedRepo = (store: MemoryRepositories, id: string, trust = true): void => {
   store.atomic(() => {
-    store.engines.save({ id, url: `https://example.test/${id}`, bootstrap: [], checks: [], trust })
+    store.engines.save({
+      id,
+      url: `https://example.test/${id}`,
+      bootstrap: [],
+      checks: [],
+      trust,
+      hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
+    })
   })
 }
 
@@ -279,6 +286,7 @@ describe('repo admission and canonical identity', () => {
         bootstrap: ['npm ci'],
         checks: [],
         trust: false,
+        hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
       })
     })
     await service.onWake({ reason: 'report', workItemId: workItemId! })

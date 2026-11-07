@@ -2,8 +2,8 @@
   {
     "name": "launch unbound by flag",
     "file": "apps/desktop/src/composition.ts",
-    "find": "  const realRunner = process.env.MEC_REAL_RUNNER === '1'\n",
-    "replace": "  const realRunner = true\n",
+    "find": "  if (realRunnerOn()) {\n",
+    "replace": "  if (true) {\n",
     "tests": ["apps/desktop/test/attempt-launch.test.ts"]
   },
   {

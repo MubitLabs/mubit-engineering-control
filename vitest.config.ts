@@ -20,6 +20,8 @@ const B_ONLY = [
 export default defineConfig({
   test: {
     environment: 'node',
+    // A real launch is the product's default. A suite turns it on where it means to; see attempt-launch.test.ts.
+    env: { MEC_REAL_RUNNER: '0' },
     testTimeout: 60_000,
     hookTimeout: 60_000,
     projects: [

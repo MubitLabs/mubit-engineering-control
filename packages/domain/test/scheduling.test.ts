@@ -257,4 +257,169 @@ describe('planDispatches', () => {
     expect(r.launches).toEqual([{ taskId: 'r1', slotId: 's1' }])
     expect(r.deferred).toEqual([{ taskId: 'i1', reason: 'slot_unhealthy' }])
   })
+
+  describe('the meta engine (owner brief 2026-11-06; §11 is silent on engines)', () => {
+    const claude = slot('z-claude', { engine: 'claude' })
+    const glm = slot('a-glm', { engine: 'opencode' })
+
+    it('takes the unpinned task over a slot that sorts first', () => {
+      const r = plan({ ready: [task('t1')], slots: [glm, claude], preferredEngine: 'claude' })
+      expect(r.launches).toEqual([{ taskId: 't1', slotId: 'z-claude' }])
+    })
+
+    it('outranks lower utilisation elsewhere, under the ceiling', () => {
+      const r = plan({
+        ready: [task('t1')],
+        slots: [
+          { ...glm, usageUtilization: 0.1 },
+          { ...claude, usageUtilization: 0.6 },
+        ],
+        preferredEngine: 'claude',
+      })
+      expect(r.launches).toEqual([{ taskId: 't1', slotId: 'z-claude' }])
+    })
+
+    it('counts for nothing where the tier would degrade', () => {
+      const r = plan({
+        ready: [task('t1', { degradedSlots: ['z-claude'] })],
+        slots: [claude, glm],
+        preferredEngine: 'claude',
+      })
+      expect(r.launches).toEqual([{ taskId: 't1', slotId: 'a-glm' }])
+    })
+
+    it('gives way to another engine when its slots are full or over the ceiling', () => {
+      const full = plan({
+        ready: [task('t1')],
+        slots: [{ ...claude, inUse: 2 }, glm],
+        preferredEngine: 'claude',
+      })
+      expect(full.launches).toEqual([{ taskId: 't1', slotId: 'a-glm' }])
+      const over = plan({
+        ready: [task('t1')],
+        slots: [{ ...claude, usageUtilization: 0.9 }, glm],
+        preferredEngine: 'claude',
+      })
+      expect(over.launches).toEqual([{ taskId: 't1', slotId: 'a-glm' }])
+    })
+
+    it('ranks below a slot class hint: the hint is the planner asking for this task', () => {
+      const r = plan({
+        ready: [task('t1', { slotClass: 'review' })],
+        slots: [claude, { ...glm, slotClass: 'review' }],
+        preferredEngine: 'claude',
+      })
+      expect(r.launches).toEqual([{ taskId: 't1', slotId: 'a-glm' }])
+    })
+
+    it('still chooses inside a matching hint', () => {
+      const r = plan({
+        ready: [task('t1', { slotClass: 'review' })],
+        slots: [
+          { ...glm, slotClass: 'review' },
+          { ...claude, slotClass: 'review' },
+        ],
+        preferredEngine: 'claude',
+      })
+      expect(r.launches).toEqual([{ taskId: 't1', slotId: 'z-claude' }])
+    })
+
+    it('never moves a pin', () => {
+      const r = plan({
+        ready: [task('t1', { slotId: 'a-glm' })],
+        slots: [claude, glm],
+        preferredEngine: 'claude',
+      })
+      expect(r.launches).toEqual([{ taskId: 't1', slotId: 'a-glm' }])
+    })
+
+    it('without a meta engine the order is utilisation, then load, then id', () => {
+      expect(plan({ ready: [task('t1')], slots: [claude, glm] }).launches).toEqual([
+        { taskId: 't1', slotId: 'a-glm' },
+      ])
+    })
+
+    it('fills the meta engine before it spills to another', () => {
+      const r = plan({
+        ready: [task('t1'), task('t2'), task('t3')],
+        slots: [glm, claude, slot('y-claude', { engine: 'claude' })],
+        preferredEngine: 'claude',
+        caps: caps({ perSlot: 1, perWorkItem: 3 }),
+      })
+      expect(r.launches).toEqual([
+        { taskId: 't1', slotId: 'y-claude' },
+        { taskId: 't2', slotId: 'z-claude' },
+        { taskId: 't3', slotId: 'a-glm' },
+      ])
+    })
+  })
+
+  describe('why each launch landed where it did', () => {
+    const reason = (over: Parameters<typeof plan>[0]) => plan(over).placements[0]
+    const a = slot('a')
+    const b = slot('b')
+
+    it('says a pin decided, and nothing else', () => {
+      expect(reason({ ready: [task('t1', { slotId: 'b' })], slots: [a, b] })).toEqual({
+        taskId: 't1',
+        pinned: true,
+        narrowedBy: [],
+        missed: [],
+        candidates: 1,
+      })
+    })
+
+    it('names the tiebreak that really decided, never utilisation on a tie', () => {
+      const of = (slots: SlotView[]) => reason({ ready: [task('t1')], slots })?.tiebreak
+      expect(of([a])).toBe('only_candidate')
+      expect(of([a, { ...b, usageUtilization: 0.5 }])).toBe('utilisation')
+      expect(of([a, { ...b, inUse: 1 }])).toBe('load')
+      expect(of([a, b])).toBe('id')
+    })
+
+    it('says the class and the engine narrowed the field', () => {
+      const r = reason({
+        ready: [task('t1', { slotClass: 'review' })],
+        slots: [
+          a,
+          slot('b', { slotClass: 'review', engine: 'opencode' }),
+          slot('c', { slotClass: 'review', engine: 'claude' }),
+        ],
+        preferredEngine: 'claude',
+      })
+      expect(r).toEqual({
+        taskId: 't1',
+        pinned: false,
+        narrowedBy: ['slot_class', 'engine'],
+        missed: [],
+        candidates: 1,
+      })
+    })
+
+    it('says when a hint or the engine could not be honoured (§7: "records when it could not")', () => {
+      const r = reason({
+        ready: [task('t1', { slotClass: 'review' })],
+        slots: [slot('a', { engine: 'opencode' }), slot('b', { engine: 'opencode', inUse: 1 })],
+        preferredEngine: 'claude',
+      })
+      expect(r).toEqual({
+        taskId: 't1',
+        pinned: false,
+        narrowedBy: [],
+        missed: ['slot_class', 'engine'],
+        tiebreak: 'load',
+        candidates: 2,
+      })
+    })
+
+    it('claims no missed engine when none was preferred, or when a hint outranked it', () => {
+      expect(reason({ ready: [task('t1')], slots: [a, b] })?.missed).toEqual([])
+      const r = reason({
+        ready: [task('t1', { slotClass: 'review' })],
+        slots: [slot('a', { engine: 'claude' }), slot('b', { engine: 'opencode', slotClass: 'review' })],
+        preferredEngine: 'claude',
+      })
+      expect(r).toMatchObject({ narrowedBy: ['slot_class'], missed: [] })
+    })
+  })
 })

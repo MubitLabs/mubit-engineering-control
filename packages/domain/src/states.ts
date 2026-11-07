@@ -54,6 +54,7 @@ export const WORK_ITEM_EVENTS = [
   'review_started',
   'integration_started',
   'work_done',
+  'answered',
   'block',
   'resume_planning',
   'resume_executing',
@@ -71,6 +72,8 @@ export const WORK_ITEM_MACHINE: TransitionTable<WorkItemState, WorkItemEvent> = 
   { from: 'admitted', event: 'planning_started', to: 'planning' },
   { from: 'admitted', event: 'stop', to: 'stopped' },
   { from: 'planning', event: 'execution_started', to: 'executing' },
+  // §12.2: a turn that planned nothing and waits on nobody is finished. It never was delivery work.
+  { from: 'planning', event: 'answered', to: 'done' },
   { from: 'planning', event: 'block', to: 'blocked' },
   { from: 'planning', event: 'stop', to: 'stopped' },
   { from: 'executing', event: 'review_started', to: 'reviewing' },
@@ -116,6 +119,7 @@ export const TASK_EVENTS = [
   'integration_conflict',
   'block',
   'unblock',
+  'integration_retry',
   'cancel',
 ] as const
 export type TaskEvent = (typeof TASK_EVENTS)[number]
@@ -139,6 +143,8 @@ export const TASK_MACHINE: TransitionTable<TaskState, TaskEvent> = [
   { from: 'accepted', event: 'block', to: 'blocked' },
   { from: 'accepted', event: 'cancel', to: 'cancelled' },
   { from: 'blocked', event: 'unblock', to: 'ready' },
+  // A person's retry of a refused integration: its accepted head still stands, so nothing reruns.
+  { from: 'blocked', event: 'integration_retry', to: 'accepted' },
   { from: 'blocked', event: 'cancel', to: 'cancelled' },
 ]
 

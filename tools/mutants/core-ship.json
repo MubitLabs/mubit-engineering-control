@@ -1,0 +1,366 @@
+[
+  {
+    "name": "a: unassigned blocked work is counted again on the server",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    return this.openNeeds().filter((item) => item.kind !== 'work' || !item.readOnly)\n",
+    "replace": "    return this.openNeeds()\n",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "a: unassigned blocked work is counted again on the page",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  const counted = waiting.filter((item) => item.kind !== 'work' || !item.readOnly).length\n",
+    "replace": "  const counted = waiting.length\n",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "an answered question reads as Done, not Answered",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    if (str(doc.state) === 'done') return 'answered'\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "a turn still on its way reads as ended",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    if (str(doc.state) !== 'planning' || !turnEnded) return null\n",
+    "replace": "    if (str(doc.state) !== 'planning') return null\n",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "delivery work reads as answered",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    if (tasks > 0 || waitingOnPerson || isHeld(doc)) return null\n",
+    "replace": "    if (waitingOnPerson || isHeld(doc)) return null\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "held work reads as ended, so its hold cannot be lifted",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    if (tasks > 0 || waitingOnPerson || isHeld(doc)) return null\n",
+    "replace": "    if (tasks > 0 || waitingOnPerson) return null\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the live line reads a blocked row as a card",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    const needs = this.openDecisions()\n    const docs = this.#collect('work_item', {}).map((row) => row.doc)\n",
+    "replace": "    const needs = this.openNeeds()\n    const docs = this.#collect('work_item', {}).map((row) => row.doc)\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "a 500-character title reaches the live line",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    const titled = (row: WorkRow | undefined): string => cutText(row?.title ?? 'this request', LABEL_CAP)\n",
+    "replace": "    const titled = (row: WorkRow | undefined): string => row?.title ?? 'this request'\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the chat route carries a second copy of the answer",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    const messages = rowsInScope(store.messages, store, request).filter((doc) => doc.quiet !== true)\n    return messages.sort(\n",
+    "replace": "    const messages = rowsInScope(store.messages, store, request).filter((doc) => doc.quiet !== true).map((doc) => ({ ...doc, replyText: doc.ackText }))\n    return messages.sort(\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "a retry block is no delivery failure",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "|repo_profile_changed|checks failed on |could not run )/",
+    "replace": "|repo_profile_changed)/",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "the retry slot and merge do not meet in the detail",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "    actions: workActions(detail, filter ?? { kind: 'all' }, detail.hold, detail.retry, detail.delivery),\n",
+    "replace": "    actions: workActions(detail, filter ?? { kind: 'all' }, detail.hold, detail.retry),\n",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "merge drops the retry offer",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "    actions: workActions(detail, filter ?? { kind: 'all' }, detail.hold, detail.retry, detail.delivery),\n",
+    "replace": "    actions: workActions(detail, filter ?? { kind: 'all' }, detail.hold, null, detail.delivery),\n",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "c: a repair runs on held work",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    if (isHeld(work)) {\n      const held = { reason: 'held', releases: 'the owner lifts the hold' }\n",
+    "replace": "    if (false as boolean) {\n      const held = { reason: 'held', releases: 'the owner lifts the hold' }\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "c: a repair runs on stopped work",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    if (isTerminal(listed) || mandateOf(listed).status === 'withdrawn') continue\n    if (store.tasks.list({ workItemId }).length === 0) continue\n",
+    "replace": "    if (store.tasks.list({ workItemId }).length === 0) continue\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "a merged delivery reads as an answer",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "        delivery === 'merged' ? null : this.#turnOutcome(doc, total, mine.length > 0, turnEnded)\n",
+    "replace": "        this.#turnOutcome(doc, total, mine.length > 0, turnEnded)\n",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "the service does not read an unfinished protocol",
+    "file": "packages/meta/src/service.ts",
+    "find": "      if (spoken === undefined && decision.protocolIncomplete === true && !asked) {\n",
+    "replace": "      if (spoken === undefined && (false as boolean) && !asked) {\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the dropdown shows with one repository",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "options.length > 2",
+    "replace": "options.length > 1",
+    "tests": ["apps/web/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the dropdown hides beside Unassigned history",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "options.length > 2",
+    "replace": "options.length > 3",
+    "tests": ["apps/web/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "q: a question beside live work is context again",
+    "file": "packages/meta/src/routing.ts",
+    "find": "  return isQuestion(input.text ?? '') ? { action: 'question' } : { action: 'conversation' }\n",
+    "replace": "  return { action: 'conversation' }\n",
+    "tests": ["packages/meta/test/routing.test.ts"]
+  },
+  {
+    "name": "q: every note gets a turn",
+    "file": "packages/meta/src/routing.ts",
+    "find": "export const isQuestion = (text: string): boolean => text.includes('?') || ASKS.test(text.trim())\n",
+    "replace": "export const isQuestion = (_text: string): boolean => true\n",
+    "tests": ["packages/meta/test/routing.test.ts"]
+  },
+  {
+    "name": "q: only a question mark counts",
+    "file": "packages/meta/src/routing.ts",
+    "find": "text.includes('?') || ASKS.test(text.trim())",
+    "replace": "text.includes('?')",
+    "tests": ["packages/meta/test/routing.test.ts"]
+  },
+  {
+    "name": "q: only an asking word counts",
+    "file": "packages/meta/src/routing.ts",
+    "find": "text.includes('?') || ASKS.test(text.trim())",
+    "replace": "ASKS.test(text.trim())",
+    "tests": ["packages/meta/test/routing.test.ts"]
+  },
+  {
+    "name": "q: a question turn is not marked",
+    "file": "packages/meta/src/service.ts",
+    "find": "      case 'question':\n        return await this.#startNewWork(input, prior, resumed, true)\n",
+    "replace": "      case 'question':\n        return await this.#startNewWork(input, prior, resumed, false)\n",
+    "tests": ["packages/meta/test/service.test.ts"]
+  },
+  {
+    "name": "q: the turn keeps its plan and its stops",
+    "file": "packages/meta/src/service.ts",
+    "find": "    if (answerOnly) return this.#ackOnlyTurn(input, workItemId, answerOf(decision, workItemId))\n",
+    "replace": "",
+    "tests": ["packages/meta/test/service.test.ts"]
+  },
+  {
+    "name": "q: a report lands on the running work",
+    "file": "packages/meta/src/service.ts",
+    "find": "reports: reports.map((report) => ({ ...report, workItemId }))",
+    "replace": "reports",
+    "tests": ["packages/meta/test/service.test.ts"]
+  },
+  {
+    "name": "q: a resumed turn forgets it was a question",
+    "file": "packages/meta/src/service.ts",
+    "find": "    const answerOnly = this.#store.workItems.get(workItemId)?.questionOnly === true\n",
+    "replace": "    const answerOnly = questionOnly\n",
+    "tests": ["packages/meta/test/service.test.ts"]
+  },
+  {
+    "name": "q: the planner is not told",
+    "file": "packages/meta/src/service.ts",
+    "find": "    const reason = answerOnly ? QUESTION_WAKE : 'user message'\n",
+    "replace": "    const reason = 'user message'\n",
+    "tests": ["packages/meta/test/service.test.ts"]
+  },
+  {
+    "name": "an agreement is listed twice",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "const OWN_ROW_STAGES = new Set(['person/decision', 'person/agreement'])",
+    "replace": "const OWN_ROW_STAGES = new Set(['person/decision'])",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "the live line hides the agreement",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    if (agreeing !== undefined) return quiet('waiting_you', 'Waiting for your agreement', agreeing)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "b: a retry is offered before the agreement",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (!INTEGRATION_BLOCK.test(reason) || !hostRunAgreed(store, String(work.repoId))) return undefined\n",
+    "replace": "    if (!INTEGRATION_BLOCK.test(reason)) return undefined\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "b: the refusal does not say why",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "error: waits ? HOST_RUN_UNAGREED : 'nothing_to_retry'",
+    "replace": "error: 'nothing_to_retry'",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "an older report reads as No answer",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    return this.#lastReport(doc) === null ? 'no-answer' : 'answered'\n",
+    "replace": "    return 'no-answer'\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the answer on done work is lost",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    return said === null ? this.#lastReport(doc) : cutText(said, ANSWER_CAP)\n",
+    "replace": "    return this.#lastReport(doc) === null ? null : null\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "the answer skips the message the turn named",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    return said === null ? this.#lastReport(doc) : cutText(said, ANSWER_CAP)\n",
+    "replace": "    return this.#lastReport(doc)\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "a stored report runs past its cap",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    const summary = str(obj(report?.body ?? undefined)?.summary)\n    return summary === null ? null : cutText(summary, ANSWER_CAP)\n",
+    "replace": "    return str(obj(report?.body ?? undefined)?.summary)\n",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "c: a stopped item's question gets a turn",
+    "file": "packages/meta/src/service.ts",
+    "find": "    if (work !== undefined && !isTerminal(work) && mandateOf(work).status !== 'withdrawn') return undefined\n    const at = this.#now()\n    const ended",
+    "replace": "    if (work !== undefined) return undefined\n    const at = this.#now()\n    const ended",
+    "tests": ["packages/meta/test/service.test.ts"]
+  },
+  {
+    "name": "c: a resume runs on stopped work",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "  if (isTerminal(work)) return { verdict: 'drop', reason: 'work_terminal' }\n  const attempt = store.attempts.get(fields.attempt_id)\n",
+    "replace": "  const attempt = store.attempts.get(fields.attempt_id)\n",
+    "tests": ["apps/desktop/test/resume-gate.test.ts"]
+  },
+  {
+    "name": "r: nothing checks capacity at the launch gate",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  return capacityFull(store, attempt, pastGate)\n    ? { verdict: 'defer', reason: 'capacity' }\n    : { verdict: 'run' }\n",
+    "replace": "  return { verdict: 'run' }\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "r: nothing checks capacity at the resume gate",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "  return capacityFull(store, attempt as StoreDoc, pastGate)\n    ? { verdict: 'defer', reason: 'capacity' }\n    : verdict\n",
+    "replace": "  return verdict\n",
+    "tests": ["apps/desktop/test/resume-gate.test.ts"]
+  },
+  {
+    "name": "r: queued siblings count, and released rows deadlock",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (pastGate.has(String(attempt.id))) return true\n  return (\n",
+    "replace": "  if (pastGate.has(String(attempt.id))) return true\n  return (\n    attempt.state === 'queued' ||\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "r: an attempt counts against itself",
+    "file": "packages/meta/src/authority.ts",
+    "find": ".filter((doc) => doc.id !== attempt.id && hasStarted(doc, pastGate))",
+    "replace": ".filter((doc) => hasStarted(doc, pastGate))",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "r: the global cap is not read",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (others.length >= DEFAULT_CAPS.globalActiveAttempts) return true\n",
+    "replace": "",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "r: a launch past the gate is not counted",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (pastGate.has(String(attempt.id))) return true\n",
+    "replace": "",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "r: a held group is not counted",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (holdsGroup(attempt) || attempt.reconcile_refused !== undefined) return true\n",
+    "replace": "  if (attempt.reconcile_refused !== undefined) return true\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "r: a stalled attempt is not counted",
+    "file": "packages/meta/src/authority.ts",
+    "find": "    attempt.state === 'stalled' ||\n",
+    "replace": "",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "r: an unjudged check is counted",
+    "file": "packages/meta/src/authority.ts",
+    "find": "    (attempt.state === 'work_complete' && !noVerdict(attempt))\n",
+    "replace": "    attempt.state === 'work_complete'\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "r: a live check stops counting after a withdrawal",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  const waits = attempt.state === 'queued' || noVerdict(attempt) || attempt.resuming === true\n",
+    "replace": "  const waits = attempt.state === 'queued' || attempt.state === 'work_complete' || attempt.resuming === true\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "r: the row does not hold its unit",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  pastGate.add(attemptId)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/resume-gate.test.ts"]
+  },
+  {
+    "name": "r: the unit is never given back",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    pastGate.delete(attemptId)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/resume-gate.test.ts"]
+  },
+  {
+    "name": "r: the link route says opened when it did not",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    if (code !== undefined && (await approval.link(code)) === false) {\n      return reply.code(502).send({ opened: false, error: 'no_browser' })\n    }\n",
+    "replace": "    if (code !== undefined) await approval.link(code)\n",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
+  },
+  {
+    "name": "r: osascript is found on PATH",
+    "file": "apps/desktop/src/approval.ts",
+    "find": "cmd: '/usr/bin/osascript'",
+    "replace": "cmd: 'osascript'",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
+  },
+  {
+    "name": "r: the page reads a failed link as sent",
+    "file": "apps/web/src/approval.ts",
+    "find": "  return response.ok\n",
+    "replace": "  return true\n",
+    "tests": ["apps/web/test/approval.test.ts"]
+  }
+]

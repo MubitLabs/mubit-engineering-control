@@ -58,7 +58,7 @@ function num(path: string, value: unknown, what: string): number {
 const optional = <K extends string>(key: K, value: unknown) =>
   (typeof value === 'string' ? { [key]: value } : {}) as Partial<Record<K, string>>
 
-const STATUSES: readonly StepStatus[] = ['done', 'missing', 'skipped']
+const STATUSES: readonly StepStatus[] = ['done', 'missing', 'skipped', 'checking']
 const ROUTES: readonly StepRoute[] = ['setup', 'slots', 'settings', 'chat']
 const PATHS: readonly ConnectionPath[] = ['link', 'sign_in', 'api_key']
 
@@ -265,7 +265,25 @@ export function decodeModelsText(raw: unknown): ModelsText {
   const body = obj(path, raw, 'the body')
   const source = body.source
   if (source !== 'user' && source !== 'default') throw new DecodeError(path, 'source is unknown')
-  return { yaml: str(path, body.yaml, 'yaml'), sha256: str(path, body.sha256, 'sha256'), source }
+  const summary = obj(path, body.summary, 'summary')
+  return {
+    yaml: str(path, body.yaml, 'yaml'),
+    sha256: str(path, body.sha256, 'sha256'),
+    source,
+    summary: {
+      tiers: arr(path, summary.tiers, 'summary.tiers').map((tier) => str(path, tier, 'tier')),
+      engines: arr(path, summary.engines, 'summary.engines').map((raw) => {
+        const entry = obj(path, raw, 'summary engine')
+        return {
+          engine: str(path, entry.engine, 'summary engine'),
+          models: arr(path, entry.models, 'summary models').map((model) => {
+            const row = obj(path, model, 'summary model')
+            return { id: str(path, row.id, 'model id'), tier: str(path, row.tier, 'model tier') }
+          }),
+        }
+      }),
+    },
+  }
 }
 
 export function decodePromptsConfig(raw: unknown): PromptsConfig {
@@ -339,6 +357,8 @@ export function decodeRepositories(raw: unknown): RepositoryView[] {
       }),
       trust: repo.trust === true,
       revision: str(path, repo.revision, 'repository.revision'),
+      hostRunAgreedAt: typeof repo.hostRunAgreedAt === 'string' ? repo.hostRunAgreedAt : null,
+      waiting: typeof repo.waiting === 'number' ? repo.waiting : 0,
     }
   })
 }

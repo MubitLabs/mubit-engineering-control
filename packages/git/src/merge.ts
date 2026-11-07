@@ -8,6 +8,9 @@
 import { GitError, git, gitLines } from './exec'
 import { assertSafeRef, headSha } from './worktrees'
 
+/** A refusal gives its cause first and the files after it, and a person reads this in a reason. */
+const REFUSAL_CHARS = 1000
+
 export type MergeIntoIntegrationOptions = {
   /** Bare cache the worktrees hang off; the task branch is resolved here before merging. */
   gitDir: string
@@ -50,8 +53,9 @@ export async function mergeIntoIntegration(
   // not. Only the first is a conflict — anything else is reported as the failure it is,
   // because silently discarding either side is exactly what §14 forbids.
   if (!(await isMidMerge(opts.worktree))) {
+    const refusal = (merged.stderr.trim() || merged.stdout.trim()).slice(0, REFUSAL_CHARS)
     throw new GitError(
-      'merge failed without leaving a merge in progress',
+      `merge failed without leaving a merge in progress: ${refusal}`,
       ['merge', '--no-ff', '--no-edit', '-m', opts.message, branch],
       merged,
     )

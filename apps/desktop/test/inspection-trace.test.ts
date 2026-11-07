@@ -266,8 +266,11 @@ describe('evidence from the records M2 wrote', () => {
     expect(task.coverage.diff).toBe(false)
   })
 
-  it('no delegation is recorded by M2, so nothing is inferred', async () => {
-    expect((await get('/api/inspect/work/wi_1')).json().delegation).toEqual([])
+  it('delegation comes from the attempt, never from dependencies', async () => {
+    const [row, ...rest] = (await get('/api/inspect/work/wi_1')).json().delegation
+    expect(rest).toEqual([])
+    expect(row).toMatchObject({ taskId: 'task_1', attempts: 1 })
+    expect(row.latest.id).toBe('att_1')
   })
 
   it('usage is summed from the stream, and a gap is a labelled subtotal', async () => {
@@ -401,13 +404,48 @@ describe('activity pages', () => {
     expect(page.items.map((i: any) => i.type)).toEqual(bodies.map(([type]) => type))
     const summary = (type: string) => page.items.find((i: any) => i.type === type).summary
     expect(summary('message')).toBe('assistant: first line')
-    expect(summary('tool_call')).toBe('Read failed')
+    expect(summary('tool_call')).toBe('Read a (failed)')
     expect(summary('usage')).toBe('1 in, 2 out')
-    expect(summary('rate_limit')).toBe('five_hour rejected')
+    expect(summary('rate_limit')).toBe('5-hour limit: reached')
     expect(summary('report')).toBe('ready: done')
     expect(summary('error')).toBe('quota: over')
     expect(summary('exit')).toBe('Exit 3: crashed')
     expect(summary('session_started')).toBe('Started claude 2.1.317')
+  })
+
+  it('a tool line says what ran, in redacted words, and a limit line says what it means', async () => {
+    const lines: [string, Json][] = [
+      ['tool_call', { tool: 'Bash', input: { command: `pnpm test\n--filter a ${KEY}` }, ok: true }],
+      ['tool_call', { tool: 'Bash', input: { command: 'false' }, ok: false }],
+      ['tool_call', { tool: 'command', input: { command: ['git', 'status'] } }],
+      ['tool_call', { tool: 'Edit', input: { file_path: 'src/a.ts', old_string: 'x' } }],
+      ['tool_call', { tool: 'mcp__mec__acknowledge', input: { text: 1 } }],
+      ['rate_limit', { window: 'seven_day', status: 'allowed' }],
+      ['rate_limit', { window: 'seven_day_opus', status: 'warning' }],
+      ['rate_limit', { window: 'unknown', status: 'unknown' }],
+    ]
+    lines.forEach(([type, body], i) => {
+      event(i + 1, type, { type, ...(body as object) })
+    })
+    const res = await get('/api/inspect/attempts/att_1/activity')
+    expect(res.body).not.toContain(KEY)
+    expect(res.json().items.map((i: any) => i.summary)).toEqual([
+      'Ran pnpm test',
+      'Ran false (failed)',
+      'Ran git status',
+      'Edit src/a.ts',
+      'mcp__mec__acknowledge',
+      'Weekly limit: fine for now',
+      'Weekly Opus limit: close to the limit',
+      'Usage limit: not reported',
+    ])
+  })
+
+  it('a secret on the first line of a command stays out of the summary', async () => {
+    event(1, 'tool_call', { type: 'tool_call', tool: 'Bash', input: { command: `curl -H ${KEY}` } })
+    const [item] = (await get('/api/inspect/attempts/att_1/activity')).json().items
+    expect(item.summary).toContain('[redacted:')
+    expect(item.summary).not.toContain(KEY)
   })
 
   it('activity is redacted', async () => {

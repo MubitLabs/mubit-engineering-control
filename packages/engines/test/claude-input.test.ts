@@ -248,6 +248,37 @@ describe('claude stream-json input (§9, §12.3)', { timeout: 60_000 }, () => {
     expect(r.events.at(-1)).toMatchObject({ type: 'exit', terminal_reason: 'max_turns' })
   })
 
+  it('a one-shot launch closes stdin at once, so the engine does not wait for it', async () => {
+    const seen: string[] = []
+    const adapter = new ClaudeAdapter({
+      spawnFn: () => ({
+        pid: 1,
+        stdout: [] as never,
+        exited: Promise.resolve(0),
+        kill: () => {},
+        stdin: { write: (text) => seen.push(`write ${text}`), end: () => seen.push('end') },
+      }),
+    })
+    await adapter.launch(launchSpec(root))
+    expect(seen).toEqual(['end'])
+  })
+
+  it('a stream launch keeps stdin open after the objective', async () => {
+    const seen: string[] = []
+    const adapter = new ClaudeAdapter({
+      streamInput: true,
+      spawnFn: () => ({
+        pid: 1,
+        stdout: [] as never,
+        exited: new Promise(() => {}),
+        kill: () => {},
+        stdin: { write: () => seen.push('write'), end: () => seen.push('end') },
+      }),
+    })
+    await adapter.launch(launchSpec(root))
+    expect(seen).toEqual(['write'])
+  })
+
   it('a planner launch with no stream input takes no send', async () => {
     const adapter = new ClaudeAdapter({
       spawnFn: () => ({ pid: 1, stdout: [] as never, exited: Promise.resolve(0), kill: () => {} }),

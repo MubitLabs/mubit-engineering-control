@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
-import { classifyExit, Supervisor, SupervisorError } from '../src/supervisor'
+import { classifyExit, processStart, Supervisor, SupervisorError } from '../src/supervisor'
 
 const workdir = mkdtempSync(join(process.env.TMPDIR ?? '/tmp', 'mec-supervisor-'))
 afterAll(() => {
@@ -315,6 +315,29 @@ describe('Supervisor', () => {
     } finally {
       spy.mockRestore()
       kill(pid, 'SIGKILL')
+    }
+  })
+
+  it('a refused stop names what it left, with the group gone and only the stray standing (§8.1)', async () => {
+    const supervisor = new Supervisor()
+    const pid = await strayOutliving('survivor', supervisor)
+    const kill = process.kill.bind(process)
+    const spy = vi
+      .spyOn(process, 'kill')
+      .mockImplementation((target, signal) => (Math.abs(target) === pid ? true : kill(target, signal)))
+    try {
+      await expect(supervisor.stop('survivor', 1, { graceMs: 150 })).rejects.toThrow('refused to die')
+      await untilGroupGone('survivor', supervisor)
+      const left = supervisor.survivors('survivor', 1)
+      expect(left.map((mark) => mark.pid)).toEqual([pid])
+      expect(left[0]?.started).toBe(processStart(pid))
+
+      spy.mockRestore()
+      await expect(supervisor.stop('survivor', 1, { graceMs: 150 })).resolves.toBeDefined()
+      expect(supervisor.survivors('survivor', 1)).toEqual([])
+    } finally {
+      spy.mockRestore()
+      if (!isGone(pid)) kill(pid, 'SIGKILL')
     }
   })
 

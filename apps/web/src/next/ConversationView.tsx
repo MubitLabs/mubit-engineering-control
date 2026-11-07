@@ -1,12 +1,25 @@
 import { useEffect, useRef } from 'react'
-import { ActivityNote, AgentMessage, DeliveryPlan, PageHeader, UserMessage } from './Conversation'
+import {
+  ActivityNote,
+  AgentMessage,
+  DeliveryPlan,
+  MetaLine,
+  OpenWork,
+  PageHeader,
+  UserMessage,
+} from './Conversation'
 import { GlossaryButton } from './GlossarySheet'
 import { QuestionCard } from './NeedsView'
-import { Button } from './primitives'
 import { useShellActions } from './Shell'
-import { EmptyState } from './states'
+import { EmptyState, StateNotice } from './states'
 import { ReadNotice } from './WorkView'
-import type { ConversationEntry, ConversationViewModel, QuestionView, SurfaceState } from './work-model'
+import type {
+  ConversationEntry,
+  ConversationViewModel,
+  MetaStatusView,
+  QuestionView,
+  SurfaceState,
+} from './work-model'
 
 export interface ConversationViewProps {
   surface: SurfaceState
@@ -19,8 +32,14 @@ export interface ConversationViewProps {
   onInspect: () => void
   /** M1.3's intent setter, and nothing else. */
   onDiscuss: () => void
+  /** The delivery the plan shows. */
+  planWorkId?: string | null
+  /** What the meta agent is doing now. */
+  meta?: MetaStatusView | null
   onAnswer: (id: string, answer: string) => void
   onRetry: () => void
+  /** Opens a delivery in Work. */
+  onOpenWork: (workItemId: string) => void
   /** The text on its way to the server, shown until the thread has it. */
   sending?: string | null
   /** Unassigned history: nothing can be sent here, so the empty state invites nothing. */
@@ -38,7 +57,7 @@ function Entry({ entry }: { entry: ConversationEntry }) {
 }
 
 export function ConversationView(props: ConversationViewProps) {
-  const { surface, view, sending, foundId, follow } = props
+  const { surface, view, sending, foundId, follow, onOpenWork, planWorkId } = props
   const { openInspector } = useShellActions()
   const end = useRef<HTMLDivElement>(null)
   const found = useRef<HTMLDivElement>(null)
@@ -73,14 +92,18 @@ export function ConversationView(props: ConversationViewProps) {
           <Entry key={entry.id} entry={entry} />
         ),
       )}
-      {isSending && (
-        <>
-          <UserMessage>{sending}</UserMessage>
-          <ActivityNote>Sending</ActivityNote>
-        </>
-      )}
+      {isSending && <UserMessage>{sending}</UserMessage>}
       {props.questions.map((question) => (
         <QuestionCard key={question.id} view={question} onAnswer={props.onAnswer} />
+      ))}
+      {view.blocked.map((item) => (
+        <StateNotice
+          key={item.id}
+          kind="blocked"
+          title={item.title}
+          body={item.body}
+          action={{ label: 'Open this delivery', onClick: () => props.onOpenWork(item.id) }}
+        />
       ))}
       {view.plan && (
         <>
@@ -94,21 +117,22 @@ export function ConversationView(props: ConversationViewProps) {
                 openInspector()
               },
             }))}
-            {...(view.discuss && { action: { label: view.discuss.label, onClick: props.onDiscuss } })}
+            actions={[
+              ...(view.discuss ? [{ label: view.discuss.label, onClick: props.onDiscuss }] : []),
+              {
+                label: 'Inspect',
+                onClick: () => {
+                  props.onInspect()
+                  openInspector()
+                },
+              },
+              ...(planWorkId ? [{ label: 'Open in Work', onClick: () => onOpenWork(planWorkId) }] : []),
+            ]}
           />
-          <div className="actions">
-            <Button
-              variant="text"
-              onClick={() => {
-                props.onInspect()
-                openInspector()
-              }}
-            >
-              Inspect
-            </Button>
-          </div>
         </>
       )}
+      {view.open.length > 0 && <OpenWork rows={view.open} onOpen={onOpenWork} />}
+      {props.meta && <MetaLine view={props.meta} />}
       <div ref={end} />
     </div>
   )

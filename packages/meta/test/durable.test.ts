@@ -74,6 +74,7 @@ const rig = (brain: MetaBrain, store = new MemoryRepositories()) => {
         bootstrap: [],
         checks: [],
         trust: true,
+        hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
       })
     })
   }
@@ -484,6 +485,15 @@ describe('chat during Pause (decision #27, §20)', () => {
     return { service, store }
   }
 
+  it('the paused acknowledgement is on the record at once, and it is not a receipt', async () => {
+    const { service, store } = paused(countingBrain(plan).brain)
+    await service.onUserMessage({ messageId: 'msg_1', text: 'go', repoId: 'repo_a' })
+    expect(store.messages.get('msg_1')).toMatchObject({
+      pausedAck: 'Recorded. Processing is paused, so planning starts when you resume.',
+    })
+    expect(store.messages.get('msg_1')?.ackText).toBeUndefined()
+  })
+
   it('a new-work message is stored with no planner turn and no receipt', async () => {
     const next = countingBrain(plan)
     const { service, store } = paused(next.brain)
@@ -663,6 +673,38 @@ describe('shutdown owns the planner (§20)', () => {
     dirs.length = 0
   })
 
+  it('says which model a turn really started on, as soon as the engine does', async () => {
+    const envelope = (handle: AttemptHandle) => ({
+      seq: 1,
+      at: NOW,
+      attempt_id: handle.attempt_id,
+      generation: handle.generation,
+    })
+    const engine: BrainEngine = {
+      launch: heldEngine().engine.launch,
+      async *events(handle) {
+        yield {
+          ...envelope(handle),
+          type: 'session_started',
+          session_id: 'sess',
+          engine: 'claude',
+          engine_version: '2.1.317',
+          model: 'claude-opus-5-5',
+        } as EngineEvent
+        yield { ...envelope(handle), type: 'exit', code: 0, terminal_reason: 'completed' } as EngineEvent
+      },
+      async stop() {},
+    }
+    const sessions: unknown[] = []
+    const brain = new PlannerBrain({
+      ...brainOptions(engine),
+      readProtocol: () => 'The protocol.',
+      onSession: (session) => sessions.push(session),
+    })
+    await brain.decide(plannerTurn())
+    expect(sessions[0]).toEqual({ engine: 'claude', model: 'claude-opus-5-5' })
+  })
+
   it('abort stops the running engine, and the turn is deferred, not failed', async () => {
     const held = heldEngine()
     const brain = planner(held.engine)
@@ -686,6 +728,41 @@ describe('shutdown owns the planner (§20)', () => {
     held.end()
 
     await expect(turn).resolves.toMatchObject({ ack: 'On it' })
+    await brain.close()
+  })
+
+  it('a question answered by its report alone is a whole turn, with no corrective retry (§12.2)', async () => {
+    const held = heldEngine()
+    const brain = planner(held.engine)
+    const tools = {
+      journal: () => ({ ...EMPTY_JOURNAL, reports: [{ summary: 'It returns hello-world.md.' }] }),
+      execute: () => undefined,
+    } as unknown as PlannerTools
+    const turn = brain.decide({ ...plannerTurn(), tools })
+    await held.untilRunning()
+    held.end()
+    const decision = await turn
+
+    expect(decision.protocolIncomplete).toBeUndefined()
+    expect(held.specs).toHaveLength(1)
+    await brain.close()
+  })
+
+  it('a plan with no acknowledgement is still corrected', async () => {
+    const held = heldEngine()
+    const brain = planner(held.engine)
+    const tools = {
+      journal: () => ({ ...EMPTY_JOURNAL, plan: { tasks: [] } }),
+      execute: () => undefined,
+    } as unknown as PlannerTools
+    const turn = brain.decide({ ...plannerTurn(), tools })
+    await held.untilRunning()
+    held.end()
+    await held.untilLaunches(2)
+    await held.untilRunning()
+    held.end()
+
+    expect((await turn).protocolIncomplete).toBe(true)
     await brain.close()
   })
 

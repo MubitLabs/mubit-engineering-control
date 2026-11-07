@@ -19,6 +19,7 @@ import type {
   BasePolicy,
   BoundFinding,
   Caps,
+  Placement,
   SchedulableTask,
   SlotModelsView,
   SlotView,
@@ -35,9 +36,21 @@ import {
 } from '@mec/domain'
 import { type ResolvedModel, resolveModel } from '../../runtime/src/model'
 import { repoOf } from './admission'
-import { blockWork, isHeld, isTerminal, mandateOf, noVerdict, processingOf } from './authority'
-import type { FollowUps } from './followups'
+import {
+  blockWork,
+  cannotStartYet,
+  HOST_RUN_UNAGREED,
+  holdsGroup,
+  hostRunAgreed,
+  isHeld,
+  isTerminal,
+  mandateOf,
+  noVerdict,
+  processingOf,
+} from './authority'
+import { enqueueWake, type FollowUps } from './followups'
 import { type Continuation, nextRepair, nextReview, repairLedger } from './repair'
+import { classifyWake } from './wakes'
 import { requiredChecks, verdictsOf } from './work-facts'
 
 /** The capability table `resolveModel` reads; the planner's seam supplies it. */
@@ -52,6 +65,8 @@ export type SchedulerDeps = {
   caps: Caps
   /** The slots a launch can start on, marks included. */
   slots: () => readonly SlotModelsView[]
+  /** The meta slot's engine, which unpinned work prefers where the tier fits; absent, nothing does. */
+  metaEngine?: () => string | undefined
   table: () => PlacementTable | undefined
   followups: FollowUps
   /** A launch row's state, when the queue can say. `failed` means it gave up. */
@@ -89,6 +104,7 @@ const launchKey = (attempt: StoreDoc): string => `${String(attempt.id)}:${Number
 
 function occupies(deps: SchedulerDeps, attempt: StoreDoc): boolean {
   const state = String(attempt.state) as AttemptState
+  if (cannotStartYet(deps.store, attempt)) return false
   // A resume on its way holds what it held, or a new task would take its place (§20).
   if (attempt.resuming === true) return true
   if (!OCCUPYING.includes(state)) return false
@@ -151,11 +167,14 @@ function lastReport(store: Store, attempt: StoreDoc): Pick<Report, 'kind' | 'sum
 /**
  * §10 and §15: an agent ending its turn is not success, and passing checks do not undo what it
  * said. `failed` and `blocked` block the task with the report's summary, and `dropped` ends it.
+ * Red checks do not undo it either: a person must act, so no repair runs after a `blocked` or
+ * `failed` report, whatever the head. `dropped` on a red head is no such word, and checks decide.
  * Returns whether the report settled the task. Runs before acceptance, on a task still waiting
  * for this attempt: a late report never takes back an accepted task.
  */
 function settleOnReport(store: Store, task: StoreDoc, attempt: StoreDoc, at: string): boolean {
-  if (attempt.state !== 'succeeded' && !noVerdict(attempt)) return false
+  const passedOrUnjudged = attempt.state === 'succeeded' || noVerdict(attempt)
+  if (attempt.state !== 'checks_failed' && !passedOrUnjudged) return false
   if (task.status !== 'active' && task.status !== 'awaiting_review') return false
   const report = lastReport(store, attempt)
   const id = String(attempt.id)
@@ -163,7 +182,7 @@ function settleOnReport(store: Store, task: StoreDoc, attempt: StoreDoc, at: str
     blockTask(store, task, `attempt ${id} reported ${report.kind}: ${report.summary}`, at)
     return true
   }
-  if (report?.kind !== 'dropped') return false
+  if (report?.kind !== 'dropped' || !passedOrUnjudged) return false
   const { deferred: _deferred, ...rest } = task
   moveTask(store, rest, 'cancel', { cancelledReason: `attempt ${id} dropped it: ${report.summary}` }, at)
   appendEvent(
@@ -321,8 +340,23 @@ function settleAttempt(
           ...target,
           ...(claimed !== undefined && { claimedHead: claimed }),
         })
-  if ('block' in step) blockTask(store, task, step.block, at)
-  else continueTask(store, task, step.next, at)
+  if ('block' in step) {
+    blockTask(store, task, step.block, at)
+    wakeOnUsedUp(deps.effects, task, step.block)
+  } else {
+    continueTask(store, task, step.next, at)
+  }
+}
+
+/**
+ * §6: used-up repairs are work parked with no automatic resolution, and no report may say so. The
+ * key is the task's family, so a task wakes one turn however many checks failed or passes ran.
+ */
+function wakeOnUsedUp(effects: Effects, task: StoreDoc, what: string): void {
+  const workItemId = String(task.workItemId)
+  if (classifyWake({ kind: 'work_parked', workItemId, autoResolvable: false }) !== 'wake') return
+  const root = typeof task.repairOf === 'string' ? task.repairOf : String(task.id)
+  enqueueWake(effects, { causationId: `used-up:${root}`, reason: 'work parked', detail: what, workItemId })
 }
 
 /**
@@ -332,6 +366,7 @@ function settleAttempt(
  */
 export function openRepairTask(
   store: Store,
+  effects: Effects,
   caps: Caps,
   input: { root: StoreDoc; evidence: string; worktree: string; branch: string; id: string; at: string },
 ): void {
@@ -343,6 +378,7 @@ export function openRepairTask(
   if ('block' in step) {
     if (canTransition(TASK_MACHINE, String(root.status), 'block')) blockTask(store, root, step.block, at)
     else blockWork(store, String(root.workItemId), step.block, at)
+    wakeOnUsedUp(effects, root, step.block)
     return
   }
   const number = store.tasks.list({ workItemId: String(root.workItemId) }).length + 1
@@ -493,7 +529,7 @@ function modelFit(
   deps: SchedulerDeps,
   task: StoreDoc,
   views: readonly SlotModelsView[],
-): { modelSlots?: string[]; resolved: Map<string, ResolvedModel> } {
+): { modelSlots?: string[]; degradedSlots?: string[]; resolved: Map<string, ResolvedModel> } {
   const resolved = new Map<string, ResolvedModel>()
   if (task.modelRequest === undefined || process.env.MEC_FAKE_ENGINE === '1') return { resolved }
   const request = ModelRequest.safeParse(task.modelRequest)
@@ -509,7 +545,10 @@ function modelFit(
       // Refused for this slot: another may serve it, and if none does the task defers.
     }
   }
-  return { modelSlots: [...resolved.keys()], resolved }
+  const degradedSlots = [...resolved].flatMap(([slotId, model]) =>
+    model.tier_degraded === undefined ? [] : [slotId],
+  )
+  return { modelSlots: [...resolved.keys()], degradedSlots, resolved }
 }
 
 function nextAttemptId(store: Store): string {
@@ -518,11 +557,26 @@ function nextAttemptId(store: Store): string {
   return `att_${max + 1}`
 }
 
-function rationale(task: SchedulableTask, slotId: string, candidates: number): string {
-  if (task.slotId !== undefined) return `pinned to ${slotId} by the plan`
-  return candidates > 1
-    ? `${slotId} had the lowest utilisation of ${candidates} candidates`
-    : `${slotId} is the only candidate`
+/** What really decided this launch: a step that changed nothing is not claimed (§7, §11). */
+function rationale(
+  task: SchedulableTask,
+  slotId: string,
+  placement: Placement,
+  metaEngine: string | undefined,
+): string {
+  if (placement.pinned) return `pinned to ${slotId} by the plan`
+  const { candidates } = placement
+  const said = [
+    ...(placement.missed.includes('slot_class') ? [`no candidate in slot class ${task.slotClass}`] : []),
+    ...(placement.narrowedBy.includes('slot_class') ? [`in slot class ${task.slotClass}`] : []),
+    ...(placement.narrowedBy.includes('engine') ? [`on the meta agent's engine, ${metaEngine}`] : []),
+    ...(placement.missed.includes('engine') ? [`no ${metaEngine} slot fits`] : []),
+    ...(placement.tiebreak === 'only_candidate' ? ['the only candidate'] : []),
+    ...(placement.tiebreak === 'utilisation' ? [`lowest utilisation of ${candidates} candidates`] : []),
+    ...(placement.tiebreak === 'load' ? [`fewest attempts of ${candidates} candidates`] : []),
+    ...(placement.tiebreak === 'id' ? [`first by id of ${candidates} tied candidates`] : []),
+  ]
+  return `${slotId}: ${said.join('; ')}`
 }
 
 /**
@@ -569,6 +623,15 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
       }
       continue
     }
+    if (!hostRunAgreed(store, repoOf(work))) {
+      const unagreed = { reason: HOST_RUN_UNAGREED, releases: 'the owner agrees to host runs here' }
+      const changed = startable.map((task) => defer(store, task, unagreed, at)).some(Boolean)
+      if (changed || workItemId === scoped) {
+        const body = { workItemId, reason: HOST_RUN_UNAGREED, at }
+        appendEvent(store, `work:${workItemId}`, 'launch_withheld', body, at)
+      }
+      continue
+    }
 
     const byId = new Map(tasks.map((task) => [String(task.id), task]))
     for (const task of startable) {
@@ -579,7 +642,7 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
       }
       const taskId = String(task.id)
       const next = task.next as Continuation | undefined
-      const { modelSlots, resolved } = modelFit(deps, task, views)
+      const { modelSlots, degradedSlots, resolved } = modelFit(deps, task, views)
       const hint = task.slotHint as { slotClass?: string; slotId?: string } | undefined
       candidates.set(taskId, { doc: task, resolved })
       ready.push({
@@ -592,13 +655,14 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
         ...(hint?.slotClass !== undefined && { slotClass: hint.slotClass }),
         ...(hint?.slotId !== undefined && { slotId: hint.slotId }),
         ...(modelSlots !== undefined && { modelSlots }),
+        ...(degradedSlots !== undefined && { degradedSlots }),
       })
     }
   }
 
   const active = store.attempts
     .list()
-    .filter((doc) => occupies(deps, doc))
+    .filter((doc) => occupies(deps, doc) || holdsGroup(doc))
     .map((doc) => ({
       taskId: String(doc.taskId),
       slotId: String(doc.slotId),
@@ -610,6 +674,7 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
       ? [{ ...FAKE_SLOT, inUse: inUse(FAKE_SLOT.id) }]
       : views.map((view) => ({
           id: view.slotId,
+          engine: view.engine,
           state: view.healthy ? 'healthy' : 'degraded',
           pinnedRoles: [],
           inUse: inUse(view.slotId),
@@ -618,6 +683,7 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
           ...(view.slotClass !== undefined && { slotClass: view.slotClass }),
         }))
 
+  const metaEngine = deps.metaEngine?.()
   const dispatch = planDispatches({
     ready,
     slots,
@@ -626,6 +692,7 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
     utilisationCeiling: UTILISATION_CEILING,
     // §11: a person continuing existing work goes before any launch.
     reservedWakeSlot: followups.deliveryWaiting(),
+    ...(metaEngine !== undefined && { preferredEngine: metaEngine }),
   })
 
   for (const { taskId, reason } of dispatch.deferred) {
@@ -634,7 +701,7 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
   }
 
   const records: LaunchRecord[] = []
-  for (const launch of dispatch.launches) {
+  for (const [index, launch] of dispatch.launches.entries()) {
     const candidate = candidates.get(launch.taskId) as { doc: StoreDoc; resolved: Map<string, ResolvedModel> }
     const task = ready.find((row) => row.taskId === launch.taskId) as SchedulableTask
     const { deferred: _deferred, next, ...doc } = candidate.doc
@@ -642,9 +709,6 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
       store.tasks.save({ ...doc, updatedAt: at })
     }
     const model = candidate.resolved.get(launch.slotId)
-    const placeable = slots.filter(
-      (slot) => slot.state === 'healthy' && (task.modelSlots?.includes(slot.id) ?? true),
-    ).length
     const attemptId = nextAttemptId(store)
     const { workItemId } = task
     store.attempts.save({
@@ -654,7 +718,7 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
       slotId: launch.slotId,
       state: 'queued',
       generation: 1,
-      placement: rationale(task, launch.slotId, placeable),
+      placement: rationale(task, launch.slotId, dispatch.placements[index] as Placement, metaEngine),
       ...(next !== undefined && { role: task.role, continuation: next }),
       ...(model !== undefined && {
         resolved_model: model.model,

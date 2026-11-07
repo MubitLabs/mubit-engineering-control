@@ -38,7 +38,7 @@ import { type CheckOutcome, type CheckSpec, runCheck } from './checks'
 import { AttemptJournal } from './journal'
 import { type ParkDecision, parkFromEvents } from './park'
 import { redactEvent } from './redact-events'
-import type { Supervisor } from './supervisor'
+import type { ProcessMark, Supervisor } from './supervisor'
 
 /** A `Runtime` call whose wiring belongs to a later milestone; it fails by name, never quietly. */
 export class NotWiredError extends Error {
@@ -60,8 +60,11 @@ export interface AttemptFacts extends CoreForEngines {
   attemptParked(attempt: AttemptRef, state: ParkedState, reason: string, resetsAt?: string): void
   attemptInterrupted(attempt: AttemptRef, reason: string): void
   attemptFailed(attempt: AttemptRef, reason: string): void
-  /** §12.5: the group did not go. The attempt stays as it is and the failure is on the record. */
-  stopFailed(attempt: AttemptRef, detail: string): void
+  /**
+   * §12.5: the group did not go. The attempt stays as it is and the failure is on the record.
+   * `held` is what outlives an attempt that ends here: its capacity stays held until they go (§8.1).
+   */
+  stopFailed(attempt: AttemptRef, detail: string, held?: readonly ProcessMark[]): void
   /** §20: the group is gone and the journal is silent. Reconciliation decides what follows. */
   attemptStalled(attempt: AttemptRef): void
   /** §8.6: what the store holds of this attempt's journal, as `generation seq`, for replay. */
@@ -99,6 +102,8 @@ export type AttemptPlan = {
   onCheckStart?: (pid: number) => void
   /** A relaunch on the same slot continues its session (§5.10). A switch never carries one. */
   resume?: { session_id: string }
+  /** Why the repo's commands may not start now, though the engine was allowed to. */
+  withheld?: () => StopReason | undefined
 }
 
 export type AttemptRunnerDeps = {
@@ -118,7 +123,7 @@ type InputEvidence = {
   inputFinished?: (handle: Live['handle'], inputId: string) => Promise<void>
 }
 
-export type StopReason = 'stop_requested' | 'wall_clock' | 'server_closing'
+export type StopReason = 'stop_requested' | 'wall_clock' | 'server_closing' | 'host_run_unagreed'
 
 type Live = {
   attempt: AttemptRef
@@ -336,10 +341,10 @@ export class AttemptRunner {
     await live.done
   }
 
-  #stopFailed(live: Live, error: unknown): void {
+  #stopFailed(live: Live, error: unknown, held?: readonly ProcessMark[]): void {
     const { facts } = this.#deps
     const detail = error instanceof Error ? error.message : String(error)
-    facts.atomic(() => facts.stopFailed(live.attempt, this.#clean(live, detail)))
+    facts.atomic(() => facts.stopFailed(live.attempt, this.#clean(live, detail), held))
   }
 
   async #stopGroup(live: Live): Promise<void> {
@@ -368,7 +373,10 @@ export class AttemptRunner {
       await this.#stopGroup(live).catch(() => {})
       // A group that would not go stays on the record as a failed stop, and it ended this attempt.
       const { attempt_id, generation } = attempt
-      if (this.#deps.supervisor.owns(attempt_id, generation)) this.#stopFailed(live, error)
+      const { supervisor } = this.#deps
+      if (supervisor.owns(attempt_id, generation)) {
+        this.#stopFailed(live, error, supervisor.survivors(attempt_id, generation))
+      }
       try {
         const detail = error instanceof Error ? error.message : String(error)
         facts.atomic(() => facts.attemptFailed(attempt, this.#clean(live, `monitor_error: ${detail}`)))
@@ -450,7 +458,8 @@ export class AttemptRunner {
       return this.#fail(live, `commit_failed: ${detail}`)
     }
     facts.atomic(() => facts.workCompleted(attempt, head))
-    await this.#runChecks(attempt, head, plan, live.checks.signal, () => live.stopReason)
+    const stopped = (): StopReason | undefined => live.stopReason ?? plan.withheld?.()
+    await this.#runChecks(attempt, head, plan, live.checks.signal, stopped)
   }
 
   /**

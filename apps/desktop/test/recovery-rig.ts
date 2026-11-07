@@ -11,6 +11,7 @@ import { type MetaBrain, repoFields } from '@mec/meta'
 import { MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import Database from 'better-sqlite3'
 import { startServer } from '../src/composition'
+import { TEST_KEY } from './approval-rig'
 
 export const POLICY = '{"preAuthorised":{}}'
 export const WORK = 'wi_abcdefghij'
@@ -25,7 +26,7 @@ const pids: number[] = []
 export async function cleanUp(): Promise<void> {
   for (const close of closers.splice(0)) await close()
   process.env.PATH = REAL_PATH
-  delete process.env.MEC_REAL_RUNNER
+  process.env.MEC_REAL_RUNNER = '0'
   delete process.env.MEC_FAKE_ENGINE
   for (const pid of pids.splice(0)) {
     try {
@@ -97,6 +98,7 @@ export function scratch(steps: unknown[]): Rig {
 }
 
 export type Seed = {
+  bootstrap?: string[]
   checks?: { name: string; cmd: string }[]
   slot?: Record<string, unknown>
   task?: Record<string, unknown>
@@ -104,6 +106,10 @@ export type Seed = {
   attempt?: Record<string, unknown>
   /** No launch row: the state an attempt is in once its launch has run. */
   noRow?: boolean
+  /** No attempt either: a task a pass has not placed yet. */
+  noAttempt?: boolean
+  /** A store from before the agreement, where no repository carries one. */
+  preUpgrade?: boolean
 }
 
 export function seedInto(store: SqliteStore, repo: string, seed: Seed = {}): void {
@@ -111,9 +117,10 @@ export function seedInto(store: SqliteStore, repo: string, seed: Seed = {}): voi
     store.engines.save({
       id: 'repo_a',
       url: repo,
-      bootstrap: [],
+      bootstrap: seed.bootstrap ?? [],
       checks: seed.checks ?? [],
       trust: false,
+      ...(seed.preUpgrade !== true && { hostRunAgreedAt: '2026-11-05T08:00:00.000Z' }),
     })
     store.messages.save({ id: 'msg_1', text: 'please add the thing' })
     store.slots.save({
@@ -145,6 +152,7 @@ export function seedInto(store: SqliteStore, repo: string, seed: Seed = {}): voi
       acceptanceChecks: ['manual-review'],
       ...seed.task,
     })
+    if (seed.noAttempt === true) return
     store.attempts.save({
       id: 'att_1',
       taskId: 'task_1',
@@ -200,8 +208,14 @@ export async function serve(
   opts: Partial<Parameters<typeof startServer>[0]> & { real?: boolean } = {},
 ): Promise<Served> {
   const { real = true, ...rest } = opts
-  if (real) process.env.MEC_REAL_RUNNER = '1'
-  const server = await startServer({ dataDir: rig.dataDir, policyText: POLICY, closeBoundMs: 6000, ...rest })
+  process.env.MEC_REAL_RUNNER = real ? '1' : '0'
+  const server = await startServer({
+    dataDir: rig.dataDir,
+    policyText: POLICY,
+    closeBoundMs: 6000,
+    ...('approvalKey' in rest || 'openLink' in rest ? {} : { approvalKey: TEST_KEY }),
+    ...rest,
+  })
   closers.push(server.close)
   return server
 }

@@ -5,9 +5,10 @@ export type { Frozen } from './drafts'
 
 /**
  * One submission at a time per repository (Internal design 8). A Send freezes the exact payload
- * and its key; the draft stays separate, so typing during a send is never lost and only a
- * confirmed success removes the sent text. A failed or uncertain send keeps the object: Retry
- * resends it with the same key, and any edit to the text, target or intent gets a new one.
+ * and its key and takes the text out of the draft at once, because the frozen copy now holds it
+ * and a turn can take most of a minute. Typing during a send is never lost. A failed or uncertain
+ * send keeps the object and puts its text back in front of what was typed since: Retry resends it
+ * with the same key, and any edit to the text, target or intent gets a new one.
  *
  * This object is the guard. It changes synchronously inside the keydown, where React state
  * would still show the last render and let a double Enter through.
@@ -56,24 +57,38 @@ export function createSubmissions(deps: {
     const known = current.get(repoId)
     if (known !== undefined) return known
     const restored = deps.drafts.pending(repoId)
-    return restored === null ? null : { frozen: restored, state: 'failed' }
+    if (restored === null) return null
+    // A reload found this: the box was emptied for a send whose outcome nobody saw.
+    const interrupted: Submission = { frozen: restored, state: 'failed' }
+    current.set(repoId, interrupted)
+    restore(restored)
+    return interrupted
+  }
+
+  /** A send that did not land goes back in the box, ahead of anything typed since. */
+  const restore = (frozen: Frozen): void => {
+    const scope = draftScope(frozen)
+    const typed = deps.drafts.read(frozen.repoId, scope)
+    if (typed.startsWith(frozen.text)) return
+    deps.drafts.write(frozen.repoId, scope, typed === '' ? frozen.text : `${frozen.text}\n${typed}`)
   }
 
   const launch = async (frozen: Frozen): Promise<void> => {
+    const scope = draftScope(frozen)
     current.set(frozen.repoId, { frozen, state: 'pending' })
     deps.drafts.holdPending(frozen)
+    deps.drafts.write(frozen.repoId, scope, withoutSent(deps.drafts.read(frozen.repoId, scope), frozen.text))
     changed()
     try {
       await deps.send(frozen)
     } catch (error) {
       current.set(frozen.repoId, { frozen, state: 'failed', error })
+      restore(frozen)
       changed()
       return
     }
     current.delete(frozen.repoId)
     deps.drafts.releasePending(frozen.repoId)
-    const scope = draftScope(frozen)
-    deps.drafts.write(frozen.repoId, scope, withoutSent(deps.drafts.read(frozen.repoId, scope), frozen.text))
     changed()
   }
 

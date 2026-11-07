@@ -23,15 +23,15 @@
   {
     "name": "count from a different list",
     "file": "apps/web/src/next/work-model.ts",
-    "find": "count: read.status === 'ready' && !partial ? waiting.length : null",
-    "replace": "count: read.status === 'ready' && !partial ? items.length : null",
+    "find": "  const counted = waiting.filter((item) => item.kind !== 'work' || !item.readOnly).length\n",
+    "replace": "  const counted = items.length\n",
     "tests": ["apps/web/test/work-model.test.ts"]
   },
   {
     "name": "read failure gives needs count 0",
     "file": "apps/web/src/next/work-model.ts",
-    "find": "count: read.status === 'ready' && !partial ? waiting.length : null",
-    "replace": "count: read.status === 'ready' && !partial ? waiting.length : 0",
+    "find": "count: read.status === 'ready' && !partial ? counted : null",
+    "replace": "count: read.status === 'ready' && !partial ? counted : 0",
     "tests": ["apps/web/test/work-model.test.ts"]
   },
   {
@@ -86,8 +86,8 @@
   {
     "name": "delegation inferred from dependencies",
     "file": "apps/web/src/next/work-model.ts",
-    "find": "delegation: detail.delegation.map((link) => ({\n      parent: link.parentAttemptId,\n      child: link.childAttemptId,\n    })),",
-    "replace": "delegation: detail.tasks.flatMap((task) => task.dependsOn.map((id) => ({ parent: id, child: task.id }))),",
+    "find": "delegation: detail.delegation.map(delegationView),",
+    "replace": "delegation: detail.tasks.flatMap((task) => task.dependsOn.map((id) => ({ parent: id, child: task.id }) as never)),",
     "tests": ["apps/web/test/work-model.test.ts"]
   },
   {
@@ -191,8 +191,8 @@
   {
     "name": "a part list is counted",
     "file": "apps/web/src/next/work-model.ts",
-    "find": "count: read.status === 'ready' && !partial ? waiting.length : null",
-    "replace": "count: read.status === 'ready' ? waiting.length : null",
+    "find": "count: read.status === 'ready' && !partial ? counted : null",
+    "replace": "count: read.status === 'ready' ? counted : null",
     "tests": ["apps/web/test/work-model.test.ts"]
   },
   {
@@ -309,21 +309,21 @@
   },
   {
     "name": "another day has no date",
-    "file": "apps/web/src/next/work-model.ts",
+    "file": "apps/web/src/next/format.ts",
     "find": "if (date.toDateString() === now.toDateString()) return date.toLocaleTimeString([], time)",
     "replace": "return date.toLocaleTimeString([], time)",
     "tests": ["apps/web/test/work-model.test.ts"]
   },
   {
     "name": "today carries a date",
-    "file": "apps/web/src/next/work-model.ts",
+    "file": "apps/web/src/next/format.ts",
     "find": "if (date.toDateString() === now.toDateString()) return date.toLocaleTimeString([], time)\n",
     "replace": "",
     "tests": ["apps/web/test/work-model.test.ts"]
   },
   {
     "name": "another year has no year",
-    "file": "apps/web/src/next/work-model.ts",
+    "file": "apps/web/src/next/format.ts",
     "find": "const year = date.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' as const }",
     "replace": "const year = {}",
     "tests": ["apps/web/test/work-model.test.ts"]
@@ -422,8 +422,8 @@
   {
     "name": "an acknowledgement drops the work's title on a wake",
     "file": "apps/web/src/next/work-model.ts",
-    "find": "text: withTitles(line.ackText, work) }]\n    if (isWake",
-    "replace": "text: line.ackText }]\n    if (isWake",
+    "find": "        : [{ id: `${line.id}:ack`, kind: 'agent' as const, text: withTitles(text, work) }]\n",
+    "replace": "        : [{ id: `${line.id}:ack`, kind: 'agent' as const, text }]\n",
     "tests": ["apps/web/test/work-model.test.ts", "apps/web/test/inspection-contract.test.ts"]
   }
 ]

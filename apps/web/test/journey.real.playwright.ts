@@ -18,8 +18,9 @@ const ONE_REAL_PASS = 'one real pass is the budget (decision #18)'
 const KILL_PASS = process.env.MEC_JOURNEY_KILL === '1'
 
 let rig: Rig
-test.beforeEach(async () => {
+test.beforeEach(async ({ page }) => {
   rig = await startRig(mode)
+  await page.addInitScript((key) => window.sessionStorage.setItem('mec.approval-key', key), rig.approvalKey)
 })
 test.afterEach(async () => {
   await rig.dispose()
@@ -188,9 +189,9 @@ test('a delivery ready for review says so on its Work row', async ({ page }) => 
   await approve(page, /pull request/i)
   await expect.poll(deliveryStage, QUIET_TIME).toBe('pr-ready')
   await open(page, 'Work')
-  // `pr_ready` lands on the release and inbox streams, which the page does not follow, so the row
-  // moves on the 10 s refetch. Five seconds, the default, made this a race.
-  await expect(page.locator('.work-row').first()).toContainText('Ready for review', { timeout: 15_000 })
+  // `pr_ready` lands on the work stream the page follows, so this is the default bound, not the
+  // 10 s refetch.
+  await expect(page.locator('.work-row').first()).toContainText('Ready for review', { timeout: 5_000 })
 })
 
 test('declining keeps the local result', async ({ page }) => {

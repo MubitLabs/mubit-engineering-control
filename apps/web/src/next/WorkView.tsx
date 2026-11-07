@@ -15,6 +15,7 @@ import type {
   WorkGroupView,
   WorkRowView,
 } from './work-model'
+import { repoScopeApplies } from './work-model'
 
 /** A failed read sits above what is kept, and a loading one always has somewhere to end. */
 export function ReadNotice({
@@ -61,7 +62,7 @@ export function RepoScope({
   value: string
   onChange: (option: RepoFilterOption) => void
 }) {
-  if (options.length < 2) return null
+  if (!repoScopeApplies(options)) return null
   return (
     <label className="repo-scope">
       <span>Repository</span>
@@ -146,23 +147,63 @@ function DeliveryDetail({
   }, [stopping])
   return (
     <div className="work-detail" ref={root}>
-      <DeliveryPlan
-        {...detail.plan}
-        tasks={detail.plan.tasks.map((task) => ({
-          ...task,
-          selected: task.id === selectedTaskId,
-          onOpen: () => {
-            onOpenTask(task.id)
-            openInspector()
-          },
-        }))}
-        {...(discuss && { action: { label: discuss.label, onClick: () => onDiscuss(discuss) } })}
-      />
-      <section className="work-links">
-        <h3>Dependencies</h3>
-        {detail.dependencies.length === 0 ? (
-          <p>No task here depends on another.</p>
-        ) : (
+      {detail.outcome ? (
+        <section className="work-answer">
+          <h3>{detail.outcome.kind === 'answered' ? 'Answer' : 'No answer'}</h3>
+          <p>{detail.outcome.text}</p>
+        </section>
+      ) : (
+        <DeliveryPlan
+          {...detail.plan}
+          footnote=""
+          tasks={detail.plan.tasks.map((task) => ({
+            ...task,
+            selected: task.id === selectedTaskId,
+            onOpen: () => {
+              onOpenTask(task.id)
+              openInspector()
+            },
+          }))}
+          {...(discuss && { actions: [{ label: discuss.label, onClick: () => onDiscuss(discuss) }] })}
+        />
+      )}
+      {detail.delegation.length > 0 && (
+        <section className="work-links">
+          <h3>Delegation</h3>
+          <ul className="delegation-list">
+            {detail.delegation.map((row) => (
+              <li key={row.taskId}>
+                <strong>{row.title}</strong>
+                <span className="delegation-state">{row.stateLabel}</span>
+                <p>{row.who}</p>
+                <p>{row.why}</p>
+                <p>
+                  {row.attempts}
+                  {row.activity ? `. ${row.activity}` : ''}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {!detail.outcome && (
+        <section className="work-links">
+          <h3>Delivery</h3>
+          <p className={detail.delivery.failure === null ? undefined : 'tone-bad'}>{detail.delivery.label}</p>
+          {detail.delivery.ci && <p>{detail.delivery.ci}</p>}
+          {detail.delivery.waiting && <p>{detail.delivery.waiting}</p>}
+          {detail.delivery.prUrl && detail.delivery.prLabel && (
+            <p>
+              <a href={detail.delivery.prUrl} target="_blank" rel="noreferrer">
+                {detail.delivery.prLabel}
+              </a>
+            </p>
+          )}
+        </section>
+      )}
+      {detail.dependencies.length > 0 && (
+        <section className="work-links">
+          <h3>Dependencies</h3>
           <ul>
             {detail.dependencies.map((link) => (
               <li key={link.task}>
@@ -171,22 +212,8 @@ function DeliveryDetail({
               </li>
             ))}
           </ul>
-        )}
-      </section>
-      <section className="work-links">
-        <h3>Delegation</h3>
-        {detail.delegation.length === 0 ? (
-          <p>No delegation recorded yet.</p>
-        ) : (
-          <ul>
-            {detail.delegation.map((link) => (
-              <li key={link.child}>
-                {link.parent} started {link.child}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+        </section>
+      )}
       {detail.actions.length > 0 && !stopping && (
         <div className="actions">
           {detail.actions.map((action) => (

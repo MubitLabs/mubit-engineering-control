@@ -277,10 +277,12 @@ for (const viewport of VIEWPORTS) {
       const models = named(page, 'Models')
       await tabTo(page, models)
       await page.keyboard.press('Enter')
-      await expect(page.getByLabel('Capability table')).toBeVisible()
+      await expect(page.locator('.plain-summary')).toContainText('Tiers')
       await tabTo(page, named(page, 'Policy'), 'Shift+Tab')
       await page.keyboard.press('Enter')
 
+      await tabTo(page, page.locator('.advanced > summary'))
+      await page.keyboard.press('Enter')
       const text = page.getByLabel('Policy file')
       await tabTo(page, text)
       await page.keyboard.press('ControlOrMeta+a')

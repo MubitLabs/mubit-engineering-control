@@ -56,6 +56,7 @@ function row(
     stage,
     reason: null,
     nextAction: null,
+    turnOutcome: null,
     taskCounts: { total: 3, byStatus: { active: 1, ready: 2 } },
     lastActivityAt: OBSERVED,
     updatedAt: OBSERVED,
@@ -171,15 +172,26 @@ const tasks = {
   shipped: taskRow('task_shipped', 'SAMPLE-ONLY add the shortcuts', 'integrated'),
 }
 
-const NO_DELIVERY = { stage: 'none', branch: null, headSha: null, prNumber: null, prUrl: null } as const
+const DELIVERY_FACTS = { repo: null, ci: null, ciReadAt: null, failure: null, mergeCardId: null }
+
+const NO_DELIVERY = {
+  stage: 'none',
+  branch: null,
+  headSha: null,
+  prNumber: null,
+  prUrl: null,
+  ...DELIVERY_FACTS,
+} as const
 
 const quietDetail = {
   originMessageId: null,
   goal: null,
+  answer: null,
   hold: null,
   planRevision: 1,
   delegation: [],
   delivery: NO_DELIVERY,
+  retry: null,
   coverage: UNCOVERED,
   cursors: {},
   cursorsTruncated: 0,
@@ -193,7 +205,42 @@ export const workDetails = {
     originMessageId: 'msg_user',
     goal: 'SAMPLE-ONLY find anything in the console',
     tasks: [tasks.done, tasks.active, tasks.partial],
-    delegation: [{ parentAttemptId: 'attempt_lead', childAttemptId: 'attempt_child' }],
+    delegation: [
+      {
+        taskId: tasks.done.id,
+        title: tasks.done.title,
+        role: tasks.done.role,
+        status: tasks.done.status,
+        requested: { tier: 'fast', model: null },
+        attempts: 1,
+        latest: {
+          id: 'attempt_lead',
+          generation: 1,
+          state: 'succeeded',
+          role: tasks.done.role,
+          requested: { tier: 'fast', model: null },
+          actual: { model: 'sample-small', engine: 'claude', slotLabel: 'sample-slot' },
+          baseSha: null,
+          headSha: null,
+          processOutcome: 'completed',
+          lastActivityAt: null,
+          placement: 'sample-slot had the lowest utilisation of 2 candidates',
+        },
+        waiting: null,
+        activity: { summary: 'SAMPLE-ONLY report', at: '2026-11-05T09:00:00.000Z' },
+      },
+      {
+        taskId: tasks.partial.id,
+        title: tasks.partial.title,
+        role: tasks.partial.role,
+        status: tasks.partial.status,
+        requested: { tier: 'balanced', model: null },
+        attempts: 0,
+        latest: null,
+        waiting: 'its dependencies have not finished',
+        activity: null,
+      },
+    ],
     coverage: COVERED,
     cursors: { 'work:work_working': 12 },
   },
@@ -212,7 +259,14 @@ export const workDetails = {
     ...workRows.completed,
     ...quietDetail,
     tasks: [tasks.shipped],
-    delivery: { stage: 'merged', branch: 'sample/shortcuts', headSha: TASK_HEAD, prNumber: 12, prUrl: null },
+    delivery: {
+      stage: 'merged',
+      branch: 'sample/shortcuts',
+      headSha: TASK_HEAD,
+      prNumber: 12,
+      prUrl: null,
+      ...DELIVERY_FACTS,
+    },
     coverage: COVERED,
   },
   work_legacy: { ...workRows.legacy, ...quietDetail, planRevision: null, tasks: [] },
@@ -233,6 +287,7 @@ const attempt = (
   baseSha: OLD_HEAD,
   headSha,
   processOutcome: 'unknown',
+  placement: null,
   lastActivityAt: OBSERVED,
   ...extra,
 })
@@ -262,7 +317,13 @@ export const taskDetails = {
     checks: {
       headSha: TASK_HEAD,
       results: [
-        { name: 'SAMPLE-ONLY typecheck', state: 'passed', headSha: TASK_HEAD, detail: 'clean', artifactRef: null },
+        {
+          name: 'SAMPLE-ONLY typecheck',
+          state: 'passed',
+          headSha: TASK_HEAD,
+          detail: 'clean\n0 errors',
+          artifactRef: null,
+        },
         // A stale row for another commit: it must never show under this head.
         { name: 'SAMPLE-ONLY stale check', state: 'failed', headSha: OLD_HEAD, detail: 'old', artifactRef: null },
       ],

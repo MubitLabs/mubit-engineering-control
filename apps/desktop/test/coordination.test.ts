@@ -20,6 +20,7 @@ import { MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
 import { startServer } from '../src/composition'
+import { ownerHeaders, TEST_KEY } from './approval-rig'
 
 const FAKE_CLI = fileURLToPath(new URL('../../../packages/testkit/fake-cli/claude', import.meta.url))
 const POLICY = '{"preAuthorised":{}}'
@@ -32,7 +33,7 @@ const closers: (() => Promise<void>)[] = []
 afterEach(async () => {
   for (const close of closers.splice(0)) await close()
   process.env.PATH = REAL_PATH
-  delete process.env.MEC_REAL_RUNNER
+  process.env.MEC_REAL_RUNNER = '0'
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
@@ -79,6 +80,7 @@ function scratch(
       bootstrap: [],
       checks,
       trust: false,
+      hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
     })
     store.slots.save({
       id: 'slot_linked',
@@ -108,6 +110,7 @@ async function serve(context: ReturnType<typeof scratch>, brain: MetaBrain): Pro
     policyText: POLICY,
     closeBoundMs: 4000,
     brain,
+    approvalKey: TEST_KEY,
   })
   closers.push(server.close)
   return {
@@ -116,7 +119,7 @@ async function serve(context: ReturnType<typeof scratch>, brain: MetaBrain): Pro
     post: async (path, body) => {
       const response = await fetch(`${server.url}${path}`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...ownerHeaders },
         body: JSON.stringify(body),
       })
       return { status: response.status, body: (await response.json()) as Record<string, unknown> }

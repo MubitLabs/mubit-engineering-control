@@ -1,3 +1,4 @@
+import type { StoreDoc } from '@mec/contracts'
 import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { loadPolicy } from '../../policy/src/policy'
@@ -34,6 +35,7 @@ const rig = (brain: MetaBrain, store = new MemoryRepositories()) => {
         bootstrap: [],
         checks: [],
         trust: true,
+        hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
       })
     })
   }
@@ -604,6 +606,76 @@ describe('authority fence', () => {
       const id = await start(service)
       return { service, store, id, payload: launchPayload(store) }
     }
+
+    describe('a released row and the caps (§11)', () => {
+      const rowsOn = async (limit: number, count: number) => {
+        const { store, payload } = await planned()
+        const first = store.attempts.get(payload.attempt_id) as StoreDoc
+        const ids = Array.from({ length: count }, (_, index) => `att_c${index}`)
+        store.atomic(() => {
+          store.slots.save({ id: 'slot_cap', concurrency: limit })
+          for (const id of ids) store.attempts.save({ ...first, id, slotId: 'slot_cap', state: 'queued' })
+        })
+        const gate = (id: string, pastGate?: ReadonlySet<string>) =>
+          launchAuthority(store, { ...payload, attempt_id: id }, NOW, POLICY_HASH, pastGate)
+        const set = (id: string, change: StoreDoc) =>
+          store.atomic(() => store.attempts.save({ ...(store.attempts.get(id) as StoreDoc), ...change }))
+        return { store, ids, gate, set }
+      }
+
+      it('four rows released on a slot of two: two run, two wait, and each wait keeps its row', async () => {
+        const { store, ids, gate, set } = await rowsOn(2, 4)
+        const ran: string[] = []
+        for (const id of ids) {
+          const verdict = gate(id)
+          if (verdict.verdict !== 'run') {
+            expect(verdict).toEqual({ verdict: 'defer', reason: 'capacity' })
+            expect(store.attempts.get(id)?.state).toBe('queued')
+            continue
+          }
+          ran.push(id)
+          set(id, { state: 'running' })
+        }
+        expect(ran).toEqual(['att_c0', 'att_c1'])
+        set('att_c0', { state: 'succeeded' })
+        expect(gate('att_c2')).toEqual({ verdict: 'run' })
+      })
+
+      it('queued rows do not hold each other back, or a released set would wait for ever', async () => {
+        const { ids, gate } = await rowsOn(1, 3)
+        for (const id of ids) expect(gate(id)).toEqual({ verdict: 'run' })
+      })
+
+      it('a launch past the gate counts before its engine is up', async () => {
+        const { gate } = await rowsOn(2, 3)
+        const pastGate = new Set(['att_c0', 'att_c1'])
+        expect(gate('att_c2', pastGate)).toEqual({ verdict: 'defer', reason: 'capacity' })
+        expect(gate('att_c0', pastGate)).toEqual({ verdict: 'run' })
+      })
+
+      it('the global cap holds across slots', async () => {
+        const { gate, set } = await rowsOn(9, 5)
+        for (const id of ['att_c0', 'att_c1', 'att_c2', 'att_c3']) {
+          set(id, { state: 'running', slotId: `slot_${id}` })
+        }
+        expect(gate('att_c4')).toEqual({ verdict: 'defer', reason: 'capacity' })
+      })
+
+      it('a held group, a stalled attempt and a live check count; a check with no verdict does not', async () => {
+        const held = await rowsOn(1, 2)
+        held.set('att_c0', { state: 'failed', held_groups: [{ pid: 1, started: 'then' }] })
+        expect(held.gate('att_c1')).toMatchObject({ verdict: 'defer' })
+        const stalled = await rowsOn(1, 2)
+        stalled.set('att_c0', { state: 'stalled' })
+        expect(stalled.gate('att_c1')).toMatchObject({ verdict: 'defer' })
+        const checking = await rowsOn(1, 2)
+        checking.set('att_c0', { state: 'work_complete' })
+        expect(checking.gate('att_c1')).toMatchObject({ verdict: 'defer' })
+        const unjudged = await rowsOn(1, 2)
+        unjudged.set('att_c0', { state: 'work_complete', checks_note: 'stopped' })
+        expect(unjudged.gate('att_c1')).toEqual({ verdict: 'run' })
+      })
+    })
 
     it('runs a queued launch on live work', async () => {
       const { store, payload } = await planned()

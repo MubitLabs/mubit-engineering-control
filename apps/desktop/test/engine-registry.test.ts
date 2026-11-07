@@ -36,7 +36,7 @@ const closers: (() => Promise<void>)[] = []
 afterEach(async () => {
   for (const close of closers.splice(0)) await close()
   process.env.PATH = REAL_PATH
-  delete process.env.MEC_REAL_RUNNER
+  process.env.MEC_REAL_RUNNER = '0'
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 }, 120_000)
 
@@ -90,7 +90,14 @@ function seed(dataDir: string, repo: string, { slot, checks, task }: Seed): void
   migrate(db, MIGRATIONS_v1)
   const store = new SqliteStore(db)
   store.atomic(() => {
-    store.engines.save({ id: 'repo_a', url: repo, bootstrap: [], checks: checks ?? [], trust: false })
+    store.engines.save({
+      id: 'repo_a',
+      url: repo,
+      bootstrap: [],
+      checks: checks ?? [],
+      trust: false,
+      hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
+    })
     store.messages.save({ id: 'msg_1', text: 'please add the thing' })
     store.slots.save({ id: 'slot_x', home: '/nowhere', state: 'healthy', env: {}, ...slot } as never)
     store.workItems.save({
@@ -502,6 +509,49 @@ describe('Codex through the runner', { timeout: 180_000 }, () => {
       spy.mockRestore()
       const pid = commandPid()
       if (pid !== undefined) kill(pid, 'SIGKILL')
+    }
+  })
+
+  it('a group that outlives its failed attempt holds capacity until it goes (§8.1)', async () => {
+    const steps = [{ stubborn: 60 }, { sleep: 60_000 }]
+    const { dataDir, repo, bin } = scratch('codex', { steps })
+    seed(dataDir, repo, { slot: CODEX_SLOT, task: { budget: { wall_clock_ms: 1500 } } })
+    const commandPid = (): number | undefined => {
+      const path = join(bin, 'command.pid')
+      return existsSync(path) ? Number(readFileSync(path, 'utf8')) : undefined
+    }
+    const kill = process.kill.bind(process)
+    const spy = vi
+      .spyOn(process, 'kill')
+      .mockImplementation((target, signal) =>
+        Math.abs(target) === commandPid() ? true : kill(target, signal),
+      )
+    const reapLater = (): void => {
+      const pid = commandPid()
+      if (pid === undefined) return
+      try {
+        kill(-pid, 'SIGKILL')
+      } catch {
+        // gone, as it should be
+      }
+    }
+    try {
+      const end = await launched(dataDir)
+      expect(end.state).toBe('failed')
+      const held = end.held_groups as { pid: number; started: string }[]
+      expect(held.map((mark) => mark.pid)).toContain(commandPid())
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+      expect(attempt(dataDir)?.held_groups).toBeDefined()
+
+      spy.mockRestore()
+      reapLater()
+      await until(() => attempt(dataDir)?.held_groups === undefined, 20_000)
+      expect(attempt(dataDir)?.state).toBe('failed')
+      const events = peek(dataDir, (store) => store.events.read('attempt:att_1').map((event) => event.type))
+      expect(events).toContain('attempt.capacity_released')
+    } finally {
+      spy.mockRestore()
+      reapLater()
     }
   })
 

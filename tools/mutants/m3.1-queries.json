@@ -142,8 +142,8 @@
   {
     "name": "open rows not merged by rowid",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "      .sort((a, b) => a.rowid - b.rowid)\n",
-    "replace": "\n",
+    "find": "    ].sort((a, b) => a.rowid - b.rowid)\n",
+    "replace": "    ]\n",
     "tests": ["apps/desktop/test/inspection.test.ts"]
   },
   {

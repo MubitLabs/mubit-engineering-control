@@ -1,7 +1,7 @@
 /**
- * The launch effect with `MEC_REAL_RUNNER=1` (spec §8, §14, §5.12, §17): from a queued attempt to
- * a started engine. The order is the spec's: load and agree, cache, pinned base, worktree, `.mec/`
- * files, bootstrap, model, bundle, token, env, start. A refusal spends nothing, and nothing before
+ * The real launch effect (spec §8, §14, §5.12, §17): from a queued attempt to a started engine.
+ * The order is the spec's: load and agree, cache, pinned base, worktree, `.mec/` files, bootstrap,
+ * model, bundle, token, env, start. A refusal spends nothing, and nothing before
  * the start is a spend at all. The token is minted last and lives only in the brief, the process
  * env and `.mec/mcp.json`, which is sealed before anything repo-controlled runs again.
  */
@@ -33,9 +33,11 @@ import type {
 import { AttemptBrief as AttemptBriefSchema, Later, ModelRequest } from '@mec/contracts'
 import { BUILTIN_ROSTER, type BuiltinRole } from '@mec/domain'
 import {
+  bootstrapOutput,
   cachedDefaultTip,
   commitAll,
   completeMidMerge,
+  dirtyFiles,
   excludeFromWorktree,
   git,
   gitLines,
@@ -43,11 +45,20 @@ import {
   historyTouches,
   isMidMerge,
   RepoCache,
+  recordBootstrapOutput,
   Worktrees,
   worktreeAdminDir,
 } from '@mec/git'
 import { issueToken } from '@mec/mec-tools'
-import { type Continuation, integrationDocId, type LaunchAuthority, mandateOf, repoFields } from '@mec/meta'
+import {
+  type Continuation,
+  HOST_RUN_UNAGREED,
+  hostRunAgreed,
+  integrationDocId,
+  type LaunchAuthority,
+  mandateOf,
+  repoFields,
+} from '@mec/meta'
 import { loadModelsTable, PromptStore, userModelsPath } from '@mec/prompts'
 import {
   type AttemptFacts,
@@ -71,6 +82,10 @@ import { bridgeOf, driftOf, ENGINE_ROWS, type EngineRow, lacksHome, type Prepare
 import { worktreeIsOurs } from './slot-switch'
 
 export { isLaunchableSlot } from './engine-registry'
+
+/** A real launch is the default: `0` or `false` turns it off, and `MEC_FAKE_ENGINE=1` wins over both. */
+export const realRunnerOn = (env: Record<string, string | undefined> = process.env): boolean =>
+  !['0', 'false'].includes(env.MEC_REAL_RUNNER?.toLowerCase() ?? '') && env.MEC_FAKE_ENGINE !== '1'
 
 /** Decision #36 (§11): until policy carries a value. */
 const DEFAULT_WALL_CLOCK_MS = 30 * 60_000
@@ -113,15 +128,24 @@ function fieldsOf(payload: Json): LaunchPayload {
   }
 }
 
+/**
+ * What a repo's command inherits: the shell's own, less the SSH agent socket. An engine keeps it,
+ * because its allowlist is §5.12's; a repo's script has no call on the owner's keys.
+ */
+export function repoInherited(): Record<string, string | undefined> {
+  const { SSH_AUTH_SOCK: _agent, ...inherited } = process.env
+  return inherited
+}
+
 /** The environment a repo's command runs in: scrubbed, no shims to trust, no token (decision #25). */
-function repoEnv(
+export function repoEnv(
   attemptId: string,
   worktree: string,
   tempDir: string,
   gitconfig: string,
 ): Record<string, string> {
   return buildAgentEnv({
-    inherited: process.env as Record<string, string | undefined>,
+    inherited: repoInherited(),
     home: tempDir,
     attempt: {
       MEC_ATTEMPT_ID: attemptId,
@@ -162,21 +186,27 @@ const CONFLICT_MARKER = /^(<{7}|>{7}) /m
  * What an attempt's tree becomes when it ends. A repair in a mid-merge worktree ends the merge
  * (§14), and `completeMidMerge` proves two parents, so it can never pass as an ordinary commit.
  * A file still carrying markers was not resolved, and a commit would hide that. Anything else is
- * `commitAll`, with its `.mec/` exclusion.
+ * `commitAll`, with its `.mec/` exclusion. Neither carries what the bootstrap left untouched (§14).
  */
 export async function commitWork(
   path: string,
   message: string,
   identity: { name: string; email: string },
 ): Promise<string | null> {
-  if (!(await isMidMerge(path))) return commitAll(path, message, identity)
+  const keepOut = await bootstrapOutput(path)
+  if (!(await isMidMerge(path))) return commitAll(path, message, identity, keepOut)
   const unmerged = await gitLines(['diff', '--name-only', '--diff-filter=U'], { cwd: path })
   const marked = unmerged.filter((file) => {
     const full = join(path, file)
     return existsSync(full) && CONFLICT_MARKER.test(readFileSync(full, 'utf8'))
   })
   if (marked.length > 0) throw new Error(`conflict markers remain in ${marked.join(', ')}`)
-  const { mergeSha } = await completeMidMerge({ worktree: path, message, ...identity })
+  const { mergeSha } = await completeMidMerge({
+    worktree: path,
+    message,
+    ...identity,
+    ...(keepOut !== undefined && { keepOut }),
+  })
   return mergeSha
 }
 
@@ -341,11 +371,21 @@ export class AttemptLauncher {
           onCheckStart: (pid) => this.#markProcess(fields.attemptId, 'check_process', pid),
         },
         entry.abort.signal,
-        () => entry.reason,
+        () => entry.reason ?? this.#withheld(work),
       )
     } finally {
       this.#rechecks.delete(fields.attemptId)
     }
+    // This row is the one that waits: the queue drains a same-payload enqueue made during its run.
+    const after = this.#deps.store.attempts.get(fields.attemptId)
+    if (after?.state === 'work_complete' && after.checks_stopped === HOST_RUN_UNAGREED) {
+      throw new Later(HOST_RUN_UNAGREED)
+    }
+  }
+
+  /** The engine was allowed, and the owner has since withdrawn: its repo's commands wait. */
+  #withheld(work: StoreDoc): StopReason | undefined {
+    return hostRunAgreed(this.#deps.store, String(work.repoId)) ? undefined : HOST_RUN_UNAGREED
   }
 
   /** Stored as soon as the group exists: a boot signals only what this proves is ours (§8.1). */
@@ -436,12 +476,21 @@ export class AttemptLauncher {
       return { name, cmd, args, cwd: worktree, env: hostEnv }
     }
     const bootstrap = Array.isArray(repo.bootstrap) ? repo.bootstrap.map(String) : []
+    const beforeBootstrap = await dirtyFiles(worktree)
     for (const [index, command] of bootstrap.entries()) {
+      // The steps so far can take minutes, and a withdrawal stops anything not yet begun.
+      const gate = this.#deps.gate(payload)
+      if (gate.verdict === 'defer') throw new Later(gate.reason)
+      if (gate.verdict === 'drop') {
+        this.#deps.drop(payload, gate)
+        return
+      }
       const outcome = await runCheck(repoCommand(`bootstrap_${index + 1}`, command))
       if (outcome.status !== 'passed') {
         throw refuse(`bootstrap_failed: ${command}: ${outcome.logTail.slice(-400)}`)
       }
     }
+    if (bootstrap.length > 0) await recordBootstrapOutput(worktree, beforeBootstrap)
 
     const resolvedModel = this.#model(task, slot, engine)
     if (resolvedModel === undefined && row.modelRequired) {
@@ -578,6 +627,7 @@ export class AttemptLauncher {
       // the admin directory after the path, and a continuation's path is not this attempt's.
       gitAdmin: join(realpathSync(gitDir), 'worktrees', basename(worktree)),
       onCheckStart: (pid) => this.#markProcess(attemptId, 'check_process', pid),
+      withheld: () => this.#withheld(work),
       ...(session !== undefined && { resume: { session_id: session } }),
     })
     this.#stderr.set(attemptId, (chunk) => {

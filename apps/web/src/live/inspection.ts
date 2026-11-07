@@ -5,6 +5,7 @@ import type {
   ActivityItem,
   ArtifactPage,
   CardEvidence,
+  MetaAnswer,
   NeedItem,
   Page,
   SearchHit,
@@ -45,6 +46,7 @@ export interface CommandResult {
 export interface InspectionClient {
   work(cursor: string | null, signal?: AbortSignal): Promise<Page<WorkRow>>
   needs(cursor: string | null, signal?: AbortSignal): Promise<Page<NeedItem>>
+  meta(signal?: AbortSignal): Promise<MetaAnswer>
   workDetail(id: string, signal?: AbortSignal): Promise<WorkDetail>
   taskDetail(id: string, signal?: AbortSignal): Promise<TaskDetail>
   evidence(id: string): Promise<CardEvidence>
@@ -52,6 +54,8 @@ export interface InspectionClient {
   hold(id: string): Promise<CommandResult>
   lift(id: string): Promise<CommandResult>
   stop(id: string): Promise<CommandResult>
+  retry(id: string): Promise<CommandResult>
+  merge(input: { repo: string; prNumber: number; workItemId: string }): Promise<CommandResult>
   resolve(id: string, answer: ResolveAnswer): Promise<ResolveResult>
   answer(id: string, answer: string): Promise<void>
   activity(id: string, cursor: string | null, signal?: AbortSignal): Promise<Page<ActivityItem>>
@@ -71,6 +75,8 @@ export interface CommandNotice {
 export interface InspectionState {
   work: Read<Page<WorkRow>>
   needs: Read<Page<NeedItem>>
+  /** What the meta agent is doing, per repository. */
+  meta: Read<MetaAnswer>
   delivery: Selected<WorkDetail>
   task: Selected<TaskDetail>
   /** The attempt on the Activity tab, read in pages. Null when the task has none to show. */
@@ -120,6 +126,13 @@ function failedOutcome(error: unknown): ApprovalOutcome {
       toast: 'Someone answered this card first. Yours was not used.',
     }
   }
+  if (error instanceof HttpError && error.reason === 'approval_required') {
+    return {
+      closes: false,
+      note: 'Not answered',
+      toast: 'This browser has no approval key, so nothing was answered. Link it, then answer again.',
+    }
+  }
   const why = error instanceof HttpError && error.reason !== undefined ? ` (${error.reason})` : ''
   return {
     closes: false,
@@ -133,6 +146,8 @@ const COMMAND_WORDS: Record<string, string> = {
   lifted: 'Hold lifted.',
   free: 'This work was not held.',
   stopped: 'Stopped.',
+  retrying: 'Asked once more. Anything that would leave this machine still comes to you as a card.',
+  card_open: 'The merge card is in Needs you. Nothing merges until you approve it.',
 }
 
 function commandFailure(error: unknown): string {
@@ -189,6 +204,7 @@ export function createInspection(client: InspectionClient) {
   let state: InspectionState = {
     work: { status: 'loading' },
     needs: { status: 'loading' },
+    meta: { status: 'loading' },
     delivery: { id: null, read: { status: 'loading' } },
     task: { id: null, read: { status: 'loading' } },
     activity: NO_ACTIVITY,
@@ -206,6 +222,7 @@ export function createInspection(client: InspectionClient) {
   let readingDelivery: AbortController | null = null
   let readingTask: AbortController | null = null
   let readingActivity: AbortController | null = null
+  let readingMeta: AbortController | null = null
   /** A frame landed during a read: one more read of the last page once that one ends. */
   let activityAgain = false
   /** The owner's choice of attempt. Null follows the latest. */
@@ -359,7 +376,22 @@ export function createInspection(client: InspectionClient) {
       })
   }
 
+  const refreshMeta = () => {
+    readingMeta?.abort()
+    const controller = new AbortController()
+    readingMeta = controller
+    const live = () => readingMeta === controller
+    within((signal) => client.meta(signal), controller.signal)
+      .then((data) => {
+        if (live()) set({ meta: { status: 'ready', data, readAt: now() } })
+      })
+      .catch((error: unknown) => {
+        if (live()) set({ meta: failedRead(state.meta, error) })
+      })
+  }
+
   const refresh = () => {
+    refreshMeta()
     reading?.abort()
     const controller = new AbortController()
     reading = controller
@@ -412,6 +444,7 @@ export function createInspection(client: InspectionClient) {
     },
 
     refresh,
+    refreshMeta,
     readEvidence,
 
     /**
@@ -528,12 +561,17 @@ export function createInspection(client: InspectionClient) {
         })
     },
 
-    /** Hold, lift and stop act on the item's own id, whatever is selected or filtered. */
+    /** Each acts on the item's own id, whatever is selected or filtered. */
     act(action: WorkAction): void {
       const key = `${action.kind}:${action.workItemId}`
       if (settling.has(key)) return
       settling.add(key)
-      client[action.kind](action.workItemId)
+      const { workItemId } = action
+      const run =
+        action.kind === 'merge'
+          ? client.merge({ repo: action.repo, prNumber: action.prNumber, workItemId })
+          : client[action.kind](workItemId)
+      run
         .then(
           ({ status }): CommandNotice => ({ kind: 'done', text: COMMAND_WORDS[status] ?? status }),
           (error: unknown): CommandNotice => ({ kind: 'failed', text: commandFailure(error) }),

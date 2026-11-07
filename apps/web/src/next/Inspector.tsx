@@ -1,4 +1,5 @@
 import { type RefObject, useId } from 'react'
+import { multiline } from './format'
 import { type InspectorTab, InspectorTabs } from './InspectorTabs'
 import { Button, CloseIcon, IconButton } from './primitives'
 
@@ -129,7 +130,11 @@ function Evidence({ scope, tab, onAsk }: { scope: InspectorScope; tab: Inspector
                 </span>
                 <span>
                   {result.label}
-                  <small>{result.detail}</small>
+                  {multiline(result.detail) ? (
+                    <pre className="check-output">{result.detail}</pre>
+                  ) : (
+                    <small>{result.detail}</small>
+                  )}
                   {result.artifact && <ArtifactLink link={result.artifact} />}
                 </span>
               </li>

@@ -160,7 +160,7 @@
   {
     "name": "stopped checks run again",
     "file": "apps/desktop/src/recovery.ts",
-    "find": "  if (doc.checks_note !== undefined && doc.checks_stopped !== 'server_closing') return\n",
+    "find": "  if (doc.checks_note !== undefined && !CHECKS_RUN_AGAIN.includes(doc.checks_stopped)) return\n",
     "replace": "",
     "tests": ["apps/desktop/test/recovery.test.ts", "-t", "an attempt stopped mid-check"]
   },
@@ -266,15 +266,15 @@
   {
     "name": "launch gate ignores a refused group",
     "file": "packages/meta/src/authority.ts",
-    "find": "return attempt.reconcile_refused === undefined\n",
-    "replace": "return attempt.reconcile_refused !== null\n",
+    "find": "  if (attempt.reconcile_refused !== undefined) return { verdict: 'defer', reason: 'reconcile_refused' }\n  return capacityFull(store, attempt, pastGate)\n",
+    "replace": "  return capacityFull(store, attempt, pastGate)\n",
     "tests": ["apps/desktop/test/recovery.test.ts", "-t", "a launch row waits for proof"]
   },
   {
     "name": "resume gate ignores a refused group",
     "file": "apps/desktop/src/recovery.ts",
-    "find": "verdict.verdict === 'run' && attempt?.reconcile_refused !== undefined",
-    "replace": "verdict.verdict === 'run' && attempt === null",
+    "find": "  if (attempt?.reconcile_refused !== undefined) return { verdict: 'defer', reason: 'reconcile_refused' }\n",
+    "replace": "",
     "tests": ["apps/desktop/test/recovery.test.ts", "-t", "a resume row waits for proof"]
   },
   {

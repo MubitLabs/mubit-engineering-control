@@ -81,9 +81,12 @@ describe('on the fake CLI, which has no sandbox', () => {
       boundMs: 90_000,
     })
 
-  it('a worker reaches the route, the card settles, and the judge calls it a breach', async () => {
+  it('a worker with no sandbox reaches the route and the key refuses it, and the read is still a breach', async () => {
     run = await onFake([{ init: true }, { sh: 'sh probe.sh' }, { result: 'completed' }])
-    expect(run.cardStatus).toBe('approved')
+    // The retest the owner asked for: the route answers, and the card does not move.
+    expect(run.cardStatus).toBe('pending')
+    expect(run.output).toContain('approval_required')
+    expect(run.output).toContain('http=403')
     expect(run.outsideWritten).toBe(true)
     expect(judgeProbe(run)).toMatchObject({ verdict: 'breached' })
   }, 200_000)

@@ -4,7 +4,14 @@ import type { Json, Report, StoreDoc } from '@mec/contracts'
 import { DEFAULT_CAPS, type SlotModelsView } from '@mec/domain'
 import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, describe, expect, it } from 'vitest'
-import { FollowUps, type PlacementTable, repoFields, type SchedulerDeps, schedulePass } from '../src'
+import {
+  FollowUps,
+  openRepairTask,
+  type PlacementTable,
+  repoFields,
+  type SchedulerDeps,
+  schedulePass,
+} from '../src'
 import { holdWorkItem, refuseLaunch, stopWorkItem } from '../src/authority'
 
 const AT = '2026-11-05T12:00:00.000Z'
@@ -47,7 +54,14 @@ const slot = (slotId: string, extra: Partial<SlotModelsView> = {}): SlotModelsVi
 function rig(slots: SlotModelsView[] = [slot('slot_a')], extra: Partial<SchedulerDeps> = {}): Rig {
   const store = new MemoryRepositories()
   store.atomic(() => {
-    store.engines.save({ id: REPO, url: 'https://example.test/a', bootstrap: [], checks: [], trust: true })
+    store.engines.save({
+      id: REPO,
+      url: 'https://example.test/a',
+      bootstrap: [],
+      checks: [],
+      trust: true,
+      hostRunAgreedAt: AT,
+    })
   })
   const followups = new FollowUps({ store, effects: store.effects, now: () => AT })
   const deps: SchedulerDeps = {
@@ -129,6 +143,317 @@ function saveReport(store: MemoryRepositories, n: number, report: Report): void 
     store.engines.save({ id: `report/att_1/${n}`, attemptId: 'att_1', n, report: report as unknown as Json })
   })
 }
+
+const wakes = (store: MemoryRepositories) => store.snapshot().effects.filter((row) => row.kind === 'relay')
+
+/** A task whose implementer already spent a repair, and the repair that just ran red. */
+function repairRanRed(store: MemoryRepositories): void {
+  work(store)
+  task(store, 'task_a', { status: 'active' })
+  store.atomic(() => {
+    store.attempts.save({
+      id: 'att_0',
+      taskId: 'task_a',
+      workItemId: 'wi_1',
+      slotId: 'slot_a',
+      state: 'checks_failed',
+      createdAt: '2026-11-05T11:00:00.000Z',
+    })
+  })
+  attempt(store, {
+    state: 'checks_failed',
+    head_sha: 'abc',
+    reports: 1,
+    createdAt: AT,
+    continuation: { kind: 'repair', role: 'repair_agent', evidence: 'red', round: 0 },
+  })
+  verdict(store, 'failed')
+}
+
+describe('a report on a red head (§10)', () => {
+  it.each([['blocked'], ['failed']] as const)(
+    'a repair reporting %s on a red head ends the repairs',
+    (kind) => {
+      const { store, pass } = rig()
+      repairRanRed(store)
+      saveReport(store, 1, { kind, summary: 'a person must issue the stamp' })
+
+      expect(pass()).toEqual([])
+      expect(store.tasks.get('task_a')).toMatchObject({ status: 'blocked' })
+      expect(String(store.tasks.get('task_a')?.blockedReason)).toContain('a person must issue the stamp')
+      expect(store.tasks.get('task_a')?.next).toBeUndefined()
+      expect(attemptsOf(store, 'task_a')).toHaveLength(2)
+      expect(store.workItems.get('wi_1')).toMatchObject({ state: 'blocked' })
+      pass()
+      expect(attemptsOf(store, 'task_a')).toHaveLength(2)
+    },
+  )
+
+  it('a dropped report on a red head is no block: checks still decide', () => {
+    const { store, pass } = rig()
+    repairRanRed(store)
+    saveReport(store, 1, { kind: 'dropped', summary: 'nothing to do' })
+
+    pass()
+    expect(store.tasks.get('task_a')?.status).not.toBe('cancelled')
+    expect(attemptsOf(store, 'task_a')).toHaveLength(3)
+  })
+
+  it('a progress report on a red head still earns its repair', () => {
+    const { store, pass } = rig()
+    repairRanRed(store)
+    saveReport(store, 1, { kind: 'progress', summary: 'tried' })
+
+    pass()
+    expect(attemptsOf(store, 'task_a')).toHaveLength(3)
+  })
+
+  it('a repair earned on held work starts nothing until the lift', () => {
+    const { store, pass } = rig()
+    repairRanRed(store)
+    saveReport(store, 1, { kind: 'progress', summary: 'tried' })
+    store.atomic(() => holdWorkItem(store, 'wi_1', { reason: 'wait', at: AT }))
+
+    expect(pass()).toEqual([])
+    expect(attemptsOf(store, 'task_a')).toHaveLength(2)
+    store.atomic(() => {
+      const doc = store.workItems.get('wi_1') as StoreDoc
+      store.workItems.save({ ...doc, hold: { ...(doc.hold as object), liftedAt: AT } })
+    })
+    pass()
+    expect(attemptsOf(store, 'task_a')).toHaveLength(3)
+  })
+
+  it('a repair earned in a repository the owner has not agreed to starts nothing', () => {
+    const { store, pass } = rig()
+    repairRanRed(store)
+    saveReport(store, 1, { kind: 'progress', summary: 'tried' })
+    store.atomic(() => {
+      const { hostRunAgreedAt: _agreed, ...unagreed } = store.engines.get(REPO) as StoreDoc
+      store.engines.save(unagreed as StoreDoc)
+    })
+
+    expect(pass()).toEqual([])
+    expect(attemptsOf(store, 'task_a')).toHaveLength(2)
+  })
+
+  it('a red head on stopped work earns no repair', () => {
+    const { store, pass } = rig()
+    repairRanRed(store)
+    saveReport(store, 1, { kind: 'progress', summary: 'tried' })
+    store.atomic(() => stopWorkItem(store, 'wi_1', { reason: 'stop', at: AT }))
+
+    expect(pass()).toEqual([])
+    expect(attemptsOf(store, 'task_a')).toHaveLength(2)
+  })
+})
+
+describe('used-up repairs wake the planner once (§6)', () => {
+  const noRepairs = { caps: { ...DEFAULT_CAPS, repairAttemptsPerTask: 0 } }
+
+  it('a task that used up its repairs wakes one turn, with what remains', () => {
+    const { store, pass } = rig([slot('slot_a')], noRepairs)
+    work(store)
+    task(store, 'task_a', { status: 'awaiting_review' })
+    attempt(store, { state: 'checks_failed', head_sha: 'abc' })
+    verdict(store, 'failed')
+
+    pass()
+    pass()
+
+    expect(wakes(store)).toHaveLength(1)
+    expect(wakes(store)[0]?.payload).toMatchObject({ reason: 'work parked', workItemId: 'wi_1' })
+    expect(JSON.stringify(wakes(store)[0]?.payload)).toContain('Check unit failed on abc')
+  })
+
+  it('its dependents add no wake of their own', () => {
+    const { store, pass } = rig([slot('slot_a')], noRepairs)
+    work(store)
+    task(store, 'task_a', { status: 'awaiting_review' })
+    task(store, 'task_b', { dependsOn: ['task_a'] })
+    attempt(store, { state: 'checks_failed', head_sha: 'abc' })
+    verdict(store, 'failed')
+
+    pass()
+
+    expect(store.tasks.get('task_b')?.status).toBe('blocked')
+    expect(wakes(store)).toHaveLength(1)
+  })
+
+  it('a failed check with a repair left wakes nobody', () => {
+    const { store, pass } = rig()
+    work(store)
+    task(store, 'task_a', { status: 'awaiting_review' })
+    attempt(store, { state: 'checks_failed', head_sha: 'abc' })
+    verdict(store, 'failed')
+
+    pass()
+
+    expect(wakes(store)).toEqual([])
+  })
+
+  it('a block a specialist reported is its report’s wake, not a second one', () => {
+    const { store, pass } = rig([slot('slot_a')], noRepairs)
+    repairRanRed(store)
+    saveReport(store, 1, { kind: 'blocked', summary: 'a person must act' })
+
+    pass()
+
+    expect(store.tasks.get('task_a')?.status).toBe('blocked')
+    expect(wakes(store)).toEqual([])
+  })
+
+  it('an integration repair past the cap wakes one turn too', () => {
+    const { store, deps } = rig([slot('slot_a')], noRepairs)
+    work(store)
+    task(store, 'task_a', { status: 'integrated' })
+    const root = store.tasks.get('task_a') as StoreDoc
+    const open = () =>
+      store.atomic(() => {
+        openRepairTask(store, store.effects, deps.caps, {
+          root,
+          evidence: 'combined checks red',
+          worktree: '/w',
+          branch: 'b',
+          id: 'task_r',
+          at: AT,
+        })
+      })
+
+    open()
+    open()
+
+    expect(store.workItems.get('wi_1')?.state).toBe('blocked')
+    expect(wakes(store)).toHaveLength(1)
+  })
+
+  it('a repair task and its root are one family, so they share one wake', () => {
+    const { store, deps, pass } = rig([slot('slot_a')], noRepairs)
+    work(store)
+    task(store, 'task_a', { status: 'integrated' })
+    task(store, 'task_r', { status: 'awaiting_review', repairOf: 'task_a' })
+    attempt(store, { taskId: 'task_r', state: 'checks_failed', head_sha: 'abc' })
+    verdict(store, 'failed')
+
+    pass()
+    expect(store.tasks.get('task_r')?.status).toBe('blocked')
+    store.atomic(() => {
+      openRepairTask(store, store.effects, deps.caps, {
+        root: store.tasks.get('task_a') as StoreDoc,
+        evidence: 'combined checks red',
+        worktree: '/w',
+        branch: 'b',
+        id: 'task_s',
+        at: AT,
+      })
+    })
+
+    expect(wakes(store)).toHaveLength(1)
+  })
+})
+
+describe('a repository the owner has not agreed to', () => {
+  const OTHER = 'repo_b'
+
+  /** A second repository, unagreed, and one work item in it. */
+  function unagreed(store: MemoryRepositories, id = 'wi_b'): void {
+    store.atomic(() => {
+      store.engines.save({
+        id: OTHER,
+        url: 'https://example.test/b',
+        bootstrap: [],
+        checks: [],
+        trust: false,
+      })
+      store.workItems.save({
+        id,
+        state: 'executing',
+        mandate: { originMessageId: 'msg_1', status: 'active' },
+        ...repoFields(store, OTHER, POLICY),
+      })
+    })
+  }
+
+  const queued = (store: MemoryRepositories, extra: StoreDoc = {}): void => {
+    task(store, 'task_b', { repoId: OTHER, status: 'active' }, 'wi_b')
+    store.atomic(() => {
+      store.attempts.save({
+        id: 'att_b',
+        taskId: 'task_b',
+        workItemId: 'wi_b',
+        slotId: 'slot_a',
+        state: 'queued',
+        generation: 1,
+        ...extra,
+      })
+    })
+  }
+
+  it('gets no attempt, and the task says what it waits for, once', () => {
+    const { store, pass } = rig()
+    unagreed(store)
+    task(store, 'task_b', { repoId: OTHER }, 'wi_b')
+    expect(pass()).toEqual([])
+    expect(pass()).toEqual([])
+    expect(attemptsOf(store, 'task_b')).toHaveLength(0)
+    expect(store.tasks.get('task_b')?.deferred).toMatchObject({ reason: 'host_run_unagreed' })
+    const withheld = store.events.read('work:wi_b').filter((event) => event.type === 'launch_withheld')
+    expect(withheld).toHaveLength(1)
+  })
+
+  it('a queued attempt there holds no slot, so work that can run gets it', () => {
+    const { store, pass } = rig([slot('slot_a', { concurrency: 1 })])
+    unagreed(store)
+    queued(store)
+    work(store)
+    task(store, 'task_a')
+    expect(pass().map((row) => row.taskId)).toEqual(['task_a'])
+  })
+
+  it('nor does a resume on its way, or checks that wait', () => {
+    const waiting: StoreDoc[] = [
+      { state: 'interrupted', resuming: true },
+      { state: 'work_complete', checks_note: 'the owner withdrew' },
+    ]
+    for (const extra of waiting) {
+      const { store, pass } = rig([slot('slot_a', { concurrency: 1 })])
+      unagreed(store)
+      queued(store, extra)
+      work(store)
+      task(store, 'task_a')
+      expect(pass().map((row) => row.taskId)).toEqual(['task_a'])
+    }
+  })
+
+  it('a check still running there keeps its slot after a withdrawal', () => {
+    const { store, pass } = rig([slot('slot_a', { concurrency: 1 })])
+    unagreed(store)
+    queued(store, { state: 'work_complete' })
+    work(store)
+    task(store, 'task_a')
+    expect(pass()).toEqual([])
+    expect(store.tasks.get('task_a')?.deferred).toMatchObject({ reason: 'capacity' })
+  })
+
+  it('a group a boot could not prove gone keeps its slot, agreed or not', () => {
+    const { store, pass } = rig([slot('slot_a', { concurrency: 1 })])
+    unagreed(store)
+    queued(store, { reconcile_refused: 'unprovable' })
+    work(store)
+    task(store, 'task_a')
+    expect(pass()).toEqual([])
+    expect(store.tasks.get('task_a')?.deferred).toMatchObject({ reason: 'capacity' })
+  })
+
+  it('a running attempt there keeps its slot: only what has not begun lets go', () => {
+    const { store, pass } = rig([slot('slot_a', { concurrency: 1 })])
+    unagreed(store)
+    queued(store, { state: 'running' })
+    work(store)
+    task(store, 'task_a')
+    expect(pass()).toEqual([])
+  })
+})
 
 describe('the scheduler pass (§11)', () => {
   it('dependent launches after prerequisite accepted', () => {
@@ -219,6 +544,37 @@ describe('the scheduler pass (§11)', () => {
 
     expect(pass().map((row) => row.taskId)).toEqual(['task_b'])
     expect(store.workItems.get('wi_1')).toMatchObject({ state: 'blocked', blockedReason: 'policy_changed' })
+  })
+
+  it('a failed attempt keeps its slot unit while its group is still there (§8.1)', () => {
+    const { store, pass } = rig([slot('slot_a', { concurrency: 1 })])
+    work(store)
+    task(store, 'task_a', { status: 'blocked' })
+    attempt(store, { state: 'failed', held_groups: [{ pid: 4242, started: 'then' }] })
+    task(store, 'task_b')
+    expect(pass()).toEqual([])
+    expect(store.tasks.get('task_b')?.deferred).toMatchObject({ reason: 'capacity' })
+
+    const { held_groups: _gone, ...rest } = store.attempts.get('att_1') as StoreDoc
+    store.atomic(() => store.attempts.save(rest))
+    expect(pass().map((row) => row.taskId)).toEqual(['task_b'])
+  })
+
+  it('a held group leaves its failed attempt failed, and the task still blocks', () => {
+    const { store, pass } = rig([slot('slot_a', { concurrency: 1 })])
+    work(store)
+    task(store, 'task_a', { status: 'active' })
+    attempt(store, {
+      state: 'failed',
+      terminal_reason: 'refused to die',
+      held_groups: [{ pid: 4242, started: 'then' }],
+    })
+    pass('wi_1')
+    expect(store.tasks.get('task_a')).toMatchObject({
+      status: 'blocked',
+      blockedReason: 'attempt att_1 failed: refused to die',
+    })
+    expect(store.attempts.get('att_1')?.state).toBe('failed')
   })
 
   it('an attempt that gets no verdict stops holding its slot', () => {
@@ -648,6 +1004,90 @@ describe('the scheduler pass (§11)', () => {
       work_item_id: 'wi_1',
       slot_id: 'slot_a',
       generation: 1,
+    })
+  })
+
+  describe('which slot an unpinned task lands on', () => {
+    const claude = slot('z_claude')
+    const codex = slot('a_codex', { engine: 'codex' })
+    const tierOnly = (tier: string) => ({ modelRequest: { tier, reason: 'r' } })
+    const onlyPlacement = (store: MemoryRepositories) => attemptsOf(store, 'task_a')[0]?.placement
+    /** Both engines serve `balanced`, so only the preference can choose between them. */
+    const BOTH = {
+      engines: {
+        ...(TABLE as unknown as { engines: Record<string, unknown> }).engines,
+        codex: { select: { flag: '-m' }, models: { 'gpt-mid': { tier: 'balanced', vendor_says: 'x' } } },
+      },
+    } as unknown as PlacementTable
+
+    it('takes the meta slot engine where the tier fits, and says so', () => {
+      const { store, pass } = rig([codex, claude], { metaEngine: () => 'claude', table: () => BOTH })
+      work(store)
+      task(store, 'task_a', tierOnly('balanced'))
+      expect(pass()).toMatchObject([{ slotId: 'z_claude' }])
+      expect(onlyPlacement(store)).toBe("z_claude: on the meta agent's engine, claude")
+    })
+
+    it('a tier the meta engine would degrade goes where the order puts it, and says why', () => {
+      // The table's Claude tops out at balanced, so `strong` degrades there; only id decides here.
+      const { store, pass } = rig([claude, codex], { metaEngine: () => 'claude' })
+      work(store)
+      task(store, 'task_a', tierOnly('strong'))
+      expect(pass()).toMatchObject([{ slotId: 'a_codex' }])
+      expect(onlyPlacement(store)).toBe('a_codex: no claude slot fits; first by id of 2 tied candidates')
+    })
+
+    it('a pin beats the meta engine and keeps its reason', () => {
+      const { store, pass } = rig([codex, claude], { metaEngine: () => 'claude', table: () => BOTH })
+      work(store)
+      task(store, 'task_a', { ...tierOnly('balanced'), slotHint: { slotId: 'a_codex' } })
+      expect(pass()).toMatchObject([{ slotId: 'a_codex' }])
+      expect(onlyPlacement(store)).toBe('pinned to a_codex by the plan')
+    })
+
+    it('a slot class hint is a preference: it wins where it matches, and a miss is recorded', () => {
+      const matched = rig([claude, slot('a_review', { engine: 'codex', slotClass: 'review' })], {
+        metaEngine: () => 'claude',
+      })
+      work(matched.store)
+      task(matched.store, 'task_a', { slotHint: { slotClass: 'review' } })
+      expect(matched.pass()).toMatchObject([{ slotId: 'a_review' }])
+      expect(onlyPlacement(matched.store)).toBe('a_review: in slot class review')
+
+      const missed = rig([claude], { metaEngine: () => 'claude' })
+      work(missed.store)
+      task(missed.store, 'task_a', { slotHint: { slotClass: 'review' } })
+      expect(missed.pass()).toMatchObject([{ slotId: 'z_claude' }])
+      expect(onlyPlacement(missed.store)).toBe(
+        'z_claude: no candidate in slot class review; the only candidate',
+      )
+    })
+
+    it('reports the tiebreak that decided, not a utilisation nobody read', () => {
+      const tied = rig([slot('slot_a'), slot('slot_b')])
+      work(tied.store)
+      task(tied.store, 'task_a')
+      tied.pass()
+      expect(onlyPlacement(tied.store)).toBe('slot_a: first by id of 2 tied candidates')
+
+      const measured = rig([slot('slot_a', { utilisation: 0.4 }), slot('slot_b', { utilisation: 0.1 })])
+      work(measured.store)
+      task(measured.store, 'task_a')
+      measured.pass()
+      expect(onlyPlacement(measured.store)).toBe('slot_b: lowest utilisation of 2 candidates')
+
+      const busy = rig([slot('slot_a'), slot('slot_b')])
+      work(busy.store)
+      task(busy.store, 'task_b')
+      task(busy.store, 'task_c')
+      busy.pass()
+      expect(attemptsOf(busy.store, 'task_c')[0]?.placement).toBe('slot_b: fewest attempts of 2 candidates')
+
+      const lone = rig([slot('slot_a')])
+      work(lone.store)
+      task(lone.store, 'task_a')
+      lone.pass()
+      expect(onlyPlacement(lone.store)).toBe('slot_a: the only candidate')
     })
   })
 })

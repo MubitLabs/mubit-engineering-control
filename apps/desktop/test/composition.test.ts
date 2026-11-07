@@ -32,6 +32,7 @@ const scratch = (): string => {
 
 /** A due launch for one queued attempt on repo-bound work, as a plan commit leaves it. */
 const seedLaunch = (store: SqliteStore, work: Record<string, unknown> = {}): void => {
+  store.atomic(() => store.engines.save({ id: 'repo_a', hostRunAgreedAt: '2026-11-05T08:00:00.000Z' }))
   store.atomic(() => {
     store.workItems.save({
       id: 'wi_1',
@@ -283,6 +284,7 @@ const seedInterrupted = (store: SqliteStore, n = 1): void => {
       bootstrap: [],
       checks: [],
       trust: true,
+      hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
     })
     store.workItems.save({
       id: `wi_${n}`,
@@ -319,6 +321,7 @@ const untilSeen = async (seen: string[], count: number): Promise<void> => {
 
 describe('truthful launch (§17, decision #26)', () => {
   it('unsupported launch never settles as success', async () => {
+    vi.stubEnv('MEC_REAL_RUNNER', '0')
     const dataDir = scratch()
     const { db, store } = openStore(dataDir)
     seedLaunch(store)

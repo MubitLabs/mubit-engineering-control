@@ -26,7 +26,7 @@ import type {
 } from '@mec/contracts'
 import { matchesSecret } from '@mec/contracts'
 import { WORK_ITEM_TERMINAL, type WorkItemState } from '@mec/domain'
-import type { LiveWork } from '@mec/meta'
+import type { LiveWork, MetaTurn } from '@mec/meta'
 // T7 (review 2026-11-04 §7): the setup agent for Chat's Setup mode — the Settings API's
 // read side plus a safe slot subset, every write a user-applied draft.
 import {
@@ -47,6 +47,7 @@ import {
   settleSpecialistCard,
   stableMessageId,
   stopWorkItem,
+  waitingForAgreement,
 } from '@mec/meta'
 import type { ConfirmationRecord } from '@mec/policy'
 import { ALWAYS_CONFIRM, loadPolicy, resolveConfirmation } from '@mec/policy'
@@ -65,7 +66,9 @@ import {
 } from '@mec/slots'
 import type { InspectionReads } from '@mec/store'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
+import { APPROVAL_HEADER, ApprovalKey } from './approval'
 import { type BackupControl, liveSlot, registerConfigRoutes, repositoryRevision } from './config-routes'
+import type { RetryOutcome } from './delivery'
 import { buildDoctorReport } from './doctor'
 import type { HealthSnapshot, PartEntry } from './health'
 import { hostIsLoopback, registerInspectionRoutes, scrub } from './inspection'
@@ -121,6 +124,8 @@ export type ServerDeps = {
   ghRun?: GhRun
   /** The result path's seam on the release routes (`delivery.ts`). */
   delivery?: Pick<ReleaseDeps, 'pushSource' | 'onCardSettled' | 'cardBlocked'>
+  /** §11: the owner's retry of a blocked integration or a declined or failed delivery. */
+  retryWork?: (workItemId: string) => RetryOutcome
   /** The push card's git; tests may inject it, production uses the argv-only default. */
   gitExec?: GitExec
   /**
@@ -149,6 +154,8 @@ export type ServerDeps = {
       launchesEnqueued: string[]
       escalated: boolean
     }>
+    /** The planner turns running now. A meta agent that does not say has none to show. */
+    turnsInFlight?(): readonly MetaTurn[]
     /** T5 wakes: records the answer and queues the planner's wake, in one transaction. */
     onQuestionAnswered?(
       questionId: string,
@@ -163,6 +170,14 @@ export type ServerDeps = {
     stopWork?(id: string): StopOutcome
   }
   /** §20 pause: the composition root owns the queue timer; absent, the routes answer 404. */
+  /**
+   * The owner's key, and how a code reaches the browser. Absent, a fresh key nobody holds: such a
+   * server resolves nothing, so a build that forgets this fails closed.
+   */
+  /** `link` answers `false` when no browser opened. */
+  approval?: { key: ApprovalKey; link: (code: string) => unknown }
+  /** A waiting launch row is due now, not at its next 30 s look. Inside the caller's transaction. */
+  wakeLaunches?: () => void
   /** §5.10: what the switch and resume routes reach; absent, they answer 404. */
   parked?: {
     switchSlot(input: { workItemId: string; toSlot: string; reason: string }): Promise<SwitchAnswer>
@@ -482,7 +497,7 @@ function rowsInScope(rows: Store['workItems'], store: Store, request: FastifyReq
   return rows.list(filter)
 }
 
-const WORK_TITLE_LENGTH = 80
+const WORK_TITLE_LENGTH = 500
 
 /** §18: work reads by words, not ids. No §10 title exists yet, so the request names it. */
 function workTitleOf(store: Store, work: StoreDoc): string | undefined {
@@ -562,6 +577,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   //     *local* page (another project's dev server) from posting as the user.
   // EventSource streams are GETs: leg 1 covers them, leg 2 never applies.
   const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
+  // A route that acts on the owner's word needs the key, so a local process that is not the owner's
+  // browser cannot say it. By the route's own pattern, so a new resolve route is covered unasked.
+  const OWNER_WORD = /(\/resolve|\/host-run\/agree)$/
+  const approval = deps.approval ?? { key: new ApprovalKey(), link: () => {} }
   // §12.1, decision #10: a request that names another repository is the client's error.
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof RepoAdmissionError) {
@@ -595,7 +614,27 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     if (browserShaped && mutating && request.headers['x-mec-client'] !== '1') {
       return reply.code(403).send({ error: 'missing client header' })
     }
+    const ownerWord = request.method === 'POST' && OWNER_WORD.test(request.routeOptions.url ?? '')
+    if (ownerWord && !approval.key.accepts(request.headers[APPROVAL_HEADER])) {
+      return reply.code(403).send({ error: 'approval_required' })
+    }
     return undefined
+  })
+
+  // Anyone may ask for a link: the code goes to the default browser and never into this answer.
+  app.post('/api/approval/link', async (_request, reply) => {
+    const code = approval.key.issueCode(Date.now())
+    if (code !== undefined && (await approval.link(code)) === false) {
+      return reply.code(502).send({ opened: false, error: 'no_browser' })
+    }
+    return { opened: code !== undefined }
+  })
+
+  // No GET serves the key, and nothing serves it without a live code.
+  app.post('/api/approval/redeem', async (request, reply) => {
+    const key = approval.key.redeem((request.body as { code?: unknown } | null)?.code, Date.now())
+    if (key === undefined) return reply.code(403).send({ error: 'approval_link_invalid' })
+    return { key }
   })
 
   app.get('/healthz', async () => ({ ok: true }))
@@ -838,8 +877,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   })
 
   app.get('/api/chat/messages', async (request) => {
-    const messages = rowsInScope(store.messages, store, request)
-    return [...messages].sort(
+    // §12.7: a wake with nothing new keeps its receipt, for replay, and stays off the chat.
+    const messages = rowsInScope(store.messages, store, request).filter((doc) => doc.quiet !== true)
+    return messages.sort(
       (a, b) =>
         String(a.createdAt).localeCompare(String(b.createdAt)) || String(a.id).localeCompare(String(b.id)),
     )
@@ -999,6 +1039,16 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     return
   })
 
+  // §11: the owner asks once. A delivery's answer is a new card, so nothing leaves the machine here.
+  app.post('/api/work/:id/retry', async (request, reply) => {
+    if (deps.retryWork === undefined) return reply.code(404).send({ error: 'retry is not available' })
+    const { id } = request.params as { id: string }
+    const outcome = deps.retryWork(id)
+    if (outcome.status === 'retrying') return { id, status: 'retrying', kind: outcome.kind }
+    if (outcome.status === 'missing') return reply.code(404).send({ error: 'unknown work item' })
+    return reply.code(409).send({ error: outcome.error })
+  })
+
   app.post('/api/work/:id/stop', async (request, reply) => {
     const { id } = request.params as { id: string }
     const outcome =
@@ -1016,7 +1066,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   app.post('/api/processing/pause', async (_request, reply) => {
     if (deps.pauseControl === undefined) return reply.code(404).send({ error: 'pause is not available' })
     deps.pauseControl.pause()
-    return { status: 'paused' }
+    const { pausedAt } = processingOf(store)
+    return { status: 'paused', ...(pausedAt !== undefined && { pausedAt }) }
   })
 
   app.post('/api/processing/resume', async (_request, reply) => {
@@ -1526,6 +1577,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         checks: Array.isArray(doc.checks) ? doc.checks : [],
         trust: doc.trust === true,
         revision: repositoryRevision(doc),
+        hostRunAgreedAt: typeof doc.hostRunAgreedAt === 'string' ? doc.hostRunAgreedAt : null,
+        waiting: waitingForAgreement(store, String(doc.id)),
       })),
   )
 
@@ -1688,6 +1741,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       repo?: unknown
       prNumber?: unknown
       confirmationId?: unknown
+      workItemId?: unknown
     }
     const repo = typeof body.repo === 'string' ? body.repo.trim() : ''
     const prNumber =
@@ -1713,6 +1767,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         repo,
         prNumber,
         ...(originConfirmationId !== undefined && { originConfirmationId }),
+        ...(typeof body.workItemId === 'string' && { workItemId: body.workItemId }),
       })
     } catch (error) {
       return refuse(error, reply)
@@ -2336,7 +2391,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // M3.1 canonical inspection: read-only, bounded, redacted `GET /api/inspect/*`.
   if (deps.inspection !== undefined) {
     const exactsFor = deps.inspectionExacts ?? (() => [])
-    registerInspectionRoutes(app, { store, reads: deps.inspection, now, exactsFor })
+    const metaTurns = () => deps.metaAgent?.turnsInFlight?.() ?? []
+    registerInspectionRoutes(app, { store, reads: deps.inspection, now, exactsFor, metaTurns })
   }
 
   // M3.3 setup and configuration: readiness, connections, policy, repository edits, drafts, backups.
@@ -2348,6 +2404,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     probeCmd,
     policyText: deps.policyText,
     ...(deps.backups !== undefined && { backups: deps.backups }),
+    ...(deps.wakeLaunches !== undefined && { wakeLaunches: deps.wakeLaunches }),
     keyShape: (keystoreId) => {
       const provider = Object.values(API_KEY_PROVIDERS).find((entry) => entry.keystoreId === keystoreId)
       return provider?.pattern === undefined

@@ -24,6 +24,11 @@ async function noHorizontalScroll(page: Page): Promise<void> {
 
 const connection = (page: Page, label: string) => page.locator('.connection').filter({ hasText: label })
 
+/** The raw policy or models text sits under Advanced, below its plain summary. */
+async function advanced(page: Page): Promise<void> {
+  await page.locator('.advanced > summary').click()
+}
+
 test('retire arms, names the loss and disarms', async ({ page }) => {
   await open(page, 'slots')
   const row = connection(page, 'sample-key')
@@ -73,13 +78,13 @@ test('parked work states its facts, and a switch names its target and shows the 
   await expect(auth.getByRole('button', { name: /Switch work/ })).toHaveCount(0)
 })
 
-test('an expired sign-in offers Sign in again, and Drain says why it is off', async ({ page }) => {
+test('an expired sign-in offers Sign in again, and Drain is gone with the reason said', async ({ page }) => {
   await open(page, 'slots')
   const row = connection(page, 'sample-expired')
   await expect(row.getByRole('button', { name: 'Sign in again' })).toBeVisible()
-  await expect(row.getByRole('button', { name: 'Drain' })).toBeDisabled()
+  await expect(row.getByRole('button', { name: 'Drain' })).toHaveCount(0)
   await expect(page.getByText('Draining a connection is not available')).toBeVisible()
-  await expect(row.getByText('No reading yet')).toBeVisible()
+  await expect(row.getByText('No reading yet. MEC does not record usage')).toBeVisible()
   await expect(row.getByText('Default limit')).toBeVisible()
   await expect(row.getByText('None set')).toBeVisible()
 })
@@ -132,6 +137,22 @@ test('trust arms and disarms', async ({ page }) => {
   await expect(page.getByText('Trusted: engines honour')).toBeVisible()
 })
 
+test('the agreement says what it allows, arms, and can be withdrawn', async ({ page }) => {
+  await open(page, 'settings')
+  await page.getByRole('button', { name: 'Repositories' }).click()
+  await expect(page.getByText('Waiting for your agreement: nothing runs')).toBeVisible()
+  await expect(page.getByText('This browser cannot answer yet')).toBeVisible()
+  await page.getByRole('button', { name: 'Review and agree…' }).click()
+  await expect(page.getByText('outside any sandbox, with your files and your network')).toBeVisible()
+  await expect(page.getByText('No work is waiting on this now.')).toBeVisible()
+  await expect(page.getByText('You can withdraw this here at any time')).toBeVisible()
+  await page.getByRole('button', { name: 'Agree to run here' }).click()
+  await expect(page.getByText('Agreed: MEC may run work')).toBeVisible()
+  await page.getByRole('button', { name: 'Withdraw…' }).click()
+  await page.getByRole('button', { name: 'Withdraw agreement' }).click()
+  await expect(page.getByText('Waiting for your agreement: nothing runs')).toBeVisible()
+})
+
 test('settings failure leaves navigation usable', async ({ page }) => {
   await open(page, 'settings', 'fail=/api/policy')
   await expect(page.getByRole('alert').getByText('Could not load the policy')).toBeVisible()
@@ -143,6 +164,7 @@ test('settings failure leaves navigation usable', async ({ page }) => {
 
 test('a stale save keeps the draft and says so', async ({ page }) => {
   await open(page, 'settings')
+  await advanced(page)
   const text = page.getByLabel('Policy file')
   await text.fill('{"preAuthorised":{"install":[]}}')
   await expect(page.getByText('Unsaved changes')).toBeVisible()
@@ -159,6 +181,7 @@ test('a stale save keeps the draft and says so', async ({ page }) => {
 
 test('saved is not shown before the server confirms', async ({ page }) => {
   await open(page, 'settings', 'hold=1')
+  await advanced(page)
   await page.getByLabel('Policy file').fill('{"preAuthorised":{"install":[]}}')
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Saving…' })).toBeDisabled()
@@ -171,8 +194,10 @@ test('saved is not shown before the server confirms', async ({ page }) => {
 
 test('leaving a section keeps its draft and marks it', async ({ page }) => {
   await open(page, 'settings')
+  await advanced(page)
   await page.getByLabel('Policy file').fill('{"preAuthorised":{"spend":[]}}')
   await page.getByRole('button', { name: 'Models' }).click()
+  await advanced(page)
   await expect(page.getByLabel('Capability table')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Policy Unsaved' })).toBeVisible()
   await page.getByRole('navigation', { name: 'Workspace' }).getByRole('button', { name: 'Work' }).click()
@@ -186,6 +211,7 @@ test('leaving a section keeps its draft and marks it', async ({ page }) => {
 
 test('a refused save shows the reason the server gave and keeps the draft', async ({ page }) => {
   await open(page, 'settings')
+  await advanced(page)
   const text = page.getByLabel('Policy file')
   await text.fill('{"preAuthorised":{"pr_merge":[]}}')
   await page.getByRole('button', { name: 'Save', exact: true }).click()
@@ -195,6 +221,7 @@ test('a refused save shows the reason the server gave and keeps the draft', asyn
   await expect(text).toHaveValue('{"preAuthorised":{"pr_merge":[]}}')
 
   await page.getByRole('button', { name: 'Models' }).click()
+  await advanced(page)
   await page.getByLabel('Capability table').fill('tiers: [unterminated')
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(
@@ -254,6 +281,7 @@ test('a proposal marks what it replaces against the saved policy', async ({ page
 
 test('saving an edit redraws a proposal against the new text', async ({ page }) => {
   await open(page, 'settings')
+  await advanced(page)
   await page.getByLabel('Policy file').fill('{"preAuthorised":{},"capsOverride":{"usd":5}}')
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.getByText('Saved, not yet in force')).toBeVisible()
@@ -264,6 +292,7 @@ test('Apply answers for the comparison on screen, not a newer read', async ({ pa
   await open(page, 'settings')
   await expect(page.locator('.proposal .diff-removed').first()).toBeVisible()
   await page.evaluate(() => window.__server.freezeDrafts())
+  await advanced(page)
   await page.getByLabel('Policy file').fill('{"preAuthorised":{},"capsOverride":{"usd":5}}')
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.getByText('Saved, not yet in force')).toBeVisible()
@@ -372,6 +401,70 @@ test('the add form offers only what an engine supports', async ({ page }) => {
   await expect(page.getByRole('radio')).toHaveCount(1)
   await expect(page.getByLabel(/Sign in to a dedicated connection/)).toBeChecked()
   await expect(page.getByText('was not found on PATH')).toBeVisible()
+})
+
+test('the walkthrough: setup answers before the engines do', async ({ page }) => {
+  await open(page, 'setup', 'checking=2')
+  const engines = page.locator('.stage').filter({ hasText: 'Engines' })
+  await expect(engines.getByText('Checking', { exact: true })).toBeVisible()
+  await expect(page.getByText(/usable connection|No connection yet/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Finish' })).toBeDisabled()
+  await expect(page.getByText('Still checking which engines are installed.')).toBeVisible()
+  await expect(engines.getByText('Done', { exact: true })).toBeVisible({ timeout: 5_000 })
+})
+
+test('the walkthrough: finished setup offers nothing more to do', async ({ page }) => {
+  await open(page, 'setup', 'complete')
+  await expect(page.getByText('Setup is finished. Nothing more is needed here.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Finish' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Open Conversation' })).toBeVisible()
+  await expect(page.getByLabel('Ask about setup')).toBeHidden()
+  await page.locator('summary', { hasText: 'Ask about setup' }).click()
+  await expect(page.getByLabel('Ask about setup')).toBeVisible()
+})
+
+test('the walkthrough: Finish stands clear of the Setup chat heading', async ({ page }) => {
+  await open(page, 'setup')
+  const finish = await page.getByRole('button', { name: 'Finish' }).boundingBox()
+  const heading = await page.getByRole('heading', { name: 'Setup chat' }).boundingBox()
+  expect(finish && heading && heading.y - (finish.y + finish.height)).toBeGreaterThanOrEqual(16)
+})
+
+test('the walkthrough: policy and models lead with plain words and fold the raw text', async ({ page }) => {
+  await open(page, 'settings')
+  await expect(page.getByText('MEC asks you before anything that needs a confirmation.')).toBeVisible()
+  await expect(page.getByLabel('Policy file')).toBeHidden()
+  await advanced(page)
+  await expect(page.getByLabel('Policy file')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Models', exact: true }).click()
+  await expect(page.getByText('Claude Code: sample-fast (fast).')).toBeVisible()
+  await expect(page.getByLabel('Capability table')).toBeHidden()
+})
+
+test('the walkthrough: a draft keeps Advanced open when its section comes back', async ({ page }) => {
+  await open(page, 'settings')
+  await advanced(page)
+  await page.getByLabel('Policy file').fill('{"preAuthorised":{"spend":[]}}')
+  await page.getByRole('button', { name: 'Models', exact: true }).click()
+  await page.getByRole('button', { name: /^Policy/ }).click()
+  await expect(page.getByLabel('Policy file')).toBeVisible()
+})
+
+test('the walkthrough: a connection date reads as words, never as digits and slashes', async ({ page }) => {
+  await open(page, 'slots')
+  const facts = connection(page, 'sample-key').locator('dd').first()
+  await expect(facts).toBeVisible()
+  await expect(connection(page, 'sample-key')).not.toContainText(/\d{2}\/\d{2}\/\d{4}/)
+})
+
+test('the walkthrough: pause is apart from navigation and says what it does', async ({ page }) => {
+  await open(page, 'chat')
+  const nav = page.getByRole('navigation', { name: 'Workspace' })
+  await expect(nav.getByRole('button', { name: 'Pause processing' })).toHaveCount(0)
+  const button = page.getByRole('button', { name: 'Pause processing' })
+  await expect(button).toHaveAccessibleDescription('Stops new runs for all work. Runs in progress finish.')
+  await expect(page.getByText('Stops new runs for all work.')).toBeVisible()
 })
 
 test('pause sits beside Needs you and waits for the server', async ({ page }) => {

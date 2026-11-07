@@ -12,6 +12,7 @@
  */
 
 import { decodeBackups, decodeModels, decodePrompts, decodeQuestions } from './api-decode'
+import { APPROVAL_HEADER, approvalKey, forgetApprovalKey } from './approval'
 
 export type PartState = 'ok' | 'degraded' | 'error'
 export type PartEntry = { state: PartState; detail?: string }
@@ -55,6 +56,8 @@ export type ChatMessage = {
   ackText?: string
   /** The server redacted this message: it looked like a key. */
   secretGuard?: boolean
+  /** Said while processing was paused. It is not a receipt: the turn has not run. */
+  pausedAck?: string
   kind?: ChatMessageKind
   /** Who said it, e.g. "Meta agent on max-1" / "You". */
   meta?: string
@@ -336,13 +339,19 @@ export function newIdempotencyKey(): string {
 export async function requestResponse(path: string, init?: RequestInit): Promise<Response> {
   // §22 CSRF discipline: the custom header every mutating call must carry; a
   // cross-origin page cannot add it without a preflight this server never answers.
+  const key = approvalKey()
   const withHeader: RequestInit = {
     ...init,
-    headers: { ...(init?.headers as Record<string, string> | undefined), 'x-mec-client': '1' },
+    headers: {
+      ...(init?.headers as Record<string, string> | undefined),
+      'x-mec-client': '1',
+      ...(key !== null && { [APPROVAL_HEADER]: key }),
+    },
   }
   const response = await fetch(path, withHeader)
   if (!response.ok) {
     const { error, detail } = await errorOf(response)
+    if (error === 'approval_required') forgetApprovalKey()
     throw new HttpError(path, response.status, error, detail)
   }
   return response
@@ -615,8 +624,10 @@ export const api = {
     })
   },
 
-  pauseProcessing(): Promise<{ status: string }> {
-    return requestOrNotServed<{ status: string }>('/api/processing/pause', { method: 'POST' })
+  pauseProcessing(): Promise<{ status: string; pausedAt?: string }> {
+    return requestOrNotServed<{ status: string; pausedAt?: string }>('/api/processing/pause', {
+      method: 'POST',
+    })
   },
 
   resumeProcessing(): Promise<{ status: string }> {

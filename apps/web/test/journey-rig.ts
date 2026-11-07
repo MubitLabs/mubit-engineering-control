@@ -2,6 +2,7 @@
 // journey reads it reads from a route, the bare repository or the fake `gh`'s log. Nothing here
 // touches `~/.mec`, and only a process this rig started is ever signalled, by its PID.
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import {
   appendFileSync,
   chmodSync,
@@ -16,6 +17,7 @@ import {
 } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { Writable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { type JourneyMode, serverEnv } from './journey-gate'
 
@@ -124,6 +126,8 @@ export interface Rig {
   plannerTurns: (...turns: unknown[]) => void
   workerSteps: (steps: unknown[]) => void
   api: <T = Record<string, unknown>>(path: string, body?: unknown) => Promise<T>
+  /** The key this rig hands the server, as a script may (`--approval-key-fd`). The page needs it too. */
+  approvalKey: string
   repoId: string
   /** Stops the server by this signal, then starts it on the same store. */
   restart: (how: 'SIGTERM' | 'SIGKILL') => Promise<void>
@@ -214,11 +218,17 @@ export async function startRig(mode: JourneyMode): Promise<Rig> {
 
   let child: ChildProcess | undefined
   let url = ''
+  const approvalKey = randomBytes(32).toString('hex')
   const log = join(root, 'server.log')
   const start = (): Promise<void> =>
     new Promise((ready, failed) => {
-      const server = spawn(process.execPath, [MEC], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] })
+      const server = spawn(process.execPath, [MEC, '--approval-key-fd=3'], {
+        cwd: ROOT,
+        env,
+        stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
+      })
       child = server
+      ;(server.stdio[3] as Writable).end(approvalKey)
       const bail = setTimeout(() => failed(new Error(`no server in 60 s; see ${log}`)), 60_000)
       server.stderr?.on('data', (chunk) => appendFileSync(log, chunk))
       server.stdout?.on('data', (chunk) => {
@@ -248,6 +258,7 @@ export async function startRig(mode: JourneyMode): Promise<Rig> {
     const response = await fetch(`${url}${path}`, {
       headers: {
         'x-mec-client': '1',
+        'x-mec-approval': approvalKey,
         ...(body !== undefined && { 'content-type': 'application/json' }),
       },
       ...(body !== undefined && { method: 'POST', body: JSON.stringify(body) }),
@@ -270,7 +281,8 @@ export async function startRig(mode: JourneyMode): Promise<Rig> {
         trusted: false,
       })
     const { id: repoId } = await register(repo)
-    await register(join(root, 'second'))
+    const { id: second } = await register(join(root, 'second'))
+    for (const id of [repoId, second]) await api(`/api/repositories/${id}/host-run/agree`, {})
     // The meta agent's slot is read at boot.
     await halt('SIGTERM')
     await start()
@@ -279,6 +291,7 @@ export async function startRig(mode: JourneyMode): Promise<Rig> {
         return url
       },
       repoId,
+      approvalKey,
       plannerTurns: (...turns) => {
         if (mode === 'real') return
         for (const [index, planned] of turns.entries()) {

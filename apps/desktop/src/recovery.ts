@@ -27,13 +27,20 @@ import {
   transition,
 } from '@mec/domain'
 import {
+  cannotStartYet,
+  capacityFull,
   enqueueWake,
+  HOST_RUN_UNAGREED,
+  holdsGroup,
+  hostRunAgreed,
+  isBlocked,
   isHeld,
   isTerminal,
   type LaunchAuthority,
   mandateOf,
   noVerdict,
   refuseLaunch,
+  repoOf,
   revalidateWork,
 } from '@mec/meta'
 import {
@@ -43,6 +50,7 @@ import {
   type ParkedState,
   type ProcessMark,
   parkReady,
+  processAlive,
   readProcess,
   reapGroup,
   replayJournal,
@@ -77,12 +85,13 @@ export type GroupFinding = 'ours' | 'recycled' | 'gone' | 'unprovable'
 
 /**
  * Whether a stored group is still ours. A pid cannot be reused while its group exists, so a leader
- * with another start time means ours has ended. A group with no leader left proves nothing.
+ * with another start time means ours has ended. A group with no leader left proves nothing, and
+ * neither does a stray `ps` could not read: gone means nothing answers to the pid at all.
  */
 export function identifyGroup(
   mark: ProcessMark,
   read: (pid: number) => { started: string; pgid: number } | undefined = readProcess,
-  alive: (pid: number) => boolean = groupAlive,
+  alive: (pid: number) => boolean = (pid) => groupAlive(pid) || processAlive(pid),
 ): GroupFinding {
   const leader = read(mark.pid)
   if (leader === undefined) return alive(mark.pid) ? 'unprovable' : 'gone'
@@ -245,12 +254,11 @@ async function reconcileQueued(deps: ProcessDeps, doc: StoreDoc): Promise<void> 
   deps.effects.enqueue('launch', `${String(doc.id)}:${generation}`, launchPayload(doc, generation, {}))
 }
 
-/** Checks a crash or a shutdown cut short run again on the same head. A stop's verdict stands. */
-async function reconcileChecks(deps: ProcessDeps, doc: StoreDoc): Promise<void> {
-  const { store, effects } = deps
-  if (doc.checks_note !== undefined && doc.checks_stopped !== 'server_closing') return
-  if (!(await clearGroup(deps, doc, doc.check_process))) return
-  if (!mayRun(store.workItems.get(String(doc.workItemId)))) return
+/** What ended a head's checks with no verdict, and leaves them to run again. A stop's stands. */
+const CHECKS_RUN_AGAIN: readonly unknown[] = ['server_closing', HOST_RUN_UNAGREED]
+
+/** One second look at a head, as its own row; the resume gate decides when. */
+export function enqueueRecheck(effects: Effects, doc: StoreDoc): void {
   const generation = Number(doc.generation ?? 1)
   effects.enqueue(
     'launch',
@@ -259,9 +267,42 @@ async function reconcileChecks(deps: ProcessDeps, doc: StoreDoc): Promise<void> 
   )
 }
 
+/** Checks a crash or a shutdown cut short run again on the same head. */
+async function reconcileChecks(deps: ProcessDeps, doc: StoreDoc): Promise<void> {
+  const { store, effects } = deps
+  if (doc.checks_note !== undefined && !CHECKS_RUN_AGAIN.includes(doc.checks_stopped)) return
+  if (!(await clearGroup(deps, doc, doc.check_process))) return
+  if (mayRun(store.workItems.get(String(doc.workItemId)))) enqueueRecheck(effects, doc)
+}
+
+/**
+ * §8.1, at boot and on every pass: a group that outlived its attempt holds the capacity until it is
+ * provably gone. The attempt stays as it ended: the hold is the one thing that changes here.
+ */
+export async function reconcileHeld(deps: ProcessDeps): Promise<void> {
+  const { store, now } = deps
+  for (const doc of store.attempts.list().filter(holdsGroup)) {
+    const held = (doc.held_groups as unknown[]).flatMap((value) => markOf(value) ?? [])
+    const left: ProcessMark[] = []
+    for (const mark of held) {
+      if ((await groupLeft(mark, deps)) !== undefined) left.push(mark)
+    }
+    const id = String(doc.id)
+    if (left.length === held.length && held.length > 0) continue
+    const at = now()
+    store.atomic(() => {
+      const { held_groups: _held, ...rest } = store.attempts.get(id) ?? doc
+      store.attempts.save({ ...rest, ...(left.length > 0 && { held_groups: left }), updatedAt: at })
+      if (left.length > 0) return
+      appendEvent(store, `attempt:${id}`, 'attempt.capacity_released', { attemptId: id, at }, at)
+    })
+  }
+}
+
 /** §20, oldest work item first. Attempts that were waiting, ready, blocked or failed stay. */
 export async function reconcileProcesses(deps: ProcessDeps): Promise<void> {
   const { store, now } = deps
+  await reconcileHeld(deps)
   const created = (doc: StoreDoc): string =>
     String(store.workItems.get(String(doc.workItemId))?.createdAt ?? '')
   const docs = [...store.attempts.list()].sort(
@@ -283,10 +324,10 @@ export async function reconcileProcesses(deps: ProcessDeps): Promise<void> {
   }
 }
 
-type PlannerSeams = Pick<ProcessDeps, 'identify' | 'reap'>
+type GroupSeams = Pick<ProcessDeps, 'identify' | 'reap'>
 
 /** Why this group may still be there, or undefined once it provably is not. */
-async function plannerGroupLeft(mark: ProcessMark, seams: PlannerSeams): Promise<string | undefined> {
+async function groupLeft(mark: ProcessMark, seams: GroupSeams): Promise<string | undefined> {
   const found = (seams.identify ?? identifyGroup)(mark)
   if (found === 'gone' || found === 'recycled') return undefined
   if (found === 'unprovable') return found
@@ -299,14 +340,14 @@ async function plannerGroupLeft(mark: ProcessMark, seams: PlannerSeams): Promise
  * A group that may still be there is reported every boot. Its mark moves to `refused`, where the
  * next planner turn cannot overwrite it, and the dirs it may be using stay until it is proven gone.
  */
-export async function reconcilePlanner(store: Store, seams: PlannerSeams = {}): Promise<void> {
+export async function reconcilePlanner(store: Store, seams: GroupSeams = {}): Promise<void> {
   const doc = store.engines.get(PLANNER_DOC)
   if (doc === undefined) return
   const held = Array.isArray(doc.refused) ? (doc.refused as { process?: Json }[]) : []
   const marks = [...held.map((entry) => markOf(entry.process)), markOf(doc.process)]
   const refused: { process: ProcessMark; reason: string }[] = []
   for (const mark of marks) {
-    const reason = mark === undefined ? undefined : await plannerGroupLeft(mark, seams)
+    const reason = mark === undefined ? undefined : await groupLeft(mark, seams)
     if (mark !== undefined && reason !== undefined) refused.push({ process: mark, reason })
   }
   const { process: _process, refused: _refused, ...rest } = doc
@@ -451,6 +492,7 @@ export function resumeAuthority(
   payload: Json,
   now: string,
   policyHash: string,
+  pastGate?: ReadonlySet<string>,
 ): LaunchAuthority {
   const fields = (payload ?? {}) as LaunchFields & { work_item_id?: string }
   const work = store.workItems.get(String(fields.work_item_id))
@@ -461,17 +503,26 @@ export function resumeAuthority(
   const fits =
     fields.recheck === true
       ? attempt?.state === 'work_complete' &&
-        !(noVerdict(attempt) && attempt.checks_stopped !== 'server_closing')
+        !(noVerdict(attempt) && !CHECKS_RUN_AGAIN.includes(attempt.checks_stopped))
       : attempt?.resuming === true &&
         attempt.switched_to === undefined &&
         [...PARKED, 'interrupted'].includes(String(attempt.state))
   if (!current || !fits) return { verdict: 'drop', reason: 'attempt_not_queued' }
-  const mandate = revalidateWork(work, now, policyHash) as MandateCheck
-  const verdict = resumeVerdict({ held: isHeld(work), mandate })
-  return verdict.verdict === 'run' && attempt?.reconcile_refused !== undefined
-    ? { verdict: 'defer', reason: 'reconcile_refused' }
+  const verdict = resumeVerdict(resumeFacts(store, work, now, policyHash))
+  if (verdict.verdict !== 'run') return verdict
+  if (attempt?.reconcile_refused !== undefined) return { verdict: 'defer', reason: 'reconcile_refused' }
+  return capacityFull(store, attempt as StoreDoc, pastGate)
+    ? { verdict: 'defer', reason: 'capacity' }
     : verdict
 }
+
+/** What every resume reads of its work, so the row and a pass cannot read it differently. */
+const resumeFacts = (store: Store, work: StoreDoc, now: string, policyHash: string) => ({
+  held: isHeld(work),
+  mandate: revalidateWork(work, now, policyHash) as MandateCheck,
+  blocked: isBlocked(work),
+  agreed: hostRunAgreed(store, repoOf(work)),
+})
 
 const withoutResuming = (doc: StoreDoc): StoreDoc => {
   const { resuming: _resuming, ...rest } = doc
@@ -566,6 +617,8 @@ const classifyPark = (state: ParkedState, resetKnown: boolean): boolean =>
 function inUse(store: Store, slotId: string): number {
   return store.attempts.list().filter((doc) => {
     if (doc.slotId !== slotId) return false
+    if (holdsGroup(doc)) return true
+    if (cannotStartYet(store, doc)) return false
     if (doc.resuming === true) return true
     return (
       ['queued', 'running', 'stalled'].includes(String(doc.state)) ||
@@ -602,11 +655,7 @@ export function resumeParked(deps: ParkDeps, only?: { workItemId: string; explic
             now: at,
           })
     if (!ready) continue
-    const verdict = resumeVerdict({
-      held: isHeld(work),
-      mandate: revalidateWork(work, at, policyHash) as MandateCheck,
-    })
-    if (verdict.verdict !== 'run') continue
+    if (resumeVerdict(resumeFacts(store, work, at, policyHash)).verdict !== 'run') continue
     const room = typeof slot?.concurrency === 'number' ? slot.concurrency : DEFAULT_CAPS.perSlot
     if (inUse(store, String(doc.slotId)) >= room) continue
     store.atomic(() => enqueueResume(store, effects, doc, RESUME_NOTE, at))

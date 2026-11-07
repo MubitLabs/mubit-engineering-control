@@ -331,8 +331,8 @@
   {
     "name": "a planned model reads as what ran",
     "file": "apps/desktop/src/inspection.ts",
-    "find": "const model = str(attempt.model) ?? (engine === null ? null : str(attempt.resolved_model))",
-    "replace": "const model = str(attempt.model) ?? str(attempt.resolved_model)",
+    "find": "      this.#sessionModel(String(attempt.id)) ??\n      (engine === null ? null : str(attempt.resolved_model))",
+    "replace": "      this.#sessionModel(String(attempt.id)) ??\n      str(attempt.resolved_model)",
     "tests": ["apps/desktop/test/inspection-trace.test.ts"]
   },
   {

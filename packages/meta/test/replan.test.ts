@@ -20,7 +20,14 @@ const t = (taskId: string, objective = `do ${taskId}`, dependsOn: string[] = [])
 function rig(decisions: MetaDecision[]) {
   const store = new MemoryRepositories()
   store.atomic(() => {
-    store.engines.save({ id: REPO, url: 'https://example.test/a', bootstrap: [], checks: [], trust: true })
+    store.engines.save({
+      id: REPO,
+      url: 'https://example.test/a',
+      bootstrap: [],
+      checks: [],
+      trust: true,
+      hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
+    })
   })
   const brain: MetaBrain = async () => decisions.shift() as MetaDecision
   const service = new MetaAgentService({ store, effects: store.effects, brain, now: NOW })

@@ -8,10 +8,12 @@ export interface RepositoryRequest {
   checkCmds: CheckProfile[]
 }
 
-export const CHECKS_HINT = 'One a line, as name: command. Commands run as argv, never through a shell.'
-export const BOOTSTRAP_HINT = 'One a line. They run once in a new worktree.'
+export const CHECKS_HINT =
+  'One a line, as name: command. Once you agree, they run on this machine as you, with your files and network, as argv and never through a shell.'
+export const BOOTSTRAP_HINT =
+  'One a line. Once you agree, they run on this machine as you, with your files and network, once in each new worktree.'
 
-/** One form for Setup and Settings. A new repository starts untrusted; trust is a separate step. */
+/** One form for Setup and Settings. A new repository runs nothing until the owner agrees. */
 export function RepositoryForm({
   busy,
   error,
@@ -59,7 +61,11 @@ export function RepositoryForm({
         <textarea rows={3} value={checks} onChange={(event) => setChecks(event.target.value)} />
         <small>{CHECKS_HINT}</small>
       </label>
-      <p className="field-note">The repository starts untrusted. You can trust it later in Settings.</p>
+      <p className="field-note">
+        Adding it runs nothing. Nothing runs in it until you agree, which you can do next. It also starts
+        untrusted, but trust is about the engines: its setup and checks run on this machine once you agree,
+        trusted or not.
+      </p>
       {error !== null && (
         <p className="field-error" role="alert">
           {error}

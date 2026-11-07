@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -28,7 +29,6 @@ import { specialistBridge, specialistTools } from '../src/specialist-tools'
 const FAKE_CLI = fileURLToPath(new URL('../../../packages/testkit/fake-cli/claude', import.meta.url))
 const POLICY = '{"preAuthorised":{}}'
 const REAL_PATH = process.env.PATH
-const FLAGS = ['MEC_REAL_RUNNER', 'MEC_FAKE_ENGINE'] as const
 
 const roots: string[] = []
 const closers: (() => Promise<void>)[] = []
@@ -36,7 +36,8 @@ const closers: (() => Promise<void>)[] = []
 afterEach(async () => {
   for (const close of closers.splice(0)) await close()
   process.env.PATH = REAL_PATH
-  for (const flag of FLAGS) delete process.env[flag]
+  process.env.MEC_REAL_RUNNER = '0'
+  delete process.env.MEC_FAKE_ENGINE
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
@@ -86,6 +87,7 @@ function seedInto(store: SqliteStore, repo: string, seed: Seed = {}): void {
       bootstrap: seed.bootstrap ?? [],
       checks: seed.checks ?? [],
       trust: false,
+      hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
     })
     store.messages.save({ id: 'msg_1', text: 'please add the thing' })
     store.slots.save({
@@ -218,7 +220,14 @@ function seedSlots(dataDir: string, repo: string, slots: Record<string, unknown>
   migrate(db, MIGRATIONS_v1)
   const store = new SqliteStore(db)
   store.atomic(() => {
-    store.engines.save({ id: 'repo_a', url: repo, bootstrap: [], checks: [], trust: false })
+    store.engines.save({
+      id: 'repo_a',
+      url: repo,
+      bootstrap: [],
+      checks: [],
+      trust: false,
+      hostRunAgreedAt: '2026-11-05T08:00:00.000Z',
+    })
     for (const slot of slots) store.slots.save(slot as never)
   })
   db.close()
@@ -400,6 +409,74 @@ describe('a chat request', { timeout: 60_000 }, () => {
     })
   })
 
+  /** A key slot's home whose opencode config lists `model` under `provider`. */
+  const keyHome = (root: string, name: string, provider: string, model: string): string => {
+    const home = join(root, name)
+    mkdirSync(join(home, 'config', 'opencode'), { recursive: true })
+    writeFileSync(
+      join(home, 'config', 'opencode', 'opencode.json'),
+      JSON.stringify({ provider: { [provider]: { models: { [model]: {} } } } }),
+    )
+    return home
+  }
+  const gemini = (home: string) => ({
+    id: 'gem-1',
+    engine: 'opencode',
+    kind: 'opencode-gemini',
+    provider: 'google-gemini',
+    home,
+    state: 'healthy',
+    env: {},
+  })
+  const glm = (home: string) => ({
+    id: 'slot_a_glm',
+    engine: 'opencode',
+    kind: 'opencode-glm',
+    provider: 'zai-coding-plan',
+    home,
+    state: 'healthy',
+    env: {},
+  })
+
+  it('an opencode-gemini slot takes no work with the runner on, though it sorts first', async () => {
+    const { root, dataDir, repo } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedSlots(dataDir, repo, [LINKED, gemini(keyHome(root, 'gem', 'google', 'gemini-3.5-flash-lite'))])
+    expect((await request(dataDir)).launchesEnqueued).toBe(1)
+    expect(peek(dataDir, (store) => store.attempts.list()[0]?.slotId)).toBe('slot_linked')
+  })
+
+  it('an opencode-gemini slot takes no work with the runner off either (known-limits)', async () => {
+    const { root, dataDir, repo } = scratch({ steps: SUCCESS })
+    seedSlots(dataDir, repo, [gemini(keyHome(root, 'gem', 'google', 'gemini-3.5-flash-lite'))])
+    expect((await request(dataDir)).launchesEnqueued).toBe(0)
+    expect(peek(dataDir, (store) => store.attempts.list())).toEqual([])
+  })
+
+  it("a tier-only task takes the meta slot's engine over a launchable slot that sorts first", async () => {
+    const { root, dataDir, repo } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedSlots(dataDir, repo, [LINKED, glm(keyHome(root, 'glm', 'zai-coding-plan', 'glm-5.3-flash'))])
+    peek(dataDir, (store) => store.engines.save({ id: 'settings/meta-slot', slotId: LINKED.id }))
+    expect((await request(dataDir)).launchesEnqueued).toBe(1)
+    const attempt = peek(dataDir, (store) => store.attempts.list()[0])
+    expect(attempt?.slotId).toBe('slot_linked')
+    expect(attempt?.placement).toBe("slot_linked: on the meta agent's engine, claude")
+  })
+
+  it('a retired meta slot sets no engine preference', async () => {
+    const { root, dataDir, repo } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedSlots(dataDir, repo, [
+      LINKED,
+      { ...LINKED, id: 'slot_old', state: 'retired' },
+      glm(keyHome(root, 'glm', 'zai-coding-plan', 'glm-5.3-flash')),
+    ])
+    peek(dataDir, (store) => store.engines.save({ id: 'settings/meta-slot', slotId: 'slot_old' }))
+    expect((await request(dataDir)).launchesEnqueued).toBe(1)
+    expect(peek(dataDir, (store) => store.attempts.list()[0]?.slotId)).toBe('slot_a_glm')
+  })
+
   it('a tier only an unlaunchable slot serves is refused at the plan, not at the launch', async () => {
     const { root, dataDir, repo } = scratch({ steps: SUCCESS })
     const home = join(root, 'glm')
@@ -457,8 +534,18 @@ describe('a chat request', { timeout: 60_000 }, () => {
 })
 
 describe('the launch path', { timeout: 60_000 }, () => {
-  it('flag off starts no process and blocks with a reason', async () => {
+  it('with no flag at all a launch is real', async () => {
     const { dataDir, repo, bin } = scratch({ steps: SUCCESS })
+    delete process.env.MEC_REAL_RUNNER
+    seedStore(dataDir, repo, { checks: [{ name: 'made', cmd: 'test -f made.txt' }] })
+    await serve(dataDir)
+    await reaches(dataDir, 'succeeded')
+    expect(existsSync(join(bin, 'seen.json'))).toBe(true)
+  })
+
+  it('MEC_REAL_RUNNER=0 starts no process and blocks with a reason', async () => {
+    const { dataDir, repo, bin } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '0'
     seedStore(dataDir, repo)
     await serve(dataDir)
     await reaches(dataDir, 'failed')
@@ -494,6 +581,16 @@ describe('the launch path', { timeout: 60_000 }, () => {
   it('the fake flag keeps priority', async () => {
     const { dataDir, repo, bin } = scratch({ steps: SUCCESS })
     process.env.MEC_REAL_RUNNER = '1'
+    process.env.MEC_FAKE_ENGINE = '1'
+    seedStore(dataDir, repo)
+    await serve(dataDir)
+    await until(() => attemptState(dataDir) !== 'queued')
+    expect(existsSync(join(bin, 'seen.json'))).toBe(false)
+  })
+
+  it('the fake flag wins over the default too', async () => {
+    const { dataDir, repo, bin } = scratch({ steps: SUCCESS })
+    delete process.env.MEC_REAL_RUNNER
     process.env.MEC_FAKE_ENGINE = '1'
     seedStore(dataDir, repo)
     await serve(dataDir)
@@ -558,8 +655,10 @@ describe('the launch path', { timeout: 60_000 }, () => {
     expect(gitIn(worktree, 'log', '-1', '--format=%ae')).toBe('owner@example.com')
     expect(gitIn(worktree, 'log', '--name-only', '--format=', `${base}..HEAD`, '--', '.mec')).toBe('')
 
-    // The bootstrap ran first, the check ran on that head, and the token left the worktree.
-    expect(gitIn(worktree, 'ls-files', 'boot-ran.txt')).toBe('boot-ran.txt')
+    // The bootstrap ran first, its file stayed out of the commit, the check ran on that head, and
+    // the token left the worktree.
+    expect(readdirSync(worktree)).toContain('boot-ran.txt')
+    expect(gitIn(worktree, 'ls-files', 'boot-ran.txt')).toBe('')
     const check = peek(dataDir, (store) => store.engines.get('check/att_1/made'))
     expect(check).toMatchObject({ status: 'passed', exit_code: 0, sha: attempt.head_sha })
     expect(existsSync(join(worktree, '.mec', 'mcp.json'))).toBe(false)

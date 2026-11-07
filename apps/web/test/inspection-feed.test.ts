@@ -46,6 +46,7 @@ const taskOfId = (id: string) => taskDetails[id as keyof typeof taskDetails] as 
 function rig(over: Partial<InspectionClient> = {}) {
   const calls: string[] = []
   const client: InspectionClient = {
+    meta: async () => ({ observedAt: '', connection: null, repositories: [] }),
     work: async () => workPage as Page<WorkRow>,
     needs: async () => needsOf([needs.pending, needs.question]),
     workDetail: async (id) => workOfId(id),
@@ -63,6 +64,10 @@ function rig(over: Partial<InspectionClient> = {}) {
     stop: async (id) => {
       calls.push(`stop ${id}`)
       return { id, status: 'stopped' }
+    },
+    retry: async (id) => {
+      calls.push(`retry ${id}`)
+      return { id, status: 'retrying' }
     },
     resolve: async (id, answer) => {
       calls.push(`${answer} ${id}`)
@@ -686,6 +691,15 @@ describe('owner commands', () => {
     await settle()
     expect(calls).toEqual(['stop work_x'])
     expect(inspection.getState().notice).toMatchObject({ kind: 'done' })
+  })
+
+  it('a retry pressed twice before the answer is one request', async () => {
+    const { inspection, calls, settle } = rig()
+    inspection.act({ ...stop, kind: 'retry' })
+    inspection.act({ ...stop, kind: 'retry' })
+    await settle()
+    expect(calls).toEqual(['retry work_x'])
+    expect(inspection.getState().notice?.text).toContain('still comes to you as a card')
   })
 
   it('a refused command says the server’s reason', async () => {

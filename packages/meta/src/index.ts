@@ -1,6 +1,6 @@
 export { Acknowledger } from './acks'
 export type { RepoAdmissionCode, RepoPin } from './admission'
-export { assertRepoAdmission, RepoAdmissionError, repoFields } from './admission'
+export { assertRepoAdmission, RepoAdmissionError, repoFields, repoOf } from './admission'
 export type {
   HoldOutcome,
   LaunchAuthority,
@@ -11,9 +11,17 @@ export type {
   StopOutcome,
 } from './authority'
 export {
+  agreeHostRun,
+  awaitsAgreement,
   blockWork,
+  cannotStartYet,
+  capacityFull,
   failLaunch,
+  HOST_RUN_UNAGREED,
+  holdsGroup,
   holdWorkItem,
+  hostRunAgreed,
+  isBlocked,
   isHeld,
   isTerminal,
   launchAuthority,
@@ -25,6 +33,8 @@ export {
   revalidateWork,
   saveProcessing,
   stopWorkItem,
+  waitingForAgreement,
+  withdrawHostRun,
 } from './authority'
 export type { PlannerDecision, PlannerTurnInput, PlannerWake } from './brain'
 export { DEFAULT_PLANNER_PROTOCOL, PlannerBrain, readMetaProtocol } from './brain'
@@ -68,6 +78,8 @@ export type {
   MetaBrain,
   MetaDecision,
   MetaPlanTask,
+  MetaTurn,
+  MetaTurnPhase,
   MetaWake,
   TurnOutcome,
   WakeRequest,

@@ -16,7 +16,8 @@ export const SETUP_DOC_ID = 'settings/setup'
 const META_SLOT_ID = 'settings/meta-slot'
 const REPOSITORY_PREFIX = 'repo_'
 
-export type StepStatus = 'done' | 'missing' | 'skipped'
+/** `checking`: the look at the engines has not answered yet, which says nothing either way. */
+export type StepStatus = 'done' | 'missing' | 'skipped' | 'checking'
 export type ReadinessStep = {
   id: SetupStep
   title: string
@@ -86,7 +87,8 @@ function repositoriesOf(store: Store): StoreDoc[] {
 
 const hasChecks = (repo: StoreDoc): boolean => Array.isArray(repo.checks) && repo.checks.length > 0
 
-export function buildReadiness(store: Store, engines: Readiness['engines']): Readiness {
+/** `engines` is null until the first look has answered: an unknown is not a missing engine. */
+export function buildReadiness(store: Store, engines: Readiness['engines'] | null): Readiness {
   const skipped = skippedSteps(store)
   const slots = store.slots.list()
   const repositories = repositoriesOf(store)
@@ -110,7 +112,7 @@ export function buildReadiness(store: Store, engines: Readiness['engines']): Rea
   const metaRefusal = chosen === undefined ? null : metaSlotRefusal(chosen)
   const metaReady = chosen !== undefined && metaRefusal === null
 
-  const found = engines.filter((engine) => engine.installed)
+  const found = (engines ?? []).filter((engine) => engine.installed)
   const connections = slots.filter(hasLogin)
   const healthy = connections.filter((slot) => slot.state === 'healthy')
   const firstRequest = store.workItems.list().some((work) => typeof work.repoId === 'string')
@@ -122,8 +124,11 @@ export function buildReadiness(store: Store, engines: Readiness['engines']): Rea
     meta_slot: metaReady,
     first_request: firstRequest,
   }
-  const statusOf = (id: SetupStep): StepStatus =>
-    facts[id] ? 'done' : skipped.includes(id) ? 'skipped' : 'missing'
+  const statusOf = (id: SetupStep): StepStatus => {
+    if (facts[id]) return 'done'
+    if (id === 'engines' && engines === null) return 'checking'
+    return skipped.includes(id) ? 'skipped' : 'missing'
+  }
 
   const steps: ReadinessStep[] = [
     {
@@ -132,7 +137,9 @@ export function buildReadiness(store: Store, engines: Readiness['engines']): Rea
       status: statusOf('engines'),
       detail: facts.engines
         ? `Found ${found.map((engine) => `${engine.engine} ${engine.version ?? ''}`.trim()).join(', ')}.`
-        : 'No engine was found on PATH. Install Claude Code, Codex or OpenCode, then check again.',
+        : engines === null
+          ? 'Checking which engines are installed.'
+          : 'No engine was found on PATH. Install Claude Code, Codex or OpenCode, then check again.',
       next: null,
     },
     {
@@ -188,15 +195,17 @@ export function buildReadiness(store: Store, engines: Readiness['engines']): Rea
     ? {
         enabled: false,
         reason:
-          blocked.status === 'skipped'
-            ? `${blocked.title} was skipped and is still needed.`
-            : `${blocked.title} is still needed: ${blocked.detail}`,
+          blocked.status === 'checking'
+            ? 'Still checking which engines are installed.'
+            : blocked.status === 'skipped'
+              ? `${blocked.title} was skipped and is still needed.`
+              : `${blocked.title} is still needed: ${blocked.detail}`,
       }
     : { enabled: true }
 
   return {
     steps,
-    engines,
+    engines: engines ?? [],
     metaCandidates,
     metaSlotId,
     finish,

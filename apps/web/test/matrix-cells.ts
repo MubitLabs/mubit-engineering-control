@@ -70,6 +70,17 @@ export const STATES: readonly Cell[] = [
     },
   },
   { name: 'setup empty', url: `${CONFIG}?empty=1#setup`, ready: '.page h1' },
+  { name: 'setup checking engines', url: `${CONFIG}?checking=500#setup`, ready: '.stages' },
+  { name: 'setup finished', url: `${CONFIG}?complete#setup`, ready: '.stages' },
+  {
+    name: 'policy advanced',
+    url: `${CONFIG}#settings`,
+    ready: '.plain-summary',
+    open: async (page) => {
+      await page.locator('.advanced > summary').click()
+      await expect(page.getByLabel('Policy file')).toBeVisible()
+    },
+  },
   {
     name: 'connection adding',
     url: `${CONFIG}#slots`,

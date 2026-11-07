@@ -342,13 +342,23 @@ const REFUSALS = new Set([
   'invalid_ref',
   'pr_unreadable',
   'pr_not_open',
+  'unknown_work',
+  'delivery_mismatch',
+  'delivery_not_ready',
 ])
+
+const REFUSAL_STATUS: Readonly<Record<string, number>> = {
+  unknown_repo: 404,
+  unknown_work: 404,
+  delivery_mismatch: 409,
+  delivery_not_ready: 409,
+}
 
 export function refusalOf(error: unknown): { status: number; error: string; detail: string } | undefined {
   if (!(error instanceof Error)) return undefined
   const [code = '', ...rest] = error.message.split(': ')
   if (!REFUSALS.has(code)) return undefined
-  return { status: code === 'unknown_repo' ? 404 : 422, error: code, detail: rest.join(': ') }
+  return { status: REFUSAL_STATUS[code] ?? 422, error: code, detail: rest.join(': ') }
 }
 
 /**
@@ -482,7 +492,7 @@ const payloadOf = <T>(doc: { payload?: Json }, confirmationId: string): T => {
  */
 export async function createPrBehindCard(
   deps: ReleaseDeps,
-  input: PrCreatePayload & { headSha?: string },
+  input: PrCreatePayload & { headSha?: string; workItemId?: string },
 ): Promise<{ confirmationId: string; prNumber?: number; prUrl?: string }> {
   const at = deps.now().toISOString()
   assertRepo(input.repo)
@@ -506,7 +516,11 @@ export async function createPrBehindCard(
   const payload: Record<string, Json> = { repo: input.repo, branch: input.branch, title, body }
 
   deps.store.atomic(() => {
-    deps.store.confirmations.save({ ...(record as unknown as StoreDoc), payload })
+    deps.store.confirmations.save({
+      ...(record as unknown as StoreDoc),
+      payload,
+      ...(input.workItemId !== undefined && { workItemId: input.workItemId }),
+    })
     savePrFlow(
       deps.store,
       advance(prFlowOf(deps.store, input.repo, input.branch, at), 'integration_complete', at),
@@ -644,6 +658,20 @@ export async function readPr(run: GhRun, repo: string, prNumber: number): Promis
   return facts !== undefined && shaOf(String(facts.headRefOid)) !== undefined ? facts : undefined
 }
 
+/** A card asked for from a work item speaks for that item's own ready pull request, and no other. */
+function assertDeliveryReady(
+  store: Store,
+  input: { repo: string; prNumber: number; workItemId?: string },
+): void {
+  const id = String(input.workItemId)
+  if (store.workItems.get(id) === undefined) throw codedError('unknown_work', id)
+  const record = store.engines.get(`delivery/${id}`)
+  if (record?.repo !== input.repo || record.prNumber !== input.prNumber) {
+    throw codedError('delivery_mismatch', `${id} does not deliver ${input.repo}#${input.prNumber}`)
+  }
+  if (record.stage !== 'ready') throw codedError('delivery_not_ready', `${id} is ${String(record.stage)}`)
+}
+
 /**
  * Open the `pr_merge` card (§13: merge always confirms; policy can never pre-authorise the
  * class). The card binds the repo, the PR number and the head GitHub reports now, so a later
@@ -651,19 +679,29 @@ export async function readPr(run: GhRun, repo: string, prNumber: number): Promis
  */
 export async function openMergeCard(
   deps: ReleaseDeps,
-  input: { repo: string; prNumber: number; originConfirmationId?: string },
+  input: { repo: string; prNumber: number; originConfirmationId?: string; workItemId?: string },
 ): Promise<{ confirmationId: string }> {
   const at = deps.now().toISOString()
   assertRepo(input.repo)
+  if (input.workItemId !== undefined) assertDeliveryReady(deps.store, input)
   const pr = await readPr(deps.run, input.repo, input.prNumber)
   if (pr === undefined) throw codedError('pr_unreadable', `${input.repo}#${input.prNumber}`)
   if (pr.state !== 'OPEN') throw codedError('pr_not_open', `${input.repo}#${input.prNumber} is ${pr.state}`)
+  const operationHash = createHash('sha256')
+    .update(`pr_merge:${input.repo}:${input.prNumber}:${pr.headRefOid}`)
+    .digest('hex')
+  // The same question about the same commit is already asked: two cards would be two answers.
+  const asked = deps.store.confirmations
+    .list({ status: 'pending' })
+    .find(
+      (card) =>
+        card.cls === 'pr_merge' && card.operationHash === operationHash && String(card.expiresAt) > at,
+    )
+  if (asked !== undefined) return { confirmationId: String(asked.id) }
   const record = openConfirmation({
     id: freshConfirmationId(),
     cls: 'pr_merge',
-    operationHash: createHash('sha256')
-      .update(`pr_merge:${input.repo}:${input.prNumber}:${pr.headRefOid}`)
-      .digest('hex'),
+    operationHash,
     inputSha: pr.headRefOid,
     expiresAt: expiresAt(deps.now),
   })
@@ -675,7 +713,11 @@ export async function openMergeCard(
     ...(input.originConfirmationId !== undefined && { originConfirmationId: input.originConfirmationId }),
   }
   deps.store.atomic(() => {
-    deps.store.confirmations.save({ ...(record as unknown as StoreDoc), payload })
+    deps.store.confirmations.save({
+      ...(record as unknown as StoreDoc),
+      payload,
+      ...(input.workItemId !== undefined && { workItemId: input.workItemId }),
+    })
     appendEvent(
       deps.store,
       `release:${input.repo}:pr-${input.prNumber}`,
@@ -942,7 +984,7 @@ async function localHead(deps: ReleaseDeps, gitDir: string, branch: string): Pro
  */
 export async function openPushCard(
   deps: ReleaseDeps,
-  input: { repoId: string; branch: string; headSha?: string },
+  input: { repoId: string; branch: string; headSha?: string; workItemId?: string },
 ): Promise<{ confirmationId: string; headSha: string }> {
   const at = deps.now().toISOString()
   const target = await pushTarget(deps, input.repoId, input.branch)
@@ -966,7 +1008,11 @@ export async function openPushCard(
     branch: input.branch,
   }
   deps.store.atomic(() => {
-    deps.store.confirmations.save({ ...(record as unknown as StoreDoc), payload })
+    deps.store.confirmations.save({
+      ...(record as unknown as StoreDoc),
+      payload,
+      ...(input.workItemId !== undefined && { workItemId: input.workItemId }),
+    })
     appendEvent(
       deps.store,
       `release:${target.repo}:${input.branch}`,
@@ -1149,6 +1195,21 @@ export function releaseEvent(
 ): void {
   const at = deps.now().toISOString()
   deps.store.atomic(() => appendEvent(deps.store, `release:${repo}:${branch}`, type, { ...body, at }, at))
+}
+
+/** The page follows a work item's own stream, not the release one, so what a row shows lands here. */
+export function workEvent(
+  deps: ReleaseDeps,
+  workItemId: string,
+  type: string,
+  body: Record<string, Json>,
+): void {
+  const at = deps.now().toISOString()
+  const stream = `work:${workItemId}`
+  deps.store.atomic(() => {
+    const seq = (deps.store.events.read(stream).at(-1)?.seq ?? 0) + 1
+    deps.store.events.append(stream, { stream, seq, at, type, body: { workItemId, ...body, at } })
+  })
 }
 
 export async function resolveReleaseCard(

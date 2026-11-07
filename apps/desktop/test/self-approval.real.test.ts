@@ -2,8 +2,8 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { judgeProbe, linkedSlot, type ProbeRun, runProbe } from './loopback-probe'
 
 /**
- * Can a sandboxed worker approve its own card? (spec §8.4, §13). `POST /api/inbox/:id/resolve` takes
- * no token, so this measures the only thing in its way. One bounded real Claude run, `fast` tier,
+ * Can a sandboxed worker reach its own card? (spec §8.4, §13). The route also asks for the approval
+ * key, and this measures the sandbox in front of it. One bounded real Claude run, `fast` tier,
  * through the linked slot, on a scratch data dir and repository, with a fake `gh` first on PATH. The
  * planner is scripted, so no planner runs. Spends quota, so never in CI or a wrapper:
  *

@@ -5,7 +5,7 @@
 
 // ─── Wire types (decoded in config-decode.ts) ───────────────────────────────────
 
-export type StepStatus = 'done' | 'missing' | 'skipped'
+export type StepStatus = 'done' | 'missing' | 'skipped' | 'checking'
 export type StepRoute = 'setup' | 'slots' | 'settings' | 'chat'
 export interface ReadinessStep {
   id: string
@@ -102,10 +102,15 @@ export interface PolicyView {
   restartRequired: boolean
   updatedAt?: string
 }
+export interface ModelsSummary {
+  tiers: readonly string[]
+  engines: readonly { engine: string; models: readonly { id: string; tier: string }[] }[]
+}
 export interface ModelsText {
   yaml: string
   sha256: string
   source: 'user' | 'default'
+  summary: ModelsSummary
 }
 export interface PromptPartView {
   path: string
@@ -132,6 +137,10 @@ export interface RepositoryView {
   checks: CheckProfile[]
   trust: boolean
   revision: string
+  /** When the owner agreed to runs on this machine; null means nothing runs here. */
+  hostRunAgreedAt: string | null
+  /** Open work items only that agreement holds back. */
+  waiting: number
 }
 export interface CheckProfile {
   name: string
@@ -260,6 +269,75 @@ export function capabilityGate(
 ): { enabled: true } | { enabled: false; reason: string } {
   if (capabilities?.[name] === true) return { enabled: true }
   return { enabled: false, reason: CAPABILITY_REASONS[name] }
+}
+
+// ─── Plain words ────────────────────────────────────────────────────────────────
+
+const CLASS_WORDS: Readonly<Record<string, string>> = {
+  install: 'Installing dependencies',
+  migration: 'Database migrations',
+  spend: 'Spending money',
+  slot_switch: 'Switching connections',
+  unsandboxed: 'Running outside the sandbox',
+  close_own_pr: 'Closing its own pull requests',
+}
+const CAP_WORDS: Readonly<Record<string, { label: string; money?: boolean }>> = {
+  globalActiveAttempts: { label: 'Runs at once' },
+  budgetUsd: { label: 'Budget', money: true },
+}
+const ENGINE_WORDS: Readonly<Record<string, string>> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+  opencode: 'OpenCode',
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+function entryLine(cls: string, entries: readonly unknown[]): string {
+  const name = CLASS_WORDS[cls] ?? cls
+  if (entries.length > 1) return `${name}: allowed without asking, ${entries.length} rules.`
+  const entry = isRecord(entries[0]) ? entries[0] : {}
+  const scope = entry.scope === 'work_item' ? 'one piece of work' : 'one repository'
+  const ceiling = typeof entry.maxUsd === 'number' ? `, up to $${entry.maxUsd}` : ''
+  return `${name}: allowed without asking, for ${scope}${ceiling}.`
+}
+
+/** The saved policy as sentences, or null for text this cannot read: it never guesses at a rule. */
+export function policySummary(text: string): string[] | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (!isRecord(parsed)) return null
+  const allowed = isRecord(parsed.preAuthorised) ? parsed.preAuthorised : {}
+  const entries = Object.entries(allowed).flatMap(([cls, list]) =>
+    Array.isArray(list) && list.length > 0 ? [entryLine(cls, list)] : [],
+  )
+  const caps = isRecord(parsed.capsOverride) ? Object.entries(parsed.capsOverride) : []
+  const tightened = isRecord(parsed.repoTightening) ? Object.keys(parsed.repoTightening).length : 0
+  return [
+    ...(entries.length > 0 ? entries : ['MEC asks you before anything that needs a confirmation.']),
+    ...caps.map(([key, value]) => {
+      const cap = CAP_WORDS[key]
+      return `${cap?.label ?? key}: at most ${cap?.money ? '$' : ''}${String(value)}.`
+    }),
+    ...(tightened > 0
+      ? [`Tighter rules for ${tightened} ${tightened === 1 ? 'repository' : 'repositories'}.`]
+      : []),
+  ]
+}
+
+export function modelsSummaryLines(summary: ModelsSummary): string[] {
+  return [
+    `Tiers: ${summary.tiers.join(', ')}.`,
+    ...summary.engines.map(({ engine, models }) => {
+      const list = models.map((model) => `${model.id} (${model.tier})`).join(', ')
+      return `${ENGINE_WORDS[engine] ?? engine}: ${list === '' ? 'no models listed' : list}.`
+    }),
+  ]
 }
 
 // ─── Parked work ────────────────────────────────────────────────────────────────
@@ -402,6 +480,10 @@ export function impactLines(impact: SlotImpact): string[] {
 
 export const openStage = (steps: readonly ReadinessStep[]): string | null =>
   steps.find((step) => step.status === 'missing')?.id ?? null
+
+/** Nothing is left to do here: every stage holds and the server names what setup ended on. */
+export const setupDone = (readiness: Readiness): boolean =>
+  readiness.completion !== null && readiness.steps.every((step) => step.status === 'done')
 
 export function metaChoices(candidates: readonly MetaCandidate[]) {
   return {

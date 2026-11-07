@@ -128,8 +128,11 @@ export interface ShellProps
   approvalInspector?: InspectorScope | null
   initialInspectorOpen?: boolean
   composer?: Omit<ComposerProps, 'textareaRef'> | null
+  /** Goes up each time something hands the owner to the composer: focus lands there. */
+  composerFocusRequest?: number
   commands?: readonly Command[]
-  search?: { onOpen: () => void }
+  /** `query` carries words typed elsewhere, such as in the palette. */
+  search?: { onOpen: (query?: string) => void }
   children: ReactNode
 }
 
@@ -143,6 +146,7 @@ export function Shell({
   approvalInspector = null,
   initialInspectorOpen = false,
   composer = null,
+  composerFocusRequest = 0,
   commands = [],
   search,
   children,
@@ -232,6 +236,14 @@ export function Shell({
 
   // A route change moves focus to its heading, and only a real change: never on first load.
   const previousRoute = useRef(route)
+  // A change of route lands in the same commit as the request, and the effect below takes it there.
+  const seenFocusRequest = useRef(composerFocusRequest)
+  useEffect(() => {
+    if (composerFocusRequest === seenFocusRequest.current) return
+    seenFocusRequest.current = composerFocusRequest
+    focusComposerNext.current = previousRoute.current !== route || !focusComposer()
+  }, [composerFocusRequest, focusComposer, route])
+
   useEffect(() => {
     if (focusComposerNext.current && focusComposer()) {
       focusComposerNext.current = false
@@ -410,7 +422,13 @@ export function Shell({
         />
       )}
 
-      {paletteOpen && <CommandPalette commands={allCommands} onClose={closePalette} />}
+      {paletteOpen && (
+        <CommandPalette
+          commands={allCommands}
+          onClose={closePalette}
+          {...(search && { onSearch: search.onOpen })}
+        />
+      )}
     </ShellActionsContext.Provider>
   )
 }

@@ -11,7 +11,7 @@ interface ToolbarProps {
   paletteRef: RefObject<HTMLButtonElement | null>
   onOpenPalette: () => void
   /** Present once something can answer a search. */
-  search?: { onOpen: () => void }
+  search?: { onOpen: (query?: string) => void }
 }
 
 export function Toolbar({
@@ -43,7 +43,7 @@ export function Toolbar({
       </div>
       <div className="toolbar-actions">
         {search && (
-          <Button variant="quiet" aria-haspopup="dialog" onClick={search.onOpen}>
+          <Button variant="quiet" aria-haspopup="dialog" onClick={() => search.onOpen()}>
             Search
           </Button>
         )}

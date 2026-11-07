@@ -96,6 +96,16 @@ test.describe('the audit defects, wide', () => {
     await expect(inspector(page)).not.toContainText('stale check')
   })
 
+  test('the walkthrough: check output keeps its lines in monospace', async ({ page }) => {
+    await harness(page)
+    await openDelivery(page)
+    await taskRow(page, 'read the code').click()
+    await page.getByRole('tab', { name: 'Checks' }).click()
+    const output = inspector(page).locator('.check-output')
+    await expect(output).toHaveText('clean\n0 errors', { useInnerText: true })
+    expect(await output.evaluate((node) => getComputedStyle(node).fontFamily)).toContain('monospace')
+  })
+
   test('8 each row opens its own task and stays selected', async ({ page }) => {
     await harness(page)
     await openDelivery(page)
@@ -363,8 +373,11 @@ test.describe('the audit defects, wide', () => {
 
   test('the conversation leads with the request and keeps tool activity out', async ({ page }) => {
     await harness(page, 'chat')
-    await expect(page.locator('.conversation h1')).toContainText('search for the console')
+    await expect(page.locator('.conversation h1')).toHaveText('sample-console')
     await expect(page.locator('.conversation')).not.toContainText('tool call')
+    await expect(page.locator('.meta-line')).toContainText('Waiting for implementer on sample-slot')
+    await expect(page.locator('.meta-line')).toContainText('sample-large on sample-slot (claude)')
+    await expect(taskRow(page, 'read the code')).toContainText('asked for fast, ran sample-small')
     await page.getByRole('button', { name: 'Inspect', exact: true }).click()
     await expect(inspector(page).getByRole('heading', { level: 2 })).toContainText('build the index')
   })

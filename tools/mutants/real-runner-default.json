@@ -1,0 +1,65 @@
+[
+  {
+    "name": "the default is off again",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "!['0', 'false'].includes(env.MEC_REAL_RUNNER?.toLowerCase() ?? '') && env.MEC_FAKE_ENGINE !== '1'",
+    "replace": "env.MEC_REAL_RUNNER === '1' && env.MEC_FAKE_ENGINE !== '1'",
+    "tests": ["apps/desktop/test/real-runner.test.ts"]
+  },
+  {
+    "name": "zero no longer turns it off",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "!['0', 'false'].includes(env.MEC_REAL_RUNNER?.toLowerCase() ?? '') && env.MEC_FAKE_ENGINE !== '1'",
+    "replace": "env.MEC_FAKE_ENGINE !== '1'",
+    "tests": ["apps/desktop/test/real-runner.test.ts"]
+  },
+  {
+    "name": "the fake flag no longer wins",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "!['0', 'false'].includes(env.MEC_REAL_RUNNER?.toLowerCase() ?? '') && env.MEC_FAKE_ENGINE !== '1'",
+    "replace": "!['0', 'false'].includes(env.MEC_REAL_RUNNER?.toLowerCase() ?? '')",
+    "tests": ["apps/desktop/test/real-runner.test.ts"]
+  },
+  {
+    "name": "the planner keeps the old default",
+    "file": "apps/desktop/src/planner-placement.ts",
+    "find": "const realRunner = realRunnerOn()",
+    "replace": "const realRunner = process.env.MEC_REAL_RUNNER === '1' && realRunnerOn()",
+    "tests": ["apps/desktop/test/real-runner.test.ts"]
+  },
+  {
+    "name": "the server keeps the old default",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  if (realRunnerOn()) {\n",
+    "replace": "  if (process.env.MEC_REAL_RUNNER === '1' && realRunnerOn()) {\n",
+    "tests": ["apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "going ready does not reach the work stream",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      if (doc.stage !== 'ready') workEvent(this.release, id, 'pr_ready', { prNumber, verdict })\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "every ready pass tells the page again",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      if (doc.stage !== 'ready') workEvent(this.release, id, 'pr_ready', { prNumber, verdict })\n",
+    "replace": "      workEvent(this.release, id, 'pr_ready', { prNumber, verdict })\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "the page is told before the stage moves",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      this.#patch(id, { stage: 'ready', limit: verdict === 'green' ? undefined : verdict, ...seen })\n      // After the patch: this frame makes the page read the stage back.\n      if (doc.stage !== 'ready') workEvent(this.release, id, 'pr_ready', { prNumber, verdict })\n",
+    "replace": "      if (doc.stage !== 'ready') workEvent(this.release, id, 'pr_ready', { prNumber, verdict })\n      this.#patch(id, { stage: 'ready', limit: verdict === 'green' ? undefined : verdict, ...seen })\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "the event lands on the wrong stream",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  const stream = `work:${workItemId}`\n  deps.store.atomic(() => {\n",
+    "replace": "  const stream = `release:${workItemId}`\n  deps.store.atomic(() => {\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  }
+]

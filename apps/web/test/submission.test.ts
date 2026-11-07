@@ -119,7 +119,7 @@ describe('submission', () => {
     const { drafts, submissions, calls, settle } = rig()
     drafts.write('repo_a', 'new', 'hello')
     submissions.submit(NEW, 'hello')
-    drafts.write('repo_a', 'new', 'hello and more')
+    drafts.write('repo_a', 'new', 'and more')
     calls[0]?.ok()
     await settle()
     expect(drafts.read('repo_a', 'new')).toBe('and more')
@@ -146,12 +146,36 @@ describe('submission', () => {
     expect(submissions.view('repo_a')?.frozen.text).toBe('hello')
   })
 
-  it('draft clears only on confirmed success', async () => {
+  it('anything typed after the send goes back behind a failed one', async () => {
+    const { drafts, submissions, calls, settle } = rig()
+    drafts.write('repo_a', 'new', 'hello')
+    submissions.submit(NEW, 'hello')
+    drafts.write('repo_a', 'new', 'and more')
+    calls[0]?.fail()
+    await settle()
+    expect(drafts.read('repo_a', 'new')).toBe('hello\nand more')
+  })
+
+  it('a reload mid-send puts the text back in the box', () => {
+    const { bin, drafts, submissions } = rig()
+    drafts.write('repo_a', 'new', 'hello')
+    submissions.submit(NEW, 'hello')
+    const reopened = createDrafts(() => bin)
+    const reloaded = createSubmissions({
+      drafts: reopened,
+      newKey: () => 'never',
+      send: async () => {},
+    })
+    expect(reloaded.view('repo_a')?.state).toBe('failed')
+    expect(reopened.read('repo_a', 'new')).toBe('hello')
+  })
+
+  it('the box clears on send, and a failed send puts the text back', async () => {
     const { drafts, submissions, calls, settle } = rig()
     drafts.write('repo_a', 'new', 'hello')
     submissions.submit(NEW, 'hello')
     await settle()
-    expect(drafts.read('repo_a', 'new')).toBe('hello')
+    expect(drafts.read('repo_a', 'new')).toBe('')
     calls[0]?.fail()
     await settle()
     expect(drafts.read('repo_a', 'new')).toBe('hello')

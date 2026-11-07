@@ -1,0 +1,261 @@
+[
+  {
+    "name": "needs: work rows left out of the list",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      ...this.#workNeedRows(decisions.map((row) => row.item)),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "needs: a decision stage is listed twice",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "const OWN_ROW_STAGES = new Set(['person/decision', 'person/agreement'])",
+    "replace": "const OWN_ROW_STAGES = new Set(['person/agreement'])",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "needs: held work is listed",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      if (!key.startsWith('person/') || OWN_ROW_STAGES.has(key)) return []",
+    "replace": "      if (view.stage.waitingOn !== 'person' || OWN_ROW_STAGES.has(key)) return []",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "work row: the turn fact is not read",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "this.#turnOutcome(doc, total, mine.length > 0, turnEnded)",
+    "replace": "this.#turnOutcome(doc, total, mine.length > 0, false)",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "stage: an attached follow-up ends a turn",
+    "file": "packages/domain/src/stages.ts",
+    "find": "  if (latest?.routing !== 'new_work') return false\n",
+    "replace": "",
+    "tests": ["packages/domain/test/stages.test.ts"]
+  },
+  {
+    "name": "stage: a message still in its turn ends it",
+    "file": "packages/domain/src/stages.ts",
+    "find": "  if (messages.length === 0 || messages.some((message) => text(message.ackText) === undefined)) return false",
+    "replace": "  if (messages.length === 0) return false",
+    "tests": ["packages/domain/test/stages.test.ts"]
+  },
+  {
+    "name": "stage: an answer's wake is ignored",
+    "file": "packages/domain/src/stages.ts",
+    "find": "  return !questions.some((question) => (text(question.answeredAt) ?? '') > reached)",
+    "replace": "  return reached !== ''",
+    "tests": ["packages/domain/test/stages.test.ts"]
+  },
+  {
+    "name": "stage: running work reads as idle",
+    "file": "packages/domain/src/stages.ts",
+    "find": "    ...(facts.turnEnded === true && text(doc.state) === 'planning' && { latestReport: 'waiting' as const }),",
+    "replace": "    ...(facts.turnEnded === true && { latestReport: 'waiting' as const }),",
+    "tests": ["packages/domain/test/stages.test.ts"]
+  },
+  {
+    "name": "merge route: the work item is dropped",
+    "file": "apps/desktop/src/server.ts",
+    "find": "        ...(typeof body.workItemId === 'string' && { workItemId: body.workItemId }),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "merge card: not stored against its work",
+    "file": "apps/desktop/src/release.ts",
+    "find": "      ...(input.workItemId !== undefined && { workItemId: input.workItemId }),\n    })\n    appendEvent(\n      deps.store,\n      `release:${input.repo}:pr-${input.prNumber}`,",
+    "replace": "    })\n    appendEvent(\n      deps.store,\n      `release:${input.repo}:pr-${input.prNumber}`,",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "merge card: opens for a delivery that is not ready",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (record.stage !== 'ready') throw codedError('delivery_not_ready', `${id} is ${String(record.stage)}`)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "merge card: opens for another pull request",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (record?.repo !== input.repo || record.prNumber !== input.prNumber) {",
+    "replace": "  if (record === undefined) {",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "merge card: a second one opens",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (asked !== undefined) return { confirmationId: String(asked.id) }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "merge card: an expired one is reused",
+    "file": "apps/desktop/src/release.ts",
+    "find": "        card.cls === 'pr_merge' && card.operationHash === operationHash && String(card.expiresAt) > at,",
+    "replace": "        card.cls === 'pr_merge' && card.operationHash === operationHash,",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "chat: the paused acknowledgement is not stored",
+    "file": "packages/meta/src/service.ts",
+    "find": "        if (doc !== undefined) this.#store.messages.save({ ...doc, pausedAck: PAUSED_ACK })\n",
+    "replace": "",
+    "tests": ["packages/meta/test/durable.test.ts"]
+  },
+  {
+    "name": "delivery: CI verdict not stored on a held PR",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    notReady(seen)",
+    "replace": "    notReady()",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "delivery: an old CI reading survives a moved head",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      this.#patch(id, { stage: 'pr_open', limit: undefined, ci: seen?.ci, ciAt: seen?.ciAt })",
+    "replace": "      this.#patch(id, { stage: 'pr_open', limit: undefined, ...(seen !== undefined && seen) })",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "inspection: an integration failure is not read",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    if (failed !== null) {\n      const repairing",
+    "replace": "    if (failed === undefined) {\n      const repairing",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "inspection: any blocked reason reads as a delivery failure",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    return str(doc.state) === 'blocked' && blocked !== null && INTEGRATION_BLOCK.test(blocked)",
+    "replace": "    return str(doc.state) === 'blocked' && blocked !== null",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "inspection: an integration record is not coverage",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "        this.#integrationRecord(workDoc) !== undefined ||\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "inspection: a record with no reading invents one",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    const reading = str(record.ci) ?? (record.stage === 'ready' ? (str(record.limit) ?? 'green') : null)",
+    "replace": "    const reading = str(record.ci) ?? str(record.limit) ?? 'green'",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "diff: a stored ref reaches git unchecked",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    return SHA.test(head) && SHA.test(base) ? { gitDir, base, head } : undefined",
+    "replace": "    return { gitDir, base, head }",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "diff: a binary file reads as a change of nothing",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "                  ...(file.binary === true && { binary: true as const }),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "web: merge offered before ready",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  if (delivery === undefined || delivery.stage !== 'pr-ready' || held) return []",
+    "replace": "  if (delivery === undefined || held) return []",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "web: merge offered on held work",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  if (delivery === undefined || delivery.stage !== 'pr-ready' || held) return []",
+    "replace": "  if (delivery === undefined || delivery.stage !== 'pr-ready') return []",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "web: merge offered with a card open",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  if (repo === null || prNumber === null || mergeCardId !== null) return []",
+    "replace": "  if (repo === null || prNumber === null) return []",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "web: a failure stays hidden behind not recorded",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  if (detail.delivery.failure !== null) return `Delivery failed: ${detail.delivery.failure}`\n",
+    "replace": "",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "web: any stored value becomes a link",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  const link = prUrl?.startsWith('https://') ? prUrl : null",
+    "replace": "  const link = prUrl",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "web: a head with no diff says not recorded",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "              : `Commit ${short(head)} is on record, but its file changes could not be read.`,",
+    "replace": "              : NOT_RECORDED,",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "web: the held acknowledgement outlives the pause",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "    const text = ackText ?? (input.paused === true ? line.pausedAck : undefined)",
+    "replace": "    const text = ackText ?? line.pausedAck",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "web: blocked work from another repository shows here",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "(row) => input.row !== null && row.repoId === input.row.repoId && row.stage.key === 'person/blocked',",
+    "replace": "(row) => input.row !== null && row.stage.key === 'person/blocked',",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "web: read-only work offers a way in",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "    actionable: !item.readOnly,",
+    "replace": "    actionable: true,",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "web: a stale read undoes a press",
+    "file": "apps/web/src/live/pause.ts",
+    "find": "      if (began === presses) set({ processing, failed: false })",
+    "replace": "      set({ processing, failed: false })",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "web: a press waits for the next read",
+    "file": "apps/web/src/live/pause.ts",
+    "find": "          set({ processing, failed: false, busy: false })",
+    "replace": "          set({ failed: false, busy: false, processing: state.processing })",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "web: the banner shows the raw time",
+    "file": "apps/web/src/next/Sidebar.tsx",
+    "find": "  return Number.isNaN(new Date(at).getTime()) ? '' : ` since ${timeLabel(at)}`",
+    "replace": "  return Number.isNaN(new Date(at).getTime()) ? '' : ` since ${at}`",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "web: the trailing comma is back",
+    "file": "apps/web/src/next/ConnectionsView.tsx",
+    "find": "  return provider ? `${name}, ${provider}` : name",
+    "replace": "  return `${name}, ${provider ?? ''}`",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "web: the merge command drops the work item",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "          ? client.merge({ repo: action.repo, prNumber: action.prNumber, workItemId })",
+    "replace": "          ? client.merge({ repo: action.repo, prNumber: action.prNumber, workItemId: '' })",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  }
+]

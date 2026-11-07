@@ -1,0 +1,317 @@
+[
+  {
+    "name": "launch gate gone",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (!hostRunAgreed(store, repoId)) return { verdict: 'defer', reason: HOST_RUN_UNAGREED }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/host-run-agreement.test.ts"]
+  },
+  {
+    "name": "absent reads as agreed",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  return typeof at === 'string' && at !== ''\n",
+    "replace": "  return true\n",
+    "tests": ["apps/desktop/test/host-run-agreement.test.ts"]
+  },
+  {
+    "name": "a blocked launch runs",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (isBlocked(work)) return { verdict: 'defer', reason: 'blocked' }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/host-run-agreement.test.ts"]
+  },
+  {
+    "name": "resume gate ignores the agreement",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "  agreed: hostRunAgreed(store, repoOf(work)),\n",
+    "replace": "  agreed: true,\n",
+    "tests": ["apps/desktop/test/host-run-agreement.test.ts"]
+  },
+  {
+    "name": "a blocked resume runs",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "  blocked: isBlocked(work),\n",
+    "replace": "  blocked: false,\n",
+    "tests": ["apps/desktop/test/host-run-agreement.test.ts"]
+  },
+  {
+    "name": "the park verdict skips the agreement",
+    "file": "packages/runtime/src/park.ts",
+    "find": "  if (!agreed) return { verdict: 'defer', reason: 'host_run_unagreed' }\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/host-run-agreement.test.ts"]
+  },
+  {
+    "name": "a pass places unagreed work",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    if (!hostRunAgreed(store, repoOf(work))) {\n",
+    "replace": "    if (false as boolean) {\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "waiting work holds a slot in a pass",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (cannotStartYet(deps.store, attempt)) return false\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "waiting work holds a slot for a park",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "    if (cannotStartYet(store, doc)) return false\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/recovery.test.ts"]
+  },
+  {
+    "name": "a stuck group gives up its slot",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (attempt.reconcile_refused !== undefined) return false\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "a resume keeps its slot while it waits",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  const waits = attempt.state === 'queued' || noVerdict(attempt) || attempt.resuming === true\n",
+    "replace": "  const waits = attempt.state === 'queued' || noVerdict(attempt)\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "a running attempt gives up its slot",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (!waits) return false\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "setup does not look again",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "      if (gate.verdict === 'defer') throw new Later(gate.reason)\n      if (gate.verdict === 'drop') {\n        this.#deps.drop(payload, gate)\n        return\n      }\n      const outcome = await runCheck(repoCommand(",
+    "replace": "      const outcome = await runCheck(repoCommand(",
+    "tests": ["apps/desktop/test/host-run-agreement.test.ts"]
+  },
+  {
+    "name": "a running attempt's checks ignore a withdrawal",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "      withheld: () => this.#withheld(work),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/host-run-agreement.test.ts"]
+  },
+  {
+    "name": "a second look ignores a withdrawal",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "        () => entry.reason ?? this.#withheld(work),\n",
+    "replace": "        () => entry.reason,\n",
+    "tests": ["apps/desktop/test/host-run-agreement.test.ts", "-t", "a withdrawal during a second look"]
+  },
+  {
+    "name": "withheld checks get no row",
+    "file": "apps/desktop/src/core-facts.ts",
+    "find": "      if (stopped === HOST_RUN_UNAGREED) this.#listener.withheld?.(doc)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/host-run-agreement.test.ts", "-t", "checks of an attempt already running"]
+  },
+  {
+    "name": "withheld checks count as stopped",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "['server_closing', HOST_RUN_UNAGREED]",
+    "replace": "['server_closing']",
+    "tests": ["apps/desktop/test/host-run-agreement.test.ts"]
+  },
+  {
+    "name": "agreeing leaves rows asleep",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "      deps.wakeLaunches?.()\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/host-run-agreement.test.ts", "-t", "agreeing makes a waiting row due"]
+  },
+  {
+    "name": "delivery ignores the agreement",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (!this.#agreed(work)) return\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "delivery setup ignores a withdrawal",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      if (!this.#agreed(work)) return undefined\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "combined checks ignore a withdrawal",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      if (!this.#agreed(work)) throw new Later('the owner withdrew the agreement')\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "a withdrawal blocks the work",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "        if (error instanceof Later) continue\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "Needs you lacks the agreement",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      ...this.#agreementRows(),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/host-run-agreement.test.ts"]
+  },
+  {
+    "name": "Work reads Working",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "          hostRunUnagreed: awaitsAgreement(this.#store, doc),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/host-run-agreement.test.ts"]
+  },
+  {
+    "name": "the agent socket reaches repo commands",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "  const { SSH_AUTH_SOCK: _agent, ...inherited } = process.env\n",
+    "replace": "  const inherited = process.env\n",
+    "tests": ["apps/desktop/test/real-runner.test.ts", "apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "the socket leaves engines too",
+    "file": "packages/runtime/src/env.ts",
+    "find": "  'SSH_AUTH_SOCK',\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/real-runner.test.ts"]
+  },
+  {
+    "name": "false reads as on",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "!['0', 'false'].includes(env.MEC_REAL_RUNNER?.toLowerCase() ?? '')",
+    "replace": "!['0'].includes(env.MEC_REAL_RUNNER?.toLowerCase() ?? '')",
+    "tests": ["apps/desktop/test/real-runner.test.ts"]
+  },
+  {
+    "name": "FALSE reads as on",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "env.MEC_REAL_RUNNER?.toLowerCase() ?? ''",
+    "replace": "env.MEC_REAL_RUNNER ?? ''",
+    "tests": ["apps/desktop/test/real-runner.test.ts"]
+  },
+  {
+    "name": "resolve takes no key",
+    "file": "apps/desktop/src/server.ts",
+    "find": "const OWNER_WORD = /(\\/resolve|\\/host-run\\/agree)$/",
+    "replace": "const OWNER_WORD = /(\\/host-run\\/agree)$/",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
+  },
+  {
+    "name": "agreeing takes no key",
+    "file": "apps/desktop/src/server.ts",
+    "find": "const OWNER_WORD = /(\\/resolve|\\/host-run\\/agree)$/",
+    "replace": "const OWNER_WORD = /(\\/resolve)$/",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
+  },
+  {
+    "name": "withdrawing needs the key",
+    "file": "apps/desktop/src/server.ts",
+    "find": "const OWNER_WORD = /(\\/resolve|\\/host-run\\/agree)$/",
+    "replace": "const OWNER_WORD = /(\\/resolve|\\/host-run\\/agree|\\/host-run\\/withdraw)$/",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
+  },
+  {
+    "name": "any header is a key",
+    "file": "apps/desktop/src/server.ts",
+    "find": "if (ownerWord && !approval.key.accepts(request.headers[APPROVAL_HEADER])) {",
+    "replace": "if (ownerWord && request.headers[APPROVAL_HEADER] === undefined) {",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
+  },
+  {
+    "name": "the link answer carries the code",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    return { opened: code !== undefined }\n",
+    "replace": "    return { opened: code !== undefined, code }\n",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
+  },
+  {
+    "name": "a code works twice",
+    "file": "apps/desktop/src/approval.ts",
+    "find": "    this.#code = undefined\n    return this.#key\n",
+    "replace": "    return this.#key\n",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
+  },
+  {
+    "name": "a code never lapses",
+    "file": "apps/desktop/src/approval.ts",
+    "find": "live === undefined || now > live.expires",
+    "replace": "live === undefined",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
+  },
+  {
+    "name": "links are not spaced",
+    "file": "apps/desktop/src/approval.ts",
+    "find": "    if (now - this.#lastCodeAt < LINK_SPACING_MS) return undefined\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
+  },
+  {
+    "name": "the code is in argv on a mac",
+    "file": "apps/desktop/src/approval.ts",
+    "find": "args: ['-'], stdin:",
+    "replace": "args: ['-e', url], stdin:",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
+  },
+  {
+    "name": "the key can come from the environment",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "new ApprovalKey(opts.approvalKey)",
+    "replace": "new ApprovalKey(opts.approvalKey ?? process.env.MEC_APPROVAL_KEY)",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
+  },
+  {
+    "name": "a restart keeps the key",
+    "file": "apps/desktop/src/approval.ts",
+    "find": "const mint = (): string => randomBytes(32).toString('hex')",
+    "replace": "const mint = (): string => 'a'.repeat(64)",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
+  },
+  {
+    "name": "the descriptor stays open",
+    "file": "apps/desktop/src/approval.ts",
+    "find": "    closeSync(fd)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
+  },
+  {
+    "name": "a short key is taken",
+    "file": "apps/desktop/src/approval.ts",
+    "find": "    if (key.length < MIN_KEY_CHARS)\n      throw new Error(`an approval key needs at least ${MIN_KEY_CHARS} characters`)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
+  },
+  {
+    "name": "the address keeps the code",
+    "file": "apps/web/src/approval.ts",
+    "find": "  window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)\n",
+    "replace": "",
+    "tests": ["apps/web/test/approval.test.ts"]
+  },
+  {
+    "name": "a request carries no key",
+    "file": "apps/web/src/api.ts",
+    "find": "      ...(key !== null && { [APPROVAL_HEADER]: key }),\n",
+    "replace": "",
+    "tests": ["apps/web/test/approval.test.ts"]
+  },
+  {
+    "name": "a refused key is kept",
+    "file": "apps/web/src/api.ts",
+    "find": "    if (error === 'approval_required') forgetApprovalKey()\n",
+    "replace": "",
+    "tests": ["apps/web/test/approval.test.ts"]
+  },
+  {
+    "name": "a withheld second look loses its row",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "      throw new Later(HOST_RUN_UNAGREED)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/host-run-agreement.test.ts"]
+  }
+]

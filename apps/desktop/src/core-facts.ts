@@ -24,8 +24,8 @@ import type {
   UsageReading,
 } from '@mec/contracts'
 import { ATTEMPT_MACHINE, canTransition, TASK_MACHINE, transition } from '@mec/domain'
-import { type FollowUps, failLaunch } from '@mec/meta'
-import type { AttemptFacts, CheckOutcome, ParkedState } from '@mec/runtime'
+import { type FollowUps, failLaunch, HOST_RUN_UNAGREED } from '@mec/meta'
+import type { AttemptFacts, CheckOutcome, ParkedState, ProcessMark } from '@mec/runtime'
 
 type AttemptEvent = (typeof ATTEMPT_MACHINE)[number]['event']
 type TaskEvent = (typeof TASK_MACHINE)[number]['event']
@@ -55,6 +55,8 @@ export type FactsListener = {
     resetsAt: string | undefined,
     at: string,
   ) => void
+  /** Checks the owner's withdrawal held back: they run again, in this transaction's row. */
+  withheld?: (doc: StoreDoc) => void
 }
 
 export class StoreFacts implements AttemptFacts {
@@ -249,6 +251,7 @@ export class StoreFacts implements AttemptFacts {
         ...(stopped !== undefined && { checks_stopped: stopped }),
         updatedAt: this.#now(),
       })
+      if (stopped === HOST_RUN_UNAGREED) this.#listener.withheld?.(doc)
     }
     this.#note(attempt, 'attempt.checks_skipped', { head_sha: head, reason })
   }
@@ -265,10 +268,15 @@ export class StoreFacts implements AttemptFacts {
     this.#changed()
   }
 
-  stopFailed(attempt: AttemptRef, detail: string): void {
+  stopFailed(attempt: AttemptRef, detail: string, held: readonly ProcessMark[] = []): void {
     const doc = this.#store.attempts.get(attempt.attempt_id)
     if (doc !== undefined) {
-      this.#store.attempts.save({ ...doc, stop_failed: detail, updatedAt: this.#now() })
+      this.#store.attempts.save({
+        ...doc,
+        stop_failed: detail,
+        ...(held.length > 0 && { held_groups: [...held] }),
+        updatedAt: this.#now(),
+      })
     }
     this.#note(attempt, 'attempt.stop_failed', { detail })
   }

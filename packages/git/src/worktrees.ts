@@ -6,6 +6,7 @@
  */
 import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { type BootstrapOutput, unstageBootstrapOutput } from './bootstrap-output'
 import { git } from './exec'
 
 export type WorktreeAddOptions = {
@@ -93,18 +94,27 @@ export async function headSha(path: string): Promise<string> {
  * `git add --all` staged it into a task branch and H3 pushed it to GitHub before the
  * Codex reviewer caught the class. The pathspec exclusion makes this seam incapable of
  * committing attempt artifacts, whatever the caller does.
+ *
+ * `keepOut` is what the repo's bootstrap left and nobody changed since: a commit leaves it out,
+ * and takes it back out if a specialist's own `git add` or commit swept it in.
  */
 export async function commitAll(
   path: string,
   message: string,
   opts: { name: string; email: string },
+  keepOut?: BootstrapOutput,
 ): Promise<string | null> {
   // The same pathspec governs both checks: a tree whose only changes sit in .mec/ is
   // CLEAN to this seam (nothing stageable), so it returns null instead of attempting
   // a commit that would exit "nothing to commit".
   const status = await git(['status', '--porcelain', '--', ':!.mec'], { cwd: path })
-  if (!status.stdout.trim()) return null
+  if (!status.stdout.trim() && keepOut === undefined) return null
   await git(['add', '--all', '--', ':!.mec'], { cwd: path })
+  if (keepOut !== undefined) {
+    await unstageBootstrapOutput(path, keepOut)
+    const staged = await git(['diff', '--cached', '--quiet'], { cwd: path, allowFailure: true })
+    if (staged.code === 0) return null
+  }
   await git(
     [
       '-c',

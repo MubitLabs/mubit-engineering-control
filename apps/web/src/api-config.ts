@@ -70,8 +70,10 @@ export const configApi = {
     return decodeCapabilities(await request<unknown>('/api/status'))
   },
 
-  async readiness(): Promise<Readiness> {
-    return decodeReadiness(await request<unknown>('/api/setup/readiness'))
+  /** `known` answers at once from the last look at the engines, which may not have finished. */
+  async readiness(engines: 'probe' | 'known' = 'probe'): Promise<Readiness> {
+    const query = engines === 'known' ? '?engines=known' : ''
+    return decodeReadiness(await request<unknown>(`/api/setup/readiness${query}`))
   },
 
   skipStep(step: string): Promise<unknown> {
@@ -194,6 +196,15 @@ export const configApi = {
     checkCmds: CheckProfile[]
   }): Promise<{ id: string }> {
     return send('/api/repositories', 'POST', { ...input, trusted: false })
+  },
+
+  /** The owner's own words on the armed panel; the server takes them from nowhere else. */
+  agreeHostRun(id: string): Promise<unknown> {
+    return send(`/api/repositories/${encodeURIComponent(id)}/host-run/agree`, 'POST', {})
+  },
+
+  withdrawHostRun(id: string): Promise<unknown> {
+    return send(`/api/repositories/${encodeURIComponent(id)}/host-run/withdraw`, 'POST', {})
   },
 
   editRepository(

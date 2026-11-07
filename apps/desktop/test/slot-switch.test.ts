@@ -6,6 +6,7 @@ import type { SqliteStore } from '@mec/store'
 import { afterEach, describe, expect, it } from 'vitest'
 import { resumeAuthority } from '../src/recovery'
 import { applyApprovedSwitches, applySwitch, requestSwitch, type SwitchDeps } from '../src/slot-switch'
+import { ownerHeaders } from './approval-rig'
 import {
   attemptOf,
   brainThatNeverRuns,
@@ -67,7 +68,7 @@ const card = async (server: Served): Promise<string> =>
 const answer = (server: Served, id: string, value: string) =>
   fetch(`${server.url}/api/inbox/${id}/resolve`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...ownerHeaders },
     body: JSON.stringify({ answer: value }),
   })
 

@@ -16,6 +16,8 @@ export interface ComposerProps {
   sending?: boolean
   /** Replaces the standing line under the field. */
   note?: string
+  /** The next message reaches one delivery, so the line above the field says so plainly. */
+  following?: boolean
   /** The last send did not land. The text is kept and Retry sends exactly that again. */
   failure?: { text: string; onRetry: () => void }
   textareaRef?: RefObject<HTMLTextAreaElement | null>
@@ -30,6 +32,7 @@ export function ComposerFrame({
   unavailable,
   sending = false,
   note,
+  following = false,
   failure,
   textareaRef,
 }: ComposerProps) {
@@ -56,8 +59,8 @@ export function ComposerFrame({
         </div>
       )}
       <form className="composer" aria-label="Message the meta agent" onSubmit={submit}>
-        <div className="composer-scope">
-          <span>{scope}</span>
+        <div className="composer-scope" data-following={following}>
+          <span role="status">{scope}</span>
           {intentToggle && (
             <Button variant="text" onClick={intentToggle.onToggle}>
               {intentToggle.label}

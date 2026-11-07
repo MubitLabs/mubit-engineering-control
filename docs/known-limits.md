@@ -30,13 +30,46 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
   kind. The handoff's scenario (50,000 tasks, 1,000 work items) takes 30-54 ms. `needs?recent=1`
   reads both whole kinds, so it crosses 100 ms at about 8,000 of each kind (in-memory measure):
   132 ms at 10,000 + 10,000, and 667 ms at 50,000 + 50,000.
+- **The approval key stops a process that reads `~/.mec` and calls loopback, and no more.** Answering
+  a card, on any resolve route, and agreeing to a repository need a key this server mints at start and
+  holds in memory. No GET route, file, log or environment variable carries it. A browser gets it from
+  a one-time code on a link the server opens. What it does not stop, because a process running as the
+  owner has the owner's powers:
+  - It can act without MEC: run the owner's `gh` or `git` with the owner's stored credentials. An
+    approval card governs what MEC does, and an agreed repository's checks are outside it.
+  - It can write the store directly, including another repository's `hostRunAgreedAt`, or stop this
+    server and start its own on the same store. So an agreement is a decision about that repository
+    and everything it can reach, and agreed repositories are not isolated from each other.
+  - It can read a browser's profile on disk. The key sits in the tab's `sessionStorage`, which a
+    browser may keep on disk for session restore.
+  - Other owner routes take no key: chat, questions, hold, lift, stop, slots, policy and repository
+    edits, trust among them, `/api/setup/drafts/:id/apply` and `/api/work/:id/switch-slot`. A policy cannot pre-authorise an always-confirm class, so none of these
+    answers a push, PR or merge card.
+  - Off a mac the link goes through `xdg-open`, found on `PATH`, so a process that can write to a
+    directory on `PATH` can stand in for it, and the code shows in the process list for a moment. On
+    a mac it goes over the stdin of `/usr/bin/osascript`, by its full path. A process that sees the code first gets the key, and the
+    owner's tab then says the link failed.
+  - The key dies with the server. After `mec restart` a tab cannot answer until the owner presses
+    Link this browser, and approving needs a browser on this machine: a link cannot reach a tunnel.
+  - `--approval-key-fd=N` is for a script that started the server itself. `mec restart` drops it.
+- **Work waiting on an agreement holds no slot, but a row stays.** A queued, resuming or re-checking
+  attempt in an unagreed repository, or on blocked work, gives up its slot place and keeps its launch
+  row, which is looked at every 30 s until something decides it. Agreeing wakes the rows at once.
 - **One oversized record fails its inspection route.** The route answers 500 `response_too_large`
   until that record is removed.
 
-- **The attempt runner is flag-gated and for scratch repositories (DECISIONS #25).** With
-  `MEC_REAL_RUNNER=1`:
-  - Repo checks run agent-written code on the host, unsandboxed, with a scrubbed environment and
-    no tools token.
+- **The attempt runner is on by default since 0.3.1, on any repository.** DECISIONS #25 kept it to
+  scratch repositories behind a flag because of the first point below, and that point still holds.
+  `MEC_REAL_RUNNER=0` turns it off, but that choice is not saved: `mec restart` passes on the
+  environment of the shell that runs it, so from a shell without the variable an off server comes
+  back on. `false` reads as off too. With it on, and once the owner agrees to a repository:
+  - An agreed repository's setup and check commands run on the host, unsandboxed, as the owner, with
+    the owner's files and network, whether or not the repository is trusted. The environment is
+    scrubbed and carries no tools token, but a command can read what the owner can read. The
+    agreement is the only gate: nothing runs in a repository until the owner gives it, and withdrawing
+    it stops new launches, new setup and new checks. An engine already running finishes its turn.
+  - Repository commands get no `SSH_AUTH_SOCK`; engines keep it. That removes the variable, not the
+    socket: a command running as the owner can still find it, for example with `launchctl getenv`.
   - The sandbox's network allowlist is the engine's own domains. Repo docs have no registry-domains
     field (§14), so a bootstrap that needs the network fails.
   - The sandbox covers the engine's Bash. The Read tool is outside it: a read outside the worktree
@@ -125,7 +158,8 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
     parent had gone, and for a command started in a new group between that listing and the signal.
   - OpenCode refuses a launch on a tracked link leading out of the worktree. An untracked one is
     not checked: bootstrap commands are the only other writer, and they run on the host anyway.
-  - `opencode-gemini` slots can be added and do not launch, until a real run proves that login.
+  - `opencode-gemini` slots can be added and take no work, until a real run proves that login:
+    plans and placement leave them out, and a plan pinning one is refused as an unknown slot.
   - The Claude profile does not deny `<data>/work` or `<data>/tmp`, so a sibling's `.mec/mcp.json`
     is readable there. Codex's profile denies both.
 - **Unproven on the way to 0.3.0 (6 November 2026, DECISIONS #41-42).**
@@ -143,11 +177,14 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
 - **Open for 31 C (the combined PR #47 is merged; not re-checked since):** a held row shows a raw ISO time
   (`inspection.ts:597`); wake rows appear in search (`inspection.ts:895-905`); the second-tab 409
   message says "was not sent" though the message was sent and refused.
-- **A process group that refuses to die (DECISIONS #45).** In 0.3.0 the attempt is failed, the
-  failed stop is recorded and its capacity is freed, even though the group is still alive. 0.3.1
-  keeps the capacity held until the group is gone (`reconcileProcesses` must track failed attempts
-  with a live group).
+- **A process group that refuses to die (DECISIONS #45).** The attempt is failed, the failed stop
+  is recorded and its capacity stays held until the group is gone: what the stop left is saved as
+  `held_groups` on the attempt, counts against the slot, and is released at boot or on the 2 s pass
+  once proven gone. 0.3.0 freed the capacity here; 0.3.1 does not.
+- **A group that never goes holds its slot indefinitely, with no alert.** Nothing times the hold
+  out and nothing tells the owner the slot unit is taken, beyond `processOutcome` on the inspection
+  read and `attempt.stop_failed` in the attempt's event stream. Ending the group by hand releases it.
 - **A late wake after a pause is assigned to handoff 21** with the card resolve gaps above.
 - **`next/work-model` `canApprove` must map absent to null when it is wired (31 B).**
-- **A Work row can lag its delivery by up to 10 seconds.** `pr_ready` lands on the release and inbox streams, and the page follows neither, so the row keeps saying Working until the next refetch. The work detail read says `pr-ready` at once.
+- **A Work row can lag a delivery that falls back by up to 10 seconds.** Going ready reaches the page on the `work:` stream it follows. A ready PR that falls back (`target_moved`, `ci_failed`, `pr_closed`) lands on the release and inbox streams, and the page follows neither, so the row moves on the next refetch.
 - **`?ui=classic` needs working browser storage.** Where `localStorage` throws, the shell choice cannot be kept, so the page stays on the new shell, and the "Return to the classic workbench" link appears to do nothing. Classic goes in the next release (decision #35).

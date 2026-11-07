@@ -8,6 +8,7 @@ import {
   decodeActivityPage,
   decodeArtifact,
   decodeCardEvidence,
+  decodeMeta,
   decodeNeedsPage,
   decodeSearchPage,
   decodeSnapshot,
@@ -19,6 +20,7 @@ import type {
   ActivityItem,
   ArtifactPage,
   CardEvidence,
+  MetaAnswer,
   NeedItem,
   Page,
   SearchHit,
@@ -45,6 +47,10 @@ const encoded = encodeURIComponent
 export const inspectApi = {
   async snapshot(signal?: AbortSignal): Promise<Snapshot> {
     return decodeSnapshot(await request<unknown>('/api/inspect/snapshot', { signal }))
+  },
+
+  async meta(signal?: AbortSignal): Promise<MetaAnswer> {
+    return decodeMeta(await request<unknown>('/api/inspect/meta', { signal }))
   },
 
   async work(cursor: string | null, signal?: AbortSignal): Promise<Page<WorkRow>> {
@@ -112,4 +118,15 @@ export const inspectApi = {
   hold: (id: string) => command(`/api/work/${encoded(id)}/hold`),
   lift: (id: string) => command(`/api/work/${encoded(id)}/lift`),
   stop: (id: string) => command(`/api/work/${encoded(id)}/stop`),
+  retry: (id: string) => command(`/api/work/${encoded(id)}/retry`),
+
+  /** Opens the card. Nothing merges here: the answer is the owner's, on that card (§13). */
+  async merge(input: { repo: string; prNumber: number; workItemId: string }) {
+    const { confirmationId } = await request<{ confirmationId: string }>('/api/release/merge', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    return { id: confirmationId, status: 'card_open' }
+  },
 }

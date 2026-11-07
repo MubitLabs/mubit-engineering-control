@@ -377,6 +377,20 @@ describe('repository scope and actions', () => {
     expect(workActions(workRows.working, ALL, null).map((action) => action.kind)).toEqual(['hold', 'stop'])
   })
 
+  it('a retry the server offers comes first, says what it asks, and waits for a hold to lift', () => {
+    const blocked = { kind: 'integration' as const, reason: 'integration: merge refused' }
+    const [first] = workActions(workRows.blocked, { kind: 'repo', repoId: 'repo_a' }, null, blocked)
+    expect(first).toMatchObject({ kind: 'retry', label: 'Retry integration', workItemId: 'work_blocked' })
+    const hold = { since: 'now', reason: null }
+    expect(workActions(workRows.blocked, ALL, hold, blocked).map((action) => action.kind)).toEqual([
+      'lift',
+      'stop',
+    ])
+    const push = { kind: 'push' as const, reason: 'The push card was denied' }
+    expect(workActions(workRows.working, ALL, null, push)[0]?.label).toContain('Ask to push again')
+    expect(workActions(workRows.completed, ALL, null, push)).toEqual([])
+  })
+
   it('a filter hides other repositories, and Unassigned appears under All or by name', () => {
     const inA = workGroups(rows, { kind: 'repo', repoId: 'repo_a' }).flatMap((group) => group.rows)
     expect(inA.every((row) => row.repository === 'sample-console')).toBe(true)
@@ -409,7 +423,10 @@ describe('delivery detail', () => {
       { task: 'SAMPLE-ONLY build the index', on: ['SAMPLE-ONLY read the code'] },
       { task: 'SAMPLE-ONLY run the combined checks', on: ['SAMPLE-ONLY build the index'] },
     ])
-    expect(detail.delegation).toEqual([{ parent: 'attempt_lead', child: 'attempt_child' }])
+    expect(detail.delegation.map((row) => row.why)).toEqual([
+      'Why here: sample-slot had the lowest utilisation of 2 candidates',
+      'Waiting: its dependencies have not finished',
+    ])
 
     const noDelegation = deliveryDetail(
       decodeWorkDetail({ ...workDetails.work_working, delegation: [] }),
@@ -426,7 +443,7 @@ describe('delivery detail', () => {
       null,
     )
     expect(noDependencies.dependencies).toEqual([])
-    expect(noDependencies.delegation).toHaveLength(1)
+    expect(noDependencies.delegation).toHaveLength(2)
   })
 
   it('task rows carry their own id and real progress', () => {
@@ -443,6 +460,19 @@ describe('delivery detail', () => {
     expect(merged.plan.footnote).toContain('12')
     const unrecorded = deliveryDetail(decodeWorkDetail(workDetails.work_held), null)
     expect(unrecorded.plan.footnote).toBe('Delivery is not recorded yet')
+  })
+
+  it('a declined card says so where a working item shows its delivery, beside the action', () => {
+    const declined = {
+      ...workDetails.work_working,
+      coverage: { ...workDetails.work_working.coverage, delivery: true },
+      retry: { kind: 'pr' as const, reason: 'The pull request card was denied' },
+    }
+    const view = deliveryDetail(decodeWorkDetail(declined), null)
+    expect(view.plan.footnote).toContain('The pull request card was denied')
+    expect(view.actions[0]).toMatchObject({ kind: 'retry' })
+    const blocked = { ...declined, retry: { kind: 'integration' as const, reason: 'integration: refused' } }
+    expect(deliveryDetail(decodeWorkDetail(blocked), null).plan.footnote).not.toContain('refused')
   })
 })
 
@@ -662,8 +692,10 @@ describe('conversation', () => {
     messages: chatLines,
   })
 
-  it('the request title leads', () => {
-    expect(view.title).toBe('SAMPLE-ONLY search for the console')
+  it('the repository leads: a request title reads wrongly once a newer one arrives', () => {
+    expect(
+      conversationView({ row: null, detail: null, messages: [], repository: 'sample-console' }).title,
+    ).toBe('sample-console')
   })
 
   it('routine tool activity stays out', () => {

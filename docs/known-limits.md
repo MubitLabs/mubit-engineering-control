@@ -43,10 +43,11 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
   - It can read a browser's profile on disk. The key sits in the tab's `sessionStorage`, which a
     browser may keep on disk for session restore.
   - Other owner routes take no key: chat, questions, hold, lift, stop, slots, policy and repository
-    edits, trust among them. A policy cannot pre-authorise an always-confirm class, so none of these
+    edits, trust among them, `/api/setup/drafts/:id/apply` and `/api/work/:id/switch-slot`. A policy cannot pre-authorise an always-confirm class, so none of these
     answers a push, PR or merge card.
-  - Off a mac the link goes through `xdg-open`, so the code shows in the process list for a moment. On
-    a mac it goes over `osascript`'s stdin. A process that sees the code first gets the key, and the
+  - Off a mac the link goes through `xdg-open`, found on `PATH`, so a process that can write to a
+    directory on `PATH` can stand in for it, and the code shows in the process list for a moment. On
+    a mac it goes over the stdin of `/usr/bin/osascript`, by its full path. A process that sees the code first gets the key, and the
     owner's tab then says the link failed.
   - The key dies with the server. After `mec restart` a tab cannot answer until the owner presses
     Link this browser, and approving needs a browser on this machine: a link cannot reach a tunnel.

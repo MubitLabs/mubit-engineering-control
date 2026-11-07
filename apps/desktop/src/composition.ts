@@ -176,7 +176,8 @@ export async function startServer(opts: {
   /** The key a deliberate starter chose (`--approval-key-fd`). Otherwise this process mints one. */
   approvalKey?: string
   /** A test seam: what opens the approval link. */
-  openLink?: (url: string) => void
+  /** `false` when no browser opened. */
+  openLink?: (url: string) => unknown
 }): Promise<RunningServer> {
   // Fail fast: a build without its prompts never starts, before it takes the lock (§16).
   defaultsRoot()
@@ -199,6 +200,8 @@ export async function startServer(opts: {
   // The launch handler reads this late too: the launcher needs the tools server, which is up
   // before the first queue pass. It stays undefined with the runner flag off.
   let launcher: AttemptLauncher | undefined
+  // Launches this process let through and has not seen start: setup can take minutes.
+  const pastGate = new Set<string>()
   const followups = new FollowUps({ store, effects: store.effects, runtime: () => launcher })
   const iso = (): string => new Date().toISOString()
   const stored = processingOf(store)
@@ -216,6 +219,7 @@ export async function startServer(opts: {
     followups,
     () => paused,
     (slotId) => probeSlot(store, slotId, probeRun, iso),
+    pastGate,
   )
 
   // §11: never while paused, and a failed pass is the next pass's to retry.
@@ -373,7 +377,13 @@ export async function startServer(opts: {
       },
       bridge: specialistBridge(store, cards),
       gate: (payload) =>
-        (isResumeRow(payload) ? resumeAuthority : launchAuthority)(store, payload, iso(), policy.versionHash),
+        (isResumeRow(payload) ? resumeAuthority : launchAuthority)(
+          store,
+          payload,
+          iso(),
+          policy.versionHash,
+          pastGate,
+        ),
       drop: (payload, { reason }) => {
         const refuse = isResumeRow(payload) ? dropResume : refuseLaunch
         store.atomic(() => refuse(store, payload, reason as never, iso()))
@@ -484,7 +494,7 @@ export async function startServer(opts: {
     approval: {
       key: new ApprovalKey(opts.approvalKey),
       // `listening`, never a request's Host, which a caller chooses.
-      link: (code) => (opts.openLink ?? openLink)(`http://127.0.0.1:${listening}/#pair=${code}`),
+      link: async (code) => await (opts.openLink ?? openLink)(`http://127.0.0.1:${listening}/#pair=${code}`),
     },
     parked: {
       switchSlot: (input) => requestSwitch(switchDeps, input),
@@ -786,13 +796,14 @@ function registerEffectHandlers(
   followups: FollowUps,
   isPaused: () => boolean,
   probe: (slotId: string) => Promise<boolean>,
+  pastGate: Set<string>,
 ): void {
   for (const kind of EFFECT_KINDS) {
     const claim = health.claim(`effects:${kind}`)
     claim.ready()
     const run: EffectHandler =
       kind === 'launch'
-        ? launchHandler(store, policyHash, launcher)
+        ? launchHandler(store, policyHash, launcher, pastGate)
         : kind === 'relay'
           ? relayHandler(metaAgent)
           : kind === 'deliver'
@@ -853,13 +864,25 @@ function unsupportedHandler(kind: string): EffectHandler {
   }
 }
 
-function launchHandler(
+/** Holds a unit from the gate until the launch job ends: the engine is up, or it never will be. */
+async function launchThrough(real: AttemptLauncher, payload: Json, pastGate: Set<string>): Promise<void> {
+  const attemptId = String((payload as { attempt_id?: unknown }).attempt_id)
+  pastGate.add(attemptId)
+  try {
+    await real.launch(payload)
+  } finally {
+    pastGate.delete(attemptId)
+  }
+}
+
+export function launchHandler(
   store: SqliteStore,
   policyHash: string,
   launcher: () => AttemptLauncher | undefined,
+  pastGate: Set<string>,
 ): EffectHandler {
   return async (payload) => {
-    if (isResumeRow(payload)) return resumeRow(store, policyHash, launcher, payload)
+    if (isResumeRow(payload)) return resumeRow(store, policyHash, launcher, payload, pastGate)
     // A failed attempt stays failed: the row keeps failing until the queue gives up on it, where
     // the gate below would drain it as refused.
     const failure = launchFailure(store, payload)
@@ -867,7 +890,7 @@ function launchHandler(
     // The gate (§13, §20) comes first on every path. `Later` keeps a held launch's row; a drop
     // returns normally, so the row drains with its refusal on record.
     const at = new Date().toISOString()
-    const authority = launchAuthority(store, payload, at, policyHash)
+    const authority = launchAuthority(store, payload, at, policyHash, pastGate)
     if (authority.verdict === 'defer') throw new Later(authority.reason)
     if (authority.verdict === 'drop') {
       store.atomic(() => refuseLaunch(store, payload, authority.reason, at))
@@ -882,7 +905,7 @@ function launchHandler(
     // of the kind's two places, and `settle` does not wait out an attempt.
     const real = launcher()
     if (real !== undefined) {
-      await real.launch(payload)
+      await launchThrough(real, payload, pastGate)
       return
     }
     // The flag is off, and a launch that cannot run says so. Not `Later`: a runner turned on
@@ -898,9 +921,10 @@ async function resumeRow(
   policyHash: string,
   launcher: () => AttemptLauncher | undefined,
   payload: Json,
+  pastGate: Set<string>,
 ): Promise<void> {
   const at = new Date().toISOString()
-  const authority = resumeAuthority(store, payload, at, policyHash)
+  const authority = resumeAuthority(store, payload, at, policyHash, pastGate)
   if (authority.verdict === 'defer') throw new Later(authority.reason)
   if (authority.verdict === 'drop') {
     store.atomic(() => dropResume(store, payload, authority.reason, at))

@@ -174,7 +174,8 @@ export type ServerDeps = {
    * The owner's key, and how a code reaches the browser. Absent, a fresh key nobody holds: such a
    * server resolves nothing, so a build that forgets this fails closed.
    */
-  approval?: { key: ApprovalKey; link: (code: string) => void }
+  /** `link` answers `false` when no browser opened. */
+  approval?: { key: ApprovalKey; link: (code: string) => unknown }
   /** A waiting launch row is due now, not at its next 30 s look. Inside the caller's transaction. */
   wakeLaunches?: () => void
   /** §5.10: what the switch and resume routes reach; absent, they answer 404. */
@@ -621,9 +622,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   })
 
   // Anyone may ask for a link: the code goes to the default browser and never into this answer.
-  app.post('/api/approval/link', async () => {
+  app.post('/api/approval/link', async (_request, reply) => {
     const code = approval.key.issueCode(Date.now())
-    if (code !== undefined) approval.link(code)
+    if (code !== undefined && (await approval.link(code)) === false) {
+      return reply.code(502).send({ opened: false, error: 'no_browser' })
+    }
     return { opened: code !== undefined }
   })
 

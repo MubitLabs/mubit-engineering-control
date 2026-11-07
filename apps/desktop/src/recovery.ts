@@ -28,6 +28,7 @@ import {
 } from '@mec/domain'
 import {
   cannotStartYet,
+  capacityFull,
   enqueueWake,
   HOST_RUN_UNAGREED,
   holdsGroup,
@@ -491,6 +492,7 @@ export function resumeAuthority(
   payload: Json,
   now: string,
   policyHash: string,
+  pastGate?: ReadonlySet<string>,
 ): LaunchAuthority {
   const fields = (payload ?? {}) as LaunchFields & { work_item_id?: string }
   const work = store.workItems.get(String(fields.work_item_id))
@@ -507,8 +509,10 @@ export function resumeAuthority(
         [...PARKED, 'interrupted'].includes(String(attempt.state))
   if (!current || !fits) return { verdict: 'drop', reason: 'attempt_not_queued' }
   const verdict = resumeVerdict(resumeFacts(store, work, now, policyHash))
-  return verdict.verdict === 'run' && attempt?.reconcile_refused !== undefined
-    ? { verdict: 'defer', reason: 'reconcile_refused' }
+  if (verdict.verdict !== 'run') return verdict
+  if (attempt?.reconcile_refused !== undefined) return { verdict: 'defer', reason: 'reconcile_refused' }
+  return capacityFull(store, attempt as StoreDoc, pastGate)
+    ? { verdict: 'defer', reason: 'capacity' }
     : verdict
 }
 

@@ -257,5 +257,110 @@
     "find": "  if (isTerminal(work)) return { verdict: 'drop', reason: 'work_terminal' }\n  const attempt = store.attempts.get(fields.attempt_id)\n",
     "replace": "  const attempt = store.attempts.get(fields.attempt_id)\n",
     "tests": ["apps/desktop/test/resume-gate.test.ts"]
+  },
+  {
+    "name": "r: nothing checks capacity at the launch gate",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  return capacityFull(store, attempt, pastGate)\n    ? { verdict: 'defer', reason: 'capacity' }\n    : { verdict: 'run' }\n",
+    "replace": "  return { verdict: 'run' }\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "r: nothing checks capacity at the resume gate",
+    "file": "apps/desktop/src/recovery.ts",
+    "find": "  return capacityFull(store, attempt as StoreDoc, pastGate)\n    ? { verdict: 'defer', reason: 'capacity' }\n    : verdict\n",
+    "replace": "  return verdict\n",
+    "tests": ["apps/desktop/test/resume-gate.test.ts"]
+  },
+  {
+    "name": "r: queued siblings count, and released rows deadlock",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (pastGate.has(String(attempt.id))) return true\n  return (\n",
+    "replace": "  if (pastGate.has(String(attempt.id))) return true\n  return (\n    attempt.state === 'queued' ||\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "r: an attempt counts against itself",
+    "file": "packages/meta/src/authority.ts",
+    "find": ".filter((doc) => doc.id !== attempt.id && hasStarted(doc, pastGate))",
+    "replace": ".filter((doc) => hasStarted(doc, pastGate))",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "r: the global cap is not read",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (others.length >= DEFAULT_CAPS.globalActiveAttempts) return true\n",
+    "replace": "",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "r: a launch past the gate is not counted",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (pastGate.has(String(attempt.id))) return true\n",
+    "replace": "",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "r: a held group is not counted",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  if (holdsGroup(attempt) || attempt.reconcile_refused !== undefined) return true\n",
+    "replace": "  if (attempt.reconcile_refused !== undefined) return true\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "r: a stalled attempt is not counted",
+    "file": "packages/meta/src/authority.ts",
+    "find": "    attempt.state === 'stalled' ||\n",
+    "replace": "",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "r: an unjudged check is counted",
+    "file": "packages/meta/src/authority.ts",
+    "find": "    (attempt.state === 'work_complete' && !noVerdict(attempt))\n",
+    "replace": "    attempt.state === 'work_complete'\n",
+    "tests": ["packages/meta/test/authority.test.ts"]
+  },
+  {
+    "name": "r: a live check stops counting after a withdrawal",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  const waits = attempt.state === 'queued' || noVerdict(attempt) || attempt.resuming === true\n",
+    "replace": "  const waits = attempt.state === 'queued' || attempt.state === 'work_complete' || attempt.resuming === true\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "r: the row does not hold its unit",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "  pastGate.add(attemptId)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/resume-gate.test.ts"]
+  },
+  {
+    "name": "r: the unit is never given back",
+    "file": "apps/desktop/src/composition.ts",
+    "find": "    pastGate.delete(attemptId)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/resume-gate.test.ts"]
+  },
+  {
+    "name": "r: the link route says opened when it did not",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    if (code !== undefined && (await approval.link(code)) === false) {\n      return reply.code(502).send({ opened: false, error: 'no_browser' })\n    }\n",
+    "replace": "    if (code !== undefined) await approval.link(code)\n",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
+  },
+  {
+    "name": "r: osascript is found on PATH",
+    "file": "apps/desktop/src/approval.ts",
+    "find": "cmd: '/usr/bin/osascript'",
+    "replace": "cmd: 'osascript'",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
+  },
+  {
+    "name": "r: the page reads a failed link as sent",
+    "file": "apps/web/src/approval.ts",
+    "find": "  return response.ok\n",
+    "replace": "  return true\n",
+    "tests": ["apps/web/test/approval.test.ts"]
   }
 ]

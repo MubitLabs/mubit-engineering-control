@@ -155,6 +155,7 @@ function DeliveryDetail({
       ) : (
         <DeliveryPlan
           {...detail.plan}
+          footnote=""
           tasks={detail.plan.tasks.map((task) => ({
             ...task,
             selected: task.id === selectedTaskId,

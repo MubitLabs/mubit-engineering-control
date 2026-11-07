@@ -187,6 +187,14 @@ const GETS = ['/', '/healthz', '/api/status', '/api/inbox', '/api/repositories',
 })
 
 describe('linking the browser', { timeout: 60_000 }, () => {
+  it('a browser that would not open is a failure, not opened', async () => {
+    const rig = scratch([])
+    const server = await started(rig, { approvalKey: KEY, openLink: async () => false })
+    const res = await fetch(`${server.url}/api/approval/link`, { method: 'POST' })
+    expect(res.status).toBe(502)
+    expect(await res.json()).toEqual({ opened: false, error: 'no_browser' })
+  })
+
   const linked = async (rig: Rig, opened: string[]) => {
     const server = await started(rig, { openLink: (url) => opened.push(url) })
     expect((await fetch(`${server.url}/api/approval/link`, { method: 'POST' })).status).toBe(200)
@@ -258,7 +266,7 @@ describe('linking the browser', { timeout: 60_000 }, () => {
   it('a mac opens the link over stdin, so no process list ever shows the code', () => {
     const url = 'http://127.0.0.1:1234/#pair=abc'
     const mac = linkCommand(url, 'darwin')
-    expect(mac.cmd).toBe('osascript')
+    expect(mac.cmd).toBe('/usr/bin/osascript')
     expect(JSON.stringify(mac.args)).not.toContain('abc')
     expect(mac.stdin).toContain(url)
     expect(linkCommand(url, 'linux')).toEqual({ cmd: 'xdg-open', args: [url] })

@@ -19,6 +19,7 @@ import type { Mandate, WorkItemState } from '@mec/domain'
 import {
   ATTEMPT_MACHINE,
   canTransition,
+  DEFAULT_CAPS,
   revalidate,
   transition,
   WORK_ITEM_MACHINE,
@@ -50,7 +51,10 @@ export type LaunchFailureReason = string
 /** What the launch gate decides: `defer` keeps the row, `drop` lets it drain unlaunched. */
 export type LaunchAuthority =
   | { verdict: 'run' }
-  | { verdict: 'defer'; reason: 'held' | 'blocked' | 'reconcile_refused' | typeof HOST_RUN_UNAGREED }
+  | {
+      verdict: 'defer'
+      reason: 'held' | 'blocked' | 'reconcile_refused' | 'capacity' | typeof HOST_RUN_UNAGREED
+    }
   | { verdict: 'drop'; reason: LaunchDropReason }
 
 export type HoldOutcome = 'held' | 'missing' | 'terminal' | 'read_only'
@@ -127,6 +131,7 @@ export function launchAuthority(
   payload: Json,
   now: string,
   policyHash: string,
+  pastGate?: ReadonlySet<string>,
 ): LaunchAuthority {
   const { work_item_id: workItemId, attempt_id: attemptId, task_id: taskId } = launchFields(payload)
   const drop = (reason: LaunchDropReason): LaunchAuthority => ({ verdict: 'drop', reason })
@@ -148,9 +153,38 @@ export function launchAuthority(
   if (!hostRunAgreed(store, repoId)) return { verdict: 'defer', reason: HOST_RUN_UNAGREED }
   if (!authority.ok) return drop('policy_changed')
   // A group a boot could not prove gone may still be running here (§8.1): nothing goes beside it.
-  return attempt.reconcile_refused === undefined
-    ? { verdict: 'run' }
-    : { verdict: 'defer', reason: 'reconcile_refused' }
+  if (attempt.reconcile_refused !== undefined) return { verdict: 'defer', reason: 'reconcile_refused' }
+  return capacityFull(store, attempt, pastGate)
+    ? { verdict: 'defer', reason: 'capacity' }
+    : { verdict: 'run' }
+}
+
+/** Holding a unit for real. A queued row is not, or rows released together would wait on each other. */
+function hasStarted(attempt: StoreDoc, pastGate: ReadonlySet<string>): boolean {
+  if (holdsGroup(attempt) || attempt.reconcile_refused !== undefined) return true
+  if (pastGate.has(String(attempt.id))) return true
+  return (
+    attempt.state === 'running' ||
+    attempt.state === 'stalled' ||
+    (attempt.state === 'work_complete' && !noVerdict(attempt))
+  )
+}
+
+/**
+ * §11, when a row runs. A pass counts what it places, but it does not count what `cannotStartYet`
+ * set aside, so an agreement or an unblock can release more rows than there are units. `pastGate`
+ * is what this process has let through and not yet seen running. Only the row's own gate reads this.
+ */
+export function capacityFull(
+  store: Store,
+  attempt: StoreDoc,
+  pastGate: ReadonlySet<string> = new Set(),
+): boolean {
+  const others = store.attempts.list().filter((doc) => doc.id !== attempt.id && hasStarted(doc, pastGate))
+  if (others.length >= DEFAULT_CAPS.globalActiveAttempts) return true
+  const slot = store.slots.get(String(attempt.slotId))
+  const room = typeof slot?.concurrency === 'number' ? slot.concurrency : DEFAULT_CAPS.perSlot
+  return others.filter((doc) => doc.slotId === attempt.slotId).length >= room
 }
 
 /**
@@ -160,7 +194,8 @@ export function launchAuthority(
  */
 export function cannotStartYet(store: Store, attempt: StoreDoc): boolean {
   if (attempt.reconcile_refused !== undefined) return false
-  const waits = attempt.state === 'queued' || attempt.state === 'work_complete' || attempt.resuming === true
+  // A `work_complete` attempt with a verdict to come has a check running: that is real work.
+  const waits = attempt.state === 'queued' || noVerdict(attempt) || attempt.resuming === true
   if (!waits) return false
   const work = store.workItems.get(String(attempt.workItemId))
   if (work === undefined) return false

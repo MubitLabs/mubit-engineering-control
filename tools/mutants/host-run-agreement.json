@@ -72,15 +72,15 @@
   {
     "name": "a resume keeps its slot while it waits",
     "file": "packages/meta/src/authority.ts",
-    "find": "attempt.state === 'queued' || attempt.state === 'work_complete' || attempt.resuming === true",
-    "replace": "attempt.state === 'queued' || attempt.state === 'work_complete'",
+    "find": "  const waits = attempt.state === 'queued' || noVerdict(attempt) || attempt.resuming === true\n",
+    "replace": "  const waits = attempt.state === 'queued' || noVerdict(attempt)\n",
     "tests": ["packages/meta/test/scheduler.test.ts"]
   },
   {
     "name": "waiting checks keep their slot",
     "file": "packages/meta/src/authority.ts",
-    "find": "attempt.state === 'queued' || attempt.state === 'work_complete' || attempt.resuming === true",
-    "replace": "attempt.state === 'queued' || attempt.resuming === true",
+    "find": "  const waits = attempt.state === 'queued' || noVerdict(attempt) || attempt.resuming === true\n",
+    "replace": "  const waits = attempt.state === 'queued' || attempt.resuming === true\n",
     "tests": ["packages/meta/test/scheduler.test.ts"]
   },
   {

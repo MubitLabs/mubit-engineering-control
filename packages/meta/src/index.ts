@@ -15,6 +15,7 @@ export {
   awaitsAgreement,
   blockWork,
   cannotStartYet,
+  capacityFull,
   failLaunch,
   HOST_RUN_UNAGREED,
   holdsGroup,

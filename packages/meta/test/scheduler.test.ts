@@ -411,7 +411,10 @@ describe('a repository the owner has not agreed to', () => {
   })
 
   it('nor does a resume on its way, or checks that wait', () => {
-    const waiting: StoreDoc[] = [{ state: 'interrupted', resuming: true }, { state: 'work_complete' }]
+    const waiting: StoreDoc[] = [
+      { state: 'interrupted', resuming: true },
+      { state: 'work_complete', checks_note: 'the owner withdrew' },
+    ]
     for (const extra of waiting) {
       const { store, pass } = rig([slot('slot_a', { concurrency: 1 })])
       unagreed(store)
@@ -420,6 +423,16 @@ describe('a repository the owner has not agreed to', () => {
       task(store, 'task_a')
       expect(pass().map((row) => row.taskId)).toEqual(['task_a'])
     }
+  })
+
+  it('a check still running there keeps its slot after a withdrawal', () => {
+    const { store, pass } = rig([slot('slot_a', { concurrency: 1 })])
+    unagreed(store)
+    queued(store, { state: 'work_complete' })
+    work(store)
+    task(store, 'task_a')
+    expect(pass()).toEqual([])
+    expect(store.tasks.get('task_a')?.deferred).toMatchObject({ reason: 'capacity' })
   })
 
   it('a group a boot could not prove gone keeps its slot, agreed or not', () => {

@@ -82,7 +82,8 @@ export async function startApproval(): Promise<void> {
   tabs?.postMessage({ key })
 }
 
-/** Asks the server to open a link. The answer says nothing of the code. */
-export async function requestApprovalLink(): Promise<void> {
-  await fetch('/api/approval/link', { method: 'POST', headers: { 'x-mec-client': '1' } })
+/** Asks the server to open a link. The answer says nothing of the code, only whether one opened. */
+export async function requestApprovalLink(): Promise<boolean> {
+  const response = await fetch('/api/approval/link', { method: 'POST', headers: { 'x-mec-client': '1' } })
+  return response.ok
 }

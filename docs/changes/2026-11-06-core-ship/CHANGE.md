@@ -34,6 +34,12 @@ The turn runs on its own work item, marked `questionOnly` so a resume after a cr
 
 `85a0ac9` came last. One agreement row per repository in Needs you: `person/agreement` has its own row, so `#workNeedRows` leaves it out, and the count takes the row once. The live line says Waiting for your agreement. A blocked integration in an unagreed repository is not offered a retry, and pressing one answers `host_run_unagreed`, because a retry that moved it to integrating would leave it reading Working with nothing to say why.
 
+## The review's blocker
+
+`cannotStartYet` took waiting attempts out of a pass's count, and nothing checked capacity when a row ran, so an agreement could release four rows onto a slot of two. `launchAuthority` and `resumeAuthority` now defer with `capacity` when the slot or the global cap is full. They count only what has started: running, stalled, a live check, a held or unproven group, and launches this process let through and has not seen start (`pastGate`, in memory, because a stored mark would outlive a crash and hold rows back). The row stays and retries through `Later`, within 30 s, and the attempt does not change. `cannotStartYet` no longer covers a `work_complete` attempt with a live check. The bound is `DEFAULT_CAPS`, as the scheduler's is.
+
+`openLink` runs `/usr/bin/osascript` by its full path and answers whether it worked, so the link route says 502 `no_browser` and the notice says so. The Work detail's plan card no longer repeats the delivery label the Delivery section shows.
+
 ## Limits
 
 - An item from before this build, whose answer sits only in `result_reported`, reads Answered and shows that report in Work. Its chat line stays the acknowledgement. No time join: the report is the last one on the item's own stream.

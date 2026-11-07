@@ -69,22 +69,38 @@ export class ApprovalKey {
   }
 }
 
+const OPENER_MS = 5_000
+
 /** On a mac the URL goes over stdin, because argv is what any process can read in `ps`. */
 export function linkCommand(
   url: string,
   platform: NodeJS.Platform = process.platform,
 ): { cmd: string; args: string[]; stdin?: string } {
   return platform === 'darwin'
-    ? { cmd: 'osascript', args: ['-'], stdin: `open location "${url}"\n` }
+    ? { cmd: '/usr/bin/osascript', args: ['-'], stdin: `open location "${url}"\n` }
     : { cmd: 'xdg-open', args: [url] }
 }
 
-export function openLink(url: string): void {
+/** True once the opener says it worked. One that has not answered by the bound has not failed. */
+export function openLink(url: string): Promise<boolean> {
   const { cmd, args, stdin } = linkCommand(url)
-  const child = spawn(cmd, args, { stdio: [stdin === undefined ? 'ignore' : 'pipe', 'ignore', 'ignore'] })
-  child.on('error', () => console.log('no browser could be opened for the approval link'))
-  child.stdin?.on('error', () => {})
-  child.stdin?.end(stdin)
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { stdio: [stdin === undefined ? 'ignore' : 'pipe', 'ignore', 'ignore'] })
+    const failed = (): void => {
+      console.log('no browser could be opened for the approval link')
+      resolve(false)
+    }
+    const bound = setTimeout(() => resolve(true), OPENER_MS)
+    bound.unref()
+    child.on('error', failed)
+    child.on('close', (code) => {
+      clearTimeout(bound)
+      if (code === 0) resolve(true)
+      else failed()
+    })
+    child.stdin?.on('error', () => {})
+    child.stdin?.end(stdin)
+  })
 }
 
 /** `--approval-key-fd=N`: the whole descriptor, once. Too short a key refuses the start. */

@@ -124,6 +124,15 @@ describe('a request', () => {
     expect(heard).toHaveBeenCalledOnce()
   })
 
+  it('a link the server could not open says so', async () => {
+    stubWindow('')
+    vi.stubGlobal('fetch', async () => new Response('{}', { status: 502 }))
+    expect(await requestApprovalLink()).toBe(false)
+    vi.stubGlobal('fetch', async () => new Response('{}', { status: 200 }))
+    expect(await requestApprovalLink()).toBe(true)
+    forgetApprovalKey()
+  })
+
   it('asking for a link sends nothing of a key', async () => {
     const { sent } = stubWindow('')
     await requestApprovalLink()

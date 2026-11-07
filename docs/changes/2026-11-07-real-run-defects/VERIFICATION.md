@@ -31,7 +31,7 @@ One assertion changed on purpose: `meta-visibility.test.ts` "a task nothing has 
 
 ## Mutants
 
-`python3 tools/mutants/run.py tools/mutants/real-run-defects.json`: 31 of 31 killed, exit 0.
+`python3 tools/mutants/run.py tools/mutants/real-run-defects.json`: 31 of 31 killed, exit 0. After the owner rulings, with 6 more (R1 x5, R3 x1): 37 of 37 killed, exit 0.
 
 ## Suites
 
@@ -43,3 +43,22 @@ One assertion changed on purpose: `meta-visibility.test.ts` "a task nothing has 
 
 - D2 rests on the 2.1.319 binary's text, not on a run: that `CLAUDE_CODE_DISABLE_CLAUDE_MDS` gates only the `CLAUDE.md` loaders, that the user source gates the user `CLAUDE.md`, and that the project `CLAUDE.md` loads only with the project or local source, which MEC never passes. A real specialist run on a linked slot would show whether the owner's instructions are gone and sign-in still works. None was spent.
 - No real run of Try again, the go-ahead lift or the owned-paths repair.
+
+## Owner rulings, 7 November 2026
+
+| Ruling | Test | Red |
+| --- | --- | --- |
+| 1 repo instructions in the brief | `attempt-launch.test.ts` "the repository's CLAUDE.md and AGENTS.md at the base reach the brief, labelled and redacted" | the prompt had no `The repository's own instructions` part |
+| 1 | `attempt-launch.test.ts` "a repository with neither file adds nothing"; `repo-instructions.test.ts` (4) | written with the fix; they pin the empty case, the label, the stated cut and redaction before the cut |
+| 3 answer needs the key | `approval-key.test.ts` "answering a question needs the key" | `expected 404 to be 403` |
+| 3 | `apps/web/test/approval.test.ts` "both ways of answering a question carry the key" | green on arrival: the client already sent it; the test holds it there |
+
+Ruling 2 is a spec text change (§10), already covered by D1's tests.
+
+Tests that play the owner now send the key on answers: `planner.test.ts`, `server.test.ts`, `apps/web/test/inspection-contract.test.ts` and `web-contract.test.ts` (that one failed with `403 approval_required` until its page held the key). That changes no expectation: an answer without the key is now refused by design.
+
+Focused suites after the rulings: project a (domain, meta, mec-tools, prompts, web) 1261 passed with 1 failure, `web-contract.test.ts`, fixed in c78501c and then 4 of 4. Project b, 14 desktop, runtime and git files with 2 workers: 376 passed, 1 timed out (`engine-registry.test.ts` Codex "a turn gives a report…", at 124 s under load). That file was rerun alone, below.
+
+`engine-registry.test.ts` alone with 1 worker: 54 of 54 passed.
+
+Not run after the rulings: a full `pnpm check`, screens (no UI text changed by the rulings), any real engine. Ruling 1 is unproven on a real specialist: that it follows the repository's instructions from the brief.

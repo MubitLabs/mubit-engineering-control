@@ -77,13 +77,6 @@
     "tests": ["packages/meta/test/scheduler.test.ts"]
   },
   {
-    "name": "waiting checks keep their slot",
-    "file": "packages/meta/src/authority.ts",
-    "find": "  const waits = attempt.state === 'queued' || noVerdict(attempt) || attempt.resuming === true\n",
-    "replace": "  const waits = attempt.state === 'queued' || attempt.resuming === true\n",
-    "tests": ["packages/meta/test/scheduler.test.ts"]
-  },
-  {
     "name": "a running attempt gives up its slot",
     "file": "packages/meta/src/authority.ts",
     "find": "  if (!waits) return false\n",

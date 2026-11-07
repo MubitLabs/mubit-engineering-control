@@ -320,7 +320,13 @@ describe('a refused merge', () => {
     writeFileSync(join(path, LOCK), 'bootstrap\n')
     chmodSync(join(path, LOCK), 0o644)
     await expect(
-      mergeIntoIntegration({ gitDir: cache, worktree: path, taskBranch: 'mec/brought', message: 'm' }),
+      mergeIntoIntegration({
+        gitDir: cache,
+        worktree: path,
+        taskBranch: 'mec/brought',
+        message: 'm',
+        identity: { name: 'mec', email: 'mec@example.invalid' },
+      }),
     ).rejects.toThrow(/would be overwritten by merge[\s\S]*package-lock\.json/)
   })
 })

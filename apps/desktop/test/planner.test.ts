@@ -3,6 +3,7 @@ import { MemoryRepositories } from '@mec/testkit'
 import type { FastifyInstance } from 'fastify'
 import { afterEach, describe, expect, it } from 'vitest'
 import { buildServer, type ServerDeps } from '../src/server'
+import { ownerApproval, ownerHeaders } from './approval-rig'
 
 /**
  * The T5/T7 planner routes (review 2026-11-04 §5.2/§7): the question surface ask_user
@@ -40,6 +41,7 @@ function makeServer(deps: Partial<ServerDeps> = {}): { store: Store; app: Fastif
     health: new FakeHealthBoard(),
     policyText: '{"preAuthorised":{}}',
     now: () => new Date(AT),
+    approval: ownerApproval(),
     ...deps,
   }
   const app = buildServer(serverDeps)
@@ -197,6 +199,7 @@ describe('POST /api/questions/:id/answer', () => {
     const first = await app.inject({
       method: 'POST',
       url: '/api/questions/q_1/answer',
+      headers: ownerHeaders,
       payload: { answer: 'claude' },
     })
     expect(first.statusCode).toBe(200)
@@ -208,6 +211,7 @@ describe('POST /api/questions/:id/answer', () => {
     const second = await app.inject({
       method: 'POST',
       url: '/api/questions/q_1/answer',
+      headers: ownerHeaders,
       payload: { answer: 'opencode' },
     })
     expect(second.statusCode).toBe(409)
@@ -229,6 +233,7 @@ describe('POST /api/questions/:id/answer', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/questions/q_1/answer',
+      headers: ownerHeaders,
       payload: { answer: 'hold' },
     })
     expect(response.statusCode).toBe(200)
@@ -242,12 +247,14 @@ describe('POST /api/questions/:id/answer', () => {
     const empty = await app.inject({
       method: 'POST',
       url: '/api/questions/q_1/answer',
+      headers: ownerHeaders,
       payload: { answer: '  ' },
     })
     expect(empty.statusCode).toBe(400)
     const missing = await app.inject({
       method: 'POST',
       url: '/api/questions/q_x/answer',
+      headers: ownerHeaders,
       payload: { answer: 'x' },
     })
     expect(missing.statusCode).toBe(404)

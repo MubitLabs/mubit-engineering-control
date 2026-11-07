@@ -4,279 +4,223 @@
     "file": "packages/domain/src/acceptance.ts",
     "find": "if (input.base === head && report?.kind !== 'ready' && input.noChangeOk !== true) {",
     "replace": "if (false) {",
-    "tests": [
-      "packages/domain/test/acceptance.test.ts"
-    ]
+    "tests": ["packages/domain/test/acceptance.test.ts"]
   },
   {
     "name": "D1 a progress report counts as saying no change was needed",
     "file": "packages/domain/src/acceptance.ts",
     "find": "if (input.base === head && report?.kind !== 'ready' && input.noChangeOk !== true) {",
     "replace": "if (input.base === head && report === undefined && input.noChangeOk !== true) {",
-    "tests": [
-      "packages/domain/test/acceptance.test.ts"
-    ]
+    "tests": ["packages/domain/test/acceptance.test.ts"]
   },
   {
     "name": "D1 the brief allowance is ignored",
     "file": "packages/domain/src/acceptance.ts",
     "find": "if (input.base === head && report?.kind !== 'ready' && input.noChangeOk !== true) {",
     "replace": "if (input.base === head && report?.kind !== 'ready') {",
-    "tests": [
-      "packages/domain/test/acceptance.test.ts"
-    ]
+    "tests": ["packages/domain/test/acceptance.test.ts"]
   },
   {
     "name": "D1 the scheduler passes no base",
     "file": "packages/meta/src/scheduler.ts",
     "find": "    ...(typeof attempt.base_sha === 'string' && { base: attempt.base_sha }),\n",
     "replace": "",
-    "tests": [
-      "packages/meta/test/repair.test.ts"
-    ]
+    "tests": ["packages/meta/test/repair.test.ts"]
   },
   {
     "name": "D1 a Blocked: ending is not read",
     "file": "packages/meta/src/scheduler.ts",
     "find": "  if (!BLOCKED_OPENING.test(text)) return undefined",
     "replace": "  if (text !== '\\u0000') return undefined",
-    "tests": [
-      "packages/meta/test/repair.test.ts"
-    ]
+    "tests": ["packages/meta/test/repair.test.ts"]
   },
   {
     "name": "D1 any earlier Blocked: message counts",
     "file": "packages/meta/src/scheduler.ts",
     "find": "    .at(-1)\n  const text = String((last?.body",
     "replace": "    .at(0)\n  const text = String((last?.body",
-    "tests": [
-      "packages/meta/test/repair.test.ts"
-    ]
+    "tests": ["packages/meta/test/repair.test.ts"]
   },
   {
     "name": "D2 owned paths are not checked",
     "file": "packages/domain/src/acceptance.ts",
     "find": "const outside = owned.length === 0 ? [] : (input.changed ?? []).filter((file) => !ownedBy(file, owned))",
     "replace": "const outside: string[] = []",
-    "tests": [
-      "packages/domain/test/acceptance.test.ts"
-    ]
+    "tests": ["packages/domain/test/acceptance.test.ts"]
   },
   {
     "name": "D2 a directory owns nothing under it",
     "file": "packages/domain/src/acceptance.ts",
     "find": "return prefix === '' || path === prefix || path.startsWith(`${prefix}/`)",
     "replace": "return prefix === '' || path === prefix",
-    "tests": [
-      "packages/domain/test/acceptance.test.ts"
-    ]
+    "tests": ["packages/domain/test/acceptance.test.ts"]
   },
   {
     "name": "D2 the runner records no changed paths",
     "file": "packages/runtime/src/attempt-runner.ts",
     "find": "      changed = await git.changedPaths?.(brief.worktree, brief.base_sha, head)\n",
     "replace": "",
-    "tests": [
-      "packages/runtime/test/attempt-runner.test.ts"
-    ]
+    "tests": ["packages/runtime/test/attempt-runner.test.ts"]
   },
   {
     "name": "D2 the specialist loads CLAUDE.md again",
     "file": "apps/desktop/src/engine-registry.ts",
     "find": "    CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',\n",
     "replace": "",
-    "tests": [
-      "apps/desktop/test/engine-registry.test.ts"
-    ]
+    "tests": ["apps/desktop/test/engine-registry.test.ts"]
   },
   {
     "name": "D3 a blocked report offers no Try again",
     "file": "packages/meta/src/scheduler.ts",
     "find": "const OWNER_RETRYABLE = /^(repairs used up |attempt \\S+ (reported blocked|ended blocked with no report): )/",
     "replace": "const OWNER_RETRYABLE = /^(repairs used up )/",
-    "tests": [
-      "packages/meta/test/repair.test.ts"
-    ]
+    "tests": ["packages/meta/test/repair.test.ts"]
   },
   {
     "name": "D3 Try again ignores the agreement",
     "file": "packages/meta/src/scheduler.ts",
     "find": "  if (work.state !== 'blocked' || !hostRunAgreed(store, repoOf(work))) return undefined",
     "replace": "  if (work.state !== 'blocked') return undefined",
-    "tests": [
-      "packages/meta/test/repair.test.ts"
-    ]
+    "tests": ["packages/meta/test/repair.test.ts"]
   },
   {
     "name": "D3 Try again ignores a hold",
     "file": "packages/meta/src/scheduler.ts",
     "find": "  if (isTerminal(work) || isHeld(work) || mandateOf(work).status === 'withdrawn') return undefined\n  if (work.state !== 'blocked'",
     "replace": "  if (isTerminal(work) || mandateOf(work).status === 'withdrawn') return undefined\n  if (work.state !== 'blocked'",
-    "tests": [
-      "packages/meta/test/repair.test.ts"
-    ]
+    "tests": ["packages/meta/test/repair.test.ts"]
   },
   {
     "name": "D3 Try again leaves the work blocked",
     "file": "packages/meta/src/scheduler.ts",
     "find": "      state: transition(WORK_ITEM_MACHINE, String(work.state), 'resume_executing'),\n",
     "replace": "",
-    "tests": [
-      "packages/meta/test/repair.test.ts"
-    ]
+    "tests": ["packages/meta/test/repair.test.ts"]
   },
   {
     "name": "D3 delivery offers no repair retry",
     "file": "apps/desktop/src/delivery.ts",
     "find": "      return repair === undefined ? undefined : { kind: 'repair', reason: clean(repair.reason) }",
     "replace": "      return undefined",
-    "tests": [
-      "apps/desktop/test/delivery.test.ts"
-    ]
+    "tests": ["apps/desktop/test/delivery.test.ts"]
   },
   {
     "name": "D3 retry needs no approval key",
     "file": "apps/desktop/src/server.ts",
-    "find": "const OWNER_WORD = /(\\/resolve|\\/host-run\\/agree|\\/work\\/[^/]+\\/retry)$/",
-    "replace": "const OWNER_WORD = /(\\/resolve|\\/host-run\\/agree)$/",
-    "tests": [
-      "apps/desktop/test/approval-key.test.ts"
-    ]
+    "find": "const OWNER_WORD = /(\\/resolve|\\/host-run\\/agree|\\/work\\/[^/]+\\/retry|\\/questions\\/[^/]+\\/answer)$/",
+    "replace": "const OWNER_WORD = /(\\/resolve|\\/host-run\\/agree|\\/questions\\/[^/]+\\/answer)$/",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
   },
   {
     "name": "D3 the protocol stops naming Try again",
     "file": "packages/prompts/defaults/roles/meta_agent/protocol.md",
     "find": "Re-runs: MEC never re-runs blocked work by itself.",
     "replace": "Re-runs: MEC may re-run blocked work.",
-    "tests": [
-      "packages/meta/test/turn-replies.test.ts"
-    ]
+    "tests": ["packages/meta/test/turn-replies.test.ts"]
   },
   {
     "name": "D4 the go-ahead lifts no block",
     "file": "packages/meta/src/service.ts",
     "find": "        if (work.state === 'blocked' && this.#ownerWentAhead(input, workItemId)) {",
     "replace": "        if (false) {",
-    "tests": [
-      "packages/meta/test/go-ahead.test.ts"
-    ]
+    "tests": ["packages/meta/test/go-ahead.test.ts"]
   },
   {
     "name": "D4 any wake lifts the block",
     "file": "packages/meta/src/service.ts",
     "find": "    return typeof when === 'string' && when >= blockedAt",
     "replace": "    return true",
-    "tests": [
-      "packages/meta/test/go-ahead.test.ts"
-    ]
+    "tests": ["packages/meta/test/go-ahead.test.ts"]
   },
   {
     "name": "D4 an answer from before the block lifts it",
     "file": "packages/meta/src/service.ts",
     "find": "    return typeof when === 'string' && when >= blockedAt",
     "replace": "    return typeof when === 'string'",
-    "tests": [
-      "packages/meta/test/go-ahead.test.ts"
-    ]
+    "tests": ["packages/meta/test/go-ahead.test.ts"]
   },
   {
     "name": "D6 a repair task asks for no model",
     "file": "packages/meta/src/scheduler.ts",
     "find": "    ...(root.modelRequest !== undefined && { modelRequest: root.modelRequest }),\n",
     "replace": "",
-    "tests": [
-      "packages/meta/test/repair.test.ts"
-    ]
+    "tests": ["packages/meta/test/repair.test.ts"]
   },
   {
     "name": "D5 the live line ignores delivery",
     "file": "apps/desktop/src/inspection.ts",
     "find": "      const words = delivery === undefined ? undefined : deliveryLine(delivery)",
     "replace": "      const words = undefined as string | undefined",
-    "tests": [
-      "apps/desktop/test/meta-visibility.test.ts"
-    ]
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
   },
   {
     "name": "D5 a spent repair is called open",
     "file": "apps/desktop/src/inspection.ts",
     "find": "      ? ' Its repairs are used up.'",
     "replace": "      ? ' A repair is open.'",
-    "tests": [
-      "apps/desktop/test/delivery-surfaces.test.ts"
-    ]
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
   },
   {
     "name": "D7 Noted on names the id",
     "file": "packages/meta/src/service.ts",
     "find": "    const named = first === '' ? workItemId : `“${cutAtWord(redact(first, [], []), TITLE_WORDS)}”`",
     "replace": "    const named = workItemId",
-    "tests": [
-      "packages/meta/test/service.test.ts"
-    ]
+    "tests": ["packages/meta/test/service.test.ts"]
   },
   {
     "name": "D7 the agreement wait shows its code",
     "file": "apps/desktop/src/inspection.ts",
     "find": "    if (reason === HOST_RUN_UNAGREED)\n      return 'until you agree to run this repository’s commands on this machine'",
     "replace": "    if (reason === HOST_RUN_UNAGREED) return reason",
-    "tests": [
-      "apps/desktop/test/meta-visibility.test.ts"
-    ]
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
   },
   {
     "name": "D7 a blocked task never started shows no reason",
     "file": "apps/desktop/src/inspection.ts",
     "find": "    if (str(task.status) === 'blocked' && blocked !== null) return cutAtWord(redactText(blocked), 200)",
     "replace": "",
-    "tests": [
-      "apps/desktop/test/meta-visibility.test.ts"
-    ]
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
   },
   {
     "name": "D7 a blocked line is cut mid-word",
     "file": "apps/desktop/src/inspection.ts",
     "find": "              : `Blocked: ${cutAtWord(redactText(String(doc.blockedReason)), 200)}`,",
     "replace": "              : `Blocked: ${cutText(String(doc.blockedReason), 200)}`,",
-    "tests": [
-      "apps/desktop/test/meta-visibility.test.ts"
-    ]
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
   },
   {
     "name": "D7 a cut lands inside a word",
     "file": "packages/meta/src/words.ts",
     "find": "  if (space > max / 2) cut = cut.slice(0, space)\n",
     "replace": "",
-    "tests": [
-      "apps/desktop/test/meta-visibility.test.ts",
-      "packages/meta/test/service.test.ts"
-    ]
+    "tests": ["apps/desktop/test/meta-visibility.test.ts", "packages/meta/test/service.test.ts"]
   },
   {
     "name": "D7 a failed bootstrap posts no chat line",
     "file": "apps/desktop/src/delivery.ts",
     "find": "          if (before === 'blocked' || this.#store.workItems.get(id)?.state !== 'blocked') return",
     "replace": "          return",
-    "tests": [
-      "apps/desktop/test/delivery.test.ts"
-    ]
+    "tests": ["apps/desktop/test/delivery.test.ts"]
   },
   {
     "name": "D7 the web shows a blocked wait as Waiting",
     "file": "apps/web/src/next/work-model.ts",
     "find": "  if (row.status === 'blocked') return `Blocked: ${waiting}`\n",
     "replace": "",
-    "tests": [
-      "apps/web/test/meta-visibility.test.ts"
-    ]
+    "tests": ["apps/web/test/meta-visibility.test.ts"]
   },
   {
     "name": "D3 the web has no Try again label",
     "file": "apps/web/src/next/work-model.ts",
     "find": "  repair: 'Try again',",
     "replace": "  repair: 'Retry',",
-    "tests": [
-      "apps/web/test/work-model.test.ts"
-    ]
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "R3 answering a question needs no approval key",
+    "file": "apps/desktop/src/server.ts",
+    "find": "const OWNER_WORD = /(\\/resolve|\\/host-run\\/agree|\\/work\\/[^/]+\\/retry|\\/questions\\/[^/]+\\/answer)$/",
+    "replace": "const OWNER_WORD = /(\\/resolve|\\/host-run\\/agree|\\/work\\/[^/]+\\/retry)$/",
+    "tests": ["apps/desktop/test/approval-key.test.ts"]
   }
 ]

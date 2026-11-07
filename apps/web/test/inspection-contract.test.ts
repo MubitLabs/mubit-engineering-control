@@ -273,7 +273,7 @@ describe('a wake on the real path (§6, §18.1)', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/questions/${id}/answer`,
-      headers: { 'x-mec-client': '1' },
+      headers: { 'x-mec-client': '1', [APPROVAL_HEADER]: OWNER_KEY },
       payload: { answer: text },
     })
     expect(res.statusCode).toBe(200)

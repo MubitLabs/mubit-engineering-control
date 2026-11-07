@@ -1176,6 +1176,7 @@ describe('durable commands at the routes (M1.4b, §12.1, §17, §20)', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/questions/q_1/answer',
+      headers: ownerHeaders,
       payload: { answer: 'a' },
     })
 
@@ -1199,6 +1200,7 @@ describe('durable commands at the routes (M1.4b, §12.1, §17, §20)', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/questions/q_1/answer',
+      headers: ownerHeaders,
       payload: { answer: 'a' },
     })
 
@@ -1211,7 +1213,12 @@ describe('durable commands at the routes (M1.4b, §12.1, §17, §20)', () => {
     const { app, store } = server
     await planningWithQuestion(server)
     const post = (answer: string) =>
-      app.inject({ method: 'POST', url: '/api/questions/q_1/answer', payload: { answer } })
+      app.inject({
+        method: 'POST',
+        url: '/api/questions/q_1/answer',
+        headers: ownerHeaders,
+        payload: { answer },
+      })
 
     await post('a')
     const second = await post('b')
@@ -1231,6 +1238,7 @@ describe('durable commands at the routes (M1.4b, §12.1, §17, §20)', () => {
     const res = await track(server.app).inject({
       method: 'POST',
       url: '/api/questions/q_1/answer',
+      headers: ownerHeaders,
       payload: { answer: secret },
     })
 

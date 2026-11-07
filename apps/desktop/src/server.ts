@@ -579,8 +579,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
   // A route that acts on the owner's word needs the key, so a local process that is not the owner's
   // browser cannot say it. By the route's own pattern, so a new resolve route is covered unasked.
-  // `/retry` starts work that runs the repository's commands, Try again an engine attempt too.
-  const OWNER_WORD = /(\/resolve|\/host-run\/agree|\/work\/[^/]+\/retry)$/
+  // `/retry` starts work that runs the repository's commands, Try again an engine attempt too. An
+  // answer is the owner's go-ahead, which can lift a block (owner, 7 November 2026).
+  const OWNER_WORD = /(\/resolve|\/host-run\/agree|\/work\/[^/]+\/retry|\/questions\/[^/]+\/answer)$/
   const approval = deps.approval ?? { key: new ApprovalKey(), link: () => {} }
   // §12.1, decision #10: a request that names another repository is the client's error.
   app.setErrorHandler((error, _request, reply) => {

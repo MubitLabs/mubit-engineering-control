@@ -182,6 +182,11 @@ function settleOnReport(store: Store, task: StoreDoc, attempt: StoreDoc, at: str
     blockTask(store, task, `attempt ${id} reported ${report.kind}: ${report.summary}`, at)
     return true
   }
+  const said = report === undefined ? endedBlocked(store, attempt) : undefined
+  if (said !== undefined) {
+    blockTask(store, task, `attempt ${id} ended blocked with no report: ${said}`, at)
+    return true
+  }
   if (report?.kind !== 'dropped' || !passedOrUnjudged) return false
   const { deferred: _deferred, ...rest } = task
   moveTask(store, rest, 'cancel', { cancelledReason: `attempt ${id} dropped it: ${report.summary}` }, at)
@@ -193,6 +198,31 @@ function settleOnReport(store: Store, task: StoreDoc, attempt: StoreDoc, at: str
     at,
   )
   return true
+}
+
+/** A turn's last words that open with `Blocked:`, markdown emphasis allowed. */
+const BLOCKED_OPENING = /^[\s*_`>#]*blocked\s*[:*_]+\s*/i
+
+/**
+ * An attempt that sent no report but whose turn ended on a message opening with `Blocked:` said
+ * it is blocked, plainly, so it reads as blocked and not as success (§15: an agent ending its turn
+ * is not success). Only the turn's last message counts: an earlier one was overtaken. Returns that
+ * message without its opening, or undefined.
+ */
+function endedBlocked(store: Store, attempt: StoreDoc): string | undefined {
+  const generation = Number(attempt.generation ?? 1)
+  const last = store.events
+    .read(`attempt:${String(attempt.id)}`)
+    .filter((event) => {
+      const body = event.body as { role?: unknown; generation?: unknown } | null
+      if (event.type !== 'message' || body?.role !== 'assistant') return false
+      return body.generation === undefined || Number(body.generation) === generation
+    })
+    .at(-1)
+  const text = String((last?.body as { text?: unknown } | undefined)?.text ?? '')
+  if (!BLOCKED_OPENING.test(text)) return undefined
+  const rest = text.replace(BLOCKED_OPENING, '').trim()
+  return rest === '' ? 'no reason given' : rest
 }
 
 type Target = { worktree?: string; branch?: string }
@@ -211,6 +241,19 @@ function reportHead(doc: StoreDoc | undefined, attempt: StoreDoc): string | unde
   const claimed = (doc?.report as { head_sha?: string } | undefined)?.head_sha
   if (claimed === undefined || doc?.head_matches === true) return attempt.head_sha as string | undefined
   return claimed
+}
+
+const strings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : []
+
+/** What the attempt's commits did against its base, and what the brief lets them do (§10, §14). */
+function workFacts(task: StoreDoc, attempt: StoreDoc) {
+  return {
+    ...(typeof attempt.base_sha === 'string' && { base: attempt.base_sha }),
+    ...(task.noChangeOk === true && { noChangeOk: true }),
+    owned: strings(task.ownedPaths),
+    ...(Array.isArray(attempt.changed_paths) && { changed: strings(attempt.changed_paths) }),
+  }
 }
 
 /** What a reviewer said, bound to the commit it read (§15): the report's `finding` artifacts. */
@@ -323,6 +366,8 @@ function settleAttempt(
     verdicts: verdictsOf(store, latest),
     findings: findingsOf(report, latest),
     policy: { sensitive: task.sensitive === true, ...(reviewed !== undefined && { reviewedSha: reviewed }) },
+    // A reviewer reads and changes nothing, so no-change and owned paths judge the task's own work.
+    ...(kindOf(latest) !== 'review' && workFacts(task, latest)),
   })
   if (decided.verdict === 'accepted') acceptTask(store, task, latest, attempts, at)
   if (decided.verdict === 'blocked') blockTask(store, task, decided.reason, at)

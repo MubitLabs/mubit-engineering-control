@@ -26,8 +26,9 @@ describe('StoreFacts', () => {
     facts.attemptStarted(REF, 2, 'session-1')
     expect(state()).toBe('running')
     expect(store.tasks.get('task_1')?.status).toBe('active')
-    facts.workCompleted(REF, HEAD)
+    facts.workCompleted(REF, HEAD, ['src/a.ts'])
     expect(state()).toBe('work_complete')
+    expect(store.attempts.get('att_1')?.changed_paths).toEqual(['src/a.ts'])
     expect(store.tasks.get('task_1')?.status).toBe('awaiting_review')
     facts.checksFinished(
       REF,

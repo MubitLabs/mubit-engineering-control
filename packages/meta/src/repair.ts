@@ -51,6 +51,20 @@ export function repairEvidence(decided: RepairVerdict, claimedHead?: string): st
   if (reason === 'report_head') {
     return `Your ready report named ${claimedHead ?? 'no commit'}, but the head is ${head}.`
   }
+  if (reason === 'no_change') {
+    return [
+      `The attempt ended on ${head}, its base, with no change and no ready report, so the task is not done.`,
+      'Make the change the objective asks for. If nothing needs changing, report ready on this head and',
+      'say why; if you cannot proceed, report blocked with what a person must do.',
+    ].join(' ')
+  }
+  if (reason === 'owned_paths') {
+    const outside = decided.outside ?? []
+    return [
+      `The commit ${head} changes files outside this task's owned paths: ${outside.join(', ')}.`,
+      'Another task may own them. Undo those changes and keep to the owned paths.',
+    ].join(' ')
+  }
   const failed = decided.failing.map(
     (check) => `Check ${check.name} failed on ${head}:\n${check.logTail.slice(-TAIL_CHARS)}`,
   )

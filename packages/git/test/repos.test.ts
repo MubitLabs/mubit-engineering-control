@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { git } from '../src/exec'
-import { cachedDefaultTip, excludeFromWorktree, historyTouches, RepoCache } from '../src/repos'
+import { cachedDefaultTip, changedPaths, excludeFromWorktree, historyTouches, RepoCache } from '../src/repos'
 import { headSha, Worktrees } from '../src/worktrees'
 
 const root = mkdtempSync(join(process.env.TMPDIR ?? '/tmp', 'mec-git-cache-'))
@@ -96,5 +96,23 @@ describe('RepoCache and task branches', () => {
     await git(['rm', '--quiet', '-f', '.mec/mcp.json'], { cwd: worktree })
     await git([...IDENT, 'commit', '--quiet', '-m', 'hidden again'], { cwd: worktree })
     expect(await historyTouches(worktree, first, await headSha(worktree), '.mec')).toBe(true)
+  })
+})
+
+describe('changedPaths (owned paths, §10)', () => {
+  it('names every file the commits changed against the base, added, edited and deleted', async () => {
+    const { src, first } = await source('src-changed')
+    await commit(src, 'b.txt', 'second')
+    writeFileSync(join(src, 'a.txt'), 'edited\n')
+    mkdirSync(join(src, 'dir with space'))
+    writeFileSync(join(src, 'dir with space', 'c.txt'), 'c\n')
+    await git(['add', '--all'], { cwd: src })
+    await git([...IDENT, 'commit', '--quiet', '-m', 'third'], { cwd: src })
+    expect(await changedPaths(src, first, await headSha(src))).toEqual([
+      'a.txt',
+      'b.txt',
+      'dir with space/c.txt',
+    ])
+    expect(await changedPaths(src, first, first)).toEqual([])
   })
 })

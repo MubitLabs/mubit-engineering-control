@@ -35,6 +35,7 @@ import { BUILTIN_ROSTER, type BuiltinRole } from '@mec/domain'
 import {
   bootstrapOutput,
   cachedDefaultTip,
+  changedPaths,
   commitAll,
   completeMidMerge,
   dirtyFiles,
@@ -261,7 +262,7 @@ export class AttemptLauncher {
       journalRoot: join(deps.dataDir, 'journal'),
       supervisor: this.#supervisor,
       facts: deps.facts,
-      git: { commitAll: commitWork, headSha, historyTouches, adminDirOf: worktreeAdminDir },
+      git: { commitAll: commitWork, headSha, historyTouches, changedPaths, adminDirOf: worktreeAdminDir },
       adapterFor: (brief) => this.#adapterFor(brief),
       planFor: (brief) => this.#planOf(brief),
     })

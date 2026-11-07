@@ -113,6 +113,8 @@ export type MetaPlanTask = {
   acceptanceChecks?: string[]
   /** Decision #33: the planner says the task touches sensitive ground, so it gets one review. */
   sensitive?: boolean
+  /** §10: a no-change outcome is acceptable for this task; absent, an unchanged head is no work. */
+  noChangeOk?: boolean
   modelRequest?: { tier?: string; model?: string; effort?: string; variant?: string; reason: string }
   slotHint?: { slotClass?: string; slotId?: string }
   budget?: { turns: number; wallClockMs: number; usd?: number }
@@ -1148,8 +1150,10 @@ export class MetaAgentService {
       // Decision #19: a key this work item already holds is the same task, so its id, status
       // and creation stay and only what the plan says about it changes.
       for (const { prior, ...task } of canonical) {
+        // A no-change allowance is what this revision says, never one an earlier revision gave.
+        const { noChangeOk: _earlier, ...kept } = prior ?? {}
         this.#store.tasks.save({
-          ...prior,
+          ...kept,
           id: task.taskId,
           workItemId,
           ...(repoId !== undefined && { repoId }),
@@ -1165,6 +1169,7 @@ export class MetaAgentService {
               ? [...task.acceptanceChecks]
               : known,
           ...((task.sensitive ?? prior?.sensitive) === true && { sensitive: true }),
+          ...(task.noChangeOk === true && { noChangeOk: true }),
           // §5.2's brief fields persist verbatim; the runtime's resolveModel reads them.
           originalRequestRef: task.originalRequestRef ?? input.messageId,
           ...(task.ownedPaths !== undefined && { ownedPaths: [...task.ownedPaths] }),

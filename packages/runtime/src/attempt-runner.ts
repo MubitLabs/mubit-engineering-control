@@ -53,7 +53,8 @@ export interface AttemptFacts extends CoreForEngines {
   atomic<T>(fn: () => T): T
   /** One journalled engine event on the attempt's stream. */
   engineEvent(attempt: AttemptRef, event: EngineEvent): void
-  workCompleted(attempt: AttemptRef, head: string): void
+  /** `changed`: the files the attempt's commits changed against its base, when git could say. */
+  workCompleted(attempt: AttemptRef, head: string, changed?: readonly string[]): void
   checksFinished(attempt: AttemptRef, head: string, outcomes: CheckOutcome[], passed: boolean): void
   /** `stopped` says what ended the checks, when something did: the note is for reading. */
   checksSkipped(attempt: AttemptRef, head: string, reason: string, stopped?: string): void
@@ -77,6 +78,8 @@ export interface AttemptGit {
   commitAll(path: string, message: string, opts: { name: string; email: string }): Promise<string | null>
   headSha(path: string): Promise<string>
   historyTouches(worktree: string, base: string, head: string, path: string): Promise<boolean>
+  /** The files changed from `base` to `head`, for the task's owned paths (§10). */
+  changedPaths?(worktree: string, base: string, head: string): Promise<string[]>
   /** Where the worktree's `.git` file points now; undefined when it is no plain pointer. */
   adminDirOf(path: string): string | undefined
 }
@@ -447,17 +450,19 @@ export class AttemptRunner {
     }
     const message = `mec: ${brief.task_id} attempt ${attempt.attempt_id}`
     let head: string
+    let changed: string[] | undefined
     try {
       await git.commitAll(brief.worktree, message, plan.identity)
       head = await git.headSha(brief.worktree)
       if (await git.historyTouches(brief.worktree, brief.base_sha, head, '.mec')) {
         return this.#fail(live, 'mec_in_history')
       }
+      changed = await git.changedPaths?.(brief.worktree, brief.base_sha, head)
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       return this.#fail(live, `commit_failed: ${detail}`)
     }
-    facts.atomic(() => facts.workCompleted(attempt, head))
+    facts.atomic(() => facts.workCompleted(attempt, head, changed))
     const stopped = (): StopReason | undefined => live.stopReason ?? plan.withheld?.()
     await this.#runChecks(attempt, head, plan, live.checks.signal, stopped)
   }

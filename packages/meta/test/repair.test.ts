@@ -283,6 +283,87 @@ describe('reports and the head (§10, §15)', () => {
   })
 })
 
+describe('no change, a Blocked: ending and owned paths (real runs 2026-11-06/07)', () => {
+  /** The attempt's own fields the runner leaves: where it started and what its commits changed. */
+  const patch = (store: Store, id: string, fields: StoreDoc): void =>
+    store.atomic(() => store.attempts.save({ ...(store.attempts.get(id) as StoreDoc), ...fields }))
+
+  const say = (store: Store, id: string, text: string): void =>
+    store.atomic(() => {
+      const stream = `attempt:${id}`
+      const seq = store.events.read(stream).length + 1
+      store.events.append(stream, {
+        stream,
+        seq,
+        at: AT,
+        type: 'message',
+        body: { type: 'message', role: 'assistant', text },
+      })
+    })
+
+  it('green checks on the unchanged base with no report go to a repair, not acceptance', () => {
+    const { store, pass } = rig()
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    patch(store, 'att_1', { base_sha: H1 })
+    pass()
+    expect(store.tasks.get('task_a')?.status).not.toBe('accepted')
+    expect(queued(store)[0]?.continuation).toMatchObject({
+      kind: 'repair',
+      evidence: expect.stringContaining('no change'),
+    })
+  })
+
+  it('a brief that allows no change accepts the unchanged base', () => {
+    const { store, pass } = rig({ noChangeOk: true })
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    patch(store, 'att_1', { base_sha: H1 })
+    pass()
+    expect(store.tasks.get('task_a')?.status).toBe('accepted')
+  })
+
+  it('a final message beginning Blocked: with no report blocks the task with its words', () => {
+    const { store, pass } = rig()
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    patch(store, 'att_1', { base_sha: H1 })
+    say(store, 'att_1', 'Looking at the task.')
+    say(store, 'att_1', '**Blocked:** the harness refuses `sleep 80`, so I did not run the waits.')
+    pass()
+    const task = store.tasks.get('task_a')
+    expect(task?.status).toBe('blocked')
+    expect(String(task?.blockedReason)).toContain('the harness refuses')
+    expect(queued(store)).toEqual([])
+  })
+
+  it('a Blocked: word earlier in the turn, not at its end, decides nothing', () => {
+    const { store, pass } = rig()
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    say(store, 'att_1', 'Blocked: the first try failed.')
+    say(store, 'att_1', 'Fixed it; the test passes.')
+    pass()
+    expect(store.tasks.get('task_a')?.status).toBe('accepted')
+  })
+
+  it("a commit outside the task's owned paths is sent to a repair with the reason", () => {
+    const { store, pass } = rig({ ownedPaths: ['src/slug.mjs', 'test/slug.test.mjs'] })
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    patch(store, 'att_1', { base_sha: H2, changed_paths: ['src/slug.mjs', 'src/title.mjs'] })
+    pass()
+    expect(store.tasks.get('task_a')?.status).not.toBe('accepted')
+    expect(queued(store)[0]?.continuation).toMatchObject({
+      kind: 'repair',
+      evidence: expect.stringContaining('src/title.mjs'),
+    })
+  })
+
+  it('a task with no owned paths takes any change', () => {
+    const { store, pass } = rig({ ownedPaths: [] })
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    patch(store, 'att_1', { base_sha: H2, changed_paths: ['anything.txt'] })
+    pass()
+    expect(store.tasks.get('task_a')?.status).toBe('accepted')
+  })
+})
+
 describe('work state (§10)', () => {
   it('work moves executing, reviewing, integrating through the machine as tasks do', () => {
     const { store, pass } = rig()

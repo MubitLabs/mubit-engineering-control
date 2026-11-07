@@ -99,6 +99,16 @@ export async function excludeFromWorktree(worktree: string, pattern: string): Pr
  * Did any commit in `base..head` touch `path`? It walks the commits, not the end state, because
  * a token added and then removed is still in the history a push would publish.
  */
+/**
+ * The files the commits after `base` changed, up to `head`, in git's order: what a task's owned
+ * paths are checked against (§10). Renames show as their new path; nothing is staged or read.
+ */
+export async function changedPaths(worktree: string, base: string, head: string): Promise<string[]> {
+  const range = `${assertSha(base)}..${assertSha(head)}`
+  const { stdout } = await git(['diff', '--name-only', '-z', '--no-renames', range], { cwd: worktree })
+  return stdout.split('\0').filter((path) => path !== '')
+}
+
 export async function historyTouches(
   worktree: string,
   base: string,

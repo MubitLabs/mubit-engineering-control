@@ -8,7 +8,13 @@
  *
  * UI evidence (§15) applies only where a repository requires it. Repository docs have no such
  * field yet, so it is not required here.
+ *
+ * Green checks on a head that never left its base say nothing about the task: the base was green
+ * already. With no `ready` report saying nothing needed changing, and no brief allowing it, that is
+ * no work done, and it goes to a repair (§10, §15). A commit that touches files outside the task's
+ * owned paths is sent back the same way, naming them (§10: a task owns its paths).
  */
+import { normalisePath } from './task-graph'
 
 /** Stands for "no checks are registered". It names no command, so it can never pass by itself. */
 export const NO_CHECKS_MARKER = 'manual-review'
@@ -34,9 +40,17 @@ export type AcceptanceInput = {
   verdicts: readonly CheckVerdict[]
   findings: readonly BoundFinding[]
   policy: { sensitive: boolean; reviewedSha?: string }
+  /** The commit the attempt started from; absent, no-change is not judged. */
+  base?: string
+  /** The brief says a no-change outcome is acceptable. */
+  noChangeOk?: boolean
+  /** The task's owned paths; empty or absent owns everything. */
+  owned?: readonly string[]
+  /** The files the attempt's commits changed against its base, as MEC read them. */
+  changed?: readonly string[]
 }
 
-export type RepairReason = 'checks_failed' | 'finding' | 'report_head'
+export type RepairReason = 'checks_failed' | 'finding' | 'report_head' | 'no_change' | 'owned_paths'
 
 export type Acceptance =
   | { verdict: 'accepted'; head: string }
@@ -48,6 +62,8 @@ export type Acceptance =
       head: string
       failing: { name: string; logTail: string }[]
       findings: string[]
+      /** `owned_paths`: the changed files no owned path covers. */
+      outside?: string[]
     }
   /** A person must act; `reason` says on what. */
   | { verdict: 'blocked'; reason: string }
@@ -57,6 +73,15 @@ export type Acceptance =
 const NO_VERDICT_YET = new Set(['queued', 'running', 'stalled', 'quota_wait', 'auth_required'])
 
 const named = (names: readonly string[]): string => names.join(', ')
+
+/** Is `file` one of `owned`, or under one of them? A root path owns everything. */
+function ownedBy(file: string, owned: readonly string[]): boolean {
+  const path = normalisePath(file)
+  return owned.some((entry) => {
+    const prefix = normalisePath(entry)
+    return prefix === '' || path === prefix || path.startsWith(`${prefix}/`)
+  })
+}
 
 export function acceptance(input: AcceptanceInput): Acceptance {
   const { attemptState, head, policy, report } = input
@@ -90,6 +115,14 @@ export function acceptance(input: AcceptanceInput): Acceptance {
 
   if (report?.kind === 'ready' && report.headSha !== head) {
     return { verdict: 'repair', reason: 'report_head', head, failing: [], findings: [] }
+  }
+  if (input.base === head && report?.kind !== 'ready' && input.noChangeOk !== true) {
+    return { verdict: 'repair', reason: 'no_change', head, failing: [], findings: [] }
+  }
+  const owned = input.owned ?? []
+  const outside = owned.length === 0 ? [] : (input.changed ?? []).filter((file) => !ownedBy(file, owned))
+  if (outside.length > 0) {
+    return { verdict: 'repair', reason: 'owned_paths', head, failing: [], findings: [], outside }
   }
   const findings = input.findings.filter((finding) => finding.sha === head).map((finding) => finding.text)
   if (findings.length > 0) return { verdict: 'repair', reason: 'finding', head, failing: [], findings }

@@ -91,6 +91,11 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
                 description:
                   'True when the task touches secrets, sign-in, permissions, money, deleting or migrating stored data, or a public post: it then gets one read-only review',
               },
+              no_change_ok: {
+                type: 'boolean',
+                description:
+                  'True when finishing with no change is a valid outcome (a check or an investigation). Otherwise a task that ends on its base with no ready report is sent back',
+              },
               depends_on: { type: 'array', items: { type: 'string' } },
               role: { type: 'string' },
               base_policy: {

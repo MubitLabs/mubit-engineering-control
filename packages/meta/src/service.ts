@@ -191,7 +191,15 @@ export type TurnOutcome = {
  * The message a turn serves; `repoId` is its repository's conversation (absent is Unassigned).
  * `wake` marks a turn no user message started: it speaks with no person's authority.
  */
-type TurnInput = { messageId: string; text: string; repoId?: string; wake?: true; idempotencyKey?: string }
+type TurnInput = {
+  messageId: string
+  text: string
+  repoId?: string
+  wake?: true
+  idempotencyKey?: string
+  /** A wake's cause, so a plan can tell the owner's go-ahead from the planner's own turn. */
+  causationId?: string
+}
 
 /** §12.1: what the owner submitted, which a key's retry must repeat exactly. */
 type SubmissionIntent = 'new' | 'follow_up'
@@ -530,7 +538,7 @@ export class MetaAgentService {
   }
 
   async #wakeTurn(
-    input: { reason: string; detail?: string; workItemId?: string },
+    input: { reason: string; detail?: string; workItemId?: string; causationId?: string },
     messageId: string,
   ): Promise<TurnOutcome> {
     const work = input.workItemId === undefined ? undefined : this.#store.workItems.get(input.workItemId)
@@ -548,7 +556,12 @@ export class MetaAgentService {
     if (isTerminal(work) || mandateOf(work).status === 'withdrawn') return this.#refuseWake(input, work)
     const repoId = repoOf(work)
     const repo = repoId !== undefined ? { repoId } : {}
-    const turn = { messageId, wake: true as const, ...repo }
+    const turn = {
+      messageId,
+      wake: true as const,
+      ...repo,
+      ...(input.causationId !== undefined && { causationId: input.causationId }),
+    }
     let decision: MetaDecision
     const tools = this.#buildTools({ messageId, workItemId }, repoId)
     const started = {
@@ -1059,6 +1072,28 @@ export class MetaAgentService {
     return { acknowledged: ack, workItemId, tasksCreated: 0, launchesEnqueued: [], escalated: false }
   }
 
+  /**
+   * Whether this turn is the owner's go-ahead on blocked work: a person's own turn, or a wake the
+   * owner caused (their follow-up, released or handed back, or their answer to a question), made
+   * after the work blocked. A wake from a report, a parked task or a timer is the planner's own.
+   */
+  #ownerWentAhead(input: TurnInput, workItemId: string): boolean {
+    const blockedAt =
+      this.#store.events
+        .read(`work:${workItemId}`)
+        .filter((event) => event.type === 'work_blocked')
+        .at(-1)?.at ?? ''
+    if (input.wake !== true) return true
+    const cause = input.causationId ?? ''
+    const said = /^(message|released|handback):(.+)$/.exec(cause)
+    const when = said
+      ? this.#store.messages.get(said[2] as string)?.createdAt
+      : cause.startsWith('question/')
+        ? this.#store.engines.get(cause)?.answeredAt
+        : undefined
+    return typeof when === 'string' && when >= blockedAt
+  }
+
   /** Validate the brain's plan (§10); an invalid one is answered with the first issue. */
   #commitPlan(
     input: TurnInput,
@@ -1144,6 +1179,19 @@ export class MetaAgentService {
         }
         work.planRevision = planRevision
         work.updatedAt = at
+        if (work.state === 'blocked' && this.#ownerWentAhead(input, workItemId)) {
+          // Owner ruling 2026-11-07: the owner's go-ahead, and the plan it led to, lift the block
+          // for that plan's new work. Tasks still blocked stay blocked, and re-block the work if
+          // nothing else is open. A planner turn the owner did not cause never gets here.
+          work.state = transition(WORK_ITEM_MACHINE, 'blocked', 'resume_executing')
+          delete work.blockedReason
+          this.#appendEvent(
+            `work:${workItemId}`,
+            'block_lifted',
+            { workItemId, messageId: input.messageId, by: 'owner', at },
+            at,
+          )
+        }
         this.#store.workItems.save(work)
       }
 

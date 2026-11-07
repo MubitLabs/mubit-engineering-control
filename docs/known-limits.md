@@ -42,9 +42,11 @@ what is verified, what runs on fakes and what is absent lives in [`docs/STATUS.m
     and everything it can reach, and agreed repositories are not isolated from each other.
   - It can read a browser's profile on disk. The key sits in the tab's `sessionStorage`, which a
     browser may keep on disk for session restore.
-  - Other owner routes take no key: chat, questions, hold, lift, stop, slots, policy and repository
+  - Other owner routes take no key: chat, hold, lift, stop, slots, policy and repository
     edits, trust among them, `/api/setup/drafts/:id/apply` and `/api/work/:id/switch-slot`. A policy cannot pre-authorise an always-confirm class, so none of these
-    answers a push, PR or merge card.
+    answers a push, PR or merge card. A keyless chat follow-up on blocked work can lead to a
+    replan that lifts the block (D4), so an agreed repository's check can restart blocked work
+    through chat. Answering a question, Try again and card answers need the key.
   - Off a mac the link goes through `xdg-open`, found on `PATH`, so a process that can write to a
     directory on `PATH` can stand in for it, and the code shows in the process list for a moment. On
     a mac it goes over the stdin of `/usr/bin/osascript`, by its full path. A process that sees the code first gets the key, and the

@@ -25,7 +25,7 @@ Owner ruling. Blocked work whose task used up its repairs, reported `blocked`, o
 
 - `packages/meta/src/scheduler.ts` `ownerRepairOffer()` and `ownerRetryRepair()`. One transaction: the task goes `blocked → ready` with one `repair` continuation (`origin: 'owner'`, evidence = where it stopped), its `prerequisite …` dependents go back to ready, the work goes `blocked → executing`, and `retry_requested {kind: 'repair', origin: 'owner'}` is written. A second press finds nothing. Held, stopped and ended work offers nothing, and a repository with no host-run agreement is refused with `host_run_unagreed`. The next pass places the attempt through the usual caps and launch gate. The repair counter keeps counting, so a failure blocks again with what remains.
 - `apps/desktop/src/delivery.ts`: `retryOffer`/`retry` take `kind: 'repair'`. `INTEGRATION_BLOCK` still decides the integration retry.
-- `apps/desktop/src/server.ts`: `/api/work/:id/retry` needs the approval key, like `/resolve` and `/host-run/agree`, so a repository's check cannot start an attempt over loopback. The web client already sends the key on every mutating call.
+- `apps/desktop/src/server.ts`: `/api/work/:id/retry` needs the approval key, like `/resolve` and `/host-run/agree`, so a repository's check cannot press Try again over loopback. It can still post a keyless chat follow-up, which can lead to a replan and lift a block (see known limits). The web client already sends the key on every mutating call.
 - `apps/web`: the existing `WorkAction` retry slot, labelled "Try again". The decoder accepts `repair`.
 - Planner protocol (`protocol.md` and the fallback in `brain.ts`): MEC never re-runs blocked work by itself, and Try again plus the integration and delivery retries are the only re-runs it may name.
 
@@ -55,4 +55,4 @@ Owner ruling. Real Run 3: after the owner's "go ahead", the planner planned `tas
 
 - Repository instructions in the brief (D2 above).
 - The `Blocked:` reading stays, and spec §10 says so (D1 above).
-- `/api/questions/:id/answer` needs the approval key, like `/resolve`, `/host-run/agree` and `/retry`: an answer is the owner's go-ahead, which can lift a block (D4). A keyless answer gets 403. The web client's two answer paths already send the key.
+- `/api/questions/:id/answer` needs the approval key, like `/resolve`, `/host-run/agree` and `/retry`: an answer is the owner's go-ahead, which can lift a block (D4). Chat stays keyless, so this narrows the path rather than closing it. A keyless answer gets 403. The web client's two answer paths already send the key.

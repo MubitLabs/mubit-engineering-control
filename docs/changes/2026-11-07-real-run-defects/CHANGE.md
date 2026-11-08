@@ -25,7 +25,7 @@ Owner ruling. Blocked work whose task used up its repairs, reported `blocked`, o
 
 - `packages/meta/src/scheduler.ts` `ownerRepairOffer()` and `ownerRetryRepair()`. One transaction: the task goes `blocked → ready` with one `repair` continuation (`origin: 'owner'`, evidence = where it stopped), its `prerequisite …` dependents go back to ready, the work goes `blocked → executing`, and `retry_requested {kind: 'repair', origin: 'owner'}` is written. A second press finds nothing. Held, stopped and ended work offers nothing, and a repository with no host-run agreement is refused with `host_run_unagreed`. The next pass places the attempt through the usual caps and launch gate. The repair counter keeps counting, so a failure blocks again with what remains.
 - `apps/desktop/src/delivery.ts`: `retryOffer`/`retry` take `kind: 'repair'`. `INTEGRATION_BLOCK` still decides the integration retry.
-- `apps/desktop/src/server.ts`: `/api/work/:id/retry` needs the approval key, like `/resolve` and `/host-run/agree`, so a repository's check cannot press Try again over loopback. It can still post a keyless chat follow-up, which can lead to a replan and lift a block (see known limits). The web client already sends the key on every mutating call.
+- `apps/desktop/src/server.ts`: `/api/work/:id/retry` needs the approval key, like `/resolve` and `/host-run/agree`, so a repository's check cannot press Try again over loopback. Since the 8 November ruling, chat needs the key too, so it cannot send the follow-up that lifts a block either. The web client already sends the key on every mutating call.
 - `apps/web`: the existing `WorkAction` retry slot, labelled "Try again". The decoder accepts `repair`.
 - Planner protocol (`protocol.md` and the fallback in `brain.ts`): MEC never re-runs blocked work by itself, and Try again plus the integration and delivery retries are the only re-runs it may name.
 
@@ -55,4 +55,11 @@ Owner ruling. Real Run 3: after the owner's "go ahead", the planner planned `tas
 
 - Repository instructions in the brief (D2 above).
 - The `Blocked:` reading stays, and spec §10 says so (D1 above).
-- `/api/questions/:id/answer` needs the approval key, like `/resolve`, `/host-run/agree` and `/retry`: an answer is the owner's go-ahead, which can lift a block (D4). Chat stays keyless, so this narrows the path rather than closing it. A keyless answer gets 403. The web client's two answer paths already send the key.
+- `/api/questions/:id/answer` needs the approval key, like `/resolve`, `/host-run/agree` and `/retry`: an answer is the owner's go-ahead, which can lift a block (D4). A keyless answer gets 403. The web client's two answer paths already send the key.
+
+## Owner ruling, 8 November 2026: chat needs the key
+
+- `apps/desktop/src/server.ts`: `POST /api/chat/messages` needs the approval key. That one route carries every chat message: a new request, a follow-up into work (`referencesWorkItem`, `intent: follow_up`) and setup chat. There is no other route that posts a message or attaches one to work. A keyless send gets 403 `approval_required` and stores nothing.
+- `apps/web`: the client already sends the key on every mutating call, chat included. A tab with no key shows "This browser cannot send yet" with "Link this browser" above the composer, and in setup chat. A refused send keeps its text in the box and says the browser is not linked; Retry sends it once linked.
+- What needs the key now: card answers, the host-run agreement, answering a question, Try again and chat. What does not: hold, lift, stop, slots, policy, repository edits, draft apply and switch-slot (`docs/known-limits.md`).
+- Tests that play the owner send the key. One assertion changed on purpose: `security-surface.test.ts` "a local non-browser client … posts unchanged" now reads "posts only with the key".

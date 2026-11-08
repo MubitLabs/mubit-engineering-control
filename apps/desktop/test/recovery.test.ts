@@ -580,6 +580,8 @@ describe('parked work', { timeout: 60_000 }, () => {
     const slot = peek(rig, (store) => store.slots.get('slot_a'))
     expect(slot).toMatchObject({ state: 'degraded', state_reason: 'quota_exhausted' })
     expect(slot?.usageUtilization).toBe(0.97)
+    // A wait on the ceiling names the window and its reset from the same reading.
+    expect(slot).toMatchObject({ usageWindow: 'five_hour', usageResetsAt: '2030-01-01T00:00:00.000Z' })
     const notices = peek(rig, (store) => store.messages.list({ routing: 'notice' }))
     expect(notices).toHaveLength(1)
     expect(String(notices[0]?.text)).toContain('slot_a')

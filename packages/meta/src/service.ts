@@ -92,7 +92,7 @@ import {
 } from './context'
 import { EscalationCounter } from './escalation'
 import { enqueueWake, FollowUps } from './followups'
-import { routeMessage } from './routing'
+import { isQuestion, routeMessage } from './routing'
 import { type LaunchRecord, type PlacementTable, type SchedulerDeps, schedulePass } from './scheduler'
 import type { PlannerConfirmationDraft, PlannerQuestionRecord, PlannerTurnJournal } from './tools'
 import { PlannerTools } from './tools'
@@ -419,6 +419,12 @@ export class MetaAgentService {
     })
     switch (routing.action) {
       case 'attach':
+        // §12.1 and §12.3 (decision #52, applied to references 8 November 2026): a question sent to
+        // running work gets the planner's answer in chat, and the running work is left as it is.
+        // Anything else lands with it, and with nothing running the work's own turn still takes it.
+        if (isQuestion(input.text) && this.#followups.ownerOf(routing.workItemId) !== undefined) {
+          return await this.#startNewWork(input, prior, resumed, true)
+        }
         return this.#noteAttached(input, routing.workItemId)
       case 'stopped_refused':
         return this.#refuseStopped(input)
@@ -900,6 +906,12 @@ export class MetaAgentService {
 
     const answerOnly = this.#store.workItems.get(workItemId)?.questionOnly === true
     const reason = answerOnly ? QUESTION_WAKE : 'user message'
+    // A question sent by reference says which work it asks about, on resume as well.
+    const about = answerOnly
+      ? (input.referencesWorkItem ??
+        (typeof prior?.referencesWorkItem === 'string' ? prior.referencesWorkItem : undefined))
+      : undefined
+    const detail = (about === undefined ? input.text : `about ${about}: ${input.text}`).slice(0, 200)
     let decision: MetaDecision
     const tools = this.#buildTools({ messageId: input.messageId, workItemId }, input.repoId)
     const started = {
@@ -916,13 +928,13 @@ export class MetaAgentService {
           messageText: input.text,
           liveWork: this.#liveForBrain(input.repoId),
           workItemId,
-          wake: { reason, detail: input.text.slice(0, 200) },
+          wake: { reason, detail },
           tools,
           snapshot: this.#buildSnapshot({
             messageId: input.messageId,
             repoId: input.repoId,
             workItemId,
-            turn: { wake: reason, detail: input.text.slice(0, 200) },
+            turn: { wake: reason, detail },
           }),
         }),
       )

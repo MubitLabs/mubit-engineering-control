@@ -48,11 +48,18 @@ export type ActiveAttempt = {
 
 /**
  * `confirmation` and `policy` belong to upstream gates (§13); this pass emits `capacity` (caps,
- * the reserved wake unit, or healthy-but-full slots), `slot_unhealthy` (no healthy slot matched
- * the task's pin or role pinning) and `model_unavailable` (those that did serve no model
- * the task asked for: unavailable never silently becomes a default).
+ * the reserved wake unit, or healthy-but-full slots), `utilisation_ceiling` (every slot that
+ * could take the task is at the ceiling, so no unit coming free releases it), `slot_unhealthy`
+ * (no healthy slot matched the task's pin or role pinning) and `model_unavailable` (those that
+ * did serve no model the task asked for: unavailable never silently becomes a default).
  */
-export type DeferReason = 'capacity' | 'slot_unhealthy' | 'model_unavailable' | 'confirmation' | 'policy'
+export type DeferReason =
+  | 'capacity'
+  | 'utilisation_ceiling'
+  | 'slot_unhealthy'
+  | 'model_unavailable'
+  | 'confirmation'
+  | 'policy'
 
 /** Why a launch landed where it did, so the attempt's placement can say what really decided. */
 export type Placement = {
@@ -70,7 +77,8 @@ export type Placement = {
 
 export type DispatchPlan = {
   launches: { taskId: string; slotId: string }[]
-  deferred: { taskId: string; reason: DeferReason }[]
+  /** `slotId` on a ceiling wait: the least used of the slots at the ceiling, the first to clear. */
+  deferred: { taskId: string; reason: DeferReason; slotId?: string }[]
   /** One per launch, in the same order. */
   placements: Placement[]
 }
@@ -173,7 +181,16 @@ export function planDispatches(input: {
     // unhealthy.
     const usable = candidates.filter((slot) => underCeiling(slot) && freeUnits(slot) > 0)
     if (usable.length === 0) {
-      deferred.push({ taskId: task.taskId, reason: 'capacity' })
+      // Only the ceiling holds it when every candidate is over it: then a unit freeing changes nothing.
+      const hot = candidates
+        .filter((slot) => !underCeiling(slot))
+        .sort((a, b) => utilisation(a) - utilisation(b))
+      const [coolest] = hot
+      deferred.push(
+        coolest !== undefined && hot.length === candidates.length
+          ? { taskId: task.taskId, reason: 'utilisation_ceiling', slotId: coolest.id }
+          : { taskId: task.taskId, reason: 'capacity' },
+      )
       continue
     }
 

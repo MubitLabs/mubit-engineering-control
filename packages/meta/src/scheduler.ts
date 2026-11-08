@@ -48,6 +48,7 @@ import {
   noVerdict,
   processingOf,
 } from './authority'
+import { ceilingWords, UTILISATION_CEILING } from './ceiling'
 import { enqueueWake, type FollowUps } from './followups'
 import { type Continuation, nextRepair, nextReview, repairLedger } from './repair'
 import { classifyWake } from './wakes'
@@ -75,9 +76,6 @@ export type SchedulerDeps = {
 
 /** A task's stored defer: why it waits, and what lets it go. */
 type Deferred = { reason: string; releases: string }
-
-/** §11 placement ceiling; no reading ranks least utilised, not high. */
-const UTILISATION_CEILING = 0.8
 
 /** What holds a task and a slot. `queued` is here: a launch in the queue is a claim on both. */
 const OCCUPYING: readonly AttemptState[] = ['queued', ...ACTIVE_ATTEMPT_STATES]
@@ -654,6 +652,26 @@ function unmetDependency(task: StoreDoc, statuses: ReadonlyMap<string, StoreDoc>
   return undefined
 }
 
+/**
+ * The owner's ruling (8 November 2026): the first time work waits on a connection's ceiling, chat
+ * says so on that work, once. The task's own words follow later readings; this line does not.
+ */
+function tellCeilingOnce(store: Store, workItemId: string, words: string, at: string): void {
+  const id = `msg_ceiling_${workItemId}`
+  if (store.messages.get(id) !== undefined) return
+  const repoId = repoOf(store.workItems.get(workItemId))
+  store.messages.save({
+    id,
+    text: `Waiting: ${words}`,
+    routing: 'notice',
+    notice: true,
+    workItemId,
+    ...(repoId !== undefined && { repoId }),
+    createdAt: at,
+    updatedAt: at,
+  })
+}
+
 /** Writes a task's defer only when it changed. Returns whether it did, so events stay one each. */
 function defer(store: Store, task: StoreDoc, deferred: Deferred, at: string): boolean {
   const stored = task.deferred as Deferred | undefined
@@ -833,9 +851,16 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
     ...(metaEngine !== undefined && { preferredEngine: metaEngine }),
   })
 
-  for (const { taskId, reason } of dispatch.deferred) {
+  for (const { taskId, reason, slotId } of dispatch.deferred) {
     const doc = candidates.get(taskId)?.doc
-    if (doc !== undefined) defer(store, doc, { reason, releases: RELEASES[reason] ?? reason }, at)
+    if (doc === undefined) continue
+    if (reason === 'utilisation_ceiling' && slotId !== undefined) {
+      const words = ceilingWords(store.slots.get(slotId), slotId)
+      defer(store, doc, { reason, releases: words }, at)
+      tellCeilingOnce(store, String(doc.workItemId), words, at)
+      continue
+    }
+    defer(store, doc, { reason, releases: RELEASES[reason] ?? reason }, at)
   }
 
   const records: LaunchRecord[] = []

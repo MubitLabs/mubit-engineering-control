@@ -29,6 +29,8 @@ import { git } from '@mec/git'
 import {
   assertRepoAdmission,
   awaitsAgreement,
+  cutAtWord,
+  HOST_RUN_UNAGREED,
   holdsGroup,
   integrationDocId,
   isHeld,
@@ -268,6 +270,8 @@ export type MetaActivity = {
     | 'waiting_you'
     | 'waiting_specialist'
     | 'integrating'
+    /** Past integration: delivery's own stage is in the line. */
+    | 'delivering'
     | 'blocked'
     | 'held'
     | 'between'
@@ -604,6 +608,23 @@ const DELIVERY_STAGES: Readonly<Record<string, DeliveryView['stage']>> = {
   ready: 'pr-ready',
   merged: 'merged',
 }
+/** The live line for work past integration, by delivery's stage; none while it integrates. */
+function deliveryLine(delivery: {
+  stage: DeliveryView['stage']
+  prNumber: number | null
+}): string | undefined {
+  const pr = delivery.prNumber === null ? 'The pull request' : `Pull request #${delivery.prNumber}`
+  const words: Partial<Record<DeliveryView['stage'], string>> = {
+    'local-complete': 'Locally complete',
+    'awaiting-push': 'Waiting to push',
+    'awaiting-pr': 'Pushed, waiting to open the pull request',
+    'pr-open': `${pr} is open`,
+    'pr-ready': `${pr} is ready for review`,
+    merged: `${pr} is merged`,
+  }
+  return words[delivery.stage]
+}
+
 /** The record's verdict (`readRequiredChecks`) on the wire. */
 const CI_READINGS: Readonly<Record<string, NonNullable<DeliveryView['ci']>>> = {
   green: 'passing',
@@ -1015,11 +1036,23 @@ class Inspector {
     return doc === undefined ? undefined : this.#store.engines.get(integrationDocId(String(doc.id)))
   }
 
+  /** An integration repair is open only while it can still run; spent, it says so (§14, #36). */
+  #repairWords(doc: StoreDoc, rootId: string | null): string {
+    const repair = this.#store.tasks
+      .list({ workItemId: String(doc.id) })
+      .filter((task) => rootId !== null && task.repairOf === rootId)
+      .at(-1)
+    if (repair?.status !== 'blocked') return ' A repair is open.'
+    return String(repair.blockedReason ?? '').startsWith('repairs used up')
+      ? ' Its repairs are used up.'
+      : ' Its repair is blocked.'
+  }
+
   /** Why delivery stopped: the integration's own failure, then the record's, then what blocked it. */
   #deliveryFailure(doc: StoreDoc, record: StoreDoc | undefined): string | null {
     const failed = obj(this.#integrationRecord(doc)?.failed)
     if (failed !== null) {
-      const repairing = failed.repairing === true ? ' A repair is open.' : ''
+      const repairing = failed.repairing === true ? this.#repairWords(doc, str(failed.taskId)) : ''
       const sha = str(failed.sha)
       const names = Array.isArray(failed.failing)
         ? failed.failing.flatMap((entry) => str(obj(entry)?.name) ?? [])
@@ -1127,7 +1160,7 @@ class Inspector {
           reason:
             str(doc.blockedReason) === null
               ? 'Blocked'
-              : `Blocked: ${cutText(String(doc.blockedReason), 200)}`,
+              : `Blocked: ${cutAtWord(redactText(String(doc.blockedReason)), 200)}`,
           nextAction: 'Resolve what blocks it',
         }
       case 'person/review':
@@ -1384,10 +1417,31 @@ class Inspector {
         requested: { tier: str(modelRequest?.tier), model: str(modelRequest?.model) },
         attempts: mine.length,
         latest: latest === undefined ? null : this.#attemptView(latest, task, lastAt),
-        waiting: str(deferred?.reason),
+        waiting: this.#waitingWords(task, deferred),
         activity: latest === undefined ? null : this.#lastActivity(String(latest.id)),
       }
     })
+  }
+
+  /**
+   * Why a task is not running, in words: what lets a deferred task go, what blocks a blocked one,
+   * or the work's own block when that is what holds a ready task back. Never a code.
+   */
+  #waitingWords(task: StoreDoc, deferred: Record<string, Json> | null): string | null {
+    const reason = str(deferred?.reason)
+    if (reason === HOST_RUN_UNAGREED)
+      return 'until you agree to run this repository’s commands on this machine'
+    const releases = str(deferred?.releases)
+    if (releases !== null) return `until ${cutAtWord(redactText(releases), 200)}`
+    if (reason !== null) return reason.replaceAll('_', ' ')
+    const blocked = str(task.blockedReason)
+    if (str(task.status) === 'blocked' && blocked !== null) return cutAtWord(redactText(blocked), 200)
+    const work = this.#store.workItems.get(str(task.workItemId) ?? '')
+    const workBlocked = str(work?.blockedReason)
+    if (str(task.status) === 'ready' && str(work?.state) === 'blocked' && workBlocked !== null) {
+      return `the work is blocked: ${cutAtWord(redactText(workBlocked), 200)}`
+    }
+    return null
   }
 
   /** The newest event worth a line. A `tool_call` has finished, so this is never "running now". */
@@ -1527,6 +1581,11 @@ class Inspector {
     }
     const integrating = open.find((row) => row.state === 'integrating')
     if (integrating !== undefined) {
+      // The work item stays `integrating` through delivery: delivery's own stage says where it is.
+      const doc = this.#store.workItems.get(integrating.id)
+      const delivery = doc === undefined ? undefined : this.#deliveryOf(doc)
+      const words = delivery === undefined ? undefined : deliveryLine(delivery)
+      if (words !== undefined) return quiet('delivering', `${words}: ${titled(integrating)}`, integrating)
       return quiet('integrating', `Integrating ${titled(integrating)}`, integrating)
     }
     const blocked = open.find((row) => row.stage.key === 'person/blocked')

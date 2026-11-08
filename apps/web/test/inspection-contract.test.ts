@@ -113,7 +113,7 @@ const say = async (repoId: string, text: string): Promise<string> => {
   const res = await app.inject({
     method: 'POST',
     url: '/api/chat/messages',
-    headers: { 'x-mec-client': '1' },
+    headers: { 'x-mec-client': '1', [APPROVAL_HEADER]: OWNER_KEY },
     payload: { text, repoId, intent: 'new' },
   })
   expect(res.statusCode).toBe(200)
@@ -236,7 +236,7 @@ describe('the fixtures’ shape against the real server', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/chat/messages',
-      headers: { 'x-mec-client': '1' },
+      headers: { 'x-mec-client': '1', [APPROVAL_HEADER]: OWNER_KEY },
       payload: { text: KEY, repoId: 'repo_a', intent: 'new' },
     })
     expect(res.statusCode).toBe(200)
@@ -273,7 +273,7 @@ describe('a wake on the real path (§6, §18.1)', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/questions/${id}/answer`,
-      headers: { 'x-mec-client': '1' },
+      headers: { 'x-mec-client': '1', [APPROVAL_HEADER]: OWNER_KEY },
       payload: { answer: text },
     })
     expect(res.statusCode).toBe(200)

@@ -1,0 +1,79 @@
+# Verification
+
+Branch `fix/real-run-defects` on base 3b40f25. No real engine, no `~/.mec`, no port 61610, no push.
+
+## Failing first
+
+Each test below was written before its fix and seen red for the intended reason, then green.
+
+| Item | Test | Red |
+| --- | --- | --- |
+| D1 | `packages/domain/test/acceptance.test.ts` "no change and owned paths": unchanged base with no report; a progress report is no word | `verdict: 'accepted'` where a `no_change` repair was expected |
+| D1 | `packages/meta/test/repair.test.ts` "green checks on the unchanged base with no report go to a repair"; "a final message beginning Blocked: …" | the task was `accepted` |
+| D1 | `packages/meta/test/check-profiles.test.ts` "a no-change allowance on a plan task survives the tool and the store" | `noChangeOk` undefined |
+| D2 | `acceptance.test.ts` "a commit that changes files outside the owned paths"; `repair.test.ts` "a commit outside the task's owned paths" | accepted |
+| D2 | `packages/git/test/repos.test.ts` "changedPaths"; `packages/runtime/test/attempt-runner.test.ts` "exit 0 with no checks stays work_complete"; `apps/desktop/test/core-facts.test.ts` "walks a clean attempt" | `changedPaths is not a function`; `changed` / `changed_paths` undefined |
+| D2 | `apps/desktop/test/engine-registry.test.ts` "a Claude specialist loads no CLAUDE.md" | no `CLAUDE_CODE_DISABLE_CLAUDE_MDS` |
+| D3 | `repair.test.ts` "the owner's Try again" (6 cases) | `ownerRepairOffer is not a function` |
+| D3 | `apps/desktop/test/delivery.test.ts` "used-up repairs offer Try again" | `retryOffer` undefined |
+| D3 | `apps/desktop/test/approval-key.test.ts` "Try again needs the key" | `expected 404 to be 403` |
+| D3 | `apps/web/test/work-model.test.ts` retry labels; `apps/web/test/inspection-decode.test.ts` "Try again offer decodes" | label and decode refused `repair` |
+| D3 | `packages/meta/test/turn-replies.test.ts` "describes only the re-run the product offers" | protocol had no such rule |
+| D4 | `packages/meta/test/go-ahead.test.ts` (4 cases) | the work stayed `blocked` after the owner's answer and follow-up |
+| D5 | `apps/desktop/test/meta-visibility.test.ts` "work whose pull request is ready"; `delivery-surfaces.test.ts` "a repair whose attempts are used up" | `Integrating …`; `A repair is open.` |
+| D6 | `repair.test.ts` "carry the root task's model request" | no `modelRequest` on the repair task |
+| D7 | `packages/meta/test/service.test.ts` "the note names the work by a short title" | `Noted on wi_live: …` |
+| D7 | `meta-visibility.test.ts` waits in words, agreement wait, blocked never-started task, cut between words | `no_capacity`, `host_run_unagreed`, `null`, a mid-word cut |
+| D7 | `apps/web/test/meta-visibility.test.ts` "a wait the server words as until" | `Waiting: until …` / `Waiting: prerequisite …` |
+| D7 | `delivery.test.ts` "a failed setup command … one chat line" | `expected 0 to have a length of 1` |
+
+One assertion changed on purpose: `meta-visibility.test.ts` "a task nothing has picked up" used to expect the raw `no_capacity`; it now seeds the real `capacity` defer and expects `until a slot unit comes free` (D7).
+
+## Mutants
+
+`python3 tools/mutants/run.py tools/mutants/real-run-defects.json`: 31 of 31 killed, exit 0. After the owner rulings, with 6 more (R1 x5, R3 x1): 37 of 37 killed, exit 0.
+
+## Suites
+
+- `pnpm check` (typecheck, lint, both suites) at 8aa123f: typecheck and lint passed; tests 3532 passed, 39 failed, 13 skipped, in 11 files of the b project. Every failure was a timeout or a worker that did not start (`Timeout waiting for worker to respond`, `pid file never appeared`, `att_1 reaching work_complete never held`), with files taking 300 to 460 s on a shared, loaded machine.
+- Those 11 files again with `--project b --maxWorkers=2`: 312 of 312 passed (`approval-key`, `attempt-launch`, `bundle-defaults`, `composition`, `coordination`, `delivery-flow`, `engine-registry`, `login-cards`, `recovery`, `attempt-runner`, `supervisor`).
+- Screens: `pnpm test:screens` under `/tmp/mec-screens.lock`: 1032 passed, exit 0. No baseline changed: no fixture offers a `repair` retry or carries the reworded waits, so the new words are covered by the unit tests above, not by a screenshot.
+
+## Not proven
+
+- D2 rests on the 2.1.319 binary's text, not on a run: that `CLAUDE_CODE_DISABLE_CLAUDE_MDS` gates only the `CLAUDE.md` loaders, that the user source gates the user `CLAUDE.md`, and that the project `CLAUDE.md` loads only with the project or local source, which MEC never passes. A real specialist run on a linked slot would show whether the owner's instructions are gone and sign-in still works. None was spent.
+- No real run of Try again, the go-ahead lift or the owned-paths repair.
+
+## Owner rulings, 7 November 2026
+
+| Ruling | Test | Red |
+| --- | --- | --- |
+| 1 repo instructions in the brief | `attempt-launch.test.ts` "the repository's CLAUDE.md and AGENTS.md at the base reach the brief, labelled and redacted" | the prompt had no `The repository's own instructions` part |
+| 1 | `attempt-launch.test.ts` "a repository with neither file adds nothing"; `repo-instructions.test.ts` (4) | written with the fix; they pin the empty case, the label, the stated cut and redaction before the cut |
+| 3 answer needs the key | `approval-key.test.ts` "answering a question needs the key" | `expected 404 to be 403` |
+| 3 | `apps/web/test/approval.test.ts` "both ways of answering a question carry the key" | green on arrival: the client already sent it; the test holds it there |
+
+Ruling 2 is a spec text change (§10), already covered by D1's tests.
+
+Tests that play the owner now send the key on answers: `planner.test.ts`, `server.test.ts`, `apps/web/test/inspection-contract.test.ts` and `web-contract.test.ts` (that one failed with `403 approval_required` until its page held the key). That changes no expectation: an answer without the key is now refused by design.
+
+Focused suites after the rulings: project a (domain, meta, mec-tools, prompts, web) 1261 passed with 1 failure, `web-contract.test.ts`, fixed in c78501c and then 4 of 4. Project b, 14 desktop, runtime and git files with 2 workers: 376 passed, 1 timed out (`engine-registry.test.ts` Codex "a turn gives a report…", at 124 s under load). That file was rerun alone, below.
+
+`engine-registry.test.ts` alone with 1 worker: 54 of 54 passed.
+
+Not run after the rulings: a full `pnpm check`, screens (no UI text changed by the rulings), any real engine. Ruling 1 is unproven on a real specialist: that it follows the repository's instructions from the brief.
+
+## Owner ruling, 8 November 2026: chat needs the key
+
+| Test | Red |
+| --- | --- |
+| `approval-key.test.ts` "a chat message needs the key" (a new request and a follow-up) | `expected 200 to be 403` |
+| `work-live.screens.playwright.ts` "a tab with no key offers the link at the composer, and a refused send keeps the draft" | no "This browser cannot send yet" in the composer |
+| `work-live.screens.playwright.ts` "a linked tab sends its key with the message" | also red on the old UI, as first written: its route was registered before the stub server's, so it never saw the post. After the fix it is green, but it would pass on the old client too, which already sent the key. It is a guard, not failing-first |
+
+Test changes: tests that play the owner now send the key on chat, and their servers hold it. These are in `server`, `inspection`, `meta-visibility`, `delivery-surfaces`, `planner`, `setup-agent`, `security-surface`, `attempt-launch`, `composition` and `recovery`, the shared `config-server.ts`, and on the web side `inspection-contract` and `config-contract`. One assertion changed on purpose: `security-surface.test.ts`, where a local non-browser client now posts only with the key.
+
+- Mutants: 38 of 38 killed, exit 0, including "R4 a chat message needs no approval key".
+- Focused tests: 44 files, 977 tests. Before the last fixes, 5 failed (4 in `server.test.ts` with an inline server that had no key, 1 in `config-contract.test.ts`). After the fixes, those files plus `meta-slot` and `repository-edit` passed 97 of 97.
+- Screens: `pnpm test:screens` under the lock passed 1034 of 1034, with no baseline changed.
+- Typecheck and lint are clean.

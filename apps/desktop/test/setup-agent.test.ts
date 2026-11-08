@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify'
 import { afterEach, describe, expect, it } from 'vitest'
 import { type CliIo, runCli } from '../src/mec'
 import { buildServer, type ServerDeps } from '../src/server'
+import { ownerApproval, ownerHeaders } from './approval-rig'
 
 /**
  * The setup agent behind Chat's Setup mode, at the route level (T7, review
@@ -93,6 +94,7 @@ function makeServer(opts: { scripted?: boolean } = {}): { store: Store; app: Fas
       // The scripted engine drives the draft flows; without it the honest default answers.
       ...(opts.scripted !== false && { decide: scriptedDecide }),
     }),
+    approval: ownerApproval(),
   }
   const app = buildServer(deps)
   apps.push(app)
@@ -140,7 +142,7 @@ const chat = (app: FastifyInstance, text: string) =>
     method: 'POST',
     url: '/api/chat/messages',
     payload: { text, setup: true },
-    headers: { 'x-mec-client': '1', origin: 'http://127.0.0.1:5173' },
+    headers: { 'x-mec-client': '1', origin: 'http://127.0.0.1:5173', ...ownerHeaders },
   })
 
 describe('Setup mode over the chat route', () => {

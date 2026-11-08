@@ -15,6 +15,7 @@ import { MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { startServer } from '../src/composition'
+import { ownerHeaders, TEST_KEY } from './approval-rig'
 
 const AT = '2026-11-05T12:00:00.000Z'
 
@@ -76,14 +77,14 @@ describe('pause persists (decision #21, §20)', () => {
   it('pause survives restart and no handler runs at boot', async () => {
     process.env.MEC_FAKE_ENGINE = '1'
     const dataDir = scratch()
-    const first = await startServer({ dataDir })
+    const first = await startServer({ approvalKey: TEST_KEY, dataDir })
     first.pause()
     await first.close()
 
     const { db, store } = openStore(dataDir)
     seedLaunch(store)
 
-    const second = await startServer({ dataDir })
+    const second = await startServer({ approvalKey: TEST_KEY, dataDir })
     expect(second.isPaused()).toBe(true)
     await sleep(100)
 
@@ -100,7 +101,7 @@ describe('pause persists (decision #21, §20)', () => {
     seedPause(store, AT)
     seedLaunch(store)
 
-    const handle = await startServer({ dataDir })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir })
     await handle.close()
 
     expect(launchRow(db)?.state).toBe('waiting')
@@ -117,7 +118,7 @@ describe('pause persists (decision #21, §20)', () => {
     seedLaunch(store)
     db.prepare("UPDATE effects SET next_run_at = ? WHERE kind = 'launch'").run(dueAt)
 
-    const handle = await startServer({ dataDir })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir })
     handle.resume()
 
     const shift = Date.parse(launchRow(db)?.next_run_at ?? '') - Date.parse(dueAt)
@@ -131,7 +132,7 @@ describe('pause persists (decision #21, §20)', () => {
   it('a second pause does not shorten the shift', async () => {
     const dataDir = scratch()
     const { db, store } = openStore(dataDir)
-    const handle = await startServer({ dataDir })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir })
 
     handle.pause()
     const first = store.engines.get('settings/processing')?.pausedAt
@@ -146,7 +147,7 @@ describe('pause persists (decision #21, §20)', () => {
 
   it('health.json and the stored doc say paused while paused', async () => {
     const dataDir = scratch()
-    const handle = await startServer({ dataDir })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir })
     handle.pause()
     const status = (await (await fetch(`${handle.url}/api/status`)).json()) as {
       runtime: { state: string }
@@ -164,7 +165,7 @@ describe('the launch gate (§13, §20)', () => {
     const { db, store } = openStore(dataDir)
     seedLaunch(store, { hold: { reason: 'wait', at: AT } })
 
-    const handle = await startServer({ dataDir })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir })
     await sleep(200)
     const status = (await (await fetch(`${handle.url}/api/status`)).json()) as {
       parts: Record<string, { state: string }>
@@ -183,7 +184,7 @@ describe('the launch gate (§13, §20)', () => {
     const { db, store } = openStore(dataDir)
     seedLaunch(store, { state: 'stopped' })
 
-    const handle = await startServer({ dataDir })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir })
     await handle.close()
 
     expect(launchRow(db)).toBeUndefined()
@@ -201,7 +202,7 @@ describe('the launch gate (§13, §20)', () => {
       mandate: { originMessageId: 'msg_1', policyHash: 'older', expiresAt: null, status: 'active' },
     })
 
-    const handle = await startServer({ dataDir })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir })
     await handle.close()
 
     expect(launchRow(db)).toBeUndefined()
@@ -215,7 +216,7 @@ describe('the launch gate (§13, §20)', () => {
     process.env.MEC_FAKE_ENGINE = '1'
     const dataDir = scratch()
     const { db, store } = openStore(dataDir)
-    const handle = await startServer({ dataDir })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir })
 
     const running = { taskId: 'task_1', workItemId: 'wi_1', slotId: 'fake-slot', generation: 1 }
     seedLaunch(store, {
@@ -239,7 +240,7 @@ describe('the launch gate (§13, §20)', () => {
       mandate: { originMessageId: 'msg_1', expiresAt: '2020-01-01T00:00:00.000Z', status: 'active' },
     })
 
-    const handle = await startServer({ dataDir })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir })
     await handle.close()
 
     expect(launchRow(db)).toBeUndefined()
@@ -258,7 +259,7 @@ describe('the launch gate (§13, §20)', () => {
     const { db, store } = openStore(dataDir)
     seedLaunch(store)
 
-    const handle = await startServer({ dataDir })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir })
     await handle.close()
 
     expect(store.attempts.get('att_1')).toMatchObject({
@@ -326,7 +327,7 @@ describe('truthful launch (§17, decision #26)', () => {
     const { db, store } = openStore(dataDir)
     seedLaunch(store)
 
-    const handle = await startServer({ dataDir })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir })
     await sleep(100)
     const status = (await (await fetch(`${handle.url}/api/status`)).json()) as {
       parts: Record<string, { state: string; detail?: string }>
@@ -349,7 +350,7 @@ describe('truthful launch (§17, decision #26)', () => {
     const { db, store } = openStore(dataDir)
     seedLaunch(store)
 
-    const handle = await startServer({ dataDir })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir })
     await vi.waitFor(() => expect(effectRow(db, 'launch', 'att_1:1')?.attempts).toBe(2), { timeout: 6000 })
 
     const types = store.events.read('work:wi_1').map((event) => event.type)
@@ -364,7 +365,7 @@ describe('truthful launch (§17, decision #26)', () => {
     const { db, store } = openStore(dataDir)
     seedLaunch(store, { hold: { reason: 'wait', at: AT } })
 
-    const handle = await startServer({ dataDir })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir })
     await sleep(100)
 
     expect(store.attempts.get('att_1')?.state).toBe('queued')
@@ -380,7 +381,7 @@ describe('truthful launch (§17, decision #26)', () => {
       store.effects.enqueue(kind, 'k1', {})
     }
 
-    const handle = await startServer({ dataDir })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir })
     await sleep(100)
 
     for (const kind of ['reply', 'external']) {
@@ -400,7 +401,7 @@ describe('relays and boot resume (§6, §17, §20)', () => {
     const { db, store } = openStore(dataDir)
     store.effects.enqueue('relay', 'wake:q', { reason: 'r', causationId: 'q' })
 
-    const handle = await startServer({ dataDir })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir })
     await sleep(100)
 
     expect(effectRow(db, 'relay', 'wake:q')).toMatchObject({ state: 'waiting', attempts: 0 })
@@ -414,7 +415,7 @@ describe('relays and boot resume (§6, §17, §20)', () => {
     seedInterrupted(store)
     const held = heldBrain()
 
-    const handle = await startServer({ dataDir, brain: held.brain })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir, brain: held.brain })
     await untilSeen(held.seen, 1)
     expect(store.messages.get('msg_1')?.ackText).toBeUndefined()
     held.answer({ ack: 'Resumed' })
@@ -434,7 +435,7 @@ describe('relays and boot resume (§6, §17, §20)', () => {
     seedInterrupted(store)
     const held = heldBrain()
 
-    const handle = await startServer({ dataDir, brain: held.brain })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir, brain: held.brain })
     await sleep(100)
     expect(held.seen).toEqual([])
 
@@ -454,7 +455,7 @@ describe('bounded shutdown (§20)', () => {
     const { db, store } = openStore(dataDir)
     seedInterrupted(store)
     const held = heldBrain()
-    const handle = await startServer({ dataDir, brain: held.brain, closeBoundMs: 100 })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir, brain: held.brain, closeBoundMs: 100 })
     await untilSeen(held.seen, 1)
 
     await handle.close()
@@ -465,7 +466,7 @@ describe('bounded shutdown (§20)', () => {
     await sleep(20)
     expect(store.messages.get('msg_1')?.ackText).toBeUndefined()
     const next = heldBrain()
-    const second = await startServer({ dataDir, brain: next.brain, closeBoundMs: 100 })
+    const second = await startServer({ approvalKey: TEST_KEY, dataDir, brain: next.brain, closeBoundMs: 100 })
     await untilSeen(next.seen, 1)
     next.answer({ ack: 'Resumed' })
     await second.close()
@@ -482,11 +483,11 @@ describe('bounded shutdown (§20)', () => {
       store.workItems.save({ ...work, state: 'stopped' })
     })
     const held = heldBrain()
-    const handle = await startServer({ dataDir, brain: held.brain, closeBoundMs: 100 })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir, brain: held.brain, closeBoundMs: 100 })
 
     const request = fetch(`${handle.url}/api/chat/messages`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...ownerHeaders },
       body: JSON.stringify({ text: 'new work', repoId: 'repo_a' }),
     }).catch(() => undefined)
     await untilSeen(held.seen, 1)
@@ -504,7 +505,7 @@ describe('bounded shutdown (§20)', () => {
     seedInterrupted(store, 1)
     seedInterrupted(store, 2)
     const held = heldBrain()
-    const handle = await startServer({ dataDir, brain: held.brain })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir, brain: held.brain })
     await untilSeen(held.seen, 1)
 
     const closing = handle.close()
@@ -585,7 +586,12 @@ describe('shutdown with a real engine process (§20)', () => {
     const dataDir = scratch()
     const { db, store } = openStore(dataDir)
     seedInterrupted(store)
-    const handle = await startServer({ dataDir, metaSlotDir: scratch(), closeBoundMs: 100 })
+    const handle = await startServer({
+      approvalKey: TEST_KEY,
+      dataDir,
+      metaSlotDir: scratch(),
+      closeBoundMs: 100,
+    })
     await stub.untilLaunches(1)
     const [engine] = stub.pids()
 
@@ -604,7 +610,7 @@ describe('shutdown with a real engine process (§20)', () => {
     const dataDir = scratch()
     const { db, store } = openStore(dataDir)
     seedInterrupted(store)
-    const handle = await startServer({ dataDir, metaSlotDir: scratch() })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir, metaSlotDir: scratch() })
     await stub.untilLaunches(1)
 
     await handle.close()
@@ -630,7 +636,12 @@ describe('shutdown with a real engine process (§20)', () => {
     }
     const { db, store } = openStore(dataDir)
     seedInterrupted(store)
-    const handle = await startServer({ dataDir, metaSlotDir: scratch(), closeBoundMs: 100 })
+    const handle = await startServer({
+      approvalKey: TEST_KEY,
+      dataDir,
+      metaSlotDir: scratch(),
+      closeBoundMs: 100,
+    })
     await stub.untilLaunches(1)
     await vi.waitFor(() => expect(stub.argv()).toContain('PROTOCOL'))
 
@@ -644,7 +655,7 @@ describe('shutdown with a real engine process (§20)', () => {
 describe('scratch data dirs (§5.4)', () => {
   it('prompts and models resolve under the data dir', async () => {
     const dataDir = scratch()
-    const handle = await startServer({ dataDir })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir })
     try {
       copyFileSync(
         fileURLToPath(new URL('../../../packages/prompts/defaults/models.yaml', import.meta.url)),
@@ -679,7 +690,7 @@ describe('startServer', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'mec-composition-'))
     tempDirs.push(dataDir)
 
-    const handle = await startServer({ dataDir })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir })
     try {
       const deadline = Date.now() + 8000
       let answered = false
@@ -708,7 +719,7 @@ describe('startServer', () => {
 
     // close() released the directory lock and the database: a second server starts on the
     // same directory without a refusal.
-    const second = await startServer({ dataDir })
+    const second = await startServer({ approvalKey: TEST_KEY, dataDir })
     await second.close()
   }, 12_000)
 })
@@ -724,7 +735,7 @@ describe('§26 restart reconciliation and capability drift (composition)', () =>
     seed.prepare("UPDATE effects SET state = 'running'").run()
     seed.close()
 
-    const handle = await startServer({ dataDir })
+    const handle = await startServer({ approvalKey: TEST_KEY, dataDir })
     await handle.close()
 
     const after = new Database(join(dataDir, 'mec.db'))
@@ -746,7 +757,7 @@ describe('§26 restart reconciliation and capability drift (composition)', () =>
     })
     // simulate restart: a NEW server reconciling the old store
     const { startServer } = await import('../src/composition')
-    const server = await startServer({ dataDir: dir })
+    const server = await startServer({ approvalKey: TEST_KEY, dataDir: dir })
     const attempt = store.attempts.get('att_stuck')
     expect(attempt?.state).toBe('interrupted')
     const events = store.events.read('attempt:att_stuck')

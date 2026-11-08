@@ -95,7 +95,12 @@ async function postMessage(
   payload: Record<string, unknown>,
   headers: Record<string, string> = {},
 ): Promise<{ messageId: string; workItemId?: string; routing: string }> {
-  const res = await app.inject({ method: 'POST', url: '/api/chat/messages', payload, headers })
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/chat/messages',
+    payload,
+    headers: { ...ownerHeaders, ...headers },
+  })
   expect(res.statusCode).toBe(200)
   return res.json() as { messageId: string; workItemId?: string; routing: string }
 }
@@ -122,7 +127,7 @@ async function registerRepo(app: ReturnType<typeof buildServer>, name: string): 
 
 describe('repo identity at the chat route', () => {
   const inject = (app: ReturnType<typeof buildServer>, payload: Record<string, unknown>) =>
-    app.inject({ method: 'POST', url: '/api/chat/messages', payload })
+    app.inject({ method: 'POST', url: '/api/chat/messages', payload, headers: ownerHeaders })
 
   it('unknown repoId is refused before any write', async () => {
     const { store, app } = makeServer()
@@ -194,7 +199,7 @@ describe('repo identity at the chat route', () => {
       method: 'POST',
       url: '/api/chat/messages',
       payload: { text: 'x', repoId: repoB },
-      headers,
+      headers: { ...ownerHeaders, ...headers },
     })
     expect(res.statusCode).toBe(400)
     expect(res.json()).toMatchObject({ error: 'repo_mismatch' })
@@ -258,6 +263,7 @@ describe('repo identity at the chat route', () => {
         health: new FakeHealthBoard(),
         policyText: '{"preAuthorised":{}}',
         now: () => new Date(AT),
+        approval: ownerApproval(),
         metaAgent: {
           onUserMessage: async (input) => {
             seen.push(input.repoId)
@@ -279,7 +285,7 @@ describe('repo identity at the chat route', () => {
     const malformed = await app.inject({
       method: 'POST',
       url: '/api/chat/messages',
-      headers: { 'content-type': 'application/json' },
+      headers: { ...ownerHeaders, 'content-type': 'application/json' },
       payload: '{not json',
     })
     expect(malformed.statusCode).toBe(400)
@@ -300,7 +306,7 @@ describe('repo identity at the chat route', () => {
 
 describe('repoId is required on the chat route', () => {
   const inject = (app: ReturnType<typeof buildServer>, payload: Record<string, unknown>) =>
-    app.inject({ method: 'POST', url: '/api/chat/messages', payload })
+    app.inject({ method: 'POST', url: '/api/chat/messages', payload, headers: ownerHeaders })
 
   it('absent repoId is 400 and writes nothing', async () => {
     const { store, app } = makeServer()
@@ -321,6 +327,7 @@ describe('repoId is required on the chat route', () => {
         health: new FakeHealthBoard(),
         policyText: '{"preAuthorised":{}}',
         now: () => new Date(AT),
+        approval: ownerApproval(),
         metaAgent: {
           onUserMessage: async () => {
             called += 1
@@ -358,7 +365,13 @@ describe('submission intent at the chat route', () => {
     app: ReturnType<typeof buildServer>,
     payload: Record<string, unknown>,
     headers: Record<string, string> = {},
-  ) => app.inject({ method: 'POST', url: '/api/chat/messages', payload, headers })
+  ) =>
+    app.inject({
+      method: 'POST',
+      url: '/api/chat/messages',
+      payload,
+      headers: { ...ownerHeaders, ...headers },
+    })
   const key = { 'x-idempotency-key': 'key-1' }
 
   it('same key different repo stays 400 repo_mismatch', async () => {
@@ -423,6 +436,7 @@ describe('submission intent at the chat route', () => {
         health: new FakeHealthBoard(),
         policyText: '{"preAuthorised":{}}',
         now: () => new Date(AT),
+        approval: ownerApproval(),
         metaAgent: {
           onUserMessage: async (input) => {
             store.atomic(() =>
@@ -460,6 +474,7 @@ describe('submission intent at the chat route', () => {
         health: new FakeHealthBoard(),
         policyText: '{"preAuthorised":{}}',
         now: () => new Date(AT),
+        approval: ownerApproval(),
         metaAgent: {
           onUserMessage: async (input) => {
             seen.push(input.explicitNew)
@@ -1092,7 +1107,12 @@ describe('durable commands at the routes (M1.4b, §12.1, §17, §20)', () => {
     const headers = { 'x-idempotency-key': 'k1' }
     const payload = { text: 'ship it', repoId }
 
-    const first = app.inject({ method: 'POST', url: '/api/chat/messages', payload, headers })
+    const first = app.inject({
+      method: 'POST',
+      url: '/api/chat/messages',
+      payload,
+      headers: { ...ownerHeaders, ...headers },
+    })
     await untilBrainCalled(calls, 1)
     const retry = await postMessage(app, payload, headers)
 
@@ -1116,7 +1136,12 @@ describe('durable commands at the routes (M1.4b, §12.1, §17, §20)', () => {
     const headers = { 'x-idempotency-key': 'k1' }
     const payload = { text: 'ship it', repoId, intent: 'new' }
 
-    const first = app.inject({ method: 'POST', url: '/api/chat/messages', payload, headers })
+    const first = app.inject({
+      method: 'POST',
+      url: '/api/chat/messages',
+      payload,
+      headers: { ...ownerHeaders, ...headers },
+    })
     await untilBrainCalled(calls, 1)
 
     // Same request: a replay. Dropped intent: another request, so never read as delivered.
@@ -1125,7 +1150,7 @@ describe('durable commands at the routes (M1.4b, §12.1, §17, §20)', () => {
       method: 'POST',
       url: '/api/chat/messages',
       payload: { text: 'ship it', repoId },
-      headers,
+      headers: { ...ownerHeaders, ...headers },
     })
     expect(edited.statusCode).toBe(409)
     expect(edited.json()).toMatchObject({ error: 'idempotency_mismatch' })
@@ -1142,7 +1167,7 @@ describe('durable commands at the routes (M1.4b, §12.1, §17, §20)', () => {
       method: 'POST',
       url: '/api/chat/messages',
       payload: { text: 'ship it', repoId },
-      headers: { 'x-idempotency-key': 'k1' },
+      headers: { ...ownerHeaders, 'x-idempotency-key': 'k1' },
     })
     await untilBrainCalled(calls, 1)
 
@@ -1158,6 +1183,7 @@ describe('durable commands at the routes (M1.4b, §12.1, §17, §20)', () => {
     const first = app.inject({
       method: 'POST',
       url: '/api/chat/messages',
+      headers: ownerHeaders,
       payload: { text: 'ship it', repoId },
     })
     await untilBrainCalled(calls, 1)
@@ -1176,6 +1202,7 @@ describe('durable commands at the routes (M1.4b, §12.1, §17, §20)', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/questions/q_1/answer',
+      headers: ownerHeaders,
       payload: { answer: 'a' },
     })
 
@@ -1199,6 +1226,7 @@ describe('durable commands at the routes (M1.4b, §12.1, §17, §20)', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/questions/q_1/answer',
+      headers: ownerHeaders,
       payload: { answer: 'a' },
     })
 
@@ -1211,7 +1239,12 @@ describe('durable commands at the routes (M1.4b, §12.1, §17, §20)', () => {
     const { app, store } = server
     await planningWithQuestion(server)
     const post = (answer: string) =>
-      app.inject({ method: 'POST', url: '/api/questions/q_1/answer', payload: { answer } })
+      app.inject({
+        method: 'POST',
+        url: '/api/questions/q_1/answer',
+        headers: ownerHeaders,
+        payload: { answer },
+      })
 
     await post('a')
     const second = await post('b')
@@ -1231,6 +1264,7 @@ describe('durable commands at the routes (M1.4b, §12.1, §17, §20)', () => {
     const res = await track(server.app).inject({
       method: 'POST',
       url: '/api/questions/q_1/answer',
+      headers: ownerHeaders,
       payload: { answer: secret },
     })
 

@@ -17,7 +17,7 @@ export { GitError, git, gitLines } from './exec'
 export type { MergeIntoIntegrationOptions, MergeIntoIntegrationResult } from './merge'
 export { isMidMerge, mergeIntoIntegration } from './merge'
 export type { EnsureResult } from './repos'
-export { cachedDefaultTip, excludeFromWorktree, historyTouches, RepoCache } from './repos'
+export { cachedDefaultTip, changedPaths, excludeFromWorktree, historyTouches, RepoCache } from './repos'
 export type { DiffSummary, WorktreeAddOptions } from './worktrees'
 export {
   assertSafeRef,

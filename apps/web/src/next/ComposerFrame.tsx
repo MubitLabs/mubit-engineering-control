@@ -1,4 +1,4 @@
-import { type FormEvent, type KeyboardEvent, type RefObject, useId } from 'react'
+import { type FormEvent, type KeyboardEvent, type ReactNode, type RefObject, useId } from 'react'
 import { isSubmitEnter } from './keyboard'
 import { Button, SendIcon } from './primitives'
 
@@ -20,6 +20,8 @@ export interface ComposerProps {
   following?: boolean
   /** The last send did not land. The text is kept and Retry sends exactly that again. */
   failure?: { text: string; onRetry: () => void }
+  /** What a tab that cannot send yet says: the draft stays, and the notice offers the link. */
+  approval?: ReactNode
   textareaRef?: RefObject<HTMLTextAreaElement | null>
 }
 
@@ -34,6 +36,7 @@ export function ComposerFrame({
   note,
   following = false,
   failure,
+  approval,
   textareaRef,
 }: ComposerProps) {
   const noteId = useId()
@@ -52,6 +55,7 @@ export function ComposerFrame({
 
   return (
     <div className="composer-dock">
+      {approval}
       {failure && (
         <div className="composer-failure" role="alert">
           <span>{failure.text}</span>

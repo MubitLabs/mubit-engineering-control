@@ -94,6 +94,53 @@ describe('the resolve routes', { timeout: 60_000 }, () => {
     expect([first.status, second.status]).toEqual([404, 404])
   })
 
+  it("Try again needs the key: a repo's check cannot start an attempt by calling loopback", async () => {
+    const rig = scratch([])
+    const server = await started(rig, { approvalKey: KEY })
+    const retry = `${server.url}/api/work/wi_any/retry`
+    const refused = await fetch(retry, { method: 'POST' })
+    expect(refused.status).toBe(403)
+    expect(await refused.json()).toEqual({ error: 'approval_required' })
+    const through = await fetch(retry, { method: 'POST', headers: { [APPROVAL_HEADER]: KEY } })
+    expect(through.status).not.toBe(403)
+  })
+
+  it('answering a question needs the key: an answer can lift a block (owner, 7 November 2026)', async () => {
+    const rig = scratch([])
+    const server = await started(rig, { approvalKey: KEY })
+    const answer = (headers: Record<string, string>) =>
+      fetch(`${server.url}/api/questions/q_any/answer`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify({ answer: 'go ahead' }),
+      })
+    const refused = await answer({})
+    expect(refused.status).toBe(403)
+    expect(await refused.json()).toEqual({ error: 'approval_required' })
+    expect((await answer({ [APPROVAL_HEADER]: KEY })).status).not.toBe(403)
+  })
+
+  it("a chat message needs the key: a message is the owner's word, and it can lift a block", async () => {
+    // Owner ruling, 8 November 2026. A follow-up is a chat message that names its work.
+    const rig = scratch([])
+    const server = await started(rig, { approvalKey: KEY })
+    const say = (body: Record<string, string>, headers: Record<string, string> = {}) =>
+      fetch(`${server.url}/api/chat/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify({ repoId: 'repo_a', text: 'go ahead', ...body }),
+      })
+    const before = peek(rig, (store) => store.messages.list().length)
+    const bodies: Record<string, string>[] = [{}, { referencesWorkItem: 'wi_any', intent: 'follow_up' }]
+    for (const body of bodies) {
+      const refused = await say(body)
+      expect(refused.status).toBe(403)
+      expect(await refused.json()).toEqual({ error: 'approval_required' })
+    }
+    expect(peek(rig, (store) => store.messages.list().length)).toBe(before)
+    expect((await say({}, { [APPROVAL_HEADER]: KEY })).status).not.toBe(403)
+  })
+
   it('agreeing needs the key, and withdrawing never does', async () => {
     const rig = scratch([])
     const server = await started(rig, { approvalKey: KEY })

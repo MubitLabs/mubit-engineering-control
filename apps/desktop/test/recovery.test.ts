@@ -14,6 +14,7 @@ import {
   reconcileProcesses,
   resumeParked,
 } from '../src/recovery'
+import { ownerHeaders } from './approval-rig'
 import {
   alive,
   attemptOf,
@@ -973,7 +974,7 @@ describe('the planner engine', { timeout: 40_000 }, () => {
     const server = await serve(rig, { metaSlotDir: slot, real: false })
     const answered = fetch(`${server.url}/api/chat/messages`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...ownerHeaders },
       body: JSON.stringify({ text: 'please plan', repoId: 'repo_a' }),
     }).then(async (response) => {
       throw new Error(`the turn ended before its engine started: ${await response.text()}`)

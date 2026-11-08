@@ -140,6 +140,9 @@ function createLive() {
 
 function failureText(submission: Submission): string {
   const { error } = submission
+  if (error instanceof HttpError && error.reason === 'approval_required') {
+    return 'This browser is not linked, so the message was not sent. It is kept here: link this browser, then Retry.'
+  }
   if (error instanceof HttpError) {
     return `The workbench refused this message${error.reason ? ` (${error.reason})` : ''}. It is kept here. Retry sends the original text.`
   }
@@ -330,6 +333,7 @@ export function LiveApp() {
       repoId !== null && {
         failure: { text: failureText(submission), onRetry: () => void submissions.retry(repoId) },
       }),
+    approval: <ApprovalLink purpose="chat" />,
   }
 
   const rows = readData(inspected.work)?.items ?? []

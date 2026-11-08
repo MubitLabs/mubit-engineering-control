@@ -93,6 +93,57 @@ describe('check profiles (§14, §15)', () => {
     expect(propose('unit').issues?.join(' ')).not.toContain('unit')
   })
 
+  it('a no-change allowance on a plan task survives the tool and the store (§10)', async () => {
+    const store = new MemoryRepositories()
+    store.atomic(() => {
+      store.engines.save({
+        id: REPO,
+        url: 'https://example.test/a',
+        bootstrap: [],
+        checks: CHECKS,
+        trust: true,
+      })
+      store.slots.save({ id: 'slot_a', engine: 'claude', state: 'healthy' })
+    })
+    const seen: { tools?: PlannerTools } = {}
+    const table = {
+      tiers: ['fast', 'balanced', 'strong', 'frontier'],
+      engines: {
+        claude: { select: { flag: '--model' }, models: { haiku: { tier: 'fast', vendor_says: 'x' } } },
+      },
+    }
+    const service = new MetaAgentService({
+      store,
+      effects: store.effects,
+      now: NOW,
+      brain: async (input) => {
+        seen.tools = (input as { tools?: PlannerTools }).tools as PlannerTools
+        return { ack: 'noted' }
+      },
+      modelsTable: () => ({ table, provenance: { sha256: 'x', origin: 'default' } }) as never,
+      marks: () => ({ slot_a: { haiku: 'available' } }) as never,
+    })
+    await service.onUserMessage({ messageId: 'msg_1', text: 'go', repoId: REPO })
+    const proposed = seen.tools?.execute('propose_plan', {
+      work_item: 'wi_turn',
+      tasks: [
+        {
+          id: 'a',
+          objective: 'check a',
+          role: 'implementer',
+          model_request: { tier: 'fast', reason: 'small' },
+          no_change_ok: true,
+        },
+      ],
+    }) as { ok: boolean; tasks?: { noChangeOk?: boolean }[] }
+    expect(proposed).toMatchObject({ ok: true })
+    expect(proposed.tasks?.[0]?.noChangeOk).toBe(true)
+
+    const stored = rig(CHECKS, planned([task({ noChangeOk: true })]))
+    await stored.service.onUserMessage({ messageId: 'msg_1', text: 'go', repoId: REPO })
+    expect(stored.store.tasks.list()[0]?.noChangeOk).toBe(true)
+  })
+
   it('a sensitive flag on a plan task survives to the stored task', async () => {
     const { store, service } = rig(CHECKS, planned([task({ sensitive: true })]))
     await service.onUserMessage({ messageId: 'msg_1', text: 'go', repoId: REPO })

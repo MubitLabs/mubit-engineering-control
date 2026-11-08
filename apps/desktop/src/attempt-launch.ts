@@ -35,6 +35,7 @@ import { BUILTIN_ROSTER, type BuiltinRole } from '@mec/domain'
 import {
   bootstrapOutput,
   cachedDefaultTip,
+  changedPaths,
   commitAll,
   completeMidMerge,
   dirtyFiles,
@@ -79,6 +80,7 @@ import {
 } from '@mec/runtime'
 import { redact } from '@mec/slots'
 import { bridgeOf, driftOf, ENGINE_ROWS, type EngineRow, lacksHome, type Prepared } from './engine-registry'
+import { instructionsPart, readInstructionFiles } from './repo-instructions'
 import { worktreeIsOurs } from './slot-switch'
 
 export { isLaunchableSlot } from './engine-registry'
@@ -261,7 +263,7 @@ export class AttemptLauncher {
       journalRoot: join(deps.dataDir, 'journal'),
       supervisor: this.#supervisor,
       facts: deps.facts,
-      git: { commitAll: commitWork, headSha, historyTouches, adminDirOf: worktreeAdminDir },
+      git: { commitAll: commitWork, headSha, historyTouches, changedPaths, adminDirOf: worktreeAdminDir },
       adapterFor: (brief) => this.#adapterFor(brief),
       planFor: (brief) => this.#planOf(brief),
     })
@@ -508,10 +510,14 @@ export class AttemptLauncher {
     ].join('\n')
     // §5.10: the same slot's session continues, and it has the brief. Without one it starts over.
     const session = resuming && typeof attempt.session_id === 'string' ? attempt.session_id : undefined
+    const instructions = instructionsPart(await readInstructionFiles(gitDir, baseSha), (text) =>
+      redact(text, this.fingerprints(), []),
+    )
     const bundle = new PromptStore(join(dataDir, 'prompts')).assemble(roleName, engine, {
       generated: [
         { name: 'original_request', text: `The original request, verbatim:\n${originText}` },
         { name: 'task', text: `Your task:\n${String(task.objective)}` },
+        ...(instructions === undefined ? [] : [{ name: 'repository_instructions', text: instructions }]),
         { name: 'environment', text: environment },
         ...(continuation === undefined ? [] : [{ name: continuation.kind, text: briefOf(continuation) }]),
       ],

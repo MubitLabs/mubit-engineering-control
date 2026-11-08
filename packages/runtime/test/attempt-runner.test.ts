@@ -16,7 +16,7 @@ import type { AttemptBrief, AttemptRef, EngineEvent, IsolationProfile } from '@m
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { ClaudeAdapter } from '../../engines/src/claude/adapter'
 import { git } from '../../git/src/exec'
-import { historyTouches } from '../../git/src/repos'
+import { changedPaths, historyTouches } from '../../git/src/repos'
 import { commitAll, headSha, worktreeAdminDir } from '../../git/src/worktrees'
 import { type AttemptFacts, type AttemptPlan, AttemptRunner } from '../src/attempt-runner'
 import type { CheckOutcome, CheckSpec } from '../src/checks'
@@ -91,9 +91,11 @@ class Facts implements AttemptFacts {
   }
   deliveryFailed(): void {}
   slotChanged(): void {}
-  workCompleted(_attempt: AttemptRef, head: string): void {
+  changed: readonly string[] | undefined
+  workCompleted(_attempt: AttemptRef, head: string, changed?: readonly string[]): void {
     this.state = 'work_complete'
     this.head = head
+    this.changed = changed
   }
   checksFinished(_attempt: AttemptRef, head: string, outcomes: CheckOutcome[], passed: boolean): void {
     this.state = passed ? 'succeeded' : 'checks_failed'
@@ -208,7 +210,7 @@ async function rig(
     journalRoot,
     supervisor,
     facts,
-    git: { commitAll, headSha, historyTouches, adminDirOf: worktreeAdminDir },
+    git: { commitAll, headSha, historyTouches, changedPaths, adminDirOf: worktreeAdminDir },
     adapterFor: () =>
       new ClaudeAdapter({
         ...(binary !== undefined && { binary }),
@@ -461,6 +463,8 @@ describe('AttemptRunner', { timeout: 60_000 }, () => {
     expect(facts.head).toBe(head)
     expect(head).not.toBe(brief.base_sha)
     expect(await historyTouches(worktree, brief.base_sha, head, '.mec')).toBe(false)
+    // What the commits changed is on the record, for the owned-paths check (§10).
+    expect(facts.changed).toEqual(['made.txt'])
   })
 
   it('failed check gives checks_failed on the exact head', async () => {

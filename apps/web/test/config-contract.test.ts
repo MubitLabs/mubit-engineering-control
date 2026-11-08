@@ -2,9 +2,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { HealthBoard, HealthClaim, HealthName, Store } from '@mec/contracts'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // Relative on purpose, as in web-contract.test.ts: the one place these decoders meet real routes.
 import { MemoryRepositories } from '../../../packages/testkit/src/index'
+import { ApprovalKey } from '../../desktop/src/approval'
 import { buildServer } from '../../desktop/src/server'
 import { HttpError } from '../src/api'
 import { configApi, StaleError } from '../src/api-config'
@@ -12,6 +13,8 @@ import { failureText } from '../src/live/config'
 import { roleOfPart } from '../src/next/config-model'
 
 const AT = new Date('2026-11-05T12:00:00.000Z')
+/** The owner's key, as a linked tab holds it: chat is the owner's word (owner, 8 November 2026). */
+const OWNER_KEY = 'config-contract-owner-key-'.padEnd(64, '0')
 
 class FakeHealthBoard implements HealthBoard {
   claim(_name: HealthName): HealthClaim {
@@ -42,6 +45,15 @@ beforeEach(() => {
         return { archivePath, excluded: [] }
       },
     },
+    approval: { key: new ApprovalKey(OWNER_KEY), link: () => {} },
+  })
+  const held = new Map([['mec.approval-key', OWNER_KEY]])
+  vi.stubGlobal('window', {
+    sessionStorage: {
+      getItem: (name: string) => held.get(name) ?? null,
+      setItem: (name: string, value: string) => held.set(name, value),
+      removeItem: (name: string) => held.delete(name),
+    },
   })
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const res = await app.inject({
@@ -55,6 +67,7 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  vi.unstubAllGlobals()
   globalThis.fetch = originalFetch
   await app.close()
   rmSync(root, { recursive: true, force: true })

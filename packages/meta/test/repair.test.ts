@@ -3,7 +3,18 @@ import type { Json, Report, StoreDoc } from '@mec/contracts'
 import { DEFAULT_CAPS, type SlotModelsView } from '@mec/domain'
 import { MemoryRepositories } from '@mec/testkit'
 import { describe, expect, it } from 'vitest'
-import { FollowUps, repairLedger, repoFields, type SchedulerDeps, schedulePass } from '../src'
+import {
+  FollowUps,
+  holdWorkItem,
+  openRepairTask,
+  ownerRepairOffer,
+  ownerRetryRepair,
+  repairLedger,
+  repoFields,
+  type SchedulerDeps,
+  schedulePass,
+  stopWorkItem,
+} from '../src'
 
 const AT = '2026-11-05T12:00:00.000Z'
 const POLICY = '{"preAuthorised":{}}'
@@ -152,6 +163,134 @@ describe('bounded repair (§11, §15)', () => {
   })
 })
 
+describe("the owner's Try again (owner ruling 2026-11-07)", () => {
+  /** Repairs used up: the task and its work are blocked with what remains. */
+  function usedUp() {
+    const r = rig()
+    finished(r.store, 'att_1', failing)
+    finished(r.store, 'att_2', { ...failing, continuation: { kind: 'repair' } })
+    finished(r.store, 'att_3', { ...failing, continuation: { kind: 'repair' } })
+    r.pass()
+    return r
+  }
+  const work = (store: Store) => store.workItems.get('wi_1') as StoreDoc
+
+  it('used-up repairs offer one fresh repair attempt, and pressing it queues exactly one', () => {
+    const { store, pass } = usedUp()
+    expect(ownerRepairOffer(store, work(store))).toMatchObject({
+      taskId: 'task_a',
+      reason: expect.stringContaining('repairs used up'),
+    })
+    expect(ownerRetryRepair(store, 'wi_1', AT)).toEqual({ status: 'retrying', taskId: 'task_a' })
+    expect(work(store).state).not.toBe('blocked')
+    expect(work(store).blockedReason).toBeUndefined()
+    pass()
+    const [attempt] = queued(store)
+    expect(queued(store)).toHaveLength(1)
+    expect(attempt).toMatchObject({ taskId: 'task_a', role: 'repair_agent' })
+    expect(attempt?.continuation).toMatchObject({
+      kind: 'repair',
+      origin: 'owner',
+      worktree: '/work/att_1',
+      evidence: expect.stringContaining('expected 2, got 3'),
+    })
+    expect(store.events.read('work:wi_1').map((event) => event.type)).toContain('retry_requested')
+  })
+
+  it('a second press finds nothing to try, and nothing more is queued', () => {
+    const { store, pass } = usedUp()
+    ownerRetryRepair(store, 'wi_1', AT)
+    expect(ownerRetryRepair(store, 'wi_1', AT)).toEqual({ status: 'refused', error: 'nothing_to_retry' })
+    pass()
+    pass()
+    expect(queued(store)).toHaveLength(1)
+  })
+
+  it('the fresh attempt failing again blocks again: nothing loops', () => {
+    const { store, pass } = usedUp()
+    ownerRetryRepair(store, 'wi_1', AT)
+    pass()
+    const [attempt] = queued(store)
+    // It ran after the three before it, as a real one would.
+    const later = { state: 'checks_failed', head_sha: H1, createdAt: '2026-11-05T12:00:09.000Z' }
+    store.atomic(() => {
+      store.attempts.save({ ...(attempt as StoreDoc), ...later })
+      store.tasks.save({ ...(store.tasks.get('task_a') as StoreDoc), status: 'awaiting_review' })
+    })
+    store.atomic(() =>
+      store.engines.save({
+        id: `check/${String(attempt?.id)}/unit`,
+        attemptId: String(attempt?.id),
+        name: 'unit',
+        status: 'failed',
+        log_tail: 'still red',
+        sha: H1,
+      }),
+    )
+    pass()
+    expect(store.tasks.get('task_a')?.status).toBe('blocked')
+    expect(work(store).state).toBe('blocked')
+    expect(queued(store)).toEqual([])
+  })
+
+  it('a blocked report offers it too', () => {
+    const { store, pass } = rig()
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    report(store, 'att_1', { kind: 'blocked', summary: 'RELEASE_STAMP is not set' })
+    pass()
+    expect(work(store).state).toBe('blocked')
+    expect(ownerRepairOffer(store, work(store))).toMatchObject({ taskId: 'task_a' })
+  })
+
+  it('held work, stopped work and a repository not agreed to host runs offer nothing', () => {
+    const held = usedUp()
+    held.store.atomic(() => holdWorkItem(held.store, 'wi_1', { reason: 'wait', at: AT }))
+    expect(ownerRepairOffer(held.store, work(held.store))).toBeUndefined()
+    expect(ownerRetryRepair(held.store, 'wi_1', AT)).toEqual({ status: 'refused', error: 'held' })
+
+    const stopped = usedUp()
+    stopped.store.atomic(() => stopWorkItem(stopped.store, 'wi_1', { reason: 'no', at: AT }))
+    expect(ownerRepairOffer(stopped.store, work(stopped.store))).toBeUndefined()
+
+    const unagreed = usedUp()
+    unagreed.store.atomic(() => {
+      const { hostRunAgreedAt: _agreed, ...repo } = unagreed.store.engines.get(REPO) as StoreDoc
+      unagreed.store.engines.save(repo as StoreDoc)
+    })
+    expect(ownerRepairOffer(unagreed.store, work(unagreed.store))).toBeUndefined()
+    expect(ownerRetryRepair(unagreed.store, 'wi_1', AT)).toEqual({
+      status: 'refused',
+      error: 'host_run_unagreed',
+    })
+  })
+
+  it('a block no repair can answer offers nothing', () => {
+    const { store, pass } = rig()
+    finished(store, 'att_1', { state: 'checks_failed', status: 'error', head: H1 })
+    pass()
+    expect(work(store).state).toBe('blocked')
+    expect(ownerRepairOffer(store, work(store))).toBeUndefined()
+  })
+})
+
+describe('repair tasks from integration (§14, decision #36)', () => {
+  it("carry the root task's model request, so the cheapest tier stays the cheapest tier", () => {
+    const modelRequest = { tier: 'fast', reason: 'the owner asked for the cheapest tier' }
+    const { store } = rig({ status: 'integrated', modelRequest })
+    store.atomic(() =>
+      openRepairTask(store, store.effects, DEFAULT_CAPS, {
+        root: store.tasks.get('task_a') as StoreDoc,
+        evidence: 'Check docs failed on abc',
+        worktree: '/work/integration',
+        branch: 'mec/wi/integration',
+        id: 'task_r',
+        at: AT,
+      }),
+    )
+    expect(store.tasks.get('task_r')).toMatchObject({ repairOf: 'task_a', modelRequest })
+  })
+})
+
 describe('review of sensitive work (#13, §15)', () => {
   it('routine work gets no reviewer', () => {
     const { store, pass } = rig()
@@ -280,6 +419,87 @@ describe('reports and the head (§10, §15)', () => {
     pass()
     expect(store.tasks.get('task_a')?.status).not.toBe('accepted')
     expect(queued(store)[0]?.continuation).toMatchObject({ evidence: expect.stringContaining(H2) })
+  })
+})
+
+describe('no change, a Blocked: ending and owned paths (real runs 2026-11-06/07)', () => {
+  /** The attempt's own fields the runner leaves: where it started and what its commits changed. */
+  const patch = (store: Store, id: string, fields: StoreDoc): void =>
+    store.atomic(() => store.attempts.save({ ...(store.attempts.get(id) as StoreDoc), ...fields }))
+
+  const say = (store: Store, id: string, text: string): void =>
+    store.atomic(() => {
+      const stream = `attempt:${id}`
+      const seq = store.events.read(stream).length + 1
+      store.events.append(stream, {
+        stream,
+        seq,
+        at: AT,
+        type: 'message',
+        body: { type: 'message', role: 'assistant', text },
+      })
+    })
+
+  it('green checks on the unchanged base with no report go to a repair, not acceptance', () => {
+    const { store, pass } = rig()
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    patch(store, 'att_1', { base_sha: H1 })
+    pass()
+    expect(store.tasks.get('task_a')?.status).not.toBe('accepted')
+    expect(queued(store)[0]?.continuation).toMatchObject({
+      kind: 'repair',
+      evidence: expect.stringContaining('no change'),
+    })
+  })
+
+  it('a brief that allows no change accepts the unchanged base', () => {
+    const { store, pass } = rig({ noChangeOk: true })
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    patch(store, 'att_1', { base_sha: H1 })
+    pass()
+    expect(store.tasks.get('task_a')?.status).toBe('accepted')
+  })
+
+  it('a final message beginning Blocked: with no report blocks the task with its words', () => {
+    const { store, pass } = rig()
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    patch(store, 'att_1', { base_sha: H1 })
+    say(store, 'att_1', 'Looking at the task.')
+    say(store, 'att_1', '**Blocked:** the harness refuses `sleep 80`, so I did not run the waits.')
+    pass()
+    const task = store.tasks.get('task_a')
+    expect(task?.status).toBe('blocked')
+    expect(String(task?.blockedReason)).toContain('the harness refuses')
+    expect(queued(store)).toEqual([])
+  })
+
+  it('a Blocked: word earlier in the turn, not at its end, decides nothing', () => {
+    const { store, pass } = rig()
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    say(store, 'att_1', 'Blocked: the first try failed.')
+    say(store, 'att_1', 'Fixed it; the test passes.')
+    pass()
+    expect(store.tasks.get('task_a')?.status).toBe('accepted')
+  })
+
+  it("a commit outside the task's owned paths is sent to a repair with the reason", () => {
+    const { store, pass } = rig({ ownedPaths: ['src/slug.mjs', 'test/slug.test.mjs'] })
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    patch(store, 'att_1', { base_sha: H2, changed_paths: ['src/slug.mjs', 'src/title.mjs'] })
+    pass()
+    expect(store.tasks.get('task_a')?.status).not.toBe('accepted')
+    expect(queued(store)[0]?.continuation).toMatchObject({
+      kind: 'repair',
+      evidence: expect.stringContaining('src/title.mjs'),
+    })
+  })
+
+  it('a task with no owned paths takes any change', () => {
+    const { store, pass } = rig({ ownedPaths: [] })
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    patch(store, 'att_1', { base_sha: H2, changed_paths: ['anything.txt'] })
+    pass()
+    expect(store.tasks.get('task_a')?.status).toBe('accepted')
   })
 })
 

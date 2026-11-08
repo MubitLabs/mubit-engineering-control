@@ -241,6 +241,41 @@ test.describe('Work', () => {
     reply({ status: 200, body: { messageId: 'msg_new', routing: 'attach' } })
   })
 
+  test('a tab with no key offers the link at the composer, and a refused send keeps the draft', async ({
+    page,
+  }) => {
+    // Owner ruling, 8 November 2026: a chat message needs the approval key.
+    await server(page, {
+      chatPost: async () => ({ status: 403, body: { error: 'approval_required' } }),
+    })
+    await open(page, 'repo/repo_a/chat')
+    const dock = page.locator('.composer-dock')
+    await expect(dock).toContainText('This browser cannot send yet')
+    await expect(dock.getByRole('button', { name: 'Link this browser' })).toBeVisible()
+    const box = page.getByRole('textbox', { name: 'Message the meta agent' })
+    await box.fill('keep this draft')
+    await page.keyboard.press('Enter')
+    await expect(dock.getByRole('alert')).toContainText('This browser is not linked')
+    await expect(box).toHaveValue('keep this draft')
+    await expect(dock.getByRole('button', { name: 'Link this browser' })).toBeVisible()
+  })
+
+  test('a linked tab sends its key with the message, and shows no link', async ({ page }) => {
+    let key: string | undefined
+    await page.addInitScript(() => window.sessionStorage.setItem('mec.approval-key', 'k'.repeat(64)))
+    await server(page)
+    // Registered last, so it sees the post first (Playwright runs routes newest first).
+    await page.route('**/api/chat/messages', async (route) => {
+      if (route.request().method() === 'POST') key = route.request().headers()['x-mec-approval']
+      await route.fallback()
+    })
+    await open(page, 'repo/repo_a/chat')
+    await expect(page.locator('.composer-dock')).not.toContainText('This browser cannot send yet')
+    await page.getByRole('textbox', { name: 'Message the meta agent' }).fill('add a thing')
+    await page.keyboard.press('Enter')
+    await expect.poll(() => key).toBe('k'.repeat(64))
+  })
+
   test('the heading stays the repository and Inspect sits inside the plan', async ({ page }) => {
     await server(page)
     await open(page, 'repo/repo_a/chat')

@@ -182,6 +182,11 @@ function settleOnReport(store: Store, task: StoreDoc, attempt: StoreDoc, at: str
     blockTask(store, task, `attempt ${id} reported ${report.kind}: ${report.summary}`, at)
     return true
   }
+  const said = report === undefined ? endedBlocked(store, attempt) : undefined
+  if (said !== undefined) {
+    blockTask(store, task, `attempt ${id} ended blocked with no report: ${said}`, at)
+    return true
+  }
   if (report?.kind !== 'dropped' || !passedOrUnjudged) return false
   const { deferred: _deferred, ...rest } = task
   moveTask(store, rest, 'cancel', { cancelledReason: `attempt ${id} dropped it: ${report.summary}` }, at)
@@ -193,6 +198,31 @@ function settleOnReport(store: Store, task: StoreDoc, attempt: StoreDoc, at: str
     at,
   )
   return true
+}
+
+/** A turn's last words that open with `Blocked:`, markdown emphasis allowed. */
+const BLOCKED_OPENING = /^[\s*_`>#]*blocked\s*[:*_]+\s*/i
+
+/**
+ * An attempt that sent no report but whose turn ended on a message opening with `Blocked:` said
+ * it is blocked, plainly, so it reads as blocked and not as success (§15: an agent ending its turn
+ * is not success). Only the turn's last message counts: an earlier one was overtaken. Returns that
+ * message without its opening, or undefined.
+ */
+function endedBlocked(store: Store, attempt: StoreDoc): string | undefined {
+  const generation = Number(attempt.generation ?? 1)
+  const last = store.events
+    .read(`attempt:${String(attempt.id)}`)
+    .filter((event) => {
+      const body = event.body as { role?: unknown; generation?: unknown } | null
+      if (event.type !== 'message' || body?.role !== 'assistant') return false
+      return body.generation === undefined || Number(body.generation) === generation
+    })
+    .at(-1)
+  const text = String((last?.body as { text?: unknown } | undefined)?.text ?? '')
+  if (!BLOCKED_OPENING.test(text)) return undefined
+  const rest = text.replace(BLOCKED_OPENING, '').trim()
+  return rest === '' ? 'no reason given' : rest
 }
 
 type Target = { worktree?: string; branch?: string }
@@ -211,6 +241,19 @@ function reportHead(doc: StoreDoc | undefined, attempt: StoreDoc): string | unde
   const claimed = (doc?.report as { head_sha?: string } | undefined)?.head_sha
   if (claimed === undefined || doc?.head_matches === true) return attempt.head_sha as string | undefined
   return claimed
+}
+
+const strings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : []
+
+/** What the attempt's commits did against its base, and what the brief lets them do (§10, §14). */
+function workFacts(task: StoreDoc, attempt: StoreDoc) {
+  return {
+    ...(typeof attempt.base_sha === 'string' && { base: attempt.base_sha }),
+    ...(task.noChangeOk === true && { noChangeOk: true }),
+    owned: strings(task.ownedPaths),
+    ...(Array.isArray(attempt.changed_paths) && { changed: strings(attempt.changed_paths) }),
+  }
 }
 
 /** What a reviewer said, bound to the commit it read (§15): the report's `finding` artifacts. */
@@ -323,6 +366,8 @@ function settleAttempt(
     verdicts: verdictsOf(store, latest),
     findings: findingsOf(report, latest),
     policy: { sensitive: task.sensitive === true, ...(reviewed !== undefined && { reviewedSha: reviewed }) },
+    // A reviewer reads and changes nothing, so no-change and owned paths judge the task's own work.
+    ...(kindOf(latest) !== 'review' && workFacts(task, latest)),
   })
   if (decided.verdict === 'accepted') acceptTask(store, task, latest, attempts, at)
   if (decided.verdict === 'blocked') blockTask(store, task, decided.reason, at)
@@ -396,6 +441,8 @@ export function openRepairTask(
     status: 'ready',
     acceptanceChecks: root.acceptanceChecks ?? [],
     originalRequestRef: root.originalRequestRef ?? null,
+    // The tier the planner asked for, and why, holds for the repair of its work too.
+    ...(root.modelRequest !== undefined && { modelRequest: root.modelRequest }),
     next: step.next as unknown as Json,
     createdAt: at,
     updatedAt: at,
@@ -407,6 +454,97 @@ export function openRepairTask(
     { taskId: id, repairOf: String(root.id), at },
     at,
   )
+}
+
+/** What a person, and only a person, may answer with one more repair (owner ruling 2026-11-07). */
+const OWNER_RETRYABLE = /^(repairs used up |attempt \S+ (reported blocked|ended blocked with no report): )/
+
+export type OwnerRepairOffer = { taskId: string; reason: string }
+export type OwnerRepairOutcome =
+  | { status: 'retrying'; taskId: string }
+  | { status: 'missing' }
+  | { status: 'refused'; error: string }
+
+/**
+ * Blocked work whose task used up its repairs or reported blocked offers the owner "Try again":
+ * one fresh repair attempt in that task's worktree. Held, stopped and ended work offers nothing,
+ * and neither does a repository not agreed to host runs, since the attempt runs its commands. A
+ * task with an attempt still holding its place has nothing to try again yet.
+ */
+export function ownerRepairOffer(store: Store, work: StoreDoc): OwnerRepairOffer | undefined {
+  if (isTerminal(work) || isHeld(work) || mandateOf(work).status === 'withdrawn') return undefined
+  if (work.state !== 'blocked' || !hostRunAgreed(store, repoOf(work))) return undefined
+  const workItemId = String(work.id)
+  const target = store.tasks
+    .list({ workItemId })
+    .filter((task) => task.status === 'blocked' && OWNER_RETRYABLE.test(String(task.blockedReason ?? '')))
+    .sort((a, b) => String(a.updatedAt ?? '').localeCompare(String(b.updatedAt ?? '')))
+    .at(-1)
+  if (target === undefined) return undefined
+  const live = store.attempts.list({ workItemId }).some((attempt) => {
+    const state = String(attempt.state) as AttemptState
+    return state === 'queued' || ACTIVE_ATTEMPT_STATES.includes(state)
+  })
+  return live ? undefined : { taskId: String(target.id), reason: String(target.blockedReason) }
+}
+
+/**
+ * The owner's Try again, inside one transaction so a second press finds nothing. The task goes
+ * back to ready with one repair queued on it, carrying where it stopped; its dependents blocked
+ * on it go back to ready, and the work leaves blocked. The next pass places the attempt through
+ * the same caps and gates as any launch, so a hold or a stop landing first still wins. The
+ * repair counter keeps counting: a failure blocks again with what remains.
+ */
+export function ownerRetryRepair(store: Store, workItemId: string, at: string): OwnerRepairOutcome {
+  return store.atomic((): OwnerRepairOutcome => {
+    const work = store.workItems.get(workItemId)
+    if (work === undefined) return { status: 'missing' }
+    if (mandateOf(work).status === 'withdrawn') return { status: 'refused', error: 'mandate_withdrawn' }
+    if (isHeld(work)) return { status: 'refused', error: 'held' }
+    const offer = ownerRepairOffer(store, work)
+    if (offer === undefined) {
+      const waits = work.state === 'blocked' && !hostRunAgreed(store, repoOf(work))
+      return { status: 'refused', error: waits ? HOST_RUN_UNAGREED : 'nothing_to_retry' }
+    }
+    const task = store.tasks.get(offer.taskId) as StoreDoc
+    const latest = latestOf(store.attempts.list({ taskId: offer.taskId }))
+    const { attempts, reports } = familyOf(store, task)
+    const next: Continuation = {
+      kind: 'repair',
+      role: 'repair_agent',
+      evidence: `The owner asked to try again. Where it stopped:\n${offer.reason}`,
+      round: repairLedger(attempts, reports).rounds,
+      origin: 'owner',
+      ...(typeof latest?.worktree === 'string' && { worktree: latest.worktree }),
+      ...(typeof latest?.branch === 'string' && { branch: latest.branch }),
+    }
+    const { blockedReason: _reason, deferred: _deferred, ...rest } = task
+    moveTask(store, rest, 'unblock', { next: next as unknown as Json }, at)
+    for (const dependent of store.tasks.list({ workItemId })) {
+      if (
+        dependent.status !== 'blocked' ||
+        !String(dependent.blockedReason ?? '').startsWith('prerequisite ')
+      ) {
+        continue
+      }
+      const { blockedReason: _why, ...kept } = dependent
+      moveTask(store, kept, 'unblock', {}, at)
+    }
+    const { blockedReason: _blocked, ...free } = work
+    store.workItems.save({
+      ...free,
+      state: transition(WORK_ITEM_MACHINE, String(work.state), 'resume_executing'),
+      updatedAt: at,
+    })
+    appendEvent(
+      store,
+      `work:${workItemId}`,
+      'retry_requested',
+      { workItemId, kind: 'repair', taskId: offer.taskId, origin: 'owner', at },
+      at,
+    )
+    return { status: 'retrying', taskId: offer.taskId }
+  })
 }
 
 /** §10: work reaches `reviewing` with the first finished task and `integrating` with the first accepted. */

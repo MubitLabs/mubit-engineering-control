@@ -4,6 +4,7 @@ import { InspectionReads, MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store
 import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildServer } from '../src/server'
+import { ownerApproval, ownerHeaders } from './approval-rig'
 
 /**
  * What the meta agent is doing and who holds the work: read from what is recorded, through the
@@ -34,6 +35,7 @@ function serverWith(metaAgent?: MetaAgentService, now = LATER): ReturnType<typeo
     now: () => new Date(now),
     inspection: new InspectionReads(db),
     ...(metaAgent !== undefined && { metaAgent }),
+    approval: ownerApproval(),
   })
 }
 
@@ -195,16 +197,47 @@ describe('delegation is read from the attempts', () => {
     })
   })
 
-  it('a task nothing has picked up says so, and why it waits', async () => {
-    seedTask('ready', { deferred: { reason: 'no_capacity', releases: 'capacity' } })
+  it('a task nothing has picked up says so, and why it waits, in words', async () => {
+    seedTask('ready', { deferred: { reason: 'capacity', releases: 'a slot unit comes free' } })
     const [row] = (await get(`/api/inspect/work/${WI}`)).delegation
     expect(row).toMatchObject({
       latest: null,
       attempts: 0,
       activity: null,
-      waiting: 'no_capacity',
+      waiting: 'until a slot unit comes free',
       requested: { tier: 'fast', model: null },
     })
+  })
+
+  it('a wait on the agreement is plain words, never its code', async () => {
+    const releases = 'the owner agrees to host runs here'
+    seedTask('ready', { deferred: { reason: 'host_run_unagreed', releases } })
+    const [row] = (await get(`/api/inspect/work/${WI}`)).delegation
+    expect(row.waiting).toBe('until you agree to run this repository’s commands on this machine')
+  })
+
+  it('a blocked task that never started says what blocks it', async () => {
+    seedTask('blocked', { blockedReason: 'prerequisite task_0 cannot finish: repairs used up' })
+    const [row] = (await get(`/api/inspect/work/${WI}`)).delegation
+    expect(row.waiting).toBe('prerequisite task_0 cannot finish: repairs used up')
+  })
+
+  it('a blocked line is cut between words, and says it was cut', async () => {
+    const reason = `attempt att_2 reported blocked: ${'Release stamp is unset, nothing here sets it. '.repeat(8)}`
+    store.atomic(() =>
+      store.workItems.save({
+        id: WI,
+        repoId: 'repo_a',
+        state: 'blocked',
+        blockedReason: reason,
+        createdAt: AT,
+        updatedAt: AT,
+      }),
+    )
+    const [row] = (await get('/api/inspect/work')).items
+    expect(row.reason.length).toBeLessThanOrEqual(209)
+    expect(row.reason).toMatch(/ \S+…$/)
+    expect(reason).toContain(row.reason.slice(0, -1).replace(/^Blocked: /, ''))
   })
 
   it('the task view carries the placement reason too', async () => {
@@ -249,6 +282,7 @@ describe('a turn that ended with no plan is not work in progress', () => {
     const posted = await app.inject({
       method: 'POST',
       url: '/api/chat/messages',
+      headers: ownerHeaders,
       payload: { text: 'what does this do?', repoId: 'repo_a' },
     })
     const { workItemId } = posted.json() as { workItemId: string }
@@ -273,6 +307,7 @@ describe('a turn that ended with no plan is not work in progress', () => {
     const posted = await app.inject({
       method: 'POST',
       url: '/api/chat/messages',
+      headers: ownerHeaders,
       payload: { text: 'what does this do?', repoId: 'repo_a' },
     })
     const { workItemId } = posted.json() as { workItemId: string }
@@ -444,6 +479,18 @@ describe('GET /api/inspect/meta', () => {
     seedDelegated({ state: 'succeeded' })
     store.atomic(() => store.workItems.save({ ...store.workItems.get(WI)!, state: 'integrating' }))
     expect(await metaOf()).toMatchObject({ state: 'integrating', workItemId: WI })
+  })
+
+  it("work whose pull request is ready says so, from delivery's stage, not Integrating", async () => {
+    seedDelegated({ state: 'succeeded' })
+    store.atomic(() => {
+      store.workItems.save({ ...store.workItems.get(WI)!, state: 'integrating' })
+      store.engines.save({ id: `delivery/${WI}`, workItemId: WI, stage: 'ready', prNumber: 7 })
+    })
+    const line = await metaOf()
+    expect(line).toMatchObject({ state: 'delivering', workItemId: WI })
+    expect(line.line).toMatch(/^Pull request #7 is ready for review/)
+    expect(line.line).not.toContain('Integrating')
   })
 
   it('a stored request with no turn running says it has not started', async () => {

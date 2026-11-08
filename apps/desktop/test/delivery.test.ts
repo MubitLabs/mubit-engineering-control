@@ -387,6 +387,19 @@ describe('integration (§14)', () => {
     expect(r.store.workItems.get(WORK)?.state).not.toBe('blocked')
   })
 
+  it('a failed setup command blocks the work and says so in one chat line', async () => {
+    const r = rig({ bootstrap: ['sh -c "echo the environment is down; exit 3"'] })
+    r.accepted('task_a', 'b.txt', 'two\n')
+    await r.passes(3)
+    expect(r.store.workItems.get(WORK)).toMatchObject({ state: 'blocked' })
+    const notes = r.store.snapshot().effects.filter((row) => row.kind === 'note')
+    expect(notes).toHaveLength(1)
+    expect(notes[0]?.payload).toMatchObject({
+      workItemId: WORK,
+      text: expect.stringMatching(/^The integration could not start: .*the environment is down/),
+    })
+  })
+
   it('a withdrawal between two setup commands runs no further one', async () => {
     const marker = join(mkdtempSync(join(tmpdir(), 'mec-marker-')), 'second')
     roots.push(dirname(marker))
@@ -990,6 +1003,64 @@ describe('a person retries what blocked (§11: blocked work and failed deliverie
     await r.delivery.idle()
     await r.passes(1)
     expect(r.store.tasks.get('task_a')?.status).toBe('integrated')
+  })
+
+  /** A task whose repairs ran out, as the scheduler leaves it: blocked, with an attempt behind it. */
+  const usedUp = (r: Rig): void => {
+    const reason = 'repairs used up (2 of 2). What remains:\nCheck unit failed on abc:\nred'
+    r.store.atomic(() => {
+      r.store.tasks.save({
+        id: 'task_c',
+        localKey: 'task_c',
+        workItemId: WORK,
+        repoId: REPO,
+        role: 'implementer',
+        status: 'blocked',
+        blockedReason: reason,
+        dependsOn: [],
+        basePolicy: 'integration',
+        acceptanceChecks: ['unit'],
+      })
+      r.store.attempts.save({
+        id: 'att_9',
+        taskId: 'task_c',
+        workItemId: WORK,
+        state: 'checks_failed',
+        worktree: '/work/att_9',
+        branch: 'mec/abcdef12/task_c/a1',
+        createdAt: AT,
+      })
+      r.store.workItems.save({ ...work(r), state: 'blocked', blockedReason: reason })
+    })
+  }
+
+  it('used-up repairs offer Try again: one fresh repair, asked once (owner ruling 2026-11-07)', () => {
+    const r = rig()
+    usedUp(r)
+    expect(retryOffer(r.store, work(r))).toMatchObject({ kind: 'repair' })
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'retrying', kind: 'repair' })
+    expect(r.store.tasks.get('task_c')).toMatchObject({
+      status: 'ready',
+      next: { kind: 'repair', origin: 'owner' },
+    })
+    expect(work(r).state).not.toBe('blocked')
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'nothing_to_retry' })
+    expect(count(r, 'retry_requested')).toBe(1)
+  })
+
+  it('Try again honours a hold and waits for the agreement', () => {
+    const held = rig()
+    usedUp(held)
+    held.store.atomic(() => holdWorkItem(held.store, WORK, { reason: 'wait', at: AT }))
+    expect(retryOffer(held.store, work(held))).toBeUndefined()
+    expect(held.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'held' })
+
+    const unagreed = rig()
+    usedUp(unagreed)
+    const { hostRunAgreedAt: _agreed, ...repo } = unagreed.store.engines.get(REPO) as StoreDoc
+    unagreed.store.atomic(() => unagreed.store.engines.save(repo as StoreDoc))
+    expect(unagreed.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'host_run_unagreed' })
+    expect(unagreed.store.tasks.get('task_c')?.status).toBe('blocked')
   })
 
   it("a repair that ended is the plan's to answer, not a retry's", async () => {

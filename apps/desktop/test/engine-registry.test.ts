@@ -203,6 +203,11 @@ describe('the registry', () => {
     expect(existsSync(join(bin, 'seen.json'))).toBe(false)
   })
 
+  it("a Claude specialist loads no CLAUDE.md, so a linked home's personal instructions stay out", () => {
+    // Owner ruling 2026-11-07: specialists follow MEC's brief and the repository's instructions only.
+    expect(ENGINE_ROWS.claude?.hygiene('att_1')).toMatchObject({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1' })
+  })
+
   it('the planner sees exactly what a launch would accept', () => {
     const home = '/slots/one'
     expect(isLaunchableSlot({ id: 's', engine: 'codex', kind: 'codex-sub', home })).toBe(true)

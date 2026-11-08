@@ -47,6 +47,7 @@ import {
 import {
   blockTask,
   blockWork,
+  cutAtWord,
   HOST_RUN_UNAGREED,
   hostRunAgreed,
   integrationDocId,
@@ -54,6 +55,8 @@ import {
   isTerminal,
   mandateOf,
   openRepairTask,
+  ownerRepairOffer,
+  ownerRetryRepair,
   processingOf,
   repairEvidence,
   repoFields,
@@ -108,7 +111,8 @@ const OFFER_CHARS = 300
 /** How many cleared paths an event names; the count says the rest. */
 const CLEARED_PATHS = 50
 
-export type RetryKind = 'integration' | 'push' | 'pr'
+/** `repair`: the owner's Try again on blocked work, one fresh repair attempt (owner ruling 2026-11-07). */
+export type RetryKind = 'integration' | 'push' | 'pr' | 'repair'
 export type RetryOffer = { kind: RetryKind; reason: string }
 export type RetryOutcome =
   | { status: 'retrying'; kind: RetryKind }
@@ -130,7 +134,11 @@ export function retryOffer(store: Store, work: StoreDoc): RetryOffer | undefined
   const clean = (text: string): string => redact(text, [], []).slice(0, OFFER_CHARS)
   if (work.state === 'blocked') {
     const reason = String(work.blockedReason ?? '')
-    if (!INTEGRATION_BLOCK.test(reason) || !hostRunAgreed(store, String(work.repoId))) return undefined
+    if (!INTEGRATION_BLOCK.test(reason)) {
+      const repair = ownerRepairOffer(store, work)
+      return repair === undefined ? undefined : { kind: 'repair', reason: clean(repair.reason) }
+    }
+    if (!hostRunAgreed(store, String(work.repoId))) return undefined
     const failed = store.engines.get(integrationDocId(id))?.failed as { repairing?: boolean } | undefined
     if (failed?.repairing === true) return undefined
     const tasks = store.tasks.list({ workItemId: id })
@@ -243,6 +251,11 @@ export class Delivery {
       if (offer === undefined) {
         const waits = work.state === 'blocked' && !this.#agreed(work)
         return { status: 'refused', error: waits ? HOST_RUN_UNAGREED : 'nothing_to_retry' }
+      }
+      if (offer.kind === 'repair') {
+        const outcome = ownerRetryRepair(this.#store, workItemId, at)
+        if (outcome.status !== 'retrying') return outcome
+        return { status: 'retrying', kind: 'repair' }
       }
       if (offer.kind === 'integration') this.#resumeIntegration(work, at)
       else this.#askAgain(workItemId, offer.kind)
@@ -409,7 +422,23 @@ export class Delivery {
       if (outcome.status !== 'passed') {
         const tail = redact(outcome.logTail, this.#fingerprints(), [])
         const reason = `bootstrap_failed: ${command}: ${tail.slice(-400)}`
-        this.#store.atomic(() => blockWork(this.#store, id, reason, this.#now))
+        this.#store.atomic(() => {
+          const before = this.#store.workItems.get(id)?.state
+          blockWork(this.#store, id, reason, this.#now)
+          if (before === 'blocked' || this.#store.workItems.get(id)?.state !== 'blocked') return
+          // One line in the chat for this block (§12.7): the person sees why nothing moves.
+          const blocks = this.#store.events
+            .read(`work:${id}`)
+            .filter((event) => event.type === 'work_blocked')
+          const cause = `bootstrap_failed/${id}/${blocks.length}`
+          const said = cutAtWord(tail.trim(), 200)
+          this.#effects.enqueue('note', `note:${cause}`, {
+            workItemId: id,
+            cause,
+            text: `The integration could not start: ${command} failed${said === '' ? '.' : `: ${said}`}`,
+            at: this.#now,
+          })
+        })
         return undefined
       }
     }

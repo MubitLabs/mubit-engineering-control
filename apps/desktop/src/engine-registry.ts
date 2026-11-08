@@ -184,6 +184,10 @@ const claudeRow: EngineRow = {
     CLAUDE_CODE_MCP_ALLOWLIST_ENV: '1',
     CLAUDE_CODE_PROJECT_DIR_NAME: attemptId,
     CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
+    // Owner ruling 2026-11-07: a specialist follows MEC's brief, not the owner's own CLAUDE.md,
+    // which a linked home would load through `--setting-sources user`. In 2.1.319's text this
+    // gates only the CLAUDE.md loaders: settings and the sign-in stay as they are.
+    CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
   }),
   homeEnv: (home) => engineHomeEnv('claude', home),
   tokenFile: true,

@@ -78,7 +78,7 @@ export type WorkDetail = WorkRow & {
   delegation: DelegationRow[]
   delivery: DeliveryView
   /** What the owner may ask for again, and why it stopped. */
-  retry: { kind: 'integration' | 'push' | 'pr'; reason: string } | null
+  retry: { kind: 'integration' | 'push' | 'pr' | 'repair'; reason: string } | null
   coverage: Coverage
   cursors: Record<string, number>
   /** Attempt streams left out of `cursors`. */

@@ -5,6 +5,7 @@ import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openPushCard } from '../src/release'
 import { buildServer } from '../src/server'
+import { ownerApproval, ownerHeaders } from './approval-rig'
 
 /**
  * Canonical inspection, stage 1 (M3.1): bounded keyset reads over the existing schema, served
@@ -77,6 +78,7 @@ function serverWith(brain: MetaDecision = plan(['task_1', []])): ReturnType<type
       now: () => AT,
       policyText: '{"preAuthorised":{}}',
     }),
+    approval: ownerApproval(),
   })
 }
 
@@ -89,6 +91,7 @@ const say = async (repoId: string | undefined, text: string): Promise<string> =>
   const res = await app.inject({
     method: 'POST',
     url: '/api/chat/messages',
+    headers: ownerHeaders,
     payload: { text, ...(repoId !== undefined && { repoId }) },
   })
   expect(res.statusCode).toBe(200)

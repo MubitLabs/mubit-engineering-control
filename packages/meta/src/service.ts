@@ -97,6 +97,7 @@ import { type LaunchRecord, type PlacementTable, type SchedulerDeps, schedulePas
 import type { PlannerConfirmationDraft, PlannerQuestionRecord, PlannerTurnJournal } from './tools'
 import { PlannerTools } from './tools'
 import { wakeHasNoNews } from './wakes'
+import { cutAtWord, TITLE_WORDS } from './words'
 import { knownChecks, workResultOf } from './work-facts'
 
 /** One planned task as the service persists it: the v0 four fields, plus the §5.2 brief fields. */
@@ -113,6 +114,8 @@ export type MetaPlanTask = {
   acceptanceChecks?: string[]
   /** Decision #33: the planner says the task touches sensitive ground, so it gets one review. */
   sensitive?: boolean
+  /** §10: a no-change outcome is acceptable for this task; absent, an unchanged head is no work. */
+  noChangeOk?: boolean
   modelRequest?: { tier?: string; model?: string; effort?: string; variant?: string; reason: string }
   slotHint?: { slotClass?: string; slotId?: string }
   budget?: { turns: number; wallClockMs: number; usd?: number }
@@ -189,7 +192,15 @@ export type TurnOutcome = {
  * The message a turn serves; `repoId` is its repository's conversation (absent is Unassigned).
  * `wake` marks a turn no user message started: it speaks with no person's authority.
  */
-type TurnInput = { messageId: string; text: string; repoId?: string; wake?: true; idempotencyKey?: string }
+type TurnInput = {
+  messageId: string
+  text: string
+  repoId?: string
+  wake?: true
+  idempotencyKey?: string
+  /** A wake's cause, so a plan can tell the owner's go-ahead from the planner's own turn. */
+  causationId?: string
+}
 
 /** §12.1: what the owner submitted, which a key's retry must repeat exactly. */
 type SubmissionIntent = 'new' | 'follow_up'
@@ -528,7 +539,7 @@ export class MetaAgentService {
   }
 
   async #wakeTurn(
-    input: { reason: string; detail?: string; workItemId?: string },
+    input: { reason: string; detail?: string; workItemId?: string; causationId?: string },
     messageId: string,
   ): Promise<TurnOutcome> {
     const work = input.workItemId === undefined ? undefined : this.#store.workItems.get(input.workItemId)
@@ -546,7 +557,12 @@ export class MetaAgentService {
     if (isTerminal(work) || mandateOf(work).status === 'withdrawn') return this.#refuseWake(input, work)
     const repoId = repoOf(work)
     const repo = repoId !== undefined ? { repoId } : {}
-    const turn = { messageId, wake: true as const, ...repo }
+    const turn = {
+      messageId,
+      wake: true as const,
+      ...repo,
+      ...(input.causationId !== undefined && { causationId: input.causationId }),
+    }
     let decision: MetaDecision
     const tools = this.#buildTools({ messageId, workItemId }, repoId)
     const started = {
@@ -775,9 +791,13 @@ export class MetaAgentService {
   #noteAttached(input: TurnInput, workItemId: string): TurnOutcome {
     const at = this.#now()
     const running = this.#followups.ownerOf(workItemId) !== undefined
+    // A short title: the whole request is already on the page, and an id is not for a person.
+    const origin = this.#store.messages.get(String(this.#store.workItems.get(workItemId)?.originMessageId))
+    const first = typeof origin?.text === 'string' ? (origin.text.trim().split('\n', 1)[0] ?? '') : ''
+    const named = first === '' ? workItemId : `“${cutAtWord(redact(first, [], []), TITLE_WORDS)}”`
     const ack = running
-      ? `Noted on ${workItemId}: it lands with the running work.`
-      : `Noted on ${workItemId}: nothing is running on it, so I'll pick this up.`
+      ? `Noted on ${named}: it lands with the running work.`
+      : `Noted on ${named}: nothing is running on it, so I'll pick this up.`
     this.#store.atomic(() => {
       this.#appendEvent(
         `work:${workItemId}`,
@@ -1057,6 +1077,28 @@ export class MetaAgentService {
     return { acknowledged: ack, workItemId, tasksCreated: 0, launchesEnqueued: [], escalated: false }
   }
 
+  /**
+   * Whether this turn is the owner's go-ahead on blocked work: a person's own turn, or a wake the
+   * owner caused (their follow-up, released or handed back, or their answer to a question), made
+   * after the work blocked. A wake from a report, a parked task or a timer is the planner's own.
+   */
+  #ownerWentAhead(input: TurnInput, workItemId: string): boolean {
+    const blockedAt =
+      this.#store.events
+        .read(`work:${workItemId}`)
+        .filter((event) => event.type === 'work_blocked')
+        .at(-1)?.at ?? ''
+    if (input.wake !== true) return true
+    const cause = input.causationId ?? ''
+    const said = /^(message|released|handback):(.+)$/.exec(cause)
+    const when = said
+      ? this.#store.messages.get(said[2] as string)?.createdAt
+      : cause.startsWith('question/')
+        ? this.#store.engines.get(cause)?.answeredAt
+        : undefined
+    return typeof when === 'string' && when >= blockedAt
+  }
+
   /** Validate the brain's plan (§10); an invalid one is answered with the first issue. */
   #commitPlan(
     input: TurnInput,
@@ -1142,14 +1184,29 @@ export class MetaAgentService {
         }
         work.planRevision = planRevision
         work.updatedAt = at
+        if (work.state === 'blocked' && this.#ownerWentAhead(input, workItemId)) {
+          // Owner ruling 2026-11-07: the owner's go-ahead, and the plan it led to, lift the block
+          // for that plan's new work. Tasks still blocked stay blocked, and re-block the work if
+          // nothing else is open. A planner turn the owner did not cause never gets here.
+          work.state = transition(WORK_ITEM_MACHINE, 'blocked', 'resume_executing')
+          delete work.blockedReason
+          this.#appendEvent(
+            `work:${workItemId}`,
+            'block_lifted',
+            { workItemId, messageId: input.messageId, by: 'owner', at },
+            at,
+          )
+        }
         this.#store.workItems.save(work)
       }
 
       // Decision #19: a key this work item already holds is the same task, so its id, status
       // and creation stay and only what the plan says about it changes.
       for (const { prior, ...task } of canonical) {
+        // A no-change allowance is what this revision says, never one an earlier revision gave.
+        const { noChangeOk: _earlier, ...kept } = prior ?? {}
         this.#store.tasks.save({
-          ...prior,
+          ...kept,
           id: task.taskId,
           workItemId,
           ...(repoId !== undefined && { repoId }),
@@ -1165,6 +1222,7 @@ export class MetaAgentService {
               ? [...task.acceptanceChecks]
               : known,
           ...((task.sensitive ?? prior?.sensitive) === true && { sensitive: true }),
+          ...(task.noChangeOk === true && { noChangeOk: true }),
           // §5.2's brief fields persist verbatim; the runtime's resolveModel reads them.
           originalRequestRef: task.originalRequestRef ?? input.messageId,
           ...(task.ownedPaths !== undefined && { ownedPaths: [...task.ownedPaths] }),

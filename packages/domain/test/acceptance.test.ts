@@ -98,3 +98,66 @@ describe('acceptance (§10, §15, decision #32)', () => {
     expect(acceptance(input({ policy: { ...sensitive, reviewedSha: HEAD } })).verdict).toBe('accepted')
   })
 })
+
+describe('no change and owned paths (§10, §14; real runs 2026-11-06/07)', () => {
+  const BASE = OLDER
+
+  it('green checks with no report on a head that never left the base are not accepted', () => {
+    const decided = acceptance(input({ base: HEAD }))
+    expect(decided).toMatchObject({ verdict: 'repair', reason: 'no_change', head: HEAD })
+  })
+
+  it('a ready report that says nothing needed changing is accepted on the base', () => {
+    const decided = acceptance(input({ base: HEAD, report: { kind: 'ready', headSha: HEAD } }))
+    expect(decided).toEqual({ verdict: 'accepted', head: HEAD })
+  })
+
+  it('a progress report is no word that the work is done, so no change still repairs', () => {
+    const decided = acceptance(input({ base: HEAD, report: { kind: 'progress', headSha: HEAD } }))
+    expect(decided).toMatchObject({ verdict: 'repair', reason: 'no_change' })
+  })
+
+  it('a brief that allows no change accepts it', () => {
+    expect(acceptance(input({ base: HEAD, noChangeOk: true })).verdict).toBe('accepted')
+  })
+
+  it('a head that moved off the base is judged as before', () => {
+    expect(acceptance(input({ base: BASE })).verdict).toBe('accepted')
+  })
+
+  it('a commit that changes files outside the owned paths is sent back naming them', () => {
+    const decided = acceptance(
+      input({
+        base: BASE,
+        owned: ['src/slug.mjs', 'test/slug.test.mjs'],
+        changed: ['src/slug.mjs', 'src/title.mjs', 'test/slug.test.mjs'],
+      }),
+    )
+    expect(decided).toMatchObject({ verdict: 'repair', reason: 'owned_paths', head: HEAD })
+    expect(decided).toHaveProperty('outside', ['src/title.mjs'])
+  })
+
+  it('owned directories and globs cover the files under them', () => {
+    const decided = acceptance(
+      input({ base: BASE, owned: ['src/api/**', 'docs/'], changed: ['src/api/a/b.ts', 'docs/x.md'] }),
+    )
+    expect(decided.verdict).toBe('accepted')
+  })
+
+  it('a brief with no owned paths owns everything', () => {
+    expect(acceptance(input({ base: BASE, owned: [], changed: ['anything.txt'] })).verdict).toBe('accepted')
+  })
+
+  it('failing checks still come first: the repair sees them', () => {
+    const decided = acceptance(
+      input({
+        attemptState: 'checks_failed',
+        base: BASE,
+        owned: ['a.txt'],
+        changed: ['b.txt'],
+        verdicts: [{ name: 'unit', status: 'failed', sha: HEAD, logTail: 'red' }],
+      }),
+    )
+    expect(decided).toMatchObject({ verdict: 'repair', reason: 'checks_failed' })
+  })
+})

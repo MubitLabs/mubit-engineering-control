@@ -212,10 +212,11 @@ export class StoreFacts implements AttemptFacts {
     this.#changed()
   }
 
-  workCompleted(attempt: AttemptRef, head: string): void {
+  workCompleted(attempt: AttemptRef, head: string, changed?: readonly string[]): void {
     const doc = this.#current(attempt)
     if (doc === undefined) return
-    if (this.#move(doc, 'agent_finished', { head_sha: head })) this.#moveTask(doc, 'work_complete')
+    const fields = { head_sha: head, ...(changed !== undefined && { changed_paths: [...changed] }) }
+    if (this.#move(doc, 'agent_finished', fields)) this.#moveTask(doc, 'work_complete')
   }
 
   checksFinished(attempt: AttemptRef, head: string, outcomes: CheckOutcome[], passed: boolean): void {

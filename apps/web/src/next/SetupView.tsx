@@ -89,9 +89,12 @@ function MetaChoice({
 function SetupChat({
   onSend,
   onOpenSettings,
+  approval,
 }: {
   onSend: (text: string) => Promise<SetupAnswer | { failure: string }>
   onOpenSettings: () => void
+  /** A tab that cannot send yet says so here; what was typed stays in the box. */
+  approval?: ReactNode
 }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
@@ -114,6 +117,7 @@ function SetupChat({
   return (
     <section className="config-block" aria-label="Setup chat">
       <h2>Setup chat</h2>
+      {approval}
       <form
         className="config-form"
         onSubmit={(event) => {
@@ -163,6 +167,7 @@ export function SetupView({
   onNavigate,
   onRecheck,
   onAsk,
+  chatApproval,
 }: {
   readiness: Readiness
   connectionForm: ReactNode
@@ -177,6 +182,8 @@ export function SetupView({
   onNavigate: (route: StepRoute, step?: string) => void
   onRecheck: () => void
   onAsk: (text: string) => Promise<SetupAnswer | { failure: string }>
+  /** What the setup chat shows a tab with no approval key. */
+  chatApproval?: ReactNode
 }) {
   const current = openStage(readiness.steps)
   const [opened, setOpened] = useState<string | null>(null)
@@ -190,7 +197,9 @@ export function SetupView({
   const { completion } = readiness
   const allDone = setupDone(readiness)
   const ended = (finished || allDone) && completion !== null
-  const chat = <SetupChat onSend={onAsk} onOpenSettings={() => onNavigate('settings')} />
+  const chat = (
+    <SetupChat onSend={onAsk} onOpenSettings={() => onNavigate('settings')} approval={chatApproval} />
+  )
 
   return (
     <div className="page">

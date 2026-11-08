@@ -51,6 +51,8 @@ export type PlannerPlanTask = {
   acceptanceChecks: string[]
   /** Decision #33: this task touches sensitive ground. */
   sensitive?: boolean
+  /** §10: the brief says finishing with no change is a valid outcome (a check, an investigation). */
+  noChangeOk?: boolean
   dependsOn: string[]
   role: string
   /** §10, §14: what the task builds on. */
@@ -387,6 +389,7 @@ export class PlannerTools {
             return checks.length > 0 ? checks : [...(this.#config.knownChecks ?? ['manual-review'])]
           })(),
           ...(task.sensitive === true && { sensitive: true }),
+          ...(task.no_change_ok === true && { noChangeOk: true }),
           dependsOn: stringArray(task.depends_on),
           role: typeof task.role === 'string' && task.role !== '' ? task.role : 'implementer',
           basePolicy: task.base_policy === 'contract' ? 'contract' : 'integration',

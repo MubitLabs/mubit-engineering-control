@@ -25,6 +25,7 @@ import { AttemptLauncher, resolveBinary } from '../src/attempt-launch'
 import { startServer } from '../src/composition'
 import { StoreFacts } from '../src/core-facts'
 import { specialistBridge, specialistTools } from '../src/specialist-tools'
+import { ownerHeaders, TEST_KEY } from './approval-rig'
 
 const FAKE_CLI = fileURLToPath(new URL('../../../packages/testkit/fake-cli/claude', import.meta.url))
 const POLICY = '{"preAuthorised":{}}'
@@ -146,7 +147,7 @@ function seedStore(dataDir: string, repo: string, seed: Seed = {}): void {
 }
 
 async function serve(dataDir: string): Promise<{ url: string }> {
-  const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 4000 })
+  const server = await startServer({ approvalKey: TEST_KEY, dataDir, policyText: POLICY, closeBoundMs: 4000 })
   closers.push(server.close)
   return server
 }
@@ -280,6 +281,7 @@ describe('the commit outside the sandbox', { timeout: 60_000 }, () => {
 describe('a chat request', { timeout: 60_000 }, () => {
   const request = async (dataDir: string, tier = 'fast') => {
     const server = await startServer({
+      approvalKey: TEST_KEY,
       dataDir,
       policyText: POLICY,
       closeBoundMs: 4000,
@@ -288,7 +290,7 @@ describe('a chat request', { timeout: 60_000 }, () => {
     closers.push(server.close)
     const answer = await fetch(`${server.url}/api/chat/messages`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...ownerHeaders },
       body: JSON.stringify({ text: 'please add the thing', repoId: 'repo_a' }),
     })
     expect(answer.status).toBeLessThan(300)
@@ -332,11 +334,16 @@ describe('a chat request', { timeout: 60_000 }, () => {
       peek(dataDir, (store) => store.engines.save({ id: 'settings/meta-slot', slotId: String(slot.id) }))
       process.env.CLAUDE_CONFIG_DIR = '/must/not/arrive'
       try {
-        const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 4000 })
+        const server = await startServer({
+          approvalKey: TEST_KEY,
+          dataDir,
+          policyText: POLICY,
+          closeBoundMs: 4000,
+        })
         closers.push(server.close)
         await fetch(`${server.url}/api/chat/messages`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', ...ownerHeaders },
           body: JSON.stringify({ text: 'please add the thing', repoId: 'repo_a' }),
         })
         await until(() => existsSync(join(bin, 'seen.json')))
@@ -366,12 +373,17 @@ describe('a chat request', { timeout: 60_000 }, () => {
       const { dataDir, repo, bin } = scratch({ steps: [{ init: true }, { result: 'completed' }] })
       seedSlots(dataDir, repo, [{ ...LINKED, state: 'retired' }])
       peek(dataDir, (store) => store.engines.save({ id: 'settings/meta-slot', slotId: LINKED.id }))
-      const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 4000 })
+      const server = await startServer({
+        approvalKey: TEST_KEY,
+        dataDir,
+        policyText: POLICY,
+        closeBoundMs: 4000,
+      })
       closers.push(server.close)
 
       await fetch(`${server.url}/api/chat/messages`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...ownerHeaders },
         body: JSON.stringify({ text: 'please add the thing', repoId: 'repo_a' }),
       })
 
@@ -390,7 +402,12 @@ describe('a chat request', { timeout: 60_000 }, () => {
       const { home: _home, ...homeless } = LINKED
       seedSlots(dataDir, repo, [{ ...homeless, state: 'retired' }])
       peek(dataDir, (store) => store.engines.save({ id: 'settings/meta-slot', slotId: LINKED.id }))
-      const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 4000 })
+      const server = await startServer({
+        approvalKey: TEST_KEY,
+        dataDir,
+        policyText: POLICY,
+        closeBoundMs: 4000,
+      })
       closers.push(server.close)
       const status = (await (await fetch(`${server.url}/api/status`)).json()) as {
         parts: Record<string, { state: string; detail?: string }>
@@ -671,9 +688,50 @@ describe('the launch path', { timeout: 60_000 }, () => {
   })
 
   // §5.3 and the slot isolation row of §26: a slot added in Connections runs under its own home.
+  it("the repository's CLAUDE.md and AGENTS.md at the base reach the brief, labelled and redacted", async () => {
+    // Owner ruling, 7 November 2026: the repository's own instructions, as information.
+    const { dataDir, repo, bin } = scratch({ steps: SUCCESS })
+    const key = `sk-ant-api03-${'k'.repeat(90)}`
+    writeFileSync(join(repo, 'CLAUDE.md'), `# Repo rules\nRun pnpm check before you finish.\nkey ${key}\n`)
+    writeFileSync(join(repo, 'AGENTS.md'), '# Agents\nKeep commits small.\n')
+    mkdirSync(join(repo, '.claude'))
+    writeFileSync(join(repo, '.claude', 'settings.json'), '{"env":{"SETTING_MARK":"from-repo"}}\n')
+    gitIn(repo, 'add', '--all')
+    gitIn(repo, 'commit', '--quiet', '-m', 'instructions')
+    process.env.MEC_REAL_RUNNER = '1'
+    seedStore(dataDir, repo, { checks: [{ name: 'made', cmd: 'test -f made.txt' }] })
+    await serve(dataDir)
+    await reaches(dataDir, 'succeeded')
+
+    const stdin = readFileSync(join(bin, 'stdin.jsonl'), 'utf8')
+    const prompt = String(JSON.parse(stdin.split('\n')[0] ?? '{}').message.content)
+    expect(prompt).toContain("The repository's own instructions, as information")
+    expect(prompt).toContain('CLAUDE.md at the base:')
+    expect(prompt).toContain('Run pnpm check before you finish.')
+    expect(prompt).toContain('AGENTS.md at the base:')
+    expect(prompt).toContain('Keep commits small.')
+    expect(prompt).not.toContain(key)
+    expect(prompt).not.toContain('SETTING_MARK')
+  })
+
+  it('a repository with neither file adds nothing to the brief', async () => {
+    const { dataDir, repo, bin } = scratch({ steps: SUCCESS })
+    process.env.MEC_REAL_RUNNER = '1'
+    seedStore(dataDir, repo, { checks: [{ name: 'made', cmd: 'test -f made.txt' }] })
+    await serve(dataDir)
+    await reaches(dataDir, 'succeeded')
+    const prompt = readFileSync(join(bin, 'stdin.jsonl'), 'utf8')
+    expect(prompt).not.toContain("repository's own instructions")
+  })
+
   it('a slot from Add connection launches under its own home, not the default login', async () => {
     const { dataDir, repo, seen } = scratch({ steps: SUCCESS })
-    const adding = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 4000 })
+    const adding = await startServer({
+      approvalKey: TEST_KEY,
+      dataDir,
+      policyText: POLICY,
+      closeBoundMs: 4000,
+    })
     const added = await fetch(`${adding.url}/api/slots/dedicated`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -755,7 +813,12 @@ describe('the launch path', { timeout: 60_000 }, () => {
     process.env.MEC_REAL_RUNNER = '1'
     seedStore(dataDir, repo, { checks: [{ name: 'made', cmd: 'test -f made.txt' }] })
     peek(dataDir, (store) => store.engines.save({ id: 'settings/policy', text: POLICY, revision: 1 }))
-    const server = await startServer({ dataDir, policyText: 'not a policy', closeBoundMs: 4000 })
+    const server = await startServer({
+      approvalKey: TEST_KEY,
+      dataDir,
+      policyText: 'not a policy',
+      closeBoundMs: 4000,
+    })
     closers.push(server.close)
     await reaches(dataDir, 'succeeded')
   })
@@ -848,7 +911,12 @@ describe('the launch path', { timeout: 60_000 }, () => {
     })
     process.env.MEC_REAL_RUNNER = '1'
     seedStore(dataDir, repo)
-    const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 6000 })
+    const server = await startServer({
+      approvalKey: TEST_KEY,
+      dataDir,
+      policyText: POLICY,
+      closeBoundMs: 6000,
+    })
     closers.push(server.close)
     await reaches(dataDir, 'running')
     await until(() => existsSync(join(dirnameOfSeen(seen), 'child.pid')))
@@ -883,7 +951,12 @@ describe('the launch path', { timeout: 60_000 }, () => {
     const { pidFile, checks } = hangingCheck(repo, root)
     process.env.MEC_REAL_RUNNER = '1'
     seedStore(dataDir, repo, { checks })
-    const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 6000 })
+    const server = await startServer({
+      approvalKey: TEST_KEY,
+      dataDir,
+      policyText: POLICY,
+      closeBoundMs: 6000,
+    })
     closers.push(server.close)
     await until(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '')
     const pid = Number(readFileSync(pidFile, 'utf8'))
@@ -901,7 +974,12 @@ describe('the launch path', { timeout: 60_000 }, () => {
     const { pidFile, checks } = hangingCheck(repo, root)
     process.env.MEC_REAL_RUNNER = '1'
     seedStore(dataDir, repo, { checks })
-    const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 6000 })
+    const server = await startServer({
+      approvalKey: TEST_KEY,
+      dataDir,
+      policyText: POLICY,
+      closeBoundMs: 6000,
+    })
     await until(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '')
     const pid = Number(readFileSync(pidFile, 'utf8'))
     await server.close()
@@ -914,7 +992,12 @@ describe('the launch path', { timeout: 60_000 }, () => {
     const { dataDir, repo, seen } = scratch({ steps: [{ init: true }, { forever: true }] })
     process.env.MEC_REAL_RUNNER = '1'
     seedStore(dataDir, repo)
-    const server = await startServer({ dataDir, policyText: POLICY, closeBoundMs: 6000 })
+    const server = await startServer({
+      approvalKey: TEST_KEY,
+      dataDir,
+      policyText: POLICY,
+      closeBoundMs: 6000,
+    })
     await reaches(dataDir, 'running')
     await server.close()
     expect(() => process.kill(-Number(seen().pid), 0)).toThrow()

@@ -1,7 +1,8 @@
 // The browser's side of the approval key, in a stand-in window: where the key is kept, and that a
 // code leaves the address before anything else happens to it.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { HttpError, requestResponse } from '../src/api'
+import { api, HttpError, requestResponse } from '../src/api'
+import { inspectApi } from '../src/api-inspect'
 import {
   APPROVAL_HEADER,
   approvalKey,
@@ -107,6 +108,21 @@ describe('a request', () => {
       (sent[index]?.init?.headers as Record<string, string> | undefined)?.[APPROVAL_HEADER]
     expect(header(0)).toBeUndefined()
     expect(header(1)).toBe(KEY)
+  })
+
+  it('both ways of answering a question carry the key (owner, 7 November 2026)', async () => {
+    const { sent, stored } = stubWindow('', [
+      new Response('{"status":"answered"}', { status: 200 }),
+      new Response('{"status":"answered"}', { status: 200 }),
+    ])
+    stored.set('mec.approval-key', KEY)
+    await api.answerQuestion('q_1', 'yes')
+    await inspectApi.answer('q_2', 'yes')
+    const headers = sent.map(
+      (row) => (row.init?.headers as Record<string, string> | undefined)?.[APPROVAL_HEADER],
+    )
+    expect(sent.map((row) => row.path)).toEqual(['/api/questions/q_1/answer', '/api/questions/q_2/answer'])
+    expect(headers).toEqual([KEY, KEY])
   })
 
   it('a key the server refuses is forgotten, and the page hears of it', async () => {

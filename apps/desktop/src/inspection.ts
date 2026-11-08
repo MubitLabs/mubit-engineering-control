@@ -533,6 +533,8 @@ const META_SLOT_ID = 'settings/meta-slot'
  * this the line stops reading as progress.
  */
 const TURN_LIMIT_MS = 11 * 60_000
+/** The scheduler's defer when every slot that could take a task is at the utilisation ceiling (§11). */
+const CEILING_WAIT = 'utilisation_ceiling'
 /** Attempts a specialist is really on. Any other state is ended or waits on something else. */
 const SPECIALIST_STATES = new Set(['queued', 'running', 'work_complete'])
 /** The types worth a line about what an attempt is doing: `usage` and the like say nothing. */
@@ -1195,9 +1197,22 @@ class Inspector {
     return this.#lastReport(doc) === null ? 'no-answer' : 'answered'
   }
 
+  /** A ready task waiting on a connection's ceiling, in the scheduler's words (owner, 8 November 2026). */
+  #ceilingWait(tasks: readonly StoreDoc[]): string | null {
+    for (const task of tasks) {
+      const deferred = obj(task.deferred)
+      const releases = str(deferred?.releases)
+      if (str(task.status) === 'ready' && str(deferred?.reason) === CEILING_WAIT && releases !== null) {
+        return `Waiting: ${cutAtWord(redactText(releases), 200)}`
+      }
+    }
+    return null
+  }
+
   /** The row for each doc. Every batch read below is one query for the whole page, not one per row. */
   workRows(docs: StoreDoc[], needs: NeedItem[]): WorkRow[] {
     const ids = docs.map((doc) => String(doc.id))
+    const tasksOf = this.#groupBy(this.#reads.docsByField('task', 'workItemId', ids), 'workItemId')
     const counts = this.#reads.countByField('task', 'workItemId', 'status', ids, 'ready')
     const lastAt = this.#reads.lastEventAt(ids.map((id) => `work:${id}`))
     const attempts = this.#groupBy(this.#reads.docsByField('attempt', 'workItemId', ids), 'workItemId')
@@ -1235,6 +1250,13 @@ class Inspector {
               }),
             )
       const repoId = repoIdOf(doc)
+      const told =
+        turnOutcome === 'no-answer'
+          ? { reason: 'The meta agent stopped without answering', nextAction: 'Ask again' }
+          : turnOutcome === 'answered'
+            ? { reason: null, nextAction: null }
+            : this.#reasonAndAction(stage, doc, facts)
+      const ceiling = stage.key === 'working' ? this.#ceilingWait(tasksOf.get(id) ?? []) : null
       return {
         id,
         title: this.#titleOf(doc),
@@ -1243,11 +1265,8 @@ class Inspector {
         readOnly: repoId === null,
         state: shortText(str(doc.state) ?? 'admitted'),
         stage,
-        ...(turnOutcome === 'no-answer'
-          ? { reason: 'The meta agent stopped without answering', nextAction: 'Ask again' }
-          : turnOutcome === 'answered'
-            ? { reason: null, nextAction: null }
-            : this.#reasonAndAction(stage, doc, facts)),
+        ...told,
+        ...(told.reason === null && ceiling !== null && { reason: ceiling }),
         taskCounts: { total, byStatus },
         lastActivityAt: lastAt[`work:${id}`] ?? null,
         updatedAt: shortText(str(doc.updatedAt) ?? ''),
@@ -1432,6 +1451,8 @@ class Inspector {
     if (reason === HOST_RUN_UNAGREED)
       return 'until you agree to run this repository’s commands on this machine'
     const releases = str(deferred?.releases)
+    // The scheduler words a ceiling wait whole: whose limit, how far, the ceiling and the reset.
+    if (reason === CEILING_WAIT && releases !== null) return cutAtWord(redactText(releases), 200)
     if (releases !== null) return `until ${cutAtWord(redactText(releases), 200)}`
     if (reason !== null) return reason.replaceAll('_', ' ')
     const blocked = str(task.blockedReason)
@@ -1592,6 +1613,11 @@ class Inspector {
     if (blocked !== undefined) return quiet('blocked', blocked.reason ?? 'Blocked', blocked)
     const held = open.find((row) => row.stage.key === 'held')
     if (held !== undefined) return quiet('held', held.reason ?? 'Held by you', held)
+    for (const row of open) {
+      const ceiling =
+        row.stage.key === 'working' ? this.#ceilingWait(this.#store.tasks.list({ workItemId: row.id })) : null
+      if (ceiling !== null) return quiet('between', ceiling, row)
+    }
     const [next] = open
     if (next !== undefined) {
       return quiet('between', `No specialist is running on ${titled(next)}`, next)

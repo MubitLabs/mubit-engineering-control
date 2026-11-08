@@ -13,6 +13,7 @@ import {
   schedulePass,
 } from '../src'
 import { holdWorkItem, refuseLaunch, stopWorkItem } from '../src/authority'
+import { ceilingWords, resetText } from '../src/ceiling'
 
 const AT = '2026-11-05T12:00:00.000Z'
 const POLICY = '{"preAuthorised":{}}'
@@ -1089,5 +1090,99 @@ describe('the scheduler pass (§11)', () => {
       lone.pass()
       expect(onlyPlacement(lone.store)).toBe('slot_a: the only candidate')
     })
+  })
+})
+
+describe('the utilisation ceiling, in words (owner, 8 November 2026)', () => {
+  const RESETS = '2026-11-10T07:00:00.000Z'
+  /** The slot as the store keeps it, with the reading `rateLimitObserved` saved. */
+  function slotDoc(store: MemoryRepositories, utilisation: number, extra: StoreDoc = {}): void {
+    store.atomic(() => {
+      store.slots.save({
+        id: 'slot_a',
+        label: 'preflight-a',
+        engine: 'claude',
+        kind: 'claude-sub',
+        state: 'healthy',
+        usageUtilization: utilisation,
+        usageWindow: 'seven_day',
+        usageResetsAt: RESETS,
+        ...extra,
+      })
+    })
+  }
+  const notices = (store: MemoryRepositories) => store.messages.list({ routing: 'notice' })
+  const releasesOf = (store: MemoryRepositories) =>
+    String((store.tasks.get('task_a')?.deferred as { releases?: string } | undefined)?.releases)
+
+  it('MEC stops at 95%: a slot at 90% still takes new work', () => {
+    const { store, pass } = rig([slot('slot_a', { utilisation: 0.9 })])
+    work(store)
+    task(store, 'task_a')
+    expect(pass()).toMatchObject([{ slotId: 'slot_a' }])
+  })
+
+  it('a slot at 95% takes none, and the wait says whose limit, how far, the ceiling and the reset', () => {
+    const { store, pass } = rig([slot('slot_a', { utilisation: 0.95 })])
+    slotDoc(store, 0.95)
+    work(store)
+    task(store, 'task_a')
+
+    expect(pass()).toEqual([])
+    expect(store.tasks.get('task_a')?.deferred).toMatchObject({ reason: 'utilisation_ceiling' })
+    expect(releasesOf(store)).toMatch(
+      /^Claude account preflight-a is at 95% of its weekly limit; MEC stops at 95%\. Resets \w{3} \d{1,2} \w{3} \d{2}:\d{2}$/,
+    )
+  })
+
+  it('posts one chat line on the work the first time it waits for this reason', () => {
+    const { store, pass } = rig([slot('slot_a', { utilisation: 0.96 })])
+    slotDoc(store, 0.96)
+    work(store)
+    task(store, 'task_a')
+    pass()
+    slotDoc(store, 0.97)
+    pass()
+
+    const lines = notices(store)
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toMatchObject({ workItemId: 'wi_1', repoId: REPO, notice: true })
+    expect(String(lines[0]?.text)).toMatch(
+      /^Waiting: Claude account preflight-a is at 96% of its weekly limit/,
+    )
+    // The task's own words follow the reading; the chat line is not repeated.
+    expect(releasesOf(store)).toContain('at 97%')
+  })
+
+  it('a reset nobody reported is said to be unknown, never guessed', () => {
+    const { store, pass } = rig([slot('slot_a', { utilisation: 0.99 })])
+    slotDoc(store, 0.99, { usageResetsAt: 'unknown', usageWindow: null })
+    work(store)
+    task(store, 'task_a')
+    pass()
+    expect(releasesOf(store)).toBe(
+      'Claude account preflight-a is at 99% of its limit; MEC stops at 95%. When it resets is not known.',
+    )
+  })
+
+  it('the reset reads as a day and a time a person knows', () => {
+    expect(resetText(RESETS, 'UTC')).toBe('Tue 10 Nov 07:00')
+    expect(resetText('unknown', 'UTC')).toBeUndefined()
+    const doc = { label: 'preflight-a', kind: 'claude-sub', usageUtilization: 0.96, usageWindow: 'seven_day' }
+    expect(ceilingWords({ ...doc, usageResetsAt: RESETS }, 'slot_a', 'UTC')).toBe(
+      'Claude account preflight-a is at 96% of its weekly limit; MEC stops at 95%. Resets Tue 10 Nov 07:00',
+    )
+  })
+
+  it('a full slot is still a unit coming free, with no chat line', () => {
+    const { store, pass } = rig([slot('slot_a', { concurrency: 0, utilisation: 0.5 })])
+    work(store)
+    task(store, 'task_a')
+    pass()
+    expect(store.tasks.get('task_a')?.deferred).toMatchObject({
+      reason: 'capacity',
+      releases: 'a slot unit comes free',
+    })
+    expect(notices(store)).toEqual([])
   })
 })

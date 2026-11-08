@@ -209,6 +209,30 @@ describe('delegation is read from the attempts', () => {
     })
   })
 
+  describe('a wait on a connection at its ceiling (owner, 8 November 2026)', () => {
+    const words =
+      'Claude account preflight-a is at 96% of its weekly limit; MEC stops at 95%. Resets Tue 10 Nov 07:00'
+    const atCeiling = () =>
+      seedTask('ready', { deferred: { reason: 'utilisation_ceiling', releases: words } })
+
+    it('Delegation says it in words, as a sentence of its own', async () => {
+      atCeiling()
+      const [row] = (await get(`/api/inspect/work/${WI}`)).delegation
+      expect(row.waiting).toBe(words)
+    })
+
+    it('Work says it on the row', async () => {
+      atCeiling()
+      const [row] = (await get('/api/inspect/work')).items
+      expect(row.reason).toBe(`Waiting: ${words}`)
+    })
+
+    it('the live line says it, in place of no specialist running', async () => {
+      atCeiling()
+      expect((await metaOf()).line).toBe(`Waiting: ${words}`)
+    })
+  })
+
   it('a wait on the agreement is plain words, never its code', async () => {
     const releases = 'the owner agrees to host runs here'
     seedTask('ready', { deferred: { reason: 'host_run_unagreed', releases } })

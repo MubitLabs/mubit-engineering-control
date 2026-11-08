@@ -194,7 +194,7 @@ From `packages/policy/src/policy.ts` — v0 is JSON (the plan's YAML is a later 
 The planner asks and deterministic code grants (spec §11). The rule, in order; each attempt's `placement` says which steps decided:
 
 1. **Launchable only.** A slot takes work only if this build has proved its kind: a row in `apps/desktop/src/engine-registry.ts`, and a home. Today that is `claude-sub`, `codex-sub` and `opencode-glm`. Anything else, `opencode-gemini` and `claude-api` included, is left out of plan validation and placement alike, with the runner on or off, so a plan pinning one is refused. `MEC_FAKE_ENGINE=1` places on its one fake slot instead.
-2. **What can take it.** Healthy (§5.5), serving the task's model or tier (§3), under the utilisation ceiling and with a free unit (§11).
+2. **What can take it.** Healthy (§5.5), serving the task's model or tier (§3), under the utilisation ceiling (95% of the connection's limit: at or above it, nothing new starts there) and with a free unit (§11). When every slot that could take a task is at the ceiling, the task's wait names the connection, its reading, the ceiling and the reset.
 3. **A pin wins.** A task pinned to a slot waits for that slot and goes nowhere else.
 4. **A `slot_class` hint is a preference** (DECISIONS #43). Slots in the class go first; if none can take the task, any other may, and the placement says the class was missed.
 5. **The meta slot's engine** (`settings/meta-slot`, chosen in the wizard) goes next, on slots where the tier fits without degrading. If none does, another engine takes the task and the placement says so. With no meta slot chosen, or a retired one, this step does nothing.

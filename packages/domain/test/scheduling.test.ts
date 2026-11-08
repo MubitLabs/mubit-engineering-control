@@ -96,7 +96,30 @@ describe('planDispatches', () => {
     const hot = slot('s1', { concurrency: 2, inUse: 1, usageUtilization: 0.9 })
     const r = plan({ ready: [task('t1')], slots: [hot], active: [attempt('a1', 's1')] })
     expect(r.launches).toEqual([])
+    // Owner ruling, 8 November 2026: the wait says it is the ceiling, and which slot holds it.
+    expect(r.deferred).toEqual([{ taskId: 't1', reason: 'utilisation_ceiling', slotId: 's1' }])
+  })
+
+  it('names the ceiling only when no unit coming free would release the task', () => {
+    const hot = slot('s1', { usageUtilization: 0.9 })
+    const full = slot('s2', { concurrency: 1, inUse: 1 })
+    const r = plan({ ready: [task('t1')], slots: [hot, full], active: [attempt('a1', 's2')] })
     expect(r.deferred).toEqual([{ taskId: 't1', reason: 'capacity' }])
+  })
+
+  it('a ceiling wait names the least used of the slots at the ceiling', () => {
+    const r = plan({
+      ready: [task('t1')],
+      slots: [slot('s1', { usageUtilization: 0.97 }), slot('s2', { usageUtilization: 0.86 })],
+    })
+    expect(r.deferred).toEqual([{ taskId: 't1', reason: 'utilisation_ceiling', slotId: 's2' }])
+  })
+
+  it('the ceiling is a bound: a slot exactly at it takes nothing new, one just under does', () => {
+    const at = plan({ ready: [task('t1')], slots: [slot('s1', { usageUtilization: 0.8 })] })
+    expect(at.deferred).toMatchObject([{ reason: 'utilisation_ceiling' }])
+    const under = plan({ ready: [task('t1')], slots: [slot('s1', { usageUtilization: 0.79 })] })
+    expect(under.launches).toEqual([{ taskId: 't1', slotId: 's1' }])
   })
 
   it('routes around a ceilinged slot to one with headroom', () => {

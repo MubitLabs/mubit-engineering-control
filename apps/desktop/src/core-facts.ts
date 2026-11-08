@@ -169,8 +169,14 @@ export class StoreFacts implements AttemptFacts {
     const body = { attemptId: attempt.attempt_id, ...reading } as unknown as Json
     const doc = this.#store.slots.get(slot)
     if (doc !== undefined && reading.utilization !== undefined) {
-      // §11: placement reads this against the ceiling. No reading stays no reading.
-      const usage = { usageUtilization: reading.utilization, updatedAt: reading.observed_at }
+      // §11: placement reads this against the ceiling, and a wait on it names the window and its
+      // reset. No reading stays no reading.
+      const usage = {
+        usageUtilization: reading.utilization,
+        usageWindow: reading.window,
+        usageResetsAt: reading.resets_at ?? 'unknown',
+        updatedAt: reading.observed_at,
+      }
       this.#store.slots.save({ ...doc, ...usage })
     }
     this.#store.events.append(stream, {

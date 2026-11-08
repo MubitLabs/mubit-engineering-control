@@ -6,6 +6,7 @@ import type { HealthBoard, StoreDoc } from '@mec/contracts'
 import { MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store'
 import Database from 'better-sqlite3'
 import { buildServer, type ProbeCmd, type ServerDeps } from '../src/server'
+import { ownerApproval, ownerHeaders } from './approval-rig'
 
 /** A deliberately synthetic key: it passes the anthropic intake shape and opens nothing. */
 export const SYNTHETIC_KEY = 'sk-ant-api03-mec-test-fixture-000000000000abcd'
@@ -61,6 +62,7 @@ export function makeConfigServer(extra: Partial<ServerDeps> = {}): ConfigServer 
       fetches.push(String(input))
       return respond()
     },
+    approval: ownerApproval(),
     ...extra,
   })
   const send =
@@ -69,10 +71,9 @@ export function makeConfigServer(extra: Partial<ServerDeps> = {}): ConfigServer 
       app.inject({
         method,
         url,
-        ...(body !== undefined && {
-          headers: { 'content-type': 'application/json' },
-          payload: JSON.stringify(body),
-        }),
+        // A test plays the owner: its word carries the key the server was handed.
+        headers: { ...ownerHeaders, ...(body !== undefined && { 'content-type': 'application/json' }) },
+        ...(body !== undefined && { payload: JSON.stringify(body) }),
       })
   return {
     app,

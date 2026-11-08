@@ -4,6 +4,7 @@ import { InspectionReads, MIGRATIONS_v1, migrate, SqliteStore } from '@mec/store
 import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildServer } from '../src/server'
+import { ownerApproval, ownerHeaders } from './approval-rig'
 
 /**
  * What the meta agent is doing and who holds the work: read from what is recorded, through the
@@ -34,6 +35,7 @@ function serverWith(metaAgent?: MetaAgentService, now = LATER): ReturnType<typeo
     now: () => new Date(now),
     inspection: new InspectionReads(db),
     ...(metaAgent !== undefined && { metaAgent }),
+    approval: ownerApproval(),
   })
 }
 
@@ -280,6 +282,7 @@ describe('a turn that ended with no plan is not work in progress', () => {
     const posted = await app.inject({
       method: 'POST',
       url: '/api/chat/messages',
+      headers: ownerHeaders,
       payload: { text: 'what does this do?', repoId: 'repo_a' },
     })
     const { workItemId } = posted.json() as { workItemId: string }
@@ -304,6 +307,7 @@ describe('a turn that ended with no plan is not work in progress', () => {
     const posted = await app.inject({
       method: 'POST',
       url: '/api/chat/messages',
+      headers: ownerHeaders,
       payload: { text: 'what does this do?', repoId: 'repo_a' },
     })
     const { workItemId } = posted.json() as { workItemId: string }

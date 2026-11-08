@@ -48,6 +48,7 @@ const serverWith = (decision: MetaDecision, extra: Partial<ServerDeps> = {}) =>
       now: () => AT,
       policyText: '{"preAuthorised":{}}',
     }),
+    approval: ownerApproval(),
     ...extra,
   })
 
@@ -57,6 +58,7 @@ const say = async (text: string): Promise<string> => {
   const res = await app.inject({
     method: 'POST',
     url: '/api/chat/messages',
+    headers: ownerHeaders,
     payload: { text, repoId: 'repo_a' },
   })
   expect(res.statusCode).toBe(200)

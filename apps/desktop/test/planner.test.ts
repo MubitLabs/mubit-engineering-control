@@ -284,7 +284,7 @@ describe('Chat Setup mode (T7)', () => {
       method: 'POST',
       url: '/api/chat/messages',
       payload: { text: 'check my slots', setup: true },
-      headers: { 'x-mec-client': '1', origin: 'http://127.0.0.1:5173' },
+      headers: { 'x-mec-client': '1', origin: 'http://127.0.0.1:5173', ...ownerHeaders },
     })
     expect(response.statusCode).toBe(200)
     const body = (await response.json()) as Record<string, unknown>
@@ -313,7 +313,7 @@ describe('Chat Setup mode (T7)', () => {
       method: 'POST',
       url: '/api/chat/messages',
       payload: { text: 'add the audit view', repoId: (repository.json() as { id: string }).id },
-      headers: { 'x-mec-client': '1', origin: 'http://127.0.0.1:5173' },
+      headers: { 'x-mec-client': '1', origin: 'http://127.0.0.1:5173', ...ownerHeaders },
     })
     const body = (await response.json()) as Record<string, unknown>
     expect(body).toMatchObject({ routing: 'new_work', acknowledged: 'On it: planning', tasksCreated: 2 })

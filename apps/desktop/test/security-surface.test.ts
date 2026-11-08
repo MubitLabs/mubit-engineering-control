@@ -2,6 +2,7 @@ import type { HealthBoard, HealthClaim, HealthName, Store } from '@mec/contracts
 import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, describe, expect, it } from 'vitest'
 import { buildServer, type ServerDeps } from '../src/server'
+import { ownerApproval, ownerHeaders } from './approval-rig'
 
 /**
  * §22 "rejects non-local origins and requires a custom request header (v1's CSRF
@@ -62,6 +63,7 @@ function makeServer(): { store: Store; app: ReturnType<typeof buildServer> } {
     health,
     policyText: '{"preAuthorised":{}}',
     now: () => new Date('2026-11-03T12:00:00Z'),
+    approval: ownerApproval(),
   }
   return { store, app: buildServer(deps) }
 }
@@ -92,7 +94,7 @@ describe('§22 leg 1: non-local origins are rejected before any route runs', () 
       method: 'POST',
       url: '/api/chat/messages',
       payload: { text: 'hello from a web page' },
-      headers: { origin: 'https://evil.com' },
+      headers: { ...ownerHeaders, origin: 'https://evil.com' },
     })
     expect(res.statusCode).toBe(403)
     const listed = await app.inject({ method: 'GET', url: '/api/chat/messages' })
@@ -115,7 +117,7 @@ describe('§22 leg 1: non-local origins are rejected before any route runs', () 
       method: 'POST',
       url: '/api/chat/messages',
       payload: { text: 'sandboxed frame' },
-      headers: { origin: 'null' },
+      headers: { ...ownerHeaders, origin: 'null' },
     })
     expect(res.statusCode).toBe(403)
   })
@@ -138,7 +140,7 @@ describe('§22 leg 2: browser-shaped mutations need the custom client header', (
       method: 'POST',
       url: '/api/chat/messages',
       payload: { text: 'hello' },
-      headers: { origin: 'http://localhost:5173' },
+      headers: { ...ownerHeaders, origin: 'http://localhost:5173' },
     })
     expect(res.statusCode).toBe(403)
   })
@@ -150,7 +152,7 @@ describe('§22 leg 2: browser-shaped mutations need the custom client header', (
       method: 'POST',
       url: '/api/chat/messages',
       payload: { text: 'hello', repoId },
-      headers: { origin: 'http://localhost:5173', 'x-mec-client': '1' },
+      headers: { ...ownerHeaders, origin: 'http://localhost:5173', 'x-mec-client': '1' },
     })
     expect(res.statusCode).toBe(200)
     expect((res.json() as { messageId: string }).messageId).toMatch(/^msg_/)
@@ -162,20 +164,24 @@ describe('§22 leg 2: browser-shaped mutations need the custom client header', (
       method: 'POST',
       url: '/api/chat/messages',
       payload: { text: 'hello' },
-      headers: { 'sec-fetch-site': 'cross-site' },
+      headers: { ...ownerHeaders, 'sec-fetch-site': 'cross-site' },
     })
     expect(res.statusCode).toBe(403)
   })
 
-  it('a local non-browser client (the CLI, tests, the engine MCP client) posts unchanged', async () => {
+  it("a local non-browser client posts only with the key: a chat message is the owner's word", async () => {
+    // Owner ruling, 8 November 2026. Being on loopback is no authority: a repository's check is too.
     const { app } = makeServer()
     const repoId = await registerRepo(track(app))
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/chat/messages',
-      payload: { text: 'hello from the CLI', repoId },
-    })
-    expect(res.statusCode).toBe(200)
+    const post = (headers: Record<string, string>) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/chat/messages',
+        payload: { text: 'hello from the CLI', repoId },
+        headers,
+      })
+    expect((await post({})).statusCode).toBe(403)
+    expect((await post(ownerHeaders)).statusCode).toBe(200)
   })
 })
 
@@ -186,6 +192,7 @@ describe('§26 secrets-in-chat at the route level (issue #8)', () => {
     const res = await track(app).inject({
       method: 'POST',
       url: '/api/chat/messages',
+      headers: ownerHeaders,
       payload: { text: `here is my key ${key} please use it` },
     })
     expect(res.statusCode).toBe(200)

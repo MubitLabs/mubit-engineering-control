@@ -495,6 +495,7 @@ function SetupSurface({
       onAsk={(text) =>
         configApi.setupMessage(text).catch((error: unknown) => ({ failure: failureText(error) }))
       }
+      chatApproval={<ApprovalLink purpose="chat" />}
     />
   )
 }

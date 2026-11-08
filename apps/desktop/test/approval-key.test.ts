@@ -120,6 +120,27 @@ describe('the resolve routes', { timeout: 60_000 }, () => {
     expect((await answer({ [APPROVAL_HEADER]: KEY })).status).not.toBe(403)
   })
 
+  it("a chat message needs the key: a message is the owner's word, and it can lift a block", async () => {
+    // Owner ruling, 8 November 2026. A follow-up is a chat message that names its work.
+    const rig = scratch([])
+    const server = await started(rig, { approvalKey: KEY })
+    const say = (body: Record<string, string>, headers: Record<string, string> = {}) =>
+      fetch(`${server.url}/api/chat/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify({ repoId: 'repo_a', text: 'go ahead', ...body }),
+      })
+    const before = peek(rig, (store) => store.messages.list().length)
+    const bodies: Record<string, string>[] = [{}, { referencesWorkItem: 'wi_any', intent: 'follow_up' }]
+    for (const body of bodies) {
+      const refused = await say(body)
+      expect(refused.status).toBe(403)
+      expect(await refused.json()).toEqual({ error: 'approval_required' })
+    }
+    expect(peek(rig, (store) => store.messages.list().length)).toBe(before)
+    expect((await say({}, { [APPROVAL_HEADER]: KEY })).status).not.toBe(403)
+  })
+
   it('agreeing needs the key, and withdrawing never does', async () => {
     const rig = scratch([])
     const server = await started(rig, { approvalKey: KEY })

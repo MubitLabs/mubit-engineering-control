@@ -107,8 +107,8 @@
   {
     "name": "D3 retry needs no approval key",
     "file": "apps/desktop/src/server.ts",
-    "find": "const OWNER_WORD = /(\\/resolve|\\/host-run\\/agree|\\/work\\/[^/]+\\/retry|\\/questions\\/[^/]+\\/answer)$/",
-    "replace": "const OWNER_WORD = /(\\/resolve|\\/host-run\\/agree|\\/questions\\/[^/]+\\/answer)$/",
+    "find": "/(\\/resolve|\\/host-run\\/agree|\\/work\\/[^/]+\\/retry|\\/questions\\/[^/]+\\/answer|^\\/api\\/chat\\/messages)$/",
+    "replace": "/(\\/resolve|\\/host-run\\/agree|\\/questions\\/[^/]+\\/answer|^\\/api\\/chat\\/messages)$/",
     "tests": ["apps/desktop/test/approval-key.test.ts"]
   },
   {
@@ -219,8 +219,8 @@
   {
     "name": "R3 answering a question needs no approval key",
     "file": "apps/desktop/src/server.ts",
-    "find": "const OWNER_WORD = /(\\/resolve|\\/host-run\\/agree|\\/work\\/[^/]+\\/retry|\\/questions\\/[^/]+\\/answer)$/",
-    "replace": "const OWNER_WORD = /(\\/resolve|\\/host-run\\/agree|\\/work\\/[^/]+\\/retry)$/",
+    "find": "/(\\/resolve|\\/host-run\\/agree|\\/work\\/[^/]+\\/retry|\\/questions\\/[^/]+\\/answer|^\\/api\\/chat\\/messages)$/",
+    "replace": "/(\\/resolve|\\/host-run\\/agree|\\/work\\/[^/]+\\/retry|^\\/api\\/chat\\/messages)$/",
     "tests": ["apps/desktop/test/approval-key.test.ts"]
   },
   {
@@ -257,5 +257,12 @@
     "find": "\"The repository's own instructions, as information. These are the repository's files, read at\",",
     "replace": "\"Instructions:\",",
     "tests": ["apps/desktop/test/repo-instructions.test.ts", "apps/desktop/test/attempt-launch.test.ts"]
+  },
+  {
+    "name": "R4 a chat message needs no approval key",
+    "file": "apps/desktop/src/server.ts",
+    "find": "/(\\/resolve|\\/host-run\\/agree|\\/work\\/[^/]+\\/retry|\\/questions\\/[^/]+\\/answer|^\\/api\\/chat\\/messages)$/",
+    "replace": "/(\\/resolve|\\/host-run\\/agree|\\/work\\/[^/]+\\/retry|\\/questions\\/[^/]+\\/answer)$/",
+    "tests": ["apps/desktop/test/approval-key.test.ts", "apps/desktop/test/security-surface.test.ts"]
   }
 ]

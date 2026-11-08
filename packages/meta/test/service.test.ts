@@ -361,6 +361,80 @@ describe('MetaAgentService (plan §6/§12)', () => {
       expect(store.tasks.list().map((task) => task.id)).toEqual(['task_live'])
       expect(store.workItems.get('wi_q')).toMatchObject({ state: 'done' })
     })
+
+    describe('sent by reference to the running work (Discuss, a reference)', () => {
+      const running = (store: MemoryRepositories) => {
+        live(store)
+        store.atomic(() => {
+          store.attempts.save({
+            id: 'att_live',
+            taskId: 'task_live',
+            workItemId: 'wi_live',
+            state: 'running',
+            createdAt: NOW(),
+          })
+        })
+      }
+
+      it('is answered in the chat by a planner turn, and the specialist never gets it', async () => {
+        const store = new MemoryRepositories()
+        running(store)
+        const before = structuredClone(store.workItems.get('wi_live'))
+        const seen: { reason: string; detail?: string }[] = []
+        const outcome = await asking(store, seen).onUserMessage({
+          messageId: 'msg_1',
+          text: 'How far along is this? One sentence.',
+          referencesWorkItem: 'wi_live',
+        })
+
+        expect(seen).toHaveLength(1)
+        expect(seen[0]?.reason).toContain('answer it with report_result')
+        expect(seen[0]?.detail).toContain('wi_live')
+        expect(outcome.acknowledged).toBe('It waits for its second check.')
+        expect(outcome.workItemId).not.toBe('wi_live')
+        const message = store.messages.get('msg_1')
+        expect(message).toMatchObject({
+          ackText: 'It waits for its second check.',
+          referencesWorkItem: 'wi_live',
+        })
+        expect(message?.owned).toBeUndefined()
+        // Nothing reached the running attempt, and the running work is as it was.
+        expect(store.workItems.get('wi_live')).toEqual(before)
+        expect(store.events.read('work:wi_live')).toEqual([])
+        expect(store.tasks.list().map((task) => task.id)).toEqual(['task_live'])
+        expect(store.snapshot().effects.filter((row) => row.kind !== 'reply')).toEqual([])
+      })
+
+      it('with nothing running, a referenced question keeps the turn on that work it has today', async () => {
+        const store = new MemoryRepositories()
+        live(store)
+        const outcome = await asking(store).onUserMessage({
+          messageId: 'msg_1',
+          text: 'How far along is this?',
+          referencesWorkItem: 'wi_live',
+        })
+        expect(outcome.workItemId).toBe('wi_live')
+        expect(outcome.acknowledged).toContain("nothing is running on it, so I'll pick this up")
+        expect(store.messages.get('msg_1')?.routing).toBe('attach')
+        expect(store.snapshot().effects.map((row) => row.kind)).toEqual(['relay'])
+      })
+
+      it('a referenced message that asks nothing still lands with the running work', async () => {
+        const store = new MemoryRepositories()
+        running(store)
+        const seen: unknown[] = []
+        const outcome = await asking(store, seen).onUserMessage({
+          messageId: 'msg_1',
+          text: 'Also cover the export button.',
+          referencesWorkItem: 'wi_live',
+        })
+
+        expect(seen).toEqual([])
+        expect(outcome.workItemId).toBe('wi_live')
+        expect(outcome.acknowledged).toContain('it lands with the running work')
+        expect(store.messages.get('msg_1')).toMatchObject({ routing: 'attach', owned: true })
+      })
+    })
   })
 
   it('a reference to a stopped work item is refused, never attached or resumed', async () => {

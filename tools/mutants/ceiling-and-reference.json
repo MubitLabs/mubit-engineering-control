@@ -1,0 +1,107 @@
+[
+  {
+    "name": "C1 the ceiling stays at 80%",
+    "file": "packages/meta/src/ceiling.ts",
+    "find": "export const UTILISATION_CEILING = 0.95",
+    "replace": "export const UTILISATION_CEILING = 0.8",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "C1 a ceiling wait is still called capacity",
+    "file": "packages/domain/src/scheduling.ts",
+    "find": "coolest !== undefined && hot.length === candidates.length",
+    "replace": "false",
+    "tests": ["packages/domain/test/scheduling.test.ts"]
+  },
+  {
+    "name": "C1 one hot slot beside a full one is called the ceiling",
+    "file": "packages/domain/src/scheduling.ts",
+    "find": "coolest !== undefined && hot.length === candidates.length",
+    "replace": "coolest !== undefined",
+    "tests": ["packages/domain/test/scheduling.test.ts"]
+  },
+  {
+    "name": "C1 the wait names the most used slot",
+    "file": "packages/domain/src/scheduling.ts",
+    "find": "utilisation(a) - utilisation(b))\n      const [coolest]",
+    "replace": "utilisation(b) - utilisation(a))\n      const [coolest]",
+    "tests": ["packages/domain/test/scheduling.test.ts"]
+  },
+  {
+    "name": "C1 no chat line on a ceiling wait",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "      tellCeilingOnce(store, String(doc.workItemId), words, at)\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "C1 the chat line repeats on every reading",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (store.messages.get(id) !== undefined) return\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "C1 the ceiling words lose the reset",
+    "file": "packages/meta/src/ceiling.ts",
+    "find": "(resets === undefined ? 'When it resets is not known.' : `Resets ${resets}`)",
+    "replace": "'When it resets is not known.'",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "C1 the reading keeps no window",
+    "file": "apps/desktop/src/core-facts.ts",
+    "find": "        usageWindow: reading.window,\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/recovery.test.ts"]
+  },
+  {
+    "name": "C1 Delegation reads the ceiling as until",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    if (reason === CEILING_WAIT && releases !== null) return cutAtWord(redactText(releases), 200)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "C1 the Work row says nothing of the ceiling",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "        ...(told.reason === null && ceiling !== null && { reason: ceiling }),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "C1 the live line says no specialist is running",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      if (ceiling !== null) return quiet('between', ceiling, row)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "C2 every referenced message to running work is answered",
+    "file": "packages/meta/src/service.ts",
+    "find": "if (isQuestion(input.text) && this.#followups.ownerOf(routing.workItemId) !== undefined) {",
+    "replace": "if (this.#followups.ownerOf(routing.workItemId) !== undefined) {",
+    "tests": ["packages/meta/test/service.test.ts"]
+  },
+  {
+    "name": "C2 a referenced question with nothing running loses its work's turn",
+    "file": "packages/meta/src/service.ts",
+    "find": "if (isQuestion(input.text) && this.#followups.ownerOf(routing.workItemId) !== undefined) {",
+    "replace": "if (isQuestion(input.text)) {",
+    "tests": ["packages/meta/test/service.test.ts"]
+  },
+  {
+    "name": "C2 referenced questions still go to the specialist",
+    "file": "packages/meta/src/service.ts",
+    "find": "if (isQuestion(input.text) && this.#followups.ownerOf(routing.workItemId) !== undefined) {",
+    "replace": "if (false) {",
+    "tests": ["packages/meta/test/service.test.ts"]
+  },
+  {
+    "name": "C2 the turn is not told which work it is asked about",
+    "file": "packages/meta/src/service.ts",
+    "find": "(about === undefined ? input.text : `about ${about}: ${input.text}`)",
+    "replace": "input.text",
+    "tests": ["packages/meta/test/service.test.ts"]
+  }
+]

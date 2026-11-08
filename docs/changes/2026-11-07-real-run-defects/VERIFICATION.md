@@ -62,3 +62,18 @@ Focused suites after the rulings: project a (domain, meta, mec-tools, prompts, w
 `engine-registry.test.ts` alone with 1 worker: 54 of 54 passed.
 
 Not run after the rulings: a full `pnpm check`, screens (no UI text changed by the rulings), any real engine. Ruling 1 is unproven on a real specialist: that it follows the repository's instructions from the brief.
+
+## Owner ruling, 8 November 2026: chat needs the key
+
+| Test | Red |
+| --- | --- |
+| `approval-key.test.ts` "a chat message needs the key" (a new request and a follow-up) | `expected 200 to be 403` |
+| `work-live.screens.playwright.ts` "a tab with no key offers the link at the composer, and a refused send keeps the draft" | no "This browser cannot send yet" in the composer |
+| `work-live.screens.playwright.ts` "a linked tab sends its key with the message" | also red on the old UI, as first written: its route was registered before the stub server's, so it never saw the post. After the fix it is green, but it would pass on the old client too, which already sent the key. It is a guard, not failing-first |
+
+Test changes: tests that play the owner now send the key on chat, and their servers hold it. These are in `server`, `inspection`, `meta-visibility`, `delivery-surfaces`, `planner`, `setup-agent`, `security-surface`, `attempt-launch`, `composition` and `recovery`, the shared `config-server.ts`, and on the web side `inspection-contract` and `config-contract`. One assertion changed on purpose: `security-surface.test.ts`, where a local non-browser client now posts only with the key.
+
+- Mutants: 38 of 38 killed, exit 0, including "R4 a chat message needs no approval key".
+- Focused tests: 44 files, 977 tests. Before the last fixes, 5 failed (4 in `server.test.ts` with an inline server that had no key, 1 in `config-contract.test.ts`). After the fixes, those files plus `meta-slot` and `repository-edit` passed 97 of 97.
+- Screens: `pnpm test:screens` under the lock passed 1034 of 1034, with no baseline changed.
+- Typecheck and lint are clean.

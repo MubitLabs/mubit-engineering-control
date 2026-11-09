@@ -29,7 +29,7 @@ Real-engine canaries are **gated and never run in CI or wrappers** (they spend r
 | Layout & quickstart | `README.md` |
 | Dev loop, fixtures, engine contract, review rules | `CONTRIBUTING.md` |
 | CLI / HTTP API / policy schema | `docs/reference.md` |
-| Engine facts & pinned versions | `docs/engines.md` (claude 2.1.317 · codex-cli 0.148.0 · opencode 2.2.5) |
+| Engine facts & pinned versions | `docs/engines.md` (claude 2.1.317 · codex-cli 0.148.0 · opencode 2.2.5 and 2.2.6) |
 | Security | `docs/security/threat-model.md` · `docs/known-limits.md` |
 | Owner decisions | `docs/DECISIONS.md` (incl. #8: standing operator authority during the build) |
 | Agent-guided first run | `SETUP.md` |

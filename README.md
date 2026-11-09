@@ -36,7 +36,7 @@ The fixtures and gates were recorded against these exact versions (`docs/engines
 | --- | --- | --- |
 | Claude Code | 2.1.317 | ✅ real recordings + live canaries (H1, H3, H4) |
 | Codex CLI | 0.148.0 | ✅ real recordings + live canary (R2.1) |
-| OpenCode | 2.2.5 | ✅ real recordings + live canary (R2.2) |
+| OpenCode | 2.2.5, 2.2.6 | ✅ real recordings + live canary (R2.2); 2.2.6 by a real run through the runner, no new recordings |
 
 ## Status
 

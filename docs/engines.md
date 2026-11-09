@@ -106,3 +106,14 @@ Two real runs on a scratch repo, the default home's existing `zai-coding-plan` l
 - **Edit asks carry a relative path:** `resources: ["hello.txt"]`. Shell asks carry the command in `resources` too, with no `metadata.command`.
 - **Events echo the prompt,** so a verdict's name can appear in the text of an earlier event. The first run ended there. The stream's end has to read the event's own `type`.
 - **The default `build` agent has no rule against `external_directory`,** and the `general` subagent allows everything including shell. Starting from `*: deny` covers both.
+
+## OpenCode 2.2.6 drift (9 November 2026, caught by the launch gate on installed 0.3.4)
+
+The CLI self-updated 2.2.5 → 2.2.6, and the registry refused the launch: "engine opencode is 2.2.6; this build proved 2.2.5". The registry's gate is now a set of proven versions, 2.2.5 and 2.2.6 (`OPENCODE_PROVEN_VERSIONS`); a version outside it is still refused with no spend. Fixtures stay at 2.2.5: no stream was re-recorded.
+
+A zero-token probe of `opencode serve` on scratch XDG homes, then one real run through the runner (HANDSHAKES, 9 November):
+
+- **Unchanged where the adapter reads.** The `{"url"}` line, 401 without Basic auth, stdin EOF shutting the server. Every path the adapter uses (`POST /api/session`, `…/prompt`, `…/interrupt`, `…/permission/:id/reply`, `GET /api/event`), the `{data: {id}}` envelope, agent ids `build` and `plan`, the reply body `{decision: once|always|reject, message?}` answering 204, and 404 `PermissionNotFoundError` for an ask already settled. `session.created` carries `version`. The tool, permission, usage and verdict events of a real turn parsed as on 2.2.5.
+- **A session on a missing directory is created.** 2.2.6 answers 200 where 2.2.5 answered `LocationNotFoundError`. The adapter always passes the worktree, so nothing reads this.
+- **Two rules follow the attempt config's.** The merged `build` and `plan` lists end with `browser * deny` and `skill browser deny` after MEC's rules. Both deny, so the last-match result for every MEC rule is unchanged.
+- **Not compared.** No 2.2.5 `openapi.json` was kept, so the schema could not be diffed whole. 2.2.6 lists `session.execution.interrupted`; the client ends the stream on succeeded and failed only. Interrupt is not advertised (`interrupt: false`, a stop kills the group), so nothing waits on it today.

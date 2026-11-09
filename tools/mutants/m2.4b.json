@@ -184,8 +184,8 @@
   {
     "name": "opencode claims a sandbox",
     "file": "apps/desktop/src/engine-registry.ts",
-    "find": "  sandbox: 'off',\n  domains: [],\n  pinned: OPENCODE_ENGINE_VERSION,\n",
-    "replace": "  sandbox: 'required',\n  domains: [],\n  pinned: OPENCODE_ENGINE_VERSION,\n",
+    "find": "  sandbox: 'off',\n  domains: [],\n  pinned: OPENCODE_PROVEN_VERSIONS,\n",
+    "replace": "  sandbox: 'required',\n  domains: [],\n  pinned: OPENCODE_PROVEN_VERSIONS,\n",
     "tests": ["apps/desktop/test/engine-registry.test.ts"]
   },
   {

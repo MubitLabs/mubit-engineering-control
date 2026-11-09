@@ -1,0 +1,30 @@
+[
+  {
+    "name": "2.2.6 left out of the proven set",
+    "file": "packages/engines/src/opencode/protocol.ts",
+    "find": "export const OPENCODE_PROVEN_VERSIONS: readonly string[] = [OPENCODE_ENGINE_VERSION, '2.2.6']\n",
+    "replace": "export const OPENCODE_PROVEN_VERSIONS: readonly string[] = [OPENCODE_ENGINE_VERSION]\n",
+    "tests": ["apps/desktop/test/engine-registry.test.ts", "-t", "2.2.6|OpenCode version"]
+  },
+  {
+    "name": "2.2.5 dropped from the proven set",
+    "file": "packages/engines/src/opencode/protocol.ts",
+    "find": "export const OPENCODE_PROVEN_VERSIONS: readonly string[] = [OPENCODE_ENGINE_VERSION, '2.2.6']\n",
+    "replace": "export const OPENCODE_PROVEN_VERSIONS: readonly string[] = ['2.2.6']\n",
+    "tests": ["apps/desktop/test/engine-registry.test.ts", "-t", "OpenCode version|advertised capabilities"]
+  },
+  {
+    "name": "any version passes the gate",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "  if (!row.pinned?.includes(probe.capabilities.engine_version)) {\n",
+    "replace": "  if (row.pinned === undefined) {\n",
+    "tests": ["apps/desktop/test/engine-registry.test.ts", "-t", "drifted version|OpenCode version"]
+  },
+  {
+    "name": "the refusal names one version",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "this build proved ${row.pinned?.join(', ')}`",
+    "replace": "this build proved ${row.pinned?.[0]}`",
+    "tests": ["apps/desktop/test/engine-registry.test.ts", "-t", "OpenCode version"]
+  }
+]

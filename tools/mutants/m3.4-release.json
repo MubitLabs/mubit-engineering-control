@@ -28,39 +28,60 @@
     "tests": ["apps/web/test/a11y-gate.test.ts"]
   },
   {
-    "name": "default stays classic",
-    "file": "apps/web/src/ui-flag.ts",
-    "find": "=== 'classic' ? 'classic' : 'next'",
-    "replace": "=== 'next' ? 'next' : 'classic'",
-    "tests": ["apps/web/test/ui-flag.test.ts"]
+    "name": "a deleted module still imported",
+    "file": "apps/web/src/live/entry.tsx",
+    "find": "import { StrictMode } from 'react'",
+    "replace": "import '../ui-flag'\nimport { StrictMode } from 'react'",
+    "tests": ["apps/web/test/next-only.test.ts"]
   },
   {
-    "name": "stored classic ignored",
-    "file": "apps/web/src/ui-flag.ts",
-    "find": "=== 'classic' ? 'classic' : 'next'",
-    "replace": "=== 'classic' ? 'next' : 'next'",
-    "tests": ["apps/web/test/ui-flag.test.ts"]
+    "name": "a deleted module imported dynamically",
+    "file": "apps/web/src/main.tsx",
+    "find": "import('./live/entry')",
+    "replace": "import('./classic-entry').then(() => import('./live/entry'))",
+    "tests": ["apps/web/test/next-only.test.ts"]
   },
   {
-    "name": "a throwing read falls to classic",
-    "file": "apps/web/src/ui-flag.ts",
-    "find": "  } catch {\n    return 'next'\n  }\n}\n\n/** A choice",
-    "replace": "  } catch {\n    return 'classic'\n  }\n}\n\n/** A choice",
-    "tests": ["apps/web/test/ui-flag.test.ts"]
+    "name": "a web font comes back",
+    "file": "apps/web/src/next/base.css",
+    "find": "*,\n*::before",
+    "replace": "@font-face { font-family: \"Instrument Sans\"; src: url(x.woff2); }\n*,\n*::before",
+    "tests": ["apps/web/test/next-only.test.ts"]
   },
   {
-    "name": "a classic that cannot be kept half-applies",
-    "file": "apps/web/src/ui-flag.ts",
-    "find": "    return shell\n  } catch {\n    return 'next'",
-    "replace": "    return shell\n  } catch {\n    return shell",
-    "tests": ["apps/web/test/ui-flag.test.ts"]
+    "name": "a classic class name comes back",
+    "file": "apps/web/src/next/states.tsx",
+    "find": "<div className=\"empty\">",
+    "replace": "<div className=\"empty rail-item\">",
+    "tests": ["apps/web/test/next-only.test.ts"]
   },
   {
-    "name": "an unknown param overrides a stored classic",
-    "file": "apps/web/src/ui-flag.ts",
-    "find": "return { shell: readStored(storage), search }",
-    "replace": "return { shell: asked === null ? readStored(storage) : 'next', search }",
-    "tests": ["apps/web/test/ui-flag.test.ts"]
+    "name": "the shell choice is read again",
+    "file": "apps/web/src/main.tsx",
+    "find": "const container = document.getElementById('root')",
+    "replace": "localStorage.getItem('mec-ui-shell')\nconst container = document.getElementById('root')",
+    "tests": ["apps/web/test/next-only.test.ts"]
+  },
+  {
+    "name": "the inbox deep link stops routing",
+    "file": "apps/web/src/router.ts",
+    "find": "{ inbox: 'needs', wizard: 'setup' }",
+    "replace": "{ wizard: 'setup' }",
+    "tests": ["apps/web/test/next-only.test.ts"]
+  },
+  {
+    "name": "the wizard deep link stops routing",
+    "file": "apps/web/src/router.ts",
+    "find": "{ inbox: 'needs', wizard: 'setup' }",
+    "replace": "{ inbox: 'needs' }",
+    "tests": ["apps/web/test/next-only.test.ts"]
+  },
+  {
+    "name": "the shell stylesheet is not loaded",
+    "file": "apps/web/src/live/entry.tsx",
+    "find": "import '../next/styles'\n",
+    "replace": "",
+    "tests": ["apps/web/test/shell-split.test.ts"]
   },
   {
     "name": "an unknown lighthouse theme is scored anyway",

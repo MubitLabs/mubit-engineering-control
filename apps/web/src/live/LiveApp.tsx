@@ -522,11 +522,6 @@ export function LiveApp() {
         label: `Switch to ${repositoryName(repo.url)}`,
         run: () => switchRepository(repo.id),
       })),
-    {
-      id: 'return-classic',
-      label: 'Return to the classic workbench',
-      run: () => window.location.assign(`?ui=classic${window.location.hash}`),
-    },
   ]
 
   const retryRead = () => workspace.refresh()

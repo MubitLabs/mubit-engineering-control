@@ -28,6 +28,7 @@ const variant = params.get('state') ?? 'working'
 
 function ConversationContent({ selected, onSelect }: { selected: string | null; onSelect: (id: string) => void }) {
   const { openInspector } = useShellActions()
+  if (variant === 'throws') throw new Error('sample boom')
   if (variant === 'empty') {
     return (
       <div className="conversation">

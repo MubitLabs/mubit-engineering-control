@@ -12,7 +12,7 @@ import {
 } from './fixtures/inspection-fixtures'
 
 /**
- * `?ui=next` on the live path: the real LiveApp, fetches and decoders, with `page.route` standing
+ * The live path: the real LiveApp, fetches and decoders, with `page.route` standing
  * in for the server. The payloads are the fixtures test/inspection-contract.test.ts holds to the
  * real server's shape. Everything a real server has to prove is the verifier's, on the built app.
  */
@@ -37,6 +37,7 @@ interface Over {
   repositories?: () => Reply
   chat?: () => Reply
   workDetail?: (id: string) => Reply
+  message?: () => Reply
   /** Runs before the answer, so the next read sees what the post changed. */
   posted?: (path: string) => void
   /** The stream's body for a connection from these cursors. Null holds it open and quiet. */
@@ -72,6 +73,7 @@ async function server(page: Page, over: Over = {}) {
       if (pathname.endsWith('/answer')) {
         return send(over.answer?.() ?? { status: 200, body: { status: 'answered' } })
       }
+      if (pathname === '/api/chat/messages' && over.message) return send(over.message())
       const command = /\/api\/work\/([^/]+)\/(hold|lift|stop)$/.exec(pathname)
       if (command) {
         const status = { hold: 'held', lift: 'lifted', stop: 'stopped' }[command[2] as 'hold']
@@ -530,6 +532,176 @@ test.describe('Conversation and search', () => {
     await page.keyboard.press('Control+k')
     await page.getByRole('option', { name: 'Search' }).click()
     await expect(page.getByRole('searchbox')).toBeFocused()
+  })
+})
+
+/** Keyboard only: Tab until `target` has focus, so reaching it is itself the assertion. */
+async function tabTo(page: Page, target: ReturnType<Page['locator']>): Promise<void> {
+  for (let press = 0; press < 80; press += 1) {
+    await page.keyboard.press('Tab')
+    if (await target.evaluate((node) => node === document.activeElement).catch(() => false)) return
+  }
+  throw new Error('Tab never reached the target')
+}
+
+// Ported from the classic suite when that shell went (decision #35). The equals are listed in
+// docs/changes/2026-11-09-remove-classic/CHANGE.md.
+test.describe('the old shell’s journeys, on this one', () => {
+  test.use({ viewport: { width: 1440, height: 900 } })
+
+  test('§23 worked example: the request, the plan, a question, a decision and its evidence', async ({
+    page,
+  }) => {
+    await server(page, {
+      work: () => ({
+        status: 200,
+        body: { ...workPage, items: workPage.items.filter((row) => row.id === 'work_working') },
+      }),
+    })
+    await open(page, 'repo/repo_a/chat')
+
+    // The request and the acknowledgement, then the status line, with tool calls kept out.
+    await expect(page.getByText('SAMPLE-ONLY add console search with clear empties')).toBeVisible()
+    await expect(page.getByText('SAMPLE-ONLY on it, I will plan this first')).toBeVisible()
+    await expect(page.getByText('SAMPLE-ONLY the implementer is building the index')).toBeVisible()
+
+    // The plan, and a task's requested and actual work behind one click.
+    const plan = page.locator('.delivery')
+    await plan.getByRole('button', { name: /build the index/ }).click()
+    await expect(page.locator('.inspector')).toContainText('build the index')
+
+    // The decision names its effect at both steps, and its evidence carries checks and diff.
+    await page
+      .locator('.rail')
+      .getByRole('button', { name: /Needs you/ })
+      .click()
+    const card = page.locator('article.decision', { hasText: 'push search to sample-console' })
+    await expect(page.getByText('SAMPLE-ONLY include archived rows?').first()).toBeVisible()
+    await expect(card).toContainText('SAMPLE-ONLY this leaves the machine, so it asks you.')
+    await card.getByRole('button', { name: 'Approve' }).click()
+    await expect(card.getByRole('button', { name: 'Confirm: push in sample-console' })).toBeVisible()
+    await card.getByRole('button', { name: 'Inspect checks and diff' }).click()
+    await expect(page.locator('.inspector')).toContainText('SAMPLE-ONLY card check')
+    await page.locator('.inspector').getByRole('tab', { name: 'Diff' }).click()
+    await expect(page.locator('.inspector')).toContainText('SAMPLE-ONLY card diff')
+  })
+
+  test('keyboard-only walkthrough', async ({ page }) => {
+    const { posts } = await server(page, {
+      resolve: () => ({ status: 200, body: { status: 'approved' } }),
+      message: () => ({ status: 200, body: { messageId: 'msg_new', workItemId: 'work_working' } }),
+    })
+    await open(page, 'repo/repo_a/chat')
+    const rail = page.locator('.rail')
+
+    // To Needs you; navigation moves focus to the heading.
+    await tabTo(page, rail.getByRole('button', { name: /Needs you/ }))
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('heading', { level: 1, name: 'Needs you' })).toBeFocused()
+
+    // Enter arms, focus stays on the card, Enter confirms.
+    const card = page.locator('article.decision', { hasText: 'push search to sample-console' })
+    await tabTo(page, card.getByRole('button', { name: 'Approve' }))
+    await page.keyboard.press('Enter')
+    await expect(card.getByRole('button', { name: /^Confirm/ })).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect.poll(() => posts.map((post) => post.path)).toContain('/api/inbox/card_pending/resolve')
+
+    // The question: Tab to a choice, Space picks it, Tab to Send, Enter answers.
+    const question = page.locator('article.decision', { hasText: 'include archived rows' })
+    await tabTo(page, question.getByRole('radio').first())
+    await page.keyboard.press('Space')
+    await expect(question.getByRole('radio').first()).toBeChecked()
+    await tabTo(page, question.getByRole('button', { name: 'Send answer' }))
+    await page.keyboard.press('Enter')
+    await expect.poll(() => posts.some((post) => post.path.endsWith('/answer'))).toBe(true)
+
+    // To Work; a row opens with Enter.
+    await tabTo(page, rail.getByRole('button', { name: 'Work', exact: true }))
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('heading', { level: 1, name: 'Work' })).toBeFocused()
+    await tabTo(page, page.getByRole('button', { name: /search for the console/ }).first())
+    await page.keyboard.press('Enter')
+    await expect(page).toHaveURL(/work\/work_working/)
+
+    // Slash focuses the composer from Conversation; Enter sends.
+    await tabTo(page, rail.getByRole('button', { name: 'Conversation', exact: true }))
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('heading', { level: 1 })).toBeFocused()
+    await page.keyboard.press('/')
+    const composer = page.getByRole('textbox', { name: 'Message the meta agent' })
+    await expect(composer).toBeFocused()
+    await page.keyboard.type('also hide the export button')
+    await page.keyboard.press('Enter')
+    await expect.poll(() => posts.map((post) => post.path)).toContain('/api/chat/messages')
+
+    // The palette switches the theme, no mouse anywhere.
+    await page.keyboard.press('Control+k')
+    await expect(page.getByRole('combobox')).toBeFocused()
+    await page.keyboard.type('dark')
+    await page.keyboard.press('Enter')
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  })
+
+  test('Esc walks the chain: armed approval, then palette, then inspector', async ({ page }) => {
+    await server(page)
+    await open(page, 'repo/repo_a/needs')
+    const card = page.locator('article.decision', { hasText: 'push search to sample-console' })
+    const approve = card.getByRole('button', { name: 'Approve' })
+    const confirm = card.getByRole('button', { name: /^Confirm/ })
+    const palette = page.locator('.palette-input')
+    await card.getByRole('button', { name: 'Inspect checks and diff' }).click()
+    await expect(page.locator('aside.inspector')).toBeVisible()
+
+    // Esc disarms the approval and touches nothing else.
+    await approve.click()
+    await expect(confirm).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(approve).toBeFocused()
+    await expect(page.locator('aside.inspector')).toBeVisible()
+
+    // Opening the palette is another action, so it cancels the arming; Esc closes only the palette.
+    await approve.click()
+    await expect(confirm).toBeFocused()
+    await page.keyboard.press('Control+k')
+    await expect(palette).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(palette).toHaveCount(0)
+    await expect(approve).toBeVisible()
+    await expect(page.locator('aside.inspector')).toBeVisible()
+
+    // The last Esc closes the inspector.
+    await page.keyboard.press('Escape')
+    await expect(page.locator('aside.inspector')).toHaveCount(0)
+  })
+
+  test('an open card whose evidence did not load cannot be approved, until a retry works', async ({
+    page,
+  }) => {
+    let down = true
+    const { posts } = await server(page, {
+      evidence: (id) =>
+        down
+          ? { status: 500, body: { error: 'down' } }
+          : { status: 200, body: cardEvidence[id as keyof typeof cardEvidence] },
+    })
+    await open(page, 'repo/repo_a/needs')
+    const missing = page.locator('.decision-missing').first()
+    await expect(missing).toContainText('cannot be approved yet')
+    await expect(missing.getByRole('button', { name: 'Approve' })).toHaveCount(0)
+    await expect(missing.getByRole('button', { name: 'Deny' })).toBeEnabled()
+
+    await missing.getByRole('button', { name: 'Retry' }).click()
+    await expect(missing).toContainText('cannot be approved yet')
+
+    down = false
+    await missing
+      .getByRole('button', { name: 'Retry' })
+      .click({ timeout: 2_000 })
+      .catch(() => {})
+    const card = page.locator('article.decision', { hasText: 'push search to sample-console' })
+    await expect(card.getByRole('button', { name: 'Approve' })).toBeEnabled()
+    expect(posts).toEqual([])
   })
 })
 

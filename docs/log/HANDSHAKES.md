@@ -150,3 +150,7 @@ Three bounded runs, real Claude 2.1.319 through the linked login: real `HOME`, s
 
 This settles the question for the shell on the route tested, on Claude only. It says nothing of Codex or OpenCode, and it is no authority on the route itself: the route still takes no token, and the sandbox is the whole of the fence. Not exercised: a model that hunts for another way out, a push or merge card killed mid-effect, and a real GitHub.
 
+
+## Installed 0.3.1, real request to a merged pull request (8 November 2026)
+
+Decision #48's gate for removing the classic shell. Installed `mec-0.3.1.tgz` (tag v0.3.1, `7a7dd82`), the real runner on, driven in Chrome as a normal user on `MubitLabs/mec-sandbox`. Link this browser, agree for `mec-sandbox`, one request ("Add shout.js …"). One cheap-tier task on the Claude slot ran on `claude-haiku-5-5`; checks passed; integrated with `shout.js` and `shout.test.js` only. Push card (first one denied by a mis-click, asked again, approved), PR card approved: PR #5. Sandbox CI passed and Work showed it. Merge card approved: GitHub reports PR #5 MERGED at 2026-11-08T21:28:18Z, merge commit `dbe767b`. Claude run 30 in `engine-runs.md`. The owner confirmed the pass and the removal on 9 November 2026.

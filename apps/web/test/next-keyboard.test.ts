@@ -98,6 +98,43 @@ describe('keyAction', () => {
   })
 })
 
+describe('the card shortcuts: J, A and G then W', () => {
+  it('J moves to the next open card, A arms the focused approval, G starts a go-to', () => {
+    expect(keyAction(key({ key: 'j' }), closed)).toBe('next-card')
+    expect(keyAction(key({ key: 'a' }), closed)).toBe('approve-card')
+    expect(keyAction(key({ key: 'g' }), closed)).toBe('go-prefix')
+  })
+
+  it('W after G goes to Work, and W alone does nothing', () => {
+    expect(keyAction(key({ key: 'w' }), { ...closed, pendingGo: true })).toBe('go-work')
+    expect(keyAction(key({ key: 'w' }), closed)).toBeNull()
+    expect(keyAction(key({ key: 'x' }), { ...closed, pendingGo: true })).toBeNull()
+  })
+
+  it('none fire while typing in a field', () => {
+    for (const letter of ['j', 'a', 'g']) {
+      expect(keyAction(key({ key: letter, typing: true }), closed)).toBeNull()
+    }
+    expect(keyAction(key({ key: 'w', typing: true }), { ...closed, pendingGo: true })).toBeNull()
+  })
+
+  it('none fire under a modal or the palette', () => {
+    for (const state of [modal, palette]) {
+      for (const letter of ['j', 'a', 'g']) expect(keyAction(key({ key: letter }), state)).toBeNull()
+      expect(keyAction(key({ key: 'w' }), { ...state, pendingGo: true })).toBeNull()
+    }
+  })
+
+  it('none fire with a modifier or while composing', () => {
+    for (const mod of [{ metaKey: true }, { ctrlKey: true }, { altKey: true }, { shiftKey: true }]) {
+      expect(keyAction(key({ key: 'a', ...mod }), closed)).toBeNull()
+      expect(keyAction(key({ key: 'j', ...mod }), closed)).toBeNull()
+    }
+    expect(keyAction(key({ key: 'a', isComposing: true }), closed)).toBeNull()
+    expect(keyAction(key({ key: 'j', keyCode: 229 }), closed)).toBeNull()
+  })
+})
+
 describe('isSubmitEnter', () => {
   const enter = { key: 'Enter', shiftKey: false, isComposing: false, keyCode: 13 }
 

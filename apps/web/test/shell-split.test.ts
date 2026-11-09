@@ -5,15 +5,11 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-/**
- * The real production build, because the dev server cannot show this: Vite preloads CSS from a
- * single dependency list per call site, so `flag ? import(a) : import(b)` built clean and
- * served classic's stylesheet to the next shell.
- */
+/** The real production build: what ships is the built bundle, not what the dev server serves. */
 
 const WEB = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
-describe('the production build keeps the shells apart', () => {
+describe('the production build', () => {
   let out: string
   let assets: string[]
   const read = (name: string) => readFileSync(join(out, 'assets', name), 'utf8')
@@ -31,32 +27,18 @@ describe('the production build keeps the shells apart', () => {
 
   afterAll(() => rmSync(out, { recursive: true, force: true }))
 
-  it('the bootstrap preloads each shell with its own stylesheet', () => {
+  it('the bootstrap preloads the shell with its stylesheet', () => {
     const bootstrap = read(asset(/^index-.*\.js$/))
-    const nextCss = asset(/^entry-.*\.css$/)
-    const classicCss = asset(/^classic-entry-.*\.css$/)
-    const nextJs = asset(/^entry-.*\.js$/)
-    const classicJs = asset(/^classic-entry-.*\.js$/)
-
-    const deps = /m\.f=(\[[^\]]*\])/.exec(bootstrap)?.[1]
-    expect(deps, 'dependency table').toBeDefined()
-    expect(deps).toContain(nextCss)
-    expect(deps).toContain(classicCss)
-
-    const list = JSON.parse(deps as string) as string[]
-    const groupOf = (js: string): string[] => {
-      const start = bootstrap.indexOf(`./${js}`)
-      const call = /__vite__mapDeps\(\[([\d,]+)\]\)/.exec(bootstrap.slice(start))
-      expect(call, `deps for ${js}`).not.toBeNull()
-      return (call?.[1] ?? '').split(',').map((index) => list[Number(index)] as string)
-    }
-    expect(groupOf(nextJs).some((file) => file.endsWith(nextCss))).toBe(true)
-    expect(groupOf(nextJs).some((file) => file.endsWith(classicCss))).toBe(false)
-    expect(groupOf(classicJs).some((file) => file.endsWith(classicCss))).toBe(true)
-    expect(groupOf(classicJs).some((file) => file.endsWith(nextCss))).toBe(false)
+    const css = asset(/^entry-.*\.css$/)
+    expect(bootstrap).toContain(asset(/^entry-.*\.js$/))
+    expect(bootstrap).toContain(css)
+    // The stylesheet is the shell's own: its tokens and layout, not an empty file.
+    const sheet = read(css)
+    expect(sheet).toContain('--')
+    expect(sheet).toContain('.shell')
   })
 
-  it('no web font, classic token or mock reaches the next shell', () => {
+  it('no web font or mock reaches the shell', () => {
     const css = read(asset(/^entry-.*\.css$/))
     expect(css).not.toMatch(/Instrument Sans|@font-face/)
     const js = read(asset(/^entry-.*\.js$/))

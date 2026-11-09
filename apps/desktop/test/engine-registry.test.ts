@@ -377,8 +377,14 @@ describe('Codex through the runner', { timeout: 180_000 }, () => {
     seed(dataDir, repo, { slot: CODEX_SLOT })
     await launched(dataDir)
     const profile = (seen().argv as string[]).find((arg) => arg.startsWith('permissions.mec=')) ?? ''
-    expect(profile).toContain(`"${dataDir}/work"="deny"`)
-    expect(profile).toContain(`"${dataDir}/tmp"="deny"`)
+    // The parents stay readable (a realpath lstats them); each sibling name goes by glob.
+    expect(profile).not.toContain(`"${dataDir}/work"="deny"`)
+    expect(profile).not.toContain(`"${dataDir}/tmp"="deny"`)
+    for (const parent of ['work', 'tmp']) {
+      expect(profile).toContain(`"${dataDir}/${parent}/att_[!1]*/**"="deny"`)
+      expect(profile).toContain(`"${dataDir}/${parent}/att_1?*/**"="deny"`)
+      expect(profile).toContain(`"${dataDir}/${parent}/[!a]*/**"="deny"`)
+    }
     expect(profile).toContain(`"${dataDir}/work/att_1"="write"`)
     expect(profile).toContain(`"${dataDir}/tmp/att_1"="write"`)
   })

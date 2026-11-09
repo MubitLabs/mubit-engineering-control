@@ -1,0 +1,100 @@
+[
+  {
+    "name": "M1 the worktree's parent is denied whole again (att_7)",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "  const filesystem: Record<string, string> = { ':root': 'read' }\n",
+    "replace": "  const filesystem: Record<string, string> = { ':root': 'read', [dirname(opts.worktree)]: 'deny' }\n",
+    "tests": ["packages/runtime/test/codex-client.test.ts"]
+  },
+  {
+    "name": "M2 the temp dir's siblings are not fenced",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "[...siblingDenyGlobs(opts.worktree), ...siblingDenyGlobs(opts.tempDir)]",
+    "replace": "[...siblingDenyGlobs(opts.worktree)]",
+    "tests": ["packages/runtime/test/codex-client.test.ts"]
+  },
+  {
+    "name": "M3 a sibling's tree is not denied, only its entry",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "  return names.flatMap((name) => [`${parent}/${name}`, `${parent}/${name}/**`])\n",
+    "replace": "  return names.map((name) => `${parent}/${name}`)\n",
+    "tests": ["packages/runtime/test/codex-client.test.ts"]
+  },
+  {
+    "name": "M4 a name that runs past this one is not fenced",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "  const names = [`${own}?*`]\n",
+    "replace": "  const names: string[] = []\n",
+    "tests": ["packages/runtime/test/codex-client.test.ts"]
+  },
+  {
+    "name": "M5 a name that stops short of this one is not fenced",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "    if (i > 0) names.push(`${own.slice(0, i - 1)}[${own[i - 1]}]`)\n",
+    "replace": "",
+    "tests": ["packages/runtime/test/codex-client.test.ts"]
+  },
+  {
+    "name": "M6 only the first character is negated",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "  for (let i = 0; i < own.length; i += 1) {\n",
+    "replace": "  for (let i = 0; i < 1; i += 1) {\n",
+    "tests": ["packages/runtime/test/codex-client.test.ts"]
+  },
+  {
+    "name": "M7 the negation also matches this attempt's own name",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "    names.push(`${own.slice(0, i)}[!${own[i]}]*`)\n",
+    "replace": "    names.push(`${own.slice(0, i)}*`)\n",
+    "tests": ["packages/runtime/test/codex-client.test.ts"]
+  },
+  {
+    "name": "M8 a name with glob metacharacters is fenced as if literal",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "  if (!GLOB_LITERAL.test(own)) throw",
+    "replace": "  if (false && !GLOB_LITERAL.test(own)) throw",
+    "tests": ["packages/runtime/test/codex-client.test.ts"]
+  },
+  {
+    "name": "M9 a completed fileChange is journalled as failed",
+    "file": "packages/engines/src/codex/protocol.ts",
+    "find": "        ok: str(item.status) === 'completed',\n      })\n    } else if (itemType === 'mcpToolCall')",
+    "replace": "        ok: false,\n      })\n    } else if (itemType === 'mcpToolCall')",
+    "tests": ["packages/engines/test/codex.test.ts"]
+  },
+  {
+    "name": "M10 a fileChange journals no paths again (att_7's input null)",
+    "file": "packages/engines/src/codex/protocol.ts",
+    "find": "        input: { changes: fileChangesOf(item), status: str(item.status) },\n",
+    "replace": "        input: null,\n",
+    "tests": ["packages/engines/test/codex.test.ts"]
+  },
+  {
+    "name": "M11 a fileChange carries its diff into the journal",
+    "file": "packages/engines/src/codex/protocol.ts",
+    "find": "    path: str(change?.path),\n",
+    "replace": "    path: str(change?.path),\n    diff: str(change?.diff),\n",
+    "tests": ["packages/engines/test/codex.test.ts"]
+  },
+  {
+    "name": "M12 the kind is read from the wrong place",
+    "file": "packages/engines/src/codex/protocol.ts",
+    "find": "    kind: str(((change?.kind ?? {}) as AnyRecord).type) || str(change?.kind),\n",
+    "replace": "    kind: str(change?.kind),\n",
+    "tests": ["packages/engines/test/codex.test.ts"]
+  },
+  {
+    "name": "M13 an applied fileChange is not journalled at all (the old rule)",
+    "file": "packages/engines/src/codex/protocol.ts",
+    "find": "    } else if (itemType === 'fileChange') {\n",
+    "replace": "    } else if (itemType === 'fileChange' && refused(item)) {\n",
+    "tests": ["packages/engines/test/codex.test.ts"]
+  },
+  {
+    "name": "M14 a fileChange's status is not journalled, so failed and declined read alike",
+    "file": "packages/engines/src/codex/protocol.ts",
+    "find": "        input: { changes: fileChangesOf(item), status: str(item.status) },\n",
+    "replace": "        input: { changes: fileChangesOf(item) },\n",
+    "tests": ["packages/engines/test/codex.test.ts"]
+  }
+]

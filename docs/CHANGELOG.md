@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.8 (9 November 2026)
+
+A fix from the owner's horse tinder test on the installed 0.3.7. See `docs/changes/2026-11-09-stale-block/`. No migration.
+
+- **A work no longer stays blocked once none of its tasks is.** When the task behind a block is cancelled or otherwise no longer blocked, the work resumes and integrates what was accepted, instead of reading Blocked with no action.
+- **An accepted task doesn't wait behind a blocked task it doesn't depend on** (spec §14: accepted tasks merge in dependency order).
+- **Cancelling a task reports it as cancelled**, and the Blocked line never names a task that is no longer blocked.
+
 ## 0.3.7 (9 November 2026)
 
 Fixes from the owner's "build a horse tinder website" test on the installed 0.3.6. See `docs/changes/2026-11-09-follow-up-base/`. No migration.

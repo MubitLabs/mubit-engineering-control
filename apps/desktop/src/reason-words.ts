@@ -23,6 +23,8 @@ const WORDS: Readonly<Record<string, readonly [string, boolean?]>> = {
   engine_not_launchable: ['This engine cannot run tasks yet'],
   auth_required: ['A connection needs signing in again'],
   model_refused: ['No model could be chosen for this task'],
+  // The runner's: the engine refused the model it was given (detail: `<model> on <slot>: <its words>`).
+  model_unsupported: ['The connection cannot run the model chosen for this task'],
   worktree_gone: ['The task’s worktree is gone'],
   slot_home_missing: ['A connection has no home directory'],
   slot_kind_unsupported: ['This engine cannot use that kind of connection'],

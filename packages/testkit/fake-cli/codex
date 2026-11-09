@@ -11,6 +11,9 @@
  *   login: 'Logged in using ChatGPT'
  *   mcp: [{name, transport}]       what `mcp list --json` prints, transport being a type name
  *   profile: 'mec'                 `activePermissionProfile.id`; null drops it, as `sandbox` does
+ *   models: ['gpt-5.6-luna', ...]  what `model/list` lists; absent, it answers `{}` as any method
+ *   modelPageSize: n               list that many per page, with `nextCursor` for the rest
+ *   modelListError: 'text'         `model/list` answers this JSON-RPC error instead
  *   steps: [...]                   what a turn does, each one of:
  *
  *   {notify: {method, params}}     one notification line
@@ -160,6 +163,15 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       },
     })
     send({ method: 'thread/started', params: { thread: { id: THREAD, cliVersion: '0.148.0' } } })
+  } else if (message.method === 'model/list' && scenario.modelListError !== undefined) {
+    send({ id: message.id, error: { code: -32603, message: scenario.modelListError } })
+  } else if (message.method === 'model/list' && scenario.models !== undefined) {
+    const start = Number(message.params?.cursor ?? 0)
+    const size = scenario.modelPageSize ?? scenario.models.length
+    const page = scenario.models.slice(start, start + size)
+    const next = start + size < scenario.models.length ? String(start + size) : null
+    const data = page.map((id) => ({ id, model: id, displayName: id, hidden: false, isDefault: false }))
+    send({ id: message.id, result: { data, nextCursor: next } })
   } else if (message.method === 'turn/start') {
     send({ id: message.id, result: { turn: { id: TURN } } })
     void turn()

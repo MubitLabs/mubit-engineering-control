@@ -753,7 +753,11 @@ function modelFit(
     try {
       const provider = view.provider
       const slot = { engine: view.engine as EngineId, ...(provider !== undefined && { provider }) }
-      const model = resolveModel(request.data, slot, table)
+      // §3 rule 2: what the slot's engine does not offer is never chosen, so the next one is.
+      const unavailable = new Set(
+        Object.entries(view.marks).flatMap(([key, mark]) => (mark === 'unavailable' ? [key] : [])),
+      )
+      const model = resolveModel(request.data, slot, table, { unavailable })
       if (view.marks[model.model] !== 'unavailable') resolved.set(view.slotId, model)
     } catch {
       // Refused for this slot: another may serve it, and if none does the task defers.
@@ -945,6 +949,7 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
         resolved_model: model.model,
         ...(model.effort !== undefined && { effort: model.effort }),
         ...(model.tier_degraded !== undefined && { tier_degraded: model.tier_degraded }),
+        ...(model.passed_over !== undefined && { models_passed_over: model.passed_over }),
       }),
       createdAt: at,
       updatedAt: at,

@@ -909,6 +909,31 @@ describe('the scheduler pass (§11)', () => {
     expect(pass()).toMatchObject([{ slotId: 'slot_b' }])
   })
 
+  // 0.3.4: a ChatGPT sign-in refused the table's first fast Codex model. The slot's marks say
+  // which models its engine lists, and placement takes the next one the slot does offer.
+  it('a tier whose first model the slot does not offer places the next one it does', () => {
+    const table = {
+      engines: {
+        codex: {
+          select: { flag: '-m' },
+          models: {
+            'gpt-6-luna': { tier: 'fast', effort: 'low', vendor_says: 'x' },
+            'gpt-5.6-luna': { tier: 'fast', effort: 'low', vendor_says: 'x' },
+          },
+        },
+      },
+    } as unknown as PlacementTable
+    const marks = { 'gpt-6-luna': 'unavailable', 'gpt-5.6-luna': 'available' } as const
+    const { store, pass } = rig([slot('slot_codex', { engine: 'codex', marks })], { table: () => table })
+    work(store)
+    task(store, 'task_a', { modelRequest: { tier: 'fast', reason: 'r' } })
+    expect(pass()).toMatchObject([{ slotId: 'slot_codex' }])
+    expect(attemptsOf(store, 'task_a')[0]).toMatchObject({
+      resolved_model: 'gpt-5.6-luna',
+      models_passed_over: ['gpt-6-luna'],
+    })
+  })
+
   it('records a degraded tier on the attempt before launch', () => {
     const { store, pass } = rig()
     work(store)

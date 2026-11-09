@@ -6,20 +6,24 @@ export type {
   ParkedState,
   StopReason,
 } from './attempt-runner'
-export { AttemptRunner, NotWiredError, replayJournal } from './attempt-runner'
+export { AttemptRunner, modelRefusalOf, NotWiredError, replayJournal } from './attempt-runner'
 export type { CheckOutcome, CheckSpec } from './checks'
 export { LOG_TAIL_BYTES, runCheck, runChecks } from './checks'
 export type {
   CodexAttemptOptions,
   CodexClient,
   CodexClientOptions,
+  CodexModelListing,
+  CodexModelListOptions,
   CodexServerRef,
 } from './codex-client'
 export {
   CODEX_PROFILE,
   CODEX_TOKEN_VAR,
   codexAttemptArgs,
+  codexModelIds,
   codexOtherServers,
+  listCodexModels,
   startCodexClient,
 } from './codex-client'
 export type { DriftCheck } from './drift'

@@ -10,6 +10,9 @@
  * engine: declared, as an OpenCode slot's marks are declared by its config, not probed. A model the
  * account refuses fails that attempt with the engine's reason. With it off the marks are the
  * opencode config probe alone, as they have been since issue #14.
+ *
+ * A slot whose home a launch has listed (Codex `model/list`, kept by `attempt-launch.ts`) is marked
+ * by that listing instead: a table row it named is available, any other row is unavailable.
  */
 
 import { join } from 'node:path'
@@ -19,6 +22,7 @@ import { loadModelsTable, userModelsPath } from '@mec/prompts'
 import { probeModelAvailabilitySync } from '@mec/slots'
 import type { SqliteStore } from '@mec/store'
 import { isLaunchableSlot, realRunnerOn } from './attempt-launch'
+import { modelListingId } from './engine-registry'
 
 type Marks = Record<string, Record<string, ModelAvailability>>
 
@@ -52,11 +56,27 @@ export function plannerPlacement(store: SqliteStore, dataDir: string): PlannerPl
       entries.map((entry) => [markKeyFor(entry.engine, entry.provider, entry.id), 'available' as const]),
     )
   }
+  /** The table's rows for this slot's engine, by what its home last listed; undefined with none kept. */
+  const listedMarks = (slot: {
+    id?: unknown
+    engine?: unknown
+  }): Record<string, ModelAvailability> | undefined => {
+    const kept = store.engines.get(modelListingId(String(slot.id)))
+    if (kept === undefined || kept.engine !== slot.engine || !Array.isArray(kept.listed)) return undefined
+    const listed = new Set(kept.listed.map(String))
+    const marks = declared(String(slot.engine))
+    return Object.fromEntries(
+      Object.keys(marks).map((key) => [
+        key,
+        listed.has(key) ? ('available' as const) : ('unavailable' as const),
+      ]),
+    )
+  }
   const marks = (): Marks => {
     const out: Marks = {}
     for (const slot of store.slots.list()) {
       if (realRunner && isLaunchableSlot(slot)) {
-        out[String(slot.id)] = declared(String(slot.engine))
+        out[String(slot.id)] = listedMarks(slot) ?? declared(String(slot.engine))
         continue
       }
       if (slot.engine !== 'opencode' || typeof slot.home !== 'string') continue

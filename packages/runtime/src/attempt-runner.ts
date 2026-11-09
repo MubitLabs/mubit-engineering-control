@@ -152,6 +152,40 @@ type Live = {
 
 const keyOf = (attempt: AttemptRef): string => `${attempt.attempt_id} ${attempt.generation}`
 
+/**
+ * An engine refusing the model it was given, by the vendor's code or words: OpenAI's
+ * `model_not_found`, Codex on a ChatGPT sign-in's "model is not supported" (0.3.4, a real run).
+ */
+const MODEL_REFUSAL = /model_not_found|model is not supported|model\b[^.]{0,80}\bdoes not exist/i
+
+/** A JSON body's `"message"` or `"detail"` inside an error's text: the vendor's own sentence. */
+const BODY_MESSAGE = /"(?:message|detail)"\s*:\s*"((?:[^"\\]|\\.)*)"/
+
+/** The longest refusal sentence a reason carries; a whole response body is not words. */
+const REFUSAL_CHARS = 300
+
+/**
+ * The engine's own words when an error event says the model was refused, else undefined. Read
+ * from the journal, so a refusal reads the same live and on replay.
+ */
+export function modelRefusalOf(events: readonly EngineEvent[]): string | undefined {
+  for (const event of events) {
+    if (event.type !== 'error') continue
+    if (!MODEL_REFUSAL.test(`${event.detail} ${JSON.stringify(event.raw ?? null)}`)) continue
+    const quoted = BODY_MESSAGE.exec(event.detail)?.[1]
+    let words = event.detail
+    if (quoted !== undefined) {
+      try {
+        words = JSON.parse(`"${quoted}"`) as string
+      } catch {
+        words = quoted
+      }
+    }
+    return words.trim().slice(0, REFUSAL_CHARS)
+  }
+  return undefined
+}
+
 /** §20: how long a dead group's silent journal is left before it counts as a stall. */
 const STALL_AFTER_MS = 30_000
 
@@ -432,10 +466,17 @@ export class AttemptRunner {
     }
     if (!live.sawSession) return this.#fail(live, 'no_session')
     if (exit?.terminal_reason === 'completed') return this.#settle(live)
-    const park = parkFromEvents(journal.events())
+    const events = journal.events()
+    const park = parkFromEvents(events)
     if (park.park) {
       facts.atomic(() => facts.attemptParked(attempt, park.state, park.reason, park.resetsAt))
       return
+    }
+    // A refused model is said as one, naming it and the connection, not as an api error.
+    const refusal = modelRefusalOf(events)
+    if (refusal !== undefined) {
+      const model = live.plan.model?.id ?? "the engine's default model"
+      return this.#fail(live, `model_unsupported: ${model} on ${live.plan.slotId}: ${refusal}`)
     }
     this.#fail(live, `engine_${exit?.terminal_reason ?? 'crashed'}`)
   }

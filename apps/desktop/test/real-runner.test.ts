@@ -37,7 +37,7 @@ describe('a real launch is the default', () => {
     vi.stubEnv('MEC_FAKE_ENGINE', undefined)
     for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value)
     const slot = { id: 'slot_a', engine: 'claude', kind: 'claude-sub', home: '/nowhere/slot' }
-    const store = { slots: { list: () => [slot] } }
+    const store = { slots: { list: () => [slot] }, engines: { get: () => undefined } }
     const placement = plannerPlacement(store as never, '/nowhere')
     expect(placement.launchableSlots !== undefined).toBe(env.MEC_FAKE_ENGINE !== '1')
     expect(placement.marks().slot_a !== undefined).toBe(on)

@@ -1,0 +1,149 @@
+[
+  {
+    "name": "M1 resolveModel ignores what the connection does not offer",
+    "file": "packages/runtime/src/model.ts",
+    "find": "  const candidates = listed.filter((c) => !refused(c))\n",
+    "replace": "  const candidates = listed\n",
+    "tests": ["packages/runtime/test/model.test.ts"]
+  },
+  {
+    "name": "M2 a named model the connection does not offer is accepted",
+    "file": "packages/runtime/src/model.ts",
+    "find": "    if (refused(named)) {",
+    "replace": "    if (false && refused(named)) {",
+    "tests": ["packages/runtime/test/model.test.ts"]
+  },
+  {
+    "name": "M3 a walk past unoffered models reads as the provider having none",
+    "file": "packages/runtime/src/model.ts",
+    "find": "skipped.length > 0 ? `this connection offers no ${requested} model` : `provider has no ${requested}`",
+    "replace": "`provider has no ${requested}`",
+    "tests": ["packages/runtime/test/model.test.ts"]
+  },
+  {
+    "name": "M4 the passed-over models are not said",
+    "file": "packages/runtime/src/model.ts",
+    "find": "    if (passed.length > 0) passed_over = passed\n",
+    "replace": "",
+    "tests": ["packages/runtime/test/model.test.ts"]
+  },
+  {
+    "name": "M4b every unoffered row at the tier reads as passed over",
+    "file": "packages/runtime/src/model.ts",
+    "find": "(at.tier === requested ? before : listed)",
+    "replace": "listed",
+    "tests": ["packages/runtime/test/model.test.ts"]
+  },
+  {
+    "name": "M5 the scheduler resolves without the slot's marks",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "      const model = resolveModel(request.data, slot, table, { unavailable })\n",
+    "replace": "      const model = resolveModel(request.data, slot, table)\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "M6 the queued attempt does not record what was passed over",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "        ...(model.passed_over !== undefined && { models_passed_over: model.passed_over }),\n",
+    "replace": "",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "M7 model ids are read from the wrong field",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "    typeof entry?.id === 'string' && entry.id !== '' ? [entry.id] : [],",
+    "replace": "    typeof entry?.id === 'string' && entry.id !== '' ? [String((entry as { displayName?: unknown }).displayName)] : [],",
+    "tests": ["packages/runtime/test/codex-client.test.ts"]
+  },
+  {
+    "name": "M8 an answer with no list reads as an empty listing",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "  if (!Array.isArray(answer.data)) return undefined\n",
+    "replace": "  if (!Array.isArray(answer.data)) return { ids: [] }\n",
+    "tests": ["packages/runtime/test/codex-client.test.ts"]
+  },
+  {
+    "name": "M9 only the first page is read",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "      cursor = answer.next\n",
+    "replace": "      cursor = undefined\n",
+    "tests": ["packages/runtime/test/codex-client.test.ts"]
+  },
+  {
+    "name": "M10 hidden models are left out of the listing",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "      const params = { includeHidden: true, ...(cursor !== undefined && { cursor }) }",
+    "replace": "      const params = { ...(cursor !== undefined && { cursor }) }",
+    "tests": ["packages/runtime/test/codex-client.test.ts"]
+  },
+  {
+    "name": "M11 the listing server is left running",
+    "file": "packages/runtime/src/codex-client.ts",
+    "find": "      proc.kill('SIGTERM')\n",
+    "replace": "",
+    "tests": ["packages/runtime/test/codex-client.test.ts"]
+  },
+  {
+    "name": "M12 a model refusal reads as an api error",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "    if (refusal !== undefined) {\n",
+    "replace": "    if (refusal !== undefined && false) {\n",
+    "tests": ["apps/desktop/test/engine-registry.test.ts", "-t", "refuses the model"]
+  },
+  {
+    "name": "M13 the refusal pattern misses the vendor's words",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "const MODEL_REFUSAL = /model_not_found|model is not supported|",
+    "replace": "const MODEL_REFUSAL = /model_not_found|",
+    "tests": ["packages/runtime/test/model-refusal.test.ts"]
+  },
+  {
+    "name": "M14 the whole response body is the reason",
+    "file": "packages/runtime/src/attempt-runner.ts",
+    "find": "    if (quoted !== undefined) {\n",
+    "replace": "    if (quoted !== undefined && false) {\n",
+    "tests": ["packages/runtime/test/model-refusal.test.ts"]
+  },
+  {
+    "name": "M15 the launch resolves without the listing",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "        unavailable === undefined ? {} : { unavailable },\n",
+    "replace": "        {},\n",
+    "tests": ["apps/desktop/test/engine-registry.test.ts", "-t", "connection offers"]
+  },
+  {
+    "name": "M16 the listing is not kept for planning",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "    store.atomic(() => {\n      const at = new Date().toISOString()\n      store.engines.save({\n        id: modelListingId(slotId),",
+    "replace": "    false && store.atomic(() => {\n      const at = new Date().toISOString()\n      store.engines.save({\n        id: modelListingId(slotId),",
+    "tests": ["apps/desktop/test/engine-registry.test.ts", "-t", "connection offers"]
+  },
+  {
+    "name": "M17 placement marks ignore the kept listing",
+    "file": "apps/desktop/src/planner-placement.ts",
+    "find": "        out[String(slot.id)] = listedMarks(slot) ?? declared(String(slot.engine))\n",
+    "replace": "        out[String(slot.id)] = declared(String(slot.engine))\n",
+    "tests": ["apps/desktop/test/planner-placement.test.ts"]
+  },
+  {
+    "name": "M18 a listing kept for another engine is used",
+    "file": "apps/desktop/src/planner-placement.ts",
+    "find": "kept.engine !== slot.engine || ",
+    "replace": "",
+    "tests": ["apps/desktop/test/planner-placement.test.ts"]
+  },
+  {
+    "name": "M19 the refusal code has no words",
+    "file": "apps/desktop/src/reason-words.ts",
+    "find": "  model_unsupported: ['The connection cannot run the model chosen for this task'],\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "M20 the shipped table puts the refused model first at fast",
+    "file": "packages/prompts/defaults/models.yaml",
+    "find": "      gpt-5.6-luna:  { tier: fast,",
+    "replace": "      gpt-5.6-luna:  { tier: balanced,",
+    "tests": ["apps/desktop/test/engine-registry.test.ts", "-t", "connection offers"]
+  }
+]

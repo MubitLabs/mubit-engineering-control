@@ -1,4 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
+import webPackage from '../package.json' with { type: 'json' }
 import {
   cardEvidence,
   chatLines,
@@ -10,6 +11,8 @@ import {
   workPage,
   workRows,
 } from './fixtures/inspection-fixtures'
+
+const PAGE_VERSION = webPackage.version
 
 /**
  * The live path: the real LiveApp, fetches and decoders, with `page.route` standing
@@ -47,6 +50,8 @@ interface Over {
   cursor?: () => number
   /** Holds a chat POST open, the way a planner turn does. */
   chatPost?: () => Promise<Reply>
+  /** `/api/status`; absent answers 404, as a server before 0.3.7 named no version. */
+  status?: () => Reply
 }
 
 async function server(page: Page, over: Over = {}) {
@@ -130,6 +135,7 @@ async function server(page: Page, over: Over = {}) {
         cursors: { repositories: over.cursor?.() ?? 1 },
       })
     }
+    if (pathname === '/api/status' && over.status) return send(over.status())
     if (pathname === '/api/inspect/work') return send(over.work?.() ?? { status: 200, body: workPage })
     if (pathname === '/api/inspect/needs') return send(over.needs?.() ?? { status: 200, body: needsPage })
     if (pathname === '/api/inspect/search') return ok(searchPage)
@@ -503,6 +509,34 @@ test.describe('Work', () => {
     await page.getByRole('button', { name: 'Discuss this work in sample-console' }).click()
     await expect(page.getByText(/Following up on/)).toBeVisible()
     await expect(page).toHaveURL(/#repo\/repo_a\/chat$/)
+  })
+
+  // The 9 November walkthrough: a tab open across an upgrade could not read a delivery until reloaded.
+  test('a delivery a page from an older build cannot read says MEC was updated, with Reload', async ({
+    page,
+  }) => {
+    await server(page, {
+      workDetail: () => ({ status: 200, body: { shapeFrom: 'a newer build' } }),
+      status: () => ({ status: 200, body: { version: '99.0.0' } }),
+    })
+    await open(page, 'repo/repo_a/work/work_working')
+    const alert = page.getByRole('alert')
+    await expect(alert).toContainText('MEC was updated')
+    await expect(alert).toContainText('Reload this page to continue.')
+    await expect(alert).not.toContainText('Could not read this delivery')
+    await expect(alert.getByRole('button', { name: 'Reload' })).toBeVisible()
+  })
+
+  test('the same build that cannot read a delivery says so, with Retry', async ({ page }) => {
+    await server(page, {
+      workDetail: () => ({ status: 200, body: { shapeFrom: 'a bug' } }),
+      status: () => ({ status: 200, body: { version: PAGE_VERSION } }),
+    })
+    await open(page, 'repo/repo_a/work/work_working')
+    const alert = page.getByRole('alert')
+    await expect(alert).toContainText('Could not read this delivery')
+    await expect(alert).toContainText('could not be read by this version of the page')
+    await expect(alert.getByRole('button', { name: 'Retry', exact: true })).toBeVisible()
   })
 
   test('error keeps content and offers retry', async ({ page }) => {

@@ -75,6 +75,15 @@ describe('planner context stage', () => {
     expect(stageIn(store)).toBe('Push declined')
   })
 
+  it('a fix running after a declined push reads as Working, as Work reads it (9 November 2026)', () => {
+    const store = storeWith({ id: 'wi_1', state: 'integrating' })
+    store.engines.save({ id: 'delivery/wi_1', stage: 'declined', pushCardId: 'conf_1', answer: 'denied' })
+    store.tasks.save({ id: 'task_fix', workItemId: 'wi_1', status: 'ready' })
+    expect(stageIn(store)).toBe('Working')
+    store.tasks.save({ id: 'task_fix', workItemId: 'wi_1', status: 'integrated' })
+    expect(stageIn(store)).toBe('Push declined')
+  })
+
   it('a branch that changed on GitHub reads as Work reads it, not Working (owner, 9 November 2026)', () => {
     const store = storeWith({ id: 'wi_1', state: 'integrating' })
     store.engines.save({ id: 'delivery/wi_1', stage: 'pr_open', headMoved: { sha: 'c'.repeat(40) } })

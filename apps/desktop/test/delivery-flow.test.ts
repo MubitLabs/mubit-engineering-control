@@ -61,6 +61,7 @@ esac
     checks: { name: string; cmd: string }[],
     steps: unknown[] = [{ init: true }, { sh: 'echo made > "$MEC_ATTEMPT_ID.txt"' }, { result: 'completed' }],
     bootstrap: string[] = [],
+    scripted?: MetaBrain,
   ) {
     const root = mkdtempSync(join(tmpdir(), 'mec-delivery-e2e-'))
     roots.push(root)
@@ -117,10 +118,12 @@ esac
     db.close()
 
     let turns = 0
-    const brain: MetaBrain = async () => {
-      turns += 1
-      return turns === 1 ? { ack: 'On it', plan: { tasks } } : { ack: 'ok' }
-    }
+    const brain: MetaBrain =
+      scripted ??
+      (async () => {
+        turns += 1
+        return turns === 1 ? { ack: 'On it', plan: { tasks } } : { ack: 'ok' }
+      })
     const server = await startServer({
       dataDir,
       policyText: POLICY,
@@ -350,5 +353,75 @@ esac
     await r.post(`/api/work/${id}/stop`, {})
     const stopped = await r.post(`/api/work/${id}/retry`, {})
     expect(stopped).toMatchObject({ status: 409, body: { error: 'mandate_withdrawn' } })
+  }, 200_000)
+
+  // The 9 November walkthrough (wi_mw9kvv16, "build a horse tinder website"), in order: one task
+  // integrates, the owner denies the push, follows up, and the planner adds a fix task with no
+  // dependency. Nobody steers it: it starts on what was built (owner decision #66, "A"). A task the
+  // planner cancels on the way does not leave the result incomplete, and the fixed head is offered
+  // for a push again, since the denial was an answer about the old commit (§13).
+  it('a follow-up after a denied push starts on the integration head and offers the fixed head', async () => {
+    const steps = [{ init: true }, { sh: 'echo made > "$MEC_ATTEMPT_ID.txt"' }, { result: 'completed' }]
+    const brain: MetaBrain = async (context) => {
+      const text = context.messageText
+      if (text === 'Build the site') return { ack: 'On it', plan: { tasks: [task('task_1')] } }
+      if (text === 'The popup is broken, fix it') {
+        // `spare` is pinned to a slot that does not exist, so it never starts: the planner drops it.
+        const spare: MetaPlanTask = { ...task('spare'), slotHint: { slotId: 'slot_nowhere' } }
+        return { ack: 'Fixing', plan: { tasks: [task('task_1'), task('fix'), spare] } }
+      }
+      if (text === 'Drop the spare task') {
+        const rows = context.snapshot?.work.flatMap((item) => item.tasks) ?? []
+        const spare = rows.find((row) => row.localKey === 'spare')
+        return { ack: 'Dropped', ...(spare !== undefined && { cancels: [{ taskId: spare.id }] }) }
+      }
+      return { ack: 'ok' }
+    }
+    const r = await serve([], [{ name: 'unit', cmd: 'test -f a.txt' }], steps, [], brain)
+    const sent = await r.post('/api/chat/messages', { text: 'Build the site', repoId: REPO })
+    const id = String(sent.body.workItemId)
+    const cards = () => r.read((store) => store.confirmations.list().filter((doc) => doc.cls === 'push'))
+    await until(() => cards().length === 1)
+    await r.post(`/api/inbox/${String(cards()[0]?.id)}/resolve`, { answer: 'deny' })
+    await until(() => r.read((store) => store.engines.get(`delivery/${id}`)?.stage) === 'declined')
+    const built = String(r.read((store) => store.engines.get(integrationDocId(id))?.head))
+
+    const follow = { repoId: REPO, referencesWorkItem: id, intent: 'follow_up' }
+    await r.post('/api/chat/messages', { text: 'The popup is broken, fix it', ...follow })
+    const fix = () => r.read((store) => store.tasks.list().find((doc) => doc.localKey === 'fix'))
+    await until(() => fix()?.status === 'integrated')
+    const facts = r.read((store) => ({
+      attempt: store.attempts.list().find((doc) => doc.taskId === fix()?.id) as StoreDoc,
+      first: store.attempts.list().find((doc) => doc.id === 'att_1') as StoreDoc,
+    }))
+    // Started from what task_1 integrated, so its file is there to fix.
+    expect(facts.attempt.base_sha).toBe(built)
+    expect(
+      gitIn(String(facts.attempt.worktree), 'ls-tree', '--name-only', String(facts.attempt.base_sha)),
+    ).toContain('att_1.txt')
+    expect(facts.first.base_sha).not.toBe(built)
+    // The worker is told where it starts, and that what was built is in it.
+    const briefs = readFileSync(join(r.bin, 'stdin.jsonl'), 'utf8')
+      .split('\n')
+      .filter((line) => line.includes(`Pinned base: ${built}`))
+    expect(briefs).toHaveLength(1)
+    expect(briefs[0]).toContain("This base is the work's integration head")
+
+    await r.post('/api/chat/messages', { text: 'Drop the spare task', ...follow })
+    await until(
+      () =>
+        r.read((store) => store.tasks.list().find((doc) => doc.localKey === 'spare')?.status) === 'cancelled',
+    )
+    await until(() => cards().length === 2, 60_000)
+    const head = String(r.read((store) => store.engines.get(integrationDocId(id))?.head))
+    expect(head).not.toBe(built)
+    expect(cards().map((card) => [card.status, card.inputSha])).toEqual([
+      ['denied', built],
+      ['pending', head],
+    ])
+    const delivery = r.read((store) => store.engines.get(`delivery/${id}`) as StoreDoc)
+    expect(delivery).toMatchObject({ stage: 'push_card', head })
+    expect(delivery.answer).toBeUndefined()
+    expect(String(delivery.summary)).toContain(`at ${head}`)
   }, 200_000)
 })

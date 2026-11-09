@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import type { HealthBoard, HealthClaim, HealthName, Json, Store, StoreDoc } from '@mec/contracts'
 import {
   MetaAgentService,
@@ -1046,6 +1047,13 @@ describe('owner commands (M1.4a, §12.5, decision #20)', () => {
       paused: true,
       pausedAt: AT,
     })
+  })
+
+  it("/api/status names this build's version, so a page from an older build can tell it is stale", async () => {
+    const { app } = fixture()
+    const status = (await app.inject({ method: 'GET', url: '/api/status' })).json() as { version?: unknown }
+    const own = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
+    expect(status.version).toBe(own)
   })
 
   it('/api/status reports paused', async () => {

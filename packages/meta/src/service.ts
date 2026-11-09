@@ -92,13 +92,14 @@ import {
 } from './context'
 import { EscalationCounter } from './escalation'
 import { enqueueWake, FollowUps } from './followups'
+import type { Continuation } from './repair'
 import { isQuestion, routeMessage } from './routing'
 import { type LaunchRecord, type PlacementTable, type SchedulerDeps, schedulePass } from './scheduler'
 import type { PlannerConfirmationDraft, PlannerQuestionRecord, PlannerTurnJournal } from './tools'
 import { PlannerTools } from './tools'
 import { wakeHasNoNews } from './wakes'
 import { cutAtWord, TITLE_WORDS } from './words'
-import { knownChecks, workResultOf } from './work-facts'
+import { knownChecks, PLANNER_CANCELLED, workResultOf } from './work-facts'
 
 /** One planned task as the service persists it: the v0 four fields, plus the §5.2 brief fields. */
 export type MetaPlanTask = {
@@ -233,6 +234,40 @@ const MANDATE_SCOPE_CHARS = 200
 
 /** v0 escalation is one streak per meta agent (see the module doc). */
 const PLANNING_STREAK_KEY = 'meta-planning'
+
+/** Whether a replan changed what a task runs on: its objective, its dependencies or its base. */
+function inputsChanged(
+  prior: StoreDoc,
+  next: { objective: string; dependsOn: readonly string[]; basePolicy: BasePolicy },
+): boolean {
+  const ids = (list: readonly unknown[]) => [...list].map(String).sort().join('\n')
+  const before = Array.isArray(prior.dependsOn) ? prior.dependsOn : []
+  const policy = prior.basePolicy === 'contract' ? 'contract' : 'integration'
+  return (
+    prior.objective !== next.objective || ids(before) !== ids(next.dependsOn) || policy !== next.basePolicy
+  )
+}
+
+/**
+ * A report from a replan that left a task blocked says so beside the planner's own words, so it
+ * can never read as that task starting (owner, 9 November 2026).
+ */
+function withBlockedNote(
+  decision: MetaDecision,
+  workItemId: string,
+  blocked: readonly string[],
+): MetaDecision {
+  if (blocked.length === 0 || decision.reports === undefined) return decision
+  const note = blocked
+    .map((key) => `${key} is still blocked: this plan changed nothing it runs on, so it did not start.`)
+    .join(' ')
+  return {
+    ...decision,
+    reports: decision.reports.map((report) =>
+      report.workItemId === workItemId ? { ...report, summary: `${report.summary} ${note}` } : report,
+    ),
+  }
+}
 
 /** Long enough that two keys never collide in one store; short enough to read in a log. */
 const STABLE_ID_HEX_CHARS = 24
@@ -1183,6 +1218,7 @@ export class MetaAgentService {
       const planRevision = (typeof work?.planRevision === 'number' ? work.planRevision : 0) + 1
       const stored = this.#store.tasks.list({ workItemId })
       const canonical = canonicalizePlan(tasks, stored, () => freshId('task_'))
+      const ownerAhead = this.#ownerWentAhead(input, workItemId)
       if (work !== undefined) {
         // A replan (#19) finds the work past planning, where it stays.
         if (canTransition(WORK_ITEM_MACHINE, String(work.state), 'execution_started')) {
@@ -1196,7 +1232,7 @@ export class MetaAgentService {
         }
         work.planRevision = planRevision
         work.updatedAt = at
-        if (work.state === 'blocked' && this.#ownerWentAhead(input, workItemId)) {
+        if (work.state === 'blocked' && ownerAhead) {
           // Owner ruling 2026-11-07: the owner's go-ahead, and the plan it led to, lift the block
           // for that plan's new work. Tasks still blocked stay blocked, and re-block the work if
           // nothing else is open. A planner turn the owner did not cause never gets here.
@@ -1214,11 +1250,34 @@ export class MetaAgentService {
 
       // Decision #19: a key this work item already holds is the same task, so its id, status
       // and creation stay and only what the plan says about it changes.
+      const stillBlocked: string[] = []
       for (const { prior, ...task } of canonical) {
         // A no-change allowance is what this revision says, never one an earlier revision gave.
         const { noChangeOk: _earlier, ...kept } = prior ?? {}
+        const basePolicy = task.basePolicy ?? (prior?.basePolicy as BasePolicy | undefined) ?? 'integration'
+        // Owner, 9 November 2026: a blocked task whose objective, dependencies or base the owner's
+        // replan changed starts again, fresh, on the base the plan now gives it (a repair would
+        // reuse the old worktree, §15). One the plan did not change stays blocked, and says so.
+        const restart =
+          prior?.status === 'blocked' && ownerAhead && inputsChanged(prior, { ...task, basePolicy })
+        if (prior?.status === 'blocked' && !restart) stillBlocked.push(task.localKey)
+        const { blockedReason: _blocked, deferred: _deferred, next: _next, ...free } = kept
+        const next: Continuation = {
+          kind: 'restart',
+          role: task.role,
+          evidence: String(prior?.blockedReason ?? 'the task was blocked'),
+          round: 0,
+        }
+        if (restart) {
+          this.#appendEvent(
+            `work:${workItemId}`,
+            'task_restarted',
+            { taskId: task.taskId, planRevision, at },
+            at,
+          )
+        }
         this.#store.tasks.save({
-          ...kept,
+          ...(restart ? { ...free, next: next as unknown as Json } : kept),
           id: task.taskId,
           workItemId,
           ...(repoId !== undefined && { repoId }),
@@ -1227,8 +1286,8 @@ export class MetaAgentService {
           objective: task.objective,
           dependsOn: task.dependsOn,
           role: task.role,
-          basePolicy: task.basePolicy ?? (prior?.basePolicy as BasePolicy | undefined) ?? 'integration',
-          status: prior?.status ?? 'ready',
+          basePolicy,
+          status: restart ? 'ready' : (prior?.status ?? 'ready'),
           acceptanceChecks:
             task.acceptanceChecks !== undefined && task.acceptanceChecks.length > 0
               ? [...task.acceptanceChecks]
@@ -1302,7 +1361,12 @@ export class MetaAgentService {
 
       // The turn's other executed effects (§5.2): questions, cards, routes, reports,
       // stops, cancels — one transaction with the plan.
-      this.#persistExtras(workItemId, decision, at, input.wake === true)
+      this.#persistExtras(
+        workItemId,
+        withBlockedNote(decision, workItemId, stillBlocked),
+        at,
+        input.wake === true,
+      )
 
       // §11: the same pass the timer runs. It re-reads the work, because this turn's own routes
       // may have held or stopped it, and task state, so a kept task runs once.
@@ -1601,7 +1665,13 @@ export class MetaAgentService {
     for (const cancel of decision.cancels ?? []) {
       const doc = this.#store.tasks.get(cancel.taskId)
       if (doc !== undefined) {
-        this.#store.tasks.save({ ...doc, status: 'cancelled', updatedAt: at })
+        // The reason is what makes it an exclusion: a cancel with none leaves the result incomplete.
+        this.#store.tasks.save({
+          ...doc,
+          status: 'cancelled',
+          cancelledReason: PLANNER_CANCELLED,
+          updatedAt: at,
+        })
         this.#appendEvent(`task:${cancel.taskId}`, 'task_cancelled', { taskId: cancel.taskId, at }, at)
       }
     }

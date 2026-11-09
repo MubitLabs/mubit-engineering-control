@@ -731,6 +731,9 @@ export class Delivery {
       headMoved: undefined,
       behind: undefined,
       update: undefined,
+      // §13: a card's answer binds its input SHA. A denial was about the old head, not this one.
+      answer: undefined,
+      prTarget: undefined,
     })
   }
 

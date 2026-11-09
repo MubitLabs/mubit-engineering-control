@@ -275,6 +275,38 @@ export interface WorkViewProps {
   partialNote?: string | null
   /** §5.10: what is parked on this delivery, always shown, never only behind a selection. */
   parkedNotice?: (workItemId: string) => ReactNode
+  /** The server is another build than this page: its answers need a reload (9 November 2026). */
+  stale?: boolean
+}
+
+/**
+ * A delivery read that failed. On a page from an older build the cause is the upgrade, and a reload
+ * is the remedy; otherwise the failure says what it was, with Retry.
+ */
+export function DeliveryReadFailure(props: {
+  stale: boolean
+  message: string
+  kept: boolean
+  onRetry: () => void
+}) {
+  if (props.stale) {
+    return (
+      <StateNotice
+        kind="error"
+        title="MEC was updated"
+        body="Reload this page to continue."
+        action={{ label: 'Reload', onClick: () => window.location.reload() }}
+      />
+    )
+  }
+  return (
+    <StateNotice
+      kind="error"
+      title="Could not read this delivery"
+      body={props.kept ? `${props.message} What is shown below may be out of date.` : props.message}
+      action={{ label: 'Retry', onClick: props.onRetry }}
+    />
+  )
 }
 
 function WorkEntry({
@@ -322,11 +354,11 @@ function WorkEntry({
       </button>
       {props.parkedNotice?.(row.id)}
       {selected && delivery.status === 'failed' && (
-        <StateNotice
-          kind="error"
-          title="Could not read this delivery"
-          body={kept ? `${delivery.message} What is shown below may be out of date.` : delivery.message}
-          action={{ label: 'Retry', onClick: props.onRetry }}
+        <DeliveryReadFailure
+          stale={props.stale === true}
+          message={delivery.message}
+          kept={kept !== null}
+          onRetry={props.onRetry}
         />
       )}
       {selected && kept && (

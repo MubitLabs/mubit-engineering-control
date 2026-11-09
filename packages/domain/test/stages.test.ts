@@ -215,6 +215,19 @@ describe('a delivery whose card was declined or whose step failed (walkthrough, 
     expect(deliveryStopped(undefined)).toBeUndefined()
   })
 
+  it('work running after the decline reads as Working, and Push declined comes back when it stops', () => {
+    const stopped = deliveryStopped(declinedPush)
+    const at = (more: Partial<Parameters<typeof workViewOf>[1]>) =>
+      stageOf(workViewOf({ state: 'integrating' }, { ...facts, deliveryStopped: stopped, ...more }))
+    // The 9 November walkthrough: a fix task ran for minutes under "Push declined".
+    expect(at({ attempts: [{ state: 'running' }] })).toMatchObject({ key: 'working', label: 'Working' })
+    expect(at({ attempts: [{ state: 'queued' }] }).key).toBe('working')
+    // A task ready for a slot is work under way too, with no attempt yet.
+    expect(at({ tasksOpen: true }).key).toBe('working')
+    expect(at({ attempts: [{ state: 'quota_wait' }] }).key).toBe('waiting/quota')
+    expect(at({ attempts: [{ state: 'succeeded' }], tasksOpen: false }).label).toBe('Push declined')
+  })
+
   it('a hold outranks it, and an ended item shows its outcome', () => {
     const stopped = deliveryStopped(declinedPush)
     const held = workViewOf(

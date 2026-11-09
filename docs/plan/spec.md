@@ -577,6 +577,8 @@ One bare clone cache per repository under `~/.mec/repos/`; one worktree per atte
 - Accepted tasks merge in dependency order (`merge --no-ff`), and the integration checks run on the **exact resulting SHA**, one task per run.
 - Conflicts or failing combined checks create a repair task whose worktree starts **mid-merge**, so the repair agent sees both sides; nothing is silently discarded and the work item never restarts.
 - Dependents with `basePolicy: integration` start from the integration commit; `contract` dependents start once the prerequisite is accepted.
+- A task with no dependencies starts from the work item's integration head once at least one of its tasks is integrated there, so a follow-up builds on what was just built; before anything is integrated it starts from the pinned base. `basePolicy: contract` opts a truly independent task out: it starts from the pinned base. A continuation in an existing worktree (a repair, a review, a resume) keeps the base its worktree was made on. A declined push does not undo integration: the integrated tasks stay on the integration branch. (Owner decision #66, 9 November 2026.)
+- A plan revision that changes a blocked task's objective, dependencies or base policy, on the owner's go-ahead, returns it to ready with a fresh attempt in a fresh worktree on the base the revision gives it, not a repair in the old worktree. A revision that changes none of those leaves it blocked, and the turn's report says so.
 
 ### Pull requests
 

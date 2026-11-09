@@ -59,7 +59,7 @@ import { repositoryName } from '../repo-target'
 import { ApprovalLink, NotLinkedNotice, useApprovalKey } from './ApprovalLink'
 import { createConfigStore } from './config-store'
 import { createDrafts, type Intent, resolveIntent } from './drafts'
-import { createInspection, liveInspectionClient } from './inspection'
+import { createInspection, liveInspectionClient, liveStaleCheck } from './inspection'
 import { switchWork, useParked } from './parked'
 import { usePause } from './pause'
 import { createSubmissions, draftScope, type Frozen, type Submission } from './submission'
@@ -98,7 +98,7 @@ const ConfigSurface = lazy(() => import('./config').then((module) => ({ default:
 /** One set per page, outside React's render, so a double Enter meets the same guard. */
 function createLive() {
   const workspace = createWorkspace(liveClient)
-  const inspection = createInspection(liveInspectionClient)
+  const inspection = createInspection(liveInspectionClient, liveStaleCheck)
   workspace.onRefresh(inspection.refresh)
   workspace.onInvalidate(inspection.invalidate)
   const drafts = createDrafts(() => window.localStorage)
@@ -569,6 +569,7 @@ export function LiveApp() {
           selectedId={selectedWorkId}
           onSelect={openWork}
           delivery={delivery}
+          stale={inspected.stale}
           selectedTaskId={taskId}
           onOpenTask={openTask}
           onAction={inspection.act}

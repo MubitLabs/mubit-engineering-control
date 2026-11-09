@@ -357,6 +357,24 @@ describe('evidence from the records M2 wrote', () => {
     expect((await get('/api/inspect/work/wi_1')).json().retry).toMatchObject({ kind: 'push' })
   })
 
+  it('a fix running after a declined push reads as Working, and the decline comes back after it', async () => {
+    save('workItems', { ...(store.workItems.get('wi_1') as StoreDoc), state: 'integrating' })
+    save('engines', {
+      id: 'delivery/wi_1',
+      workItemId: 'wi_1',
+      stage: 'declined',
+      pushCardId: 'conf_push',
+      answer: 'denied',
+      head: HEAD,
+    })
+    // The 9 November walkthrough: a follow-up's fix task, ready for its slot, on an agreed repository.
+    save('engines', { ...(store.engines.get('repo_a') as StoreDoc), hostRunAgreedAt: AT })
+    save('tasks', { id: 'task_fix', workItemId: 'wi_1', status: 'ready', objective: 'fix the popup' })
+    expect((await get('/api/inspect/work')).json().items[0].stage.label).toBe('Working')
+    save('tasks', { id: 'task_fix', workItemId: 'wi_1', status: 'integrated', objective: 'fix the popup' })
+    expect((await get('/api/inspect/work')).json().items[0].stage.label).toBe('Push declined')
+  })
+
   it('a failed pull request step says so, and what to do', async () => {
     save('workItems', { ...(store.workItems.get('wi_1') as StoreDoc), state: 'integrating' })
     save('engines', {

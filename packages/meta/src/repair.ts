@@ -11,7 +11,11 @@ import type { Acceptance, Caps } from '@mec/domain'
 /** What a queued attempt continues. Stored on the task until a pass places it, then on the attempt. */
 export type Continuation = {
   /** `handoff` is a slot switch (§5.10): the task's own role, on a slot it did not start on. */
-  kind: 'repair' | 'review' | 'handoff'
+  /**
+   * `restart`: a blocked task whose objective, dependencies or base a replan changed starts again,
+   * its own role in a fresh worktree on the base the new plan gives it, never in the old one.
+   */
+  kind: 'repair' | 'review' | 'handoff' | 'restart'
   role: string
   /** Exact evidence for the brief: failing check, log tail, SHA, or the finding. */
   evidence: string

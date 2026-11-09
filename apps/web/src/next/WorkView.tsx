@@ -147,6 +147,11 @@ function DeliveryDetail({
   }, [stopping])
   return (
     <div className="work-detail" ref={root}>
+      {detail.lead && !stopping && (
+        <div className="work-lead">
+          <Button onClick={() => detail.lead && onAction(detail.lead)}>{detail.lead.label}</Button>
+        </div>
+      )}
       {detail.outcome ? (
         <section className="work-answer">
           <h3>{detail.outcome.kind === 'answered' ? 'Answer' : 'No answer'}</h3>
@@ -216,16 +221,18 @@ function DeliveryDetail({
       )}
       {detail.actions.length > 0 && !stopping && (
         <div className="actions">
-          {detail.actions.map((action) => (
-            <Button
-              key={action.kind}
-              ref={action.kind === 'stop' ? stopButton : undefined}
-              variant="quiet"
-              onClick={() => (action.kind === 'stop' ? setStopping(action) : onAction(action))}
-            >
-              {action.label}
-            </Button>
-          ))}
+          {detail.actions
+            .filter((action) => action !== detail.lead)
+            .map((action) => (
+              <Button
+                key={action.kind}
+                ref={action.kind === 'stop' ? stopButton : undefined}
+                variant="quiet"
+                onClick={() => (action.kind === 'stop' ? setStopping(action) : onAction(action))}
+              >
+                {action.label}
+              </Button>
+            ))}
         </div>
       )}
       {stopping && (

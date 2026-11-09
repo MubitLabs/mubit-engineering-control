@@ -267,6 +267,12 @@ describe('the configuration client against the real routes', () => {
     expect(failureText(new HttpError('/x', 500))).toBe('The server answered 500.')
   })
 
+  it('an agreement an unlinked browser sent says so in words, not as its code', () => {
+    const said = failureText(new HttpError('/api/repositories/r/host-run/agree', 403, 'approval_required'))
+    expect(said).toContain('This browser is not linked yet')
+    expect(said).not.toContain('approval_required')
+  })
+
   it('lists drafts and takes a backup', async () => {
     store.engines.save({
       id: 'draft/d1',

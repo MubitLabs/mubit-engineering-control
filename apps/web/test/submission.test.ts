@@ -170,6 +170,33 @@ describe('submission', () => {
     expect(reopened.read('repo_a', 'new')).toBe('hello')
   })
 
+  it('a send a reload interrupted that the server stored is done: its text leaves the box for good', () => {
+    const { bin, drafts, submissions, calls } = rig()
+    drafts.write('repo_a', 'new', 'hello')
+    submissions.submit(NEW, 'hello')
+    const key = calls[0]?.frozen.key ?? ''
+    const reopened = createDrafts(() => bin)
+    const reloaded = createSubmissions({ drafts: reopened, newKey: () => 'never', send: async () => {} })
+    expect(reloaded.view('repo_a')?.state).toBe('failed')
+    reopened.write('repo_a', 'new', `${reopened.read('repo_a', 'new')}\ntyped since`)
+    expect(reloaded.landed('repo_a', (sent) => sent === 'other')).toBe(false)
+    expect(reloaded.view('repo_a')?.state).toBe('failed')
+    expect(reloaded.landed('repo_a', (sent) => sent === key)).toBe(true)
+    expect(reloaded.view('repo_a')).toBeNull()
+    expect(reopened.read('repo_a', 'new')).toBe('typed since')
+    // A new tab, or the next day: nothing brings the sent request back.
+    const nextDay = createDrafts(() => bin)
+    expect(nextDay.read('repo_a', 'new')).toBe('typed since')
+    expect(nextDay.pending('repo_a')).toBeNull()
+  })
+
+  it('a send still in flight is not settled by the thread', () => {
+    const { submissions, calls } = rig()
+    submissions.submit(NEW, 'hello')
+    expect(submissions.landed('repo_a', (sent) => sent === calls[0]?.frozen.key)).toBe(false)
+    expect(submissions.view('repo_a')?.state).toBe('pending')
+  })
+
   it('the box clears on send, and a failed send puts the text back', async () => {
     const { drafts, submissions, calls, settle } = rig()
     drafts.write('repo_a', 'new', 'hello')

@@ -144,7 +144,12 @@ const workDetail = (id: string) => {
   if (!raw) return null
   const decoded = decodeWorkDetail(raw)
   if (variant !== 'delivery') return decoded
-  return { ...decoded, delivery: { ...decoded.delivery, ...DELIVERY_STATES[id] } }
+  return {
+    ...decoded,
+    delivery: { ...decoded.delivery, ...DELIVERY_STATES[id] },
+    // The server offers the blocked integration once more (§11 Retry).
+    ...(id === 'work_blocked' && { retry: { kind: 'integration' as const, reason: 'integration: SAMPLE-ONLY' } }),
+  }
 }
 const taskDetail = (id: string) => {
   const raw = taskDetails[id as keyof typeof taskDetails]

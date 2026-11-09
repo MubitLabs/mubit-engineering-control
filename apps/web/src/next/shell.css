@@ -1416,6 +1416,14 @@ button.choice:hover,
   padding: 16px 0 24px;
 }
 
+/* The retry on offer sits under the row's Blocked line, before the plan, where it is seen. */
+.work-lead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
 .work-links {
   margin: 16px 0;
   font-size: 13px;

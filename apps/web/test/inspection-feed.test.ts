@@ -702,6 +702,50 @@ describe('owner commands', () => {
     expect(inspection.getState().notice?.text).toContain('still comes to you as a card')
   })
 
+  it('a keyed command an unlinked browser sent says so in words, and offers the link', async () => {
+    const { inspection, settle } = rig({
+      retry: async () => {
+        throw new HttpError('/api/work/x/retry', 403, 'approval_required')
+      },
+    })
+    inspection.act({ ...stop, kind: 'retry' })
+    await settle()
+    const notice = inspection.getState().notice
+    expect(notice).toMatchObject({ kind: 'failed', link: true })
+    expect(notice?.text).toContain('This browser is not linked yet')
+    expect(notice?.text).not.toContain('approval_required')
+  })
+
+  it('an answer an unlinked browser sent says so in words', async () => {
+    const { inspection, settle } = rig({
+      answer: async () => {
+        throw new HttpError('/api/questions/q/answer', 403, 'approval_required')
+      },
+    })
+    inspection.answer('q', 'yes')
+    await settle()
+    const outcome = inspection.getState().answers.q
+    expect(outcome).toMatchObject({ kind: 'failed' })
+    expect(outcome?.kind === 'failed' && outcome.message).toContain('This browser is not linked yet')
+    expect(JSON.stringify(outcome)).not.toContain('approval_required')
+  })
+
+  it.each([
+    ['nothing_to_retry', 'There is nothing to retry'],
+    ['host_run_unagreed', 'you have not agreed to run this repository’s commands'],
+  ])('a known refusal reads in words: %s', async (code, words) => {
+    const { inspection, settle } = rig({
+      retry: async () => {
+        throw new HttpError('/api/work/x/retry', 409, code)
+      },
+    })
+    inspection.act({ ...stop, kind: 'retry' })
+    await settle()
+    expect(inspection.getState().notice?.text).toContain(words)
+    expect(inspection.getState().notice?.text).not.toContain(code)
+    expect(inspection.getState().notice).not.toHaveProperty('link')
+  })
+
   it('a refused command says the server’s reason', async () => {
     const { inspection, settle } = rig({
       lift: async () => {

@@ -60,6 +60,23 @@ for (const viewport of VIEWPORTS) {
         await expectSound(page)
       })
 
+      test('a retry on offer leads the detail, beside the Blocked line, and only there', async ({ page }) => {
+        await open(page, theme, '&work=work_blocked', 'work')
+        const lead = page
+          .locator('.work-detail > .work-lead')
+          .getByRole('button', { name: /^Retry integration/ })
+        await expect(lead).toBeVisible()
+        await expect(page.getByRole('button', { name: /^Retry integration/ })).toHaveCount(1)
+        await expect(
+          page.locator('.work-detail > .actions').getByRole('button', { name: /^Hold/ }),
+        ).toBeVisible()
+        const leadTop = (await lead.boundingBox())?.y ?? Number.POSITIVE_INFINITY
+        const deliveryTop =
+          (await page.getByRole('heading', { name: 'Delivery', level: 3 }).boundingBox())?.y ?? 0
+        expect(leadTop).toBeLessThan(deliveryTop)
+        await expectSound(page)
+      })
+
       test('Needs you lists blocked work and the count agrees', async ({ page }) => {
         await open(page, theme, '', 'needs')
         await expect(

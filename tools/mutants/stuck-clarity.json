@@ -1,0 +1,121 @@
+[
+  {
+    "name": "a retry on offer no longer names the Next line",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "            offer !== undefined\n              ? RETRY_NEXT[offer.kind]",
+    "replace": "            offer === undefined\n              ? RETRY_NEXT['integration']",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "changed repository commands fall back to the general Next line",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "                ? 'Stop this work and ask again'",
+    "replace": "                ? 'Resolve what blocks it'",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "the blocked reason is served raw",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "`Blocked: ${cutAtWord(reasonWords(redactText(blocked)), 200)}`",
+    "replace": "`Blocked: ${cutAtWord(redactText(blocked), 200)}`",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "a blocked delivery failure is served raw",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "      ? cutText(reasonWords(blocked), FAILURE_CAP)",
+    "replace": "      ? cutText(blocked, FAILURE_CAP)",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "a delivery record's error is served raw",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "`${reasonWords(error)}.${again}`",
+    "replace": "`${error}.${again}`",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "a code whose words say it all keeps the writer's detail",
+    "file": "apps/desktop/src/reason-words.ts",
+    "find": "  return known?.[1] === true || detail.trim() === '' ? words : `${words}: ${detail}`",
+    "replace": "  return detail.trim() === '' ? words : `${words}: ${detail}`",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "an unknown code keeps its underscores",
+    "file": "apps/desktop/src/reason-words.ts",
+    "find": "known?.[0] ?? code.replaceAll('_', ' ')",
+    "replace": "known?.[0] ?? code",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "a command refused for an unlinked browser offers no link",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "            ...(unlinked(error) && { link: true as const }),",
+    "replace": "",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "approval_required reads as its code on a command",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "  if (reason === APPROVAL_REQUIRED) return NOT_LINKED\n",
+    "replace": "",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "known refusals read as their codes",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "  return REFUSAL_WORDS[reason] ?? `The workbench refused this: ${reason}.`",
+    "replace": "  return `The workbench refused this: ${reason}.`",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "approval_required reads as its code in Settings",
+    "file": "apps/web/src/live/failure.ts",
+    "find": "    if (error.reason === APPROVAL_REQUIRED) return NOT_LINKED\n",
+    "replace": "",
+    "tests": ["apps/web/test/config-contract.test.ts"]
+  },
+  {
+    "name": "the detail leads with nothing",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "    lead: actions.find((action) => action.kind === 'retry') ?? null,",
+    "replace": "    lead: null,",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "a stored send stays in the box",
+    "file": "apps/web/src/live/submission.ts",
+    "find": "      if (held?.state !== 'failed' || !stored(held.frozen.key)) return false",
+    "replace": "      if (held?.state !== 'failed' || stored(held.frozen.key)) return false",
+    "tests": ["apps/web/test/submission.test.ts"]
+  },
+  {
+    "name": "a send in flight is settled by the thread",
+    "file": "apps/web/src/live/submission.ts",
+    "find": "      if (held?.state !== 'failed' || !stored(held.frozen.key)) return false",
+    "replace": "      if (held === null || !stored(held.frozen.key)) return false",
+    "tests": ["apps/web/test/submission.test.ts"]
+  },
+  {
+    "name": "a landed send leaves its pending copy in storage",
+    "file": "apps/web/src/live/submission.ts",
+    "find": "      current.delete(repoId)\n      deps.drafts.releasePending(repoId)\n      deps.drafts.write",
+    "replace": "      current.delete(repoId)\n      deps.drafts.write",
+    "tests": ["apps/web/test/submission.test.ts"]
+  },
+  {
+    "name": "a settled card keeps the open card's id",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "    id: settled === null ? `approval:${item.id}` : `approval:${item.id}:${settled.label}`,",
+    "replace": "    id: `approval:${item.id}`,",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  },
+  {
+    "name": "an answer this tab gave does not settle the inspector",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  const status = cardStatus(item, outcome)\n  const settled",
+    "replace": "  const status = cardStatus(item, null)\n  const settled",
+    "tests": ["apps/web/test/work-model.test.ts"]
+  }
+]

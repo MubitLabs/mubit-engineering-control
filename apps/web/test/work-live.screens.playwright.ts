@@ -38,6 +38,7 @@ interface Over {
   chat?: () => Reply
   workDetail?: (id: string) => Reply
   message?: () => Reply
+  retry?: () => Reply
   /** Runs before the answer, so the next read sees what the post changed. */
   posted?: (path: string) => void
   /** The stream's body for a connection from these cursors. Null holds it open and quiet. */
@@ -74,6 +75,7 @@ async function server(page: Page, over: Over = {}) {
         return send(over.answer?.() ?? { status: 200, body: { status: 'answered' } })
       }
       if (pathname === '/api/chat/messages' && over.message) return send(over.message())
+      if (pathname.endsWith('/retry') && over.retry) return send(over.retry())
       const command = /\/api\/work\/([^/]+)\/(hold|lift|stop)$/.exec(pathname)
       if (command) {
         const status = { hold: 'held', lift: 'lifted', stop: 'stopped' }[command[2] as 'hold']
@@ -262,6 +264,44 @@ test.describe('Work', () => {
     await expect(dock.getByRole('button', { name: 'Link this browser' })).toBeVisible()
   })
 
+  test('a request sent yesterday whose answer the tab never saw does not come back in the box', async ({
+    page,
+  }) => {
+    const sent = 'SAMPLE-ONLY add shout.js'
+    await page.addInitScript((text) => {
+      // The tab closed while the send was open: the draft store still holds it as unconfirmed.
+      const frozen = { key: 'key-yesterday', repoId: 'repo_a', intent: 'new', text }
+      window.localStorage.setItem('mec-next-pending:repo_a', JSON.stringify(frozen))
+      window.localStorage.setItem('mec-next-draft:repo_a:new', text)
+    }, sent)
+    await server(page, {
+      chat: () => ({
+        status: 200,
+        body: [
+          ...chatLines.map(inRepoA),
+          {
+            id: 'msg_shout',
+            text: sent,
+            createdAt: OBSERVED,
+            kind: 'user',
+            repoId: 'repo_a',
+            idempotencyKey: 'key-yesterday',
+          },
+        ],
+      }),
+    })
+    await open(page, 'repo/repo_a/chat')
+    await expect(page.locator('.message-user').filter({ hasText: sent })).toHaveCount(1)
+    const box = page.getByRole('textbox', { name: 'Message the meta agent' })
+    await expect(box).toHaveValue('')
+    await expect
+      .poll(() => page.evaluate(() => window.localStorage.getItem('mec-next-pending:repo_a')))
+      .toBeNull()
+    await expect
+      .poll(() => page.evaluate(() => window.localStorage.getItem('mec-next-draft:repo_a:new')))
+      .toBeNull()
+  })
+
   test('a linked tab sends its key with the message, and shows no link', async ({ page }) => {
     let key: string | undefined
     await page.addInitScript(() => window.sessionStorage.setItem('mec.approval-key', 'k'.repeat(64)))
@@ -346,6 +386,26 @@ test.describe('Work', () => {
     await page.getByRole('button', { name: 'Confirm: stop this delivery in sample-billing' }).click()
     await expect(page.getByText('Stopped.')).toBeVisible()
     expect(posts.map((post) => post.path)).toEqual(['/api/work/work_quota/stop'])
+  })
+
+  test('a retry an unlinked tab sent says so in words and offers the link in place', async ({ page }) => {
+    const { posts } = await server(page, {
+      workDetail: (id) => ({
+        status: 200,
+        body: {
+          ...workDetails[id as keyof typeof workDetails],
+          ...(id === 'work_failed' && { retry: { kind: 'integration', reason: 'integration: SAMPLE-ONLY' } }),
+        },
+      }),
+      retry: () => ({ status: 403, body: { error: 'approval_required' } }),
+    })
+    await open(page, 'repo/repo_b/work/work_failed')
+    await page.getByRole('button', { name: /^Retry integration/ }).click()
+    const notice = page.locator('.live-notice')
+    await expect(notice).toContainText('This browser is not linked yet')
+    await expect(notice).not.toContainText('approval_required')
+    await notice.getByRole('button', { name: 'Link this browser' }).click()
+    await expect.poll(() => posts.map((post) => post.path)).toContain('/api/approval/link')
   })
 
   test('hold and lift go to the routes, and pause is not offered', async ({ page }) => {
@@ -474,6 +534,21 @@ test.describe('Needs you', () => {
     await expect(page.locator('article.decision', { hasText: 'merge pull request 9' })).toBeVisible()
     await page.getByRole('combobox', { name: 'Repository' }).selectOption('repo_a')
     await expect(page.locator('article.decision', { hasText: 'merge pull request 9' })).toHaveCount(0)
+  })
+
+  test('a card answered while its Diff is open follows to its settled state', async ({ page }) => {
+    await server(page)
+    await open(page, 'repo/repo_a/needs')
+    const card = page.locator('article.decision', { hasText: 'push search to sample-console' })
+    await card.getByRole('button', { name: 'Inspect checks and diff' }).click()
+    const inspector = page.locator('.inspector')
+    await inspector.getByRole('tab', { name: 'Diff' }).click()
+    await expect(inspector.getByRole('tab', { name: 'Diff' })).toHaveAttribute('aria-selected', 'true')
+    await card.getByRole('button', { name: 'Deny', exact: true }).click()
+    await card.getByRole('button', { name: 'Confirm: deny in sample-console' }).click()
+    await expect(card.locator('.settled-label')).toHaveText('Denied')
+    await expect(inspector.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true')
+    await expect(inspector.getByRole('heading', { name: 'Denied', level: 3 })).toBeVisible()
   })
 
   test('inspecting a card opens the card’s own evidence', async ({ page }) => {

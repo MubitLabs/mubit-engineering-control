@@ -53,7 +53,8 @@ import {
   MAX_PAGE_LIMIT,
 } from '@mec/store'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { deliveryDocId, type RetryOffer, retryOffer, stoppedWords } from './delivery'
+import { deliveryDocId, type RetryKind, type RetryOffer, retryOffer, stoppedWords } from './delivery'
+import { reasonWords } from './reason-words'
 
 // ── The wire shape (handoff 30, "The wire shape") ────────────────────────────────────────────
 
@@ -635,6 +636,18 @@ const CI_READINGS: Readonly<Record<string, NonNullable<DeliveryView['ci']>>> = {
   ci_failed: 'failing',
   ci_unreadable: 'unreadable',
 }
+/** The Next line for a retry the server offers: the same words as the button that asks for it. */
+const RETRY_NEXT: Readonly<Record<RetryKind, string>> = {
+  integration: 'Retry integration',
+  push: 'Ask to push again',
+  pr: 'Ask to open the pull request again',
+  repair: 'Try again',
+}
+/**
+ * Work admitted under other commands is never delivered under them (§14, decision #41), and no
+ * route resumes it: stopping it and asking again admits it under the commands that stand (§12.5).
+ */
+const PROFILE_CHANGED = 'repo_profile_changed'
 /** What the integration step writes into a blocked item's reason (`Delivery.#work`, `#integrationDoc`). */
 const INTEGRATION_BLOCK =
   /^(integration: |bootstrap_failed|repo_profile_changed|checks failed on |could not run )/
@@ -1068,11 +1081,11 @@ class Inspector {
     const error = str(record?.error)
     if (error !== null) {
       const again = str(record?.retryAt) === null ? '' : ' MEC tries this step again.'
-      return cutText(`${error}.${again}`.replace('..', '.'), FAILURE_CAP)
+      return cutText(`${reasonWords(error)}.${again}`.replace('..', '.'), FAILURE_CAP)
     }
     const blocked = str(doc.blockedReason)
     return str(doc.state) === 'blocked' && blocked !== null && INTEGRATION_BLOCK.test(blocked)
-      ? cutText(blocked, FAILURE_CAP)
+      ? cutText(reasonWords(blocked), FAILURE_CAP)
       : null
   }
 
@@ -1166,12 +1179,17 @@ class Inspector {
             nextAction: stop.step === 'pr' ? 'Ask to open the pull request again' : 'Ask to push again',
           }
         }
+        const blocked = str(doc.blockedReason)
+        const offer = retryOffer(this.#store, doc)
         return {
           reason:
-            str(doc.blockedReason) === null
-              ? 'Blocked'
-              : `Blocked: ${cutAtWord(redactText(String(doc.blockedReason)), 200)}`,
-          nextAction: 'Resolve what blocks it',
+            blocked === null ? 'Blocked' : `Blocked: ${cutAtWord(reasonWords(redactText(blocked)), 200)}`,
+          nextAction:
+            offer !== undefined
+              ? RETRY_NEXT[offer.kind]
+              : blocked?.startsWith(PROFILE_CHANGED) === true
+                ? 'Stop this work and ask again'
+                : 'Resolve what blocks it',
         }
       }
       case 'person/review':
@@ -1492,11 +1510,12 @@ class Inspector {
     if (releases !== null) return `until ${cutAtWord(redactText(releases), 200)}`
     if (reason !== null) return reason.replaceAll('_', ' ')
     const blocked = str(task.blockedReason)
-    if (str(task.status) === 'blocked' && blocked !== null) return cutAtWord(redactText(blocked), 200)
+    if (str(task.status) === 'blocked' && blocked !== null)
+      return cutAtWord(reasonWords(redactText(blocked)), 200)
     const work = this.#store.workItems.get(str(task.workItemId) ?? '')
     const workBlocked = str(work?.blockedReason)
     if (str(task.status) === 'ready' && str(work?.state) === 'blocked' && workBlocked !== null) {
-      return `the work is blocked: ${cutAtWord(redactText(workBlocked), 200)}`
+      return `the work is blocked: ${cutAtWord(reasonWords(redactText(workBlocked)), 200)}`
     }
     return null
   }

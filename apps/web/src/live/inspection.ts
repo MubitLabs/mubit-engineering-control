@@ -1,6 +1,7 @@
 import { AlreadyHandledError, HttpError, type ResolveAnswer, type ResolveResult } from '../api'
 import { DecodeError } from '../api-decode'
 import { inspectApi } from '../api-inspect'
+import { APPROVAL_REQUIRED, NOT_LINKED } from '../approval'
 import type {
   ActivityItem,
   ArtifactPage,
@@ -70,6 +71,8 @@ export interface Selected<T> {
 export interface CommandNotice {
   kind: 'done' | 'failed'
   text: string
+  /** The browser is not linked: the notice offers the link in place (`approval_required`). */
+  link?: true
   /** The card this notice is about. It says something only while that card is open. */
   cardId?: string
 }
@@ -152,12 +155,27 @@ const COMMAND_WORDS: Record<string, string> = {
   card_open: 'The merge card is in Needs you. Nothing merges until you approve it.',
 }
 
+/** The refusals a command can meet, in words (`Delivery.retry`, `holdWork`, `stopWorkItem`). */
+const REFUSAL_WORDS: Record<string, string> = {
+  nothing_to_retry: 'There is nothing to retry: what blocked this is not something a retry answers.',
+  host_run_unagreed:
+    'Nothing was retried: you have not agreed to run this repository’s commands on this machine. Agree in Settings, Repositories.',
+  held: 'Nothing was retried: this work is held. Lift the hold first.',
+  mandate_withdrawn: 'Nothing was retried: this work was stopped.',
+  terminal: 'This work has already ended.',
+  done: 'This work has already ended.',
+  read_only: 'This work has no repository, so it cannot be changed here.',
+}
+
 function commandFailure(error: unknown): string {
   const reason = error instanceof HttpError ? error.reason : undefined
-  return reason === undefined
-    ? 'The workbench did not answer, so this may not have happened. Check the delivery.'
-    : `The workbench refused this: ${reason}.`
+  if (reason === APPROVAL_REQUIRED) return NOT_LINKED
+  if (reason === undefined)
+    return 'The workbench did not answer, so this may not have happened. Check the delivery.'
+  return REFUSAL_WORDS[reason] ?? `The workbench refused this: ${reason}.`
 }
+
+const unlinked = (error: unknown): boolean => error instanceof HttpError && error.reason === APPROVAL_REQUIRED
 
 function failedRead<T>(previous: Read<T>, error: unknown): Read<T> {
   return {
@@ -591,7 +609,11 @@ export function createInspection(client: InspectionClient) {
             text: COMMAND_WORDS[status] ?? status,
             ...(status === 'card_open' && { cardId: id }),
           }),
-          (error: unknown): CommandNotice => ({ kind: 'failed', text: commandFailure(error) }),
+          (error: unknown): CommandNotice => ({
+            kind: 'failed',
+            text: commandFailure(error),
+            ...(unlinked(error) && { link: true as const }),
+          }),
         )
         .then((notice) => {
           settling.delete(key)

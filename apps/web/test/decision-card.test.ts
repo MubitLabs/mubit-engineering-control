@@ -48,6 +48,12 @@ describe('the approval card', () => {
     )
   })
 
+  it('only Approve carries the marker the A shortcut presses, so a second A never reaches Deny', () => {
+    const [approve, deny] = buttons(card())
+    expect(approve).toContain('data-approve=""')
+    expect(deny).not.toContain('data-approve')
+  })
+
   it('a cancel with no confirm label keeps one label and one click', () => {
     const [, deny] = buttons(card({ denyLabel: 'Keep it', denyConfirmLabel: undefined }))
     expect(deny).not.toContain('aria-hidden')

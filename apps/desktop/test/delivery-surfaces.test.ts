@@ -275,6 +275,34 @@ describe('a blocked row names the way forward the server offers (§11 Retry)', (
     expect(need.nextAction).toBe('Retry integration')
   })
 
+  it('commands changed since admission: no retry on offer, and the row says why and what to do (§14, #41)', async () => {
+    agreed()
+    seedWork('wi_stale', {
+      state: 'blocked',
+      blockedReason: 'integration: the merge was refused',
+      pin: { repoId: 'repo_a', profileHash: 'admitted-under-other-commands' },
+    })
+    store.atomic(() => {
+      store.tasks.save({
+        id: 'task_1',
+        workItemId: 'wi_stale',
+        repoId: 'repo_a',
+        status: 'accepted',
+        createdAt: AT,
+        updatedAt: AT,
+      })
+    })
+    const words =
+      'The repository’s setup or check commands changed since this work was planned, so MEC will not deliver it under the old ones'
+    expect((await get('/api/inspect/work/wi_stale')).retry).toBeNull()
+    const row = (await get('/api/inspect/work')).items.find((entry: any) => entry.id === 'wi_stale')
+    expect(row.reason).toBe(`Blocked: ${words}`)
+    expect(row.nextAction).toBe('Stop this work and ask again')
+    const need = (await get('/api/inspect/needs')).items.find((entry: any) => entry.id === 'wi_stale')
+    expect(need.reason).toBe(`Blocked: ${words}`)
+    expect(need.nextAction).toBe('Stop this work and ask again')
+  })
+
   it('with nothing on offer, the Next line stays the general one', async () => {
     seedWork('wi_plain', { state: 'blocked', blockedReason: 'integration: the merge was refused' })
     const row = (await get('/api/inspect/work')).items.find((entry: any) => entry.id === 'wi_plain')

@@ -1,0 +1,44 @@
+[
+  {
+    "name": "the retry offer ignores changed commands",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "  if (admittedUnderOtherCommands(store, work)) return undefined\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts", "apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "a retry on changed commands is refused as nothing to retry",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "          return { status: 'refused', error: PROFILE_CHANGED }",
+    "replace": "          return { status: 'refused', error: 'nothing_to_retry' }",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "work pinned to no profile reads as changed",
+    "file": "packages/meta/src/admission.ts",
+    "find": "  return pinned !== undefined && pinned !== current\n",
+    "replace": "  return pinned !== current\n",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "the shared question never sees a change",
+    "file": "packages/meta/src/admission.ts",
+    "find": "  return pinned !== undefined && pinned !== current\n",
+    "replace": "  return false && pinned !== current\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "the blocked row offers a retry on changed commands",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "        if (admittedUnderOtherCommands(this.#store, doc)) {\n",
+    "replace": "        if (false) {\n",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "the Approve button loses the marker the A shortcut presses",
+    "file": "apps/web/src/next/Decision.tsx",
+    "find": "              data-approve=\"\"\n",
+    "replace": "",
+    "tests": ["apps/web/test/decision-card.test.ts"]
+  }
+]

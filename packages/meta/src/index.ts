@@ -1,6 +1,6 @@
 export { Acknowledger } from './acks'
 export type { RepoAdmissionCode, RepoPin } from './admission'
-export { assertRepoAdmission, RepoAdmissionError, repoFields, repoOf } from './admission'
+export { assertRepoAdmission, profileChanged, RepoAdmissionError, repoFields, repoOf } from './admission'
 export type {
   HoldOutcome,
   LaunchAuthority,

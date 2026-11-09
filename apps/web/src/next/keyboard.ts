@@ -121,8 +121,11 @@ export function focusNextCard(): boolean {
  */
 export function armFocusedCard(): boolean {
   const card = focusedCard(openCards())
-  const approve = card?.querySelector<HTMLButtonElement>('button[data-armed="false"]')
+  // The Approve button by name, never "the first unarmed button": once Approve is armed that
+  // would be Deny, and a second A must not deny.
+  const approve = card?.querySelector<HTMLButtonElement>('button[data-approve]')
   if (approve === null || approve === undefined || approve.disabled) return false
+  if (approve.getAttribute('data-armed') !== 'false') return false
   if (approve.getAttribute('aria-disabled') === 'true') return false
   approve.click()
   approve.focus()

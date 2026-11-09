@@ -194,6 +194,7 @@ export function Approval(props: ApprovalProps) {
             <Button
               ref={approveButton}
               variant="primary"
+              data-approve=""
               data-armed={armed === 'approve'}
               onClick={onApprove}
             >

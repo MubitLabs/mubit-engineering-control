@@ -69,21 +69,43 @@ function isRegistered(store: Store, repoId: string): boolean {
   return repoId.startsWith(REPOSITORY_PREFIX) && store.engines.get(repoId) !== undefined
 }
 
-/** The values a work item is pinned to; the caller saves them once, inside its transaction. */
-export function pinRepo(store: Store, repoId: string, policyText: string): RepoPin {
+function registeredRepo(store: Store, repoId: string): StoreDoc {
   const repo = store.engines.get(repoId)
   if (repo === undefined || !isRegistered(store, repoId)) {
     throw new RepoAdmissionError('unknown_repo', `repository ${repoId} is not registered`)
   }
+  return repo
+}
+
+/** The hash of a repository's commands as they stand: setup, checks and the trust flag (§14). */
+function profileHashOf(repo: StoreDoc): string {
   const profile = JSON.stringify({
     bootstrap: repo.bootstrap ?? [],
     checks: repo.checks ?? [],
     trust: repo.trust === true,
   })
+  return createHash('sha256').update(profile, 'utf8').digest('hex')
+}
+
+/**
+ * Whether the repository's commands changed since this work was admitted (§14, decision #41).
+ * The launch gate, the integration step and the retry offer all ask this one question, so a
+ * retry is never offered that a gate is certain to refuse. Work pinned to no profile has
+ * nothing to compare. An unregistered repository throws `unknown_repo`, as `pinRepo` does.
+ */
+export function profileChanged(store: Store, repoId: string, work: StoreDoc): boolean {
+  const current = profileHashOf(registeredRepo(store, repoId))
+  const pinned = (work.pin as { profileHash?: string } | undefined)?.profileHash
+  return pinned !== undefined && pinned !== current
+}
+
+/** The values a work item is pinned to; the caller saves them once, inside its transaction. */
+export function pinRepo(store: Store, repoId: string, policyText: string): RepoPin {
+  const repo = registeredRepo(store, repoId)
   return {
     repoId,
     url: String(repo.url ?? ''),
-    profileHash: createHash('sha256').update(profile, 'utf8').digest('hex'),
+    profileHash: profileHashOf(repo),
     policyHash: loadPolicy(policyText).versionHash,
     promptRevision: UNRESOLVED_PROMPT_REVISION,
   }

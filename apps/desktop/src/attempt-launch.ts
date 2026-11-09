@@ -58,7 +58,7 @@ import {
   integrationDocId,
   type LaunchAuthority,
   mandateOf,
-  repoFields,
+  profileChanged,
 } from '@mec/meta'
 import { loadModelsTable, PromptStore, userModelsPath } from '@mec/prompts'
 import {
@@ -756,9 +756,7 @@ export class AttemptLauncher {
     if (task.repoId !== repoId || (work.pin as { repoId?: string } | undefined)?.repoId !== repoId) {
       throw refuse('launch_mismatch: task and repository disagree')
     }
-    const pinned = (work.pin as { profileHash?: string }).profileHash
-    const current = repoFields(store, repoId, this.#deps.policyText).pin as { profileHash?: string }
-    if (pinned !== undefined && pinned !== current.profileHash) {
+    if (profileChanged(store, String(repoId), work)) {
       throw refuse('repo_profile_changed: this work was admitted under other commands')
     }
     return { attempt, task, work, repo, slot }

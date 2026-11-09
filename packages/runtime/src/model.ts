@@ -9,7 +9,9 @@
  *     the ladder and the attempt records `tier_degraded` (§3 rule 1 — cross-provider
  *     equivalence is never claimed);
  *   - effort falls back to the model's default when the request carries none;
- *   - unknown tiers and models are refused loudly, never guessed.
+ *   - unknown tiers and models are refused loudly, never guessed;
+ *   - a model the slot's engine said it does not offer (§3 rule 2, `unavailable`) is never
+ *     chosen: the next one at the tier serves, then the ladder down, and the attempt says so.
  */
 import type { EffortLevel, EngineId, ModelRequest, TierName } from '@mec/contracts'
 import type { CapabilityTable, ModelEntry } from '@mec/prompts'
@@ -46,6 +48,14 @@ export type ResolvedModel = {
   env_additions: Record<string, string>
   /** Set only when the requested tier was degraded down the ladder, e.g. `strong→balanced (provider has no strong)`. */
   tier_degraded?: string
+  /** The requested tier's models this connection does not offer, passed over in table order. */
+  passed_over?: string[]
+}
+
+/** What the slot's engine said about the table's models: engine-facing keys it does not offer. */
+export type ModelOffer = {
+  /** Bare ids on Claude/Codex, `provider/model` on OpenCode — the keys a probe marks. */
+  unavailable?: ReadonlySet<string>
 }
 
 /** Slot ProviderIds → table provider keys (the keystore names Google 'google-gemini'; the table says 'google'). */
@@ -60,6 +70,11 @@ export function providerKeyOf(provider: string | undefined): string | undefined 
 }
 
 type Candidate = { id: string; entry: ModelEntry }
+
+/** The key a probe marks a candidate by: `provider/model` on OpenCode, the bare id elsewhere. */
+function offerKey(slot: ModelSlot, id: string): string {
+  return slot.engine === 'opencode' ? `${PROVIDER_KEY[slot.provider ?? ''] ?? ''}/${id}` : id
+}
 
 function candidatesFor(table: CapabilityTable, slot: ModelSlot): Candidate[] {
   const engine = table.engines[slot.engine]
@@ -138,43 +153,65 @@ export function resolveModel(
   model_request: ModelRequest,
   slot: ModelSlot,
   table: CapabilityTable,
+  offer: ModelOffer = {},
 ): ResolvedModel {
   const engine = table.engines[slot.engine]
-  const candidates = candidatesFor(table, slot)
-  if (candidates.length === 0) {
+  const listed = candidatesFor(table, slot)
+  if (listed.length === 0) {
     throw new ModelResolutionError(`resolveModel: the table carries no models for engine '${slot.engine}'`)
   }
+  const refused = (c: Candidate): boolean => offer.unavailable?.has(offerKey(slot, c.id)) === true
+  const candidates = listed.filter((c) => !refused(c))
 
   let chosen: Candidate
   let tier_degraded: string | undefined
+  let passed_over: string[] | undefined
   if (model_request.model !== undefined) {
-    const found = candidates.find((c) => c.id === model_request.model)
-    if (found === undefined) {
-      const known = candidates.map((c) => c.id).join(', ')
+    const named = listed.find((c) => c.id === model_request.model)
+    if (named === undefined) {
+      const known = listed.map((c) => c.id).join(', ')
       throw new ModelResolutionError(
         `resolveModel: unknown model '${model_request.model}' for engine '${slot.engine}' (known: ${known})`,
       )
     }
-    chosen = found
+    // A named model is the plan's choice: one the connection does not offer is refused, never swapped.
+    if (refused(named)) {
+      throw new ModelResolutionError(
+        `resolveModel: model '${named.id}' is not offered on this connection (${slot.engine})`,
+      )
+    }
+    chosen = named
   } else if (model_request.tier !== undefined) {
-    const at = degrade(model_request.tier, candidates)
+    const requested = model_request.tier
+    const skipped = listed.filter((c) => c.entry.tier === requested && refused(c)).map((c) => c.id)
+    const at = degrade(requested, candidates)
     if (at === undefined) {
       // Nothing at or below the requested tier: the ladder has no rung this provider serves.
       const offered = [...new Set(candidates.map((c) => c.entry.tier))].join(', ')
+      const unoffered = listed.filter(refused).map((c) => c.id)
       throw new ModelResolutionError(
-        `resolveModel: tier '${model_request.tier}' and every tier below it are unavailable on ${slot.engine}${slot.provider !== undefined ? ` (${slot.provider})` : ''} (offered: ${offered})`,
+        `resolveModel: tier '${requested}' and every tier below it are unavailable on ${slot.engine}${slot.provider !== undefined ? ` (${slot.provider})` : ''} (offered: ${offered}${unoffered.length > 0 ? `; not offered on this connection: ${unoffered.join(', ')}` : ''})`,
       )
     }
     const first = at.candidates[0]
     if (first === undefined) {
       const offered = [...new Set(candidates.map((c) => c.entry.tier))].join(', ')
       throw new ModelResolutionError(
-        `resolveModel: tier '${model_request.tier}' matched no model on ${slot.engine} (offered: ${offered})`,
+        `resolveModel: tier '${requested}' matched no model on ${slot.engine} (offered: ${offered})`,
       )
     }
     chosen = first
-    if (at.tier !== model_request.tier) {
-      tier_degraded = `${model_request.tier}→${at.tier} (provider has no ${model_request.tier})`
+    // Passed over: the rows that would have served first. On the requested tier that is the
+    // unoffered ones ahead of the choice; after a walk down it is every unoffered one there.
+    const before = listed.slice(0, listed.indexOf(first))
+    const ahead = (at.tier === requested ? before : listed).filter((c) => c.entry.tier === requested)
+    const passed = ahead.filter(refused).map((c) => c.id)
+    if (passed.length > 0) passed_over = passed
+    if (at.tier !== requested) {
+      // The table may serve the tier while this connection does not: the two read differently.
+      const why =
+        skipped.length > 0 ? `this connection offers no ${requested} model` : `provider has no ${requested}`
+      tier_degraded = `${requested}→${at.tier} (${why})`
     }
   } else {
     throw new ModelResolutionError('resolveModel: the model_request names neither a tier nor a model')
@@ -199,6 +236,7 @@ export function resolveModel(
       argv_additions: variant !== undefined ? [select.flag, `${id}#${variant}`] : [select.flag, id],
       env_additions: {},
       ...(tier_degraded !== undefined && { tier_degraded }),
+      ...(passed_over !== undefined && { passed_over }),
     }
   }
 
@@ -222,5 +260,6 @@ export function resolveModel(
     // Reserved: a claude-glm slot maps aliases via ANTHROPIC_DEFAULT_*_MODEL (§4) — env, not argv.
     env_additions: {},
     ...(tier_degraded !== undefined && { tier_degraded }),
+    ...(passed_over !== undefined && { passed_over }),
   }
 }

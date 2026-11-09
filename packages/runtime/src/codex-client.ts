@@ -232,3 +232,99 @@ export function startCodexClient(opts: CodexClientOptions): CodexClient {
     processExitCode: () => exitCode,
   }
 }
+
+/** Pages enough for any catalogue seen (eight models on 0.148.0), and a bound on a looping cursor. */
+const MODEL_LIST_PAGES = 20
+
+/** A short wait: `model/list` answers from the binary or one catalogue fetch, and spends nothing. */
+const MODEL_LIST_TIMEOUT_MS = 15_000
+
+/** What a Codex home offers, or why it could not be read. A failed listing is never an empty one. */
+export type CodexModelListing = { listed: string[] } | { failed: string }
+
+/**
+ * The ids in one `model/list` answer (0.148.0: `{data: [{id, model, hidden, ...}], nextCursor}`).
+ * Undefined when the answer carries no list, so a server that ignored the method is not a home
+ * that offers nothing.
+ */
+export function codexModelIds(result: unknown): { ids: string[]; next?: string } | undefined {
+  const answer = (result ?? {}) as { data?: unknown; nextCursor?: unknown }
+  if (!Array.isArray(answer.data)) return undefined
+  const ids = (answer.data as { id?: unknown }[]).flatMap((entry) =>
+    typeof entry?.id === 'string' && entry.id !== '' ? [entry.id] : [],
+  )
+  const next =
+    typeof answer.nextCursor === 'string' && answer.nextCursor !== '' ? answer.nextCursor : undefined
+  return next === undefined ? { ids } : { ids, next }
+}
+
+export type CodexModelListOptions = {
+  binary: string
+  cwd: string
+  /** The slot's env: its CODEX_HOME, or none for a linked default login. */
+  env: Record<string, string>
+  spawn: OwnedSpawn
+  requestTimeoutMs?: number
+}
+
+/**
+ * §3 rule 2's probe on Codex: an app-server of its own under the slot's home, `initialize`, then
+ * `model/list` with hidden models included, page by page. No thread starts and nothing is spent;
+ * on 0.148.0 the call starts none of the home's MCP servers. The server is stopped before this
+ * returns, whatever the answer.
+ */
+export async function listCodexModels(opts: CodexModelListOptions): Promise<CodexModelListing> {
+  let started: ReturnType<OwnedSpawn> | undefined
+  const spawn: OwnedSpawn = (argv, spawnOpts) => {
+    started = opts.spawn(argv, spawnOpts)
+    return started
+  }
+  try {
+    const client = startCodexClient({
+      binary: opts.binary,
+      args: ['app-server', ...DISABLED_FEATURES.flatMap((feature) => ['--disable', feature])],
+      cwd: opts.cwd,
+      env: opts.env,
+      spawn,
+      requestTimeoutMs: opts.requestTimeoutMs ?? MODEL_LIST_TIMEOUT_MS,
+    })
+    await client.post({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        clientInfo: { name: 'mec', title: 'Mubit Engineering Control', version: '0.1.0' },
+        capabilities: { experimentalApi: false, requestAttestation: false },
+      },
+    })
+    await client.post({ jsonrpc: '2.0', method: 'initialized' })
+    const listed: string[] = []
+    let cursor: string | undefined
+    for (let page = 0; page < MODEL_LIST_PAGES; page += 1) {
+      const params = { includeHidden: true, ...(cursor !== undefined && { cursor }) }
+      const answer = codexModelIds(
+        await client.post({ jsonrpc: '2.0', id: page + 2, method: 'model/list', params }),
+      )
+      if (answer === undefined) return { failed: 'model/list answered no model ids' }
+      listed.push(...answer.ids)
+      cursor = answer.next
+      if (cursor === undefined) break
+    }
+    if (cursor !== undefined) return { failed: `model/list kept paging past ${MODEL_LIST_PAGES} pages` }
+    return listed.length > 0 ? { listed } : { failed: 'model/list answered no model ids' }
+  } catch (error) {
+    return { failed: `model/list: ${error instanceof Error ? error.message : String(error)}` }
+  } finally {
+    const proc = started as ReturnType<OwnedSpawn> | undefined
+    if (proc !== undefined) {
+      proc.kill('SIGTERM')
+      const gone = await Promise.race([proc.exited.then(() => true), sleep(2_000).then(() => false)])
+      if (!gone) proc.kill('SIGKILL')
+    }
+  }
+}
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms).unref()
+  })

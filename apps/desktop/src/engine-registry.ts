@@ -10,6 +10,7 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readlinkSync, realpathSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve as resolvePath, sep } from 'node:path'
 import type {
   AttemptRef,
@@ -35,13 +36,17 @@ import {
 import {
   buildAttemptSettings,
   CODEX_PROFILE,
+  type CodexModelListing,
   checkDrift,
   codexAttemptArgs,
   codexOtherServers,
   defaultDenyRead,
+  listCodexModels,
   type OwnedSpawn,
   opencodeAttemptConfig,
   opencodeSlotEnv,
+  ownedSpawn,
+  Supervisor,
   serialiseAttemptSettings,
   startCodexClient,
   startOpenCodeClient,
@@ -137,6 +142,11 @@ export type EngineRow = {
   adapter: (ctx: AdapterContext) => EngineAdapter
   /** Its version and login now, spending nothing; a row with none keeps today's launch. */
   probe?: (binary: string, env: Record<string, string>) => Promise<EngineProbe>
+  /**
+   * The models the slot's home offers, spending nothing (§3 rule 2). Asked only once the probe
+   * passed; a row with none resolves on the table alone.
+   */
+  listModels?: (binary: string, env: Record<string, string>) => Promise<CodexModelListing>
   /** The slot's key, read at launch: never in the attempt's env, which reaches its shell. */
   secretsOf?: (slot: StoreDoc) => Record<string, string>
 }
@@ -374,7 +384,19 @@ const codexRow: EngineRow = {
       loginStatus: () => run(binary, ['login', 'status'], env),
       versionProbe: async () => versionOf((await run(binary, ['--version'], env)).stdout),
     }).probe(),
+  // A ChatGPT sign-in refuses models the table names (0.3.4: gpt-6-luna, model_not_found), and
+  // `model/list` on the home's own app-server says which it offers before any thread starts.
+  listModels: (binary, env) =>
+    listCodexModels({
+      binary,
+      cwd: tmpdir(),
+      env,
+      spawn: ownedSpawn(new Supervisor(), { attemptId: 'model-list', generation: 1 }, { stdin: true }),
+    }),
 }
+
+/** Where the last listing of a slot's models is kept, for planning between launches. */
+export const modelListingId = (slotId: string): string => `slot-models/${slotId}`
 
 /** The rows, each added only with its own proof. */
 export const ENGINE_ROWS: Readonly<Record<string, EngineRow>> = {

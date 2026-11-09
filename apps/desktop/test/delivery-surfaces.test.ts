@@ -335,6 +335,10 @@ describe('a blocked row names the way forward the server offers (§11 Retry)', (
     ['auth_required: max-1', 'A connection needs signing in again: max-1'],
     ['model_refused: no model', 'No model could be chosen for this task: no model'],
     [
+      "model_unsupported: gpt-6-luna on codex-1: The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account.",
+      "The connection cannot run the model chosen for this task: gpt-6-luna on codex-1: The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account.",
+    ],
+    [
       'no_commit_identity: the repository sets no user.name/email',
       'The repository sets no commit name or email',
     ],

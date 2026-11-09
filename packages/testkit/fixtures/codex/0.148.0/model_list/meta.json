@@ -1,0 +1,10 @@
+{
+  "engine": "codex",
+  "engine_version": "0.148.0",
+  "scenario": "model_list",
+  "recorded_at": "2026-11-09T14:14:00.000Z",
+  "recorded_by": "real",
+  "redacted": true,
+  "method": "codex-cli 0.148.0 `codex app-server` on an EMPTY scratch CODEX_HOME (no login): initialize, the initialized notification, then model/list {includeHidden: true}. Zero tokens; no network sign-in. raw.jsonl holds the two responses verbatim, with codexHome and userAgent replaced (a local path and a host string, no secret).",
+  "notes": "Not a turn stream, so no events.jsonl and no `expected` block. With no login, model/list answers the binary's bundled catalogue: gpt-5.6-sol (isDefault), gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.2, and hidden gpt-5.4, gpt-5.4-mini, codex-auto-review. No gpt-6-* id appears. Whether a signed-in ChatGPT home answers a different list is recorded separately in docs/changes/2026-11-09-codex-models/VERIFICATION.md."
+}

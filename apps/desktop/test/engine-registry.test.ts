@@ -429,6 +429,88 @@ describe('Codex through the runner', { timeout: 180_000 }, () => {
     expect(existsSync(join(bin, 'seen.json'))).toBe(false)
   })
 
+  // 0.3.4, a real run: a fast task went to the table's first fast model, which a ChatGPT sign-in
+  // does not offer. The launch now asks the slot's home what it offers (model/list, zero tokens).
+  describe('the model is one the connection offers (§3 rule 2)', () => {
+    const OFFERED = ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']
+    const threadModel = (lines: (name: string) => Record<string, never>[]) =>
+      lines('requests.jsonl').find((line: { method?: string }) => line.method === 'thread/start') as
+        | { params: { model?: string } }
+        | undefined
+
+    it('a fast task runs on a fast model the home lists, and the listing is kept', async () => {
+      const { dataDir, repo, lines } = scratch('codex', {
+        models: OFFERED,
+        steps: [{ complete: 'completed' }],
+      })
+      seed(dataDir, repo, { slot: CODEX_SLOT, task: { modelRequest: { tier: 'fast', reason: 'r' } } })
+      const end = await launched(dataDir)
+      expect(end.resolved_model).toBe('gpt-5.6-luna')
+      expect(end.tier_degraded).toBeUndefined()
+      expect(threadModel(lines)?.params.model).toBe('gpt-5.6-luna')
+      expect(peek(dataDir, (store) => store.engines.get('slot-models/slot_x'))).toMatchObject({
+        slotId: 'slot_x',
+        engine: 'codex',
+        listed: OFFERED,
+      })
+    })
+
+    it('a tier the home offers nothing at walks down, and the attempt says what it passed over', async () => {
+      const { dataDir, repo, lines } = scratch('codex', {
+        models: ['gpt-5.6-luna'],
+        steps: [{ complete: 'completed' }],
+      })
+      seed(dataDir, repo, { slot: CODEX_SLOT, task: { modelRequest: { tier: 'balanced', reason: 'r' } } })
+      const end = await launched(dataDir)
+      expect(end.resolved_model).toBe('gpt-5.6-luna')
+      expect(end.tier_degraded).toBe('balanced→fast (this connection offers no balanced model)')
+      expect(end.models_passed_over).toEqual(['gpt-5.6-terra', 'gpt-6.1-sol'])
+      expect(threadModel(lines)?.params.model).toBe('gpt-5.6-luna')
+    })
+
+    it('nothing offered at or below the tier refuses before any thread starts', async () => {
+      const { dataDir, repo, lines } = scratch('codex', { models: ['gpt-5.6-sol'], steps: [] })
+      seed(dataDir, repo, { slot: CODEX_SLOT, task: { modelRequest: { tier: 'fast', reason: 'r' } } })
+      const end = await launched(dataDir)
+      expect(end.state).toBe('failed')
+      expect(String(end.terminal_reason)).toContain('model_refused')
+      expect(String(end.terminal_reason)).toContain('not offered on this connection')
+      expect(threadModel(lines)).toBeUndefined()
+    })
+
+    // The 400's shape is synthetic (no recording of it exists): the message is the one the owner saw
+    // on 0.3.4, inside the error envelope and the failed turn the 0.148.0 fixtures show.
+    it('an engine that refuses the model fails in words naming the model and the connection', async () => {
+      const message =
+        'unexpected status 400 Bad Request: {"error":{"message":"The \'gpt-5.6-luna\' model is not supported when using Codex with a ChatGPT account.","type":"invalid_request_error","param":"model","code":"model_not_found"}}'
+      const steps = [
+        {
+          notify: {
+            method: 'error',
+            params: { error: { message, codexErrorInfo: 'other' }, willRetry: false },
+          },
+        },
+        { complete: 'failed' },
+      ]
+      const { dataDir, repo } = scratch('codex', { models: OFFERED, steps })
+      seed(dataDir, repo, { slot: CODEX_SLOT, task: { modelRequest: { tier: 'fast', reason: 'r' } } })
+      const end = await launched(dataDir)
+      expect(end.state).toBe('failed')
+      expect(String(end.terminal_reason)).toMatch(
+        /^model_unsupported: gpt-5\.6-luna on slot_x: The 'gpt-5\.6-luna' model is not supported when using Codex with a ChatGPT account\./,
+      )
+    })
+
+    it('a home that lists nothing launches on the table order, which puts the proven model first', async () => {
+      const { dataDir, repo, lines } = scratch('codex', { steps: [{ complete: 'completed' }] })
+      seed(dataDir, repo, { slot: CODEX_SLOT, task: { modelRequest: { tier: 'fast', reason: 'r' } } })
+      const end = await launched(dataDir)
+      expect(end.resolved_model).toBe('gpt-5.6-luna')
+      expect(threadModel(lines)?.params.model).toBe('gpt-5.6-luna')
+      expect(peek(dataDir, (store) => store.engines.get('slot-models/slot_x'))).toBeUndefined()
+    })
+  })
+
   it('a stop ends interrupted, with the group confirmed gone', async () => {
     const { dataDir, repo, seen } = scratch('codex', { steps: [{ sleep: 60_000 }] })
     seed(dataDir, repo, { slot: CODEX_SLOT, task: { budget: { wall_clock_ms: 800 } } })

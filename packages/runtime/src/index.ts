@@ -13,13 +13,17 @@ export type {
   CodexAttemptOptions,
   CodexClient,
   CodexClientOptions,
+  CodexModelListing,
+  CodexModelListOptions,
   CodexServerRef,
 } from './codex-client'
 export {
   CODEX_PROFILE,
   CODEX_TOKEN_VAR,
   codexAttemptArgs,
+  codexModelIds,
   codexOtherServers,
+  listCodexModels,
   startCodexClient,
 } from './codex-client'
 export type { DriftCheck } from './drift'

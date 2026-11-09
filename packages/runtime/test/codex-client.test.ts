@@ -2,8 +2,16 @@
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { matchesSecret } from '@mec/contracts'
 import { afterAll, describe, expect, it } from 'vitest'
-import { CODEX_TOKEN_VAR, codexAttemptArgs, codexOtherServers, startCodexClient } from '../src/codex-client'
+import {
+  CODEX_TOKEN_VAR,
+  codexAttemptArgs,
+  codexModelIds,
+  codexOtherServers,
+  listCodexModels,
+  startCodexClient,
+} from '../src/codex-client'
 import { ownedSpawn } from '../src/owned-spawn'
 import { Supervisor } from '../src/supervisor'
 
@@ -197,5 +205,89 @@ describe('the servers another config adds', () => {
 
   it('an unreadable listing is an error, never an empty fence', () => {
     expect(() => codexOtherServers('not json')).toThrow('codex mcp list')
+  })
+})
+
+// §3 rule 2 on Codex: `model/list` on the app-server spends nothing and names what the home offers.
+const MODEL_LIST = fileURLToPath(
+  new URL('../../testkit/fixtures/codex/0.148.0/model_list/raw.jsonl', import.meta.url),
+)
+
+describe('the models a Codex home offers', () => {
+  it('reads the ids from the real 0.148.0 answer, hidden ones included', () => {
+    const raw = readFileSync(MODEL_LIST, 'utf8')
+    expect(matchesSecret(raw)).toBe(false)
+    const answer = raw
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .find((line) => line.id === 2)
+    expect(codexModelIds(answer.result)).toEqual({
+      ids: [
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+        'gpt-5.5',
+        'gpt-5.4',
+        'gpt-5.4-mini',
+        'gpt-5.2',
+        'codex-auto-review',
+      ],
+    })
+  })
+
+  it('an answer with no list is no listing, never an empty one', () => {
+    expect(codexModelIds({})).toBeUndefined()
+    expect(codexModelIds({ data: 'x' })).toBeUndefined()
+  })
+
+  function lister(name: string, scenario: Record<string, unknown>) {
+    const dir = join(root, name)
+    mkdirSync(dir, { recursive: true })
+    copyFileSync(FAKE_CLI, join(dir, 'codex'))
+    writeFileSync(join(dir, 'scenario.json'), JSON.stringify(scenario))
+    const supervisor = new Supervisor()
+    const spawn = ownedSpawn(supervisor, { attemptId: name, generation: 1 }, { stdin: true })
+    const requests = () =>
+      readFileSync(join(dir, 'requests.jsonl'), 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+    const seen = () => JSON.parse(readFileSync(join(dir, 'seen.json'), 'utf8'))
+    const run = () =>
+      listCodexModels({
+        binary: join(dir, 'codex'),
+        cwd: dir,
+        env: { PATH: process.env.PATH ?? '', CODEX_HOME: '/slots/codex/one' },
+        spawn,
+      })
+    return { run, requests, seen }
+  }
+
+  it('lists every page under the slot home, then stops the server it started', async () => {
+    const models = ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']
+    const { run, requests, seen } = lister('list', { models, modelPageSize: 2, steps: [] })
+    await expect(run()).resolves.toEqual({ listed: models })
+    expect(requests().map((request) => request.method)).toEqual([
+      'initialize',
+      'initialized',
+      'model/list',
+      'model/list',
+    ])
+    expect(requests()[2].params).toMatchObject({ includeHidden: true })
+    expect(seen().codex_home).toBe('/slots/codex/one')
+    const { pid } = seen()
+    expect(() => process.kill(pid, 0)).toThrow()
+  })
+
+  it('a server that answers no list says so, and starts no thread', async () => {
+    const { run, requests } = lister('nolist', { steps: [] })
+    await expect(run()).resolves.toEqual({ failed: 'model/list answered no model ids' })
+    expect(requests().some((request) => request.method === 'thread/start')).toBe(false)
+  })
+
+  it('a refused request is a failed listing, not a throw', async () => {
+    const { run } = lister('refused', { modelListError: 'not signed in', steps: [] })
+    await expect(run()).resolves.toMatchObject({ failed: expect.stringContaining('not signed in') })
   })
 })

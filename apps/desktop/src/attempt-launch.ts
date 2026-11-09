@@ -79,7 +79,15 @@ import {
   writeShimDir,
 } from '@mec/runtime'
 import { redact } from '@mec/slots'
-import { bridgeOf, driftOf, ENGINE_ROWS, type EngineRow, lacksHome, type Prepared } from './engine-registry'
+import {
+  bridgeOf,
+  driftOf,
+  ENGINE_ROWS,
+  type EngineRow,
+  lacksHome,
+  modelListingId,
+  type Prepared,
+} from './engine-registry'
 import { instructionsPart, readInstructionFiles } from './repo-instructions'
 import { worktreeIsOurs } from './slot-switch'
 
@@ -418,6 +426,7 @@ export class AttemptLauncher {
     const home = process.env.HOME ?? '/tmp'
     const probeEnv = { PATH: process.env.PATH ?? '', HOME: home, ...slotEnv(slot, row) }
     await this.#probe(row, slot, binary, probeEnv)
+    const offered = await this.#offered(row, slot, binary, probeEnv)
     // A repair or a review is its own role on the task's own record (§15).
     const roleName = String(attempt.role ?? task.role)
     const continuation = attempt.continuation as Continuation | undefined
@@ -494,7 +503,7 @@ export class AttemptLauncher {
     }
     if (bootstrap.length > 0) await recordBootstrapOutput(worktree, beforeBootstrap)
 
-    const resolvedModel = this.#model(task, slot, engine)
+    const resolvedModel = this.#model(task, slot, engine, offered)
     if (resolvedModel === undefined && row.modelRequired) {
       throw refuse(`model_refused: ${engine} inherits no model, and this task names none`)
     }
@@ -650,9 +659,11 @@ export class AttemptLauncher {
       sandbox: isolation.sandbox,
       bundle_revision: bundle.revision,
       origin_message_id: originId,
+      // The launch's own resolution replaces the queue's, which planned on an older listing.
       ...(resolvedModel !== undefined && {
         resolved_model: resolvedModel.model,
-        ...(resolvedModel.tier_degraded !== undefined && { tier_degraded: resolvedModel.tier_degraded }),
+        tier_degraded: resolvedModel.tier_degraded,
+        models_passed_over: resolvedModel.passed_over,
       }),
     }
     facts.atomic(() => {
@@ -795,17 +806,56 @@ export class AttemptLauncher {
     return typeof head === 'string' ? head : pinned
   }
 
-  #model(task: StoreDoc, slot: StoreDoc, engine: string): ResolvedModel | undefined {
+  /**
+   * §3 rule 2: what the slot's home offers now, kept for planning between launches. A listing that
+   * failed is no listing: the table alone decides, as it did before, and the last good one stays.
+   */
+  async #offered(
+    row: EngineRow,
+    slot: StoreDoc,
+    binary: string,
+    env: Record<string, string>,
+  ): Promise<readonly string[] | undefined> {
+    if (row.listModels === undefined) return undefined
+    const listing = await row.listModels(binary, env)
+    if (!('listed' in listing)) return undefined
+    const { store } = this.#deps
+    const slotId = String(slot.id)
+    store.atomic(() => {
+      const at = new Date().toISOString()
+      store.engines.save({
+        id: modelListingId(slotId),
+        slotId,
+        engine: row.engine,
+        listed: listing.listed,
+        listedAt: at,
+        updatedAt: at,
+      })
+    })
+    return listing.listed
+  }
+
+  #model(
+    task: StoreDoc,
+    slot: StoreDoc,
+    engine: string,
+    offered: readonly string[] | undefined,
+  ): ResolvedModel | undefined {
     if (task.modelRequest === undefined) return undefined
     const request = ModelRequest.safeParse(task.modelRequest)
     if (!request.success) throw refuse(`model_refused: ${request.error.message}`)
     try {
       const { table } = loadModelsTable({ userPath: userModelsPath(this.#deps.dataDir) })
       const provider = typeof slot.provider === 'string' ? slot.provider : undefined
+      // A table row the home did not list is one it does not offer.
+      const rows = Object.keys(table.engines[engine as EngineId]?.models ?? {})
+      const unavailable =
+        offered === undefined ? undefined : new Set(rows.filter((id) => !offered.includes(id)))
       return resolveModel(
         request.data,
         { engine: engine as EngineId, ...(provider !== undefined && { provider }) },
         table,
+        unavailable === undefined ? {} : { unavailable },
       )
     } catch (error) {
       if (error instanceof ModelResolutionError) throw refuse(`model_refused: ${error.message}`)

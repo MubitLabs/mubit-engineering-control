@@ -1,0 +1,128 @@
+[
+  {
+    "name": "S1 mec stop signals nothing again",
+    "file": "apps/desktop/src/mec.ts",
+    "find": "    const outcome = await io.stopServer()\n",
+    "replace": "    const outcome = { stopped: true, lines: [] as string[] }\n",
+    "tests": ["apps/desktop/test/mec-cli.test.ts"]
+  },
+  {
+    "name": "S1 a server that did not stop still exits 0",
+    "file": "apps/desktop/src/mec.ts",
+    "find": "    return outcome.stopped ? 0 : 1\n",
+    "replace": "    return 0\n",
+    "tests": ["apps/desktop/test/mec-cli.test.ts"]
+  },
+  {
+    "name": "S1 stop says stopped without waiting for the pid",
+    "file": "apps/desktop/src/restart.ts",
+    "find": "  if (!(await stop(found.pid, stopBoundMs))) {\n    return {\n      stopped: false,",
+    "replace": "  if (!(await stop(found.pid, 0) || true)) {\n    return {\n      stopped: false,",
+    "tests": ["apps/desktop/test/restart-proof.test.ts"]
+  },
+  {
+    "name": "S1 stop signals an unproven pid",
+    "file": "apps/desktop/src/restart.ts",
+    "find": "    return { stopped: false, lines: [`not stopped: ${found.why}; nothing was signalled`] }",
+    "replace": "    return { stopped: true, lines: [] }",
+    "tests": ["apps/desktop/test/restart-proof.test.ts"]
+  },
+  {
+    "name": "S1 the shutdown bound never fires",
+    "file": "apps/desktop/src/serve.ts",
+    "find": "    timer = setTimeout(() => resolve('bound'), boundMs)",
+    "replace": "    timer = setTimeout(() => resolve('bound'), 60_000)",
+    "tests": ["apps/desktop/test/serve-shutdown.test.ts"]
+  },
+  {
+    "name": "S2 a declined delivery is no stage",
+    "file": "packages/domain/src/stages.ts",
+    "find": "  if (stage !== 'declined' && stage !== 'failed') return undefined\n  return { step:",
+    "replace": "  if (stage !== 'never') return undefined\n  return { step:",
+    "tests": ["packages/domain/test/stages.test.ts", "apps/desktop/test/inspection-trace.test.ts", "packages/meta/test/context-stage.test.ts"]
+  },
+  {
+    "name": "S2 a declined pull request reads as a push",
+    "file": "packages/domain/src/stages.ts",
+    "find": "return { step: typeof record?.prCardId === 'string' ? 'pr' : 'push', outcome: stage }",
+    "replace": "return { step: 'push', outcome: stage }",
+    "tests": ["packages/domain/test/stages.test.ts"]
+  },
+  {
+    "name": "S2 Work never reads the delivery stop",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "                ...(stopped !== undefined && { deliveryStopped: stopped }),",
+    "replace": "",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "S2 the planner context never reads the delivery stop",
+    "file": "packages/meta/src/context.ts",
+    "find": "    ...(stopped !== undefined && { deliveryStopped: stopped }),",
+    "replace": "",
+    "tests": ["packages/meta/test/context-stage.test.ts"]
+  },
+  {
+    "name": "S2 the row's next step is the generic one",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "nextAction: stop.step === 'pr' ? 'Ask to open the pull request again' : 'Ask to push again',",
+    "replace": "nextAction: 'Resolve what blocks it',",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "S3 an older same-turn answer is not read",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "return this.#lastReport(doc) === null && this.#sameTurnReport(doc) === null ? 'no-answer' : 'answered'",
+    "replace": "return this.#lastReport(doc) === null ? 'no-answer' : 'answered'",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "S3 any report in the repository is the answer",
+    "file": "packages/store/src/inspection.ts",
+    "find": "AND type = ? AND at = ? ORDER BY stream, seq`,\n      ).all(...chunk, type, at)",
+    "replace": "AND type = ? AND ? = ? ORDER BY stream, seq`,\n      ).all(...chunk, type, at, at)",
+    "tests": ["apps/desktop/test/meta-visibility.test.ts"]
+  },
+  {
+    "name": "S4 an integrated task's used-up repairs offer nothing",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "      ? integrationRepairOffer(store, work)\n",
+    "replace": "      ? undefined\n",
+    "tests": ["packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "S4 the owner's repair runs outside the integration worktree",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "next: { ...next, ...offer.integration }, at })",
+    "replace": "next, at })",
+    "tests": ["packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "S4 the work stays blocked after Try again",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "        state: transition(WORK_ITEM_MACHINE, String(work.state), 'resume_integrating'),",
+    "replace": "        state: String(work.state),",
+    "tests": ["packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "S4 no failure on record still offers",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (failed?.repairing !== true || typeof failed.taskId !== 'string') return undefined",
+    "replace": "  if (typeof failed?.taskId !== 'string') return { taskId: 'task_a', reason, integration: { worktree: '', branch: '' } }",
+    "tests": ["packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "S5 the sentence repeats its label again",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  const why = row.reason?.replace(/^(Blocked|Failed):\\s*/, '').trim() ?? ''",
+    "replace": "  const why = row.reason?.trim() ?? ''",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "S5 a name keeps its capital mid-sentence only by luck",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "const lead = /^[A-Z][a-z]*(\\s|$)/.test(why)",
+    "replace": "const lead = /^[A-Z][a-z]/.test(why)",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  }
+]

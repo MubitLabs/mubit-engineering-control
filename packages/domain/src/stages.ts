@@ -32,7 +32,12 @@ export type WorkItemView = {
   merged?: boolean
   /** The delivery is at `pr-ready`: a person has the pull request to review (§10). */
   deliveryReady?: boolean
+  /** A push or pull request card was declined, or its step failed: nothing moves until you ask again. */
+  deliveryStopped?: DeliveryStop
 }
+
+/** Where a delivery stopped short, and how. */
+export type DeliveryStop = { step: 'push' | 'pr'; outcome: 'declined' | 'failed' }
 
 /** What a stage reads beyond the work doc. Each caller gathers these from its own store reads. */
 export type WorkFacts = {
@@ -46,6 +51,8 @@ export type WorkFacts = {
   turnEnded?: boolean
   /** This item waits for its repository's agreement; absent where the caller does not read it. */
   hostRunUnagreed?: boolean
+  /** `deliveryStopped` of the item's delivery record; absent where the caller reads no delivery. */
+  deliveryStopped?: DeliveryStop
 }
 
 export type Stage = {
@@ -129,6 +136,16 @@ export const STAGE_TABLE: readonly StageRow[] = [
     label: () => 'Held by you',
   },
   {
+    // A declined card or a failed step: the delivery waits for you to ask again (walkthrough, 9 November 2026).
+    key: 'person/blocked',
+    waitingOn: 'person',
+    match: (w) => w.deliveryStopped !== undefined,
+    label: (w) => {
+      const stop = w.deliveryStopped as DeliveryStop
+      return `${stop.step === 'pr' ? 'Pull request' : 'Push'} ${stop.outcome}`
+    },
+  },
+  {
     key: 'person/agreement',
     waitingOn: 'person',
     match: (w) => w.hostRunUnagreed === true,
@@ -190,6 +207,16 @@ export function stageOf(w: WorkItemView): Stage {
   return { key: row.key, label: row.label(w), waitingOn: row.waitingOn }
 }
 
+/**
+ * A delivery record (`delivery/<work item>`) that stopped short: its card was declined or its step
+ * failed. The pull request's card id says the push was already behind it, as the retry reads it.
+ */
+export function deliveryStopped(record: Record<string, unknown> | undefined): DeliveryStop | undefined {
+  const stage = record?.stage
+  if (stage !== 'declined' && stage !== 'failed') return undefined
+  return { step: typeof record?.prCardId === 'string' ? 'pr' : 'push', outcome: stage }
+}
+
 const text = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
 
 /**
@@ -237,5 +264,6 @@ export function workViewOf(doc: Record<string, unknown>, facts: WorkFacts): Work
     ...(facts.deliveryReady === true && { deliveryReady: true }),
     ...(facts.turnEnded === true && text(doc.state) === 'planning' && { latestReport: 'waiting' as const }),
     ...(facts.hostRunUnagreed === true && { hostRunUnagreed: true }),
+    ...(facts.deliveryStopped !== undefined && { deliveryStopped: facts.deliveryStopped }),
   }
 }

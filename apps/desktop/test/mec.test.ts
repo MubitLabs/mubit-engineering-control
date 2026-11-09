@@ -35,6 +35,7 @@ function makeIo(overrides: { readSnapshotText?: () => string; initialized?: bool
       starts += 1
       return { started: true, lines: [] }
     },
+    stopServer: async () => ({ stopped: true, lines: ['no server was running'] }),
   }
   return { io, lines, markerDir, dataDir, starts: () => starts }
 }

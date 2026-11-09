@@ -273,6 +273,98 @@ describe("the owner's Try again (owner ruling 2026-11-07)", () => {
   })
 })
 
+describe('Try again on an integration whose repairs are used up (walkthrough, 9 November 2026)', () => {
+  const INTEGRATION = { worktree: '/work/integration', branch: 'mec/wi/integration' }
+
+  /** The task is integrated, so the used-up block lands on its work: no task carries it. */
+  function integrationUsedUp() {
+    const r = rig({ status: 'integrated' })
+    finished(r.store, 'att_2', { ...failing, continuation: { kind: 'repair' } })
+    finished(r.store, 'att_3', { ...failing, continuation: { kind: 'repair' } })
+    r.store.atomic(() => {
+      r.store.workItems.save({ ...(r.store.workItems.get('wi_1') as StoreDoc), state: 'integrating' })
+      r.store.engines.save({
+        id: 'integration/wi_1',
+        workItemId: 'wi_1',
+        ...INTEGRATION,
+        head: H2,
+        integrated: { task_a: H1 },
+        failed: { taskId: 'task_a', reason: 'checks_failed', sha: H2, failing: [], repairing: true },
+      })
+      openRepairTask(r.store, r.store.effects, DEFAULT_CAPS, {
+        root: r.store.tasks.get('task_a') as StoreDoc,
+        evidence: 'Check unit failed on the combined head',
+        ...INTEGRATION,
+        id: 'task_r',
+        at: AT,
+      })
+    })
+    return r
+  }
+  const work = (store: Store) => store.workItems.get('wi_1') as StoreDoc
+
+  it('offers one fresh repair in the integration worktree, and pressing it queues exactly one', () => {
+    const { store, pass } = integrationUsedUp()
+    expect(work(store)).toMatchObject({
+      state: 'blocked',
+      blockedReason: expect.stringContaining('repairs used up'),
+    })
+    expect(store.tasks.get('task_r')).toBeUndefined()
+    expect(ownerRepairOffer(store, work(store))).toMatchObject({
+      taskId: 'task_a',
+      reason: expect.stringContaining('repairs used up'),
+    })
+    const outcome = ownerRetryRepair(store, 'wi_1', AT)
+    expect(outcome).toMatchObject({ status: 'retrying' })
+    expect(work(store).state).toBe('integrating')
+    expect(work(store).blockedReason).toBeUndefined()
+    const repair = store.tasks.list({ workItemId: 'wi_1' }).find((task) => task.repairOf === 'task_a')
+    expect(repair).toMatchObject({ status: 'ready', role: 'repair_agent', basePolicy: 'integration' })
+    expect(outcome).toEqual({ status: 'retrying', taskId: repair?.id })
+    expect(store.tasks.get('task_a')?.status).toBe('integrated')
+    pass()
+    expect(queued(store)).toHaveLength(1)
+    expect(queued(store)[0]).toMatchObject({ taskId: repair?.id, role: 'repair_agent' })
+    expect(queued(store)[0]?.continuation).toMatchObject({
+      kind: 'repair',
+      origin: 'owner',
+      ...INTEGRATION,
+      evidence: expect.stringContaining('repairs used up'),
+    })
+    expect(store.events.read('work:wi_1').map((event) => event.type)).toContain('retry_requested')
+  })
+
+  it('a second press finds nothing to try', () => {
+    const { store } = integrationUsedUp()
+    ownerRetryRepair(store, 'wi_1', AT)
+    expect(ownerRetryRepair(store, 'wi_1', AT)).toEqual({ status: 'refused', error: 'nothing_to_retry' })
+    expect(
+      store.tasks.list({ workItemId: 'wi_1' }).filter((task) => task.repairOf === 'task_a'),
+    ).toHaveLength(1)
+  })
+
+  it('held work and a repository not agreed to host runs offer nothing', () => {
+    const held = integrationUsedUp()
+    held.store.atomic(() => holdWorkItem(held.store, 'wi_1', { reason: 'wait', at: AT }))
+    expect(ownerRepairOffer(held.store, work(held.store))).toBeUndefined()
+    const unagreed = integrationUsedUp()
+    unagreed.store.atomic(() => {
+      const { hostRunAgreedAt: _agreed, ...repo } = unagreed.store.engines.get(REPO) as StoreDoc
+      unagreed.store.engines.save(repo as StoreDoc)
+    })
+    expect(ownerRepairOffer(unagreed.store, work(unagreed.store))).toBeUndefined()
+  })
+
+  it('an integration with no failure on record offers nothing', () => {
+    const { store } = integrationUsedUp()
+    store.atomic(() => {
+      const { failed: _failed, ...doc } = store.engines.get('integration/wi_1') as StoreDoc
+      store.engines.save(doc as StoreDoc)
+    })
+    expect(ownerRepairOffer(store, work(store))).toBeUndefined()
+  })
+})
+
 describe('repair tasks from integration (§14, decision #36)', () => {
   it("carry the root task's model request, so the cheapest tier stays the cheapest tier", () => {
     const modelRequest = { tier: 'fast', reason: 'the owner asked for the cheapest tier' }

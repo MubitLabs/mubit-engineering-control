@@ -21,6 +21,7 @@ import {
   type Caps,
   canTransition,
   DEFAULT_CAPS,
+  deliveryStopped,
   TASK_MACHINE,
   transition,
   WORK_ITEM_MACHINE,
@@ -149,14 +150,17 @@ export function retryOffer(store: Store, work: StoreDoc): RetryOffer | undefined
   }
   if (!OPEN_STATES.includes(String(work.state))) return undefined
   const doc = store.engines.get(deliveryDocId(id))
-  if (doc?.stage !== 'declined' && doc?.stage !== 'failed') return undefined
-  const kind = typeof doc.prCardId === 'string' ? 'pr' : 'push'
-  const step = kind === 'pr' ? 'pull request' : 'push'
-  const reason =
-    doc.stage === 'failed'
-      ? `The ${step} failed: ${String(doc.error ?? 'no detail')}`
-      : `The ${step} card was ${String(doc.answer ?? 'declined')}`
-  return { kind, reason: clean(reason) }
+  const stop = deliveryStopped(doc)
+  if (doc === undefined || stop === undefined) return undefined
+  return { kind: stop.step, reason: clean(stoppedWords(doc)) }
+}
+
+/** What stopped a delivery short, in words: the card's answer, or the step's failure. */
+export function stoppedWords(doc: StoreDoc): string {
+  const step = typeof doc.prCardId === 'string' ? 'pull request' : 'push'
+  return doc.stage === 'failed'
+    ? `The ${step} failed: ${String(doc.error ?? 'no detail')}`
+    : `The ${step} card was ${String(doc.answer ?? 'declined')}`
 }
 
 export type DeliveryStage =

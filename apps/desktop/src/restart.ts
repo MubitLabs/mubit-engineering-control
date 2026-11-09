@@ -1,6 +1,6 @@
 /**
  * `mec restart` (§21): finds the data dir's server, stops it by a pid proven to be MEC's, and
- * starts a new detached one from this install. The new server takes the last port itself
+ * starts a new detached one from this install. `mec stop` is the same stop without the start. The new server takes the last port itself
  * (`listenOnLastPort`), and `DirLock` stays what keeps a second writer out: nothing here replaces
  * it. A stop is SIGTERM only, so a server that will not go is reported, never killed.
  *
@@ -152,6 +152,30 @@ async function start(deps: RestartDeps, opening: string): Promise<RestartOutcome
       `no server was confirmed: pid ${child.pid} has not answered within ${startBoundMs / 1000} s and may still be starting; check \`mec status\``,
     ],
   }
+}
+
+export type StopOutcome = { stopped: boolean; lines: string[] }
+
+/**
+ * `mec stop`: the same proven pid and the same SIGTERM as a restart, and the same wait: it says
+ * stopped only once the pid is gone. One that outlives the bound is reported by pid, never killed.
+ */
+export async function stopServer(deps: Pick<RestartDeps, 'dataDir' | 'stopBoundMs'>): Promise<StopOutcome> {
+  const { dataDir, stopBoundMs = STOP_BOUND_MS } = deps
+  const found = findServer(dataDir)
+  if (found.status === 'unproven') {
+    return { stopped: false, lines: [`not stopped: ${found.why}; nothing was signalled`] }
+  }
+  if (found.status === 'none') return { stopped: true, lines: ['no server was running'] }
+  if (!(await stop(found.pid, stopBoundMs))) {
+    return {
+      stopped: false,
+      lines: [
+        `not stopped: pid ${found.pid} did not stop within ${stopBoundMs / 1000} s; it was sent SIGTERM and is still running`,
+      ],
+    }
+  }
+  return { stopped: true, lines: [`stopped pid ${found.pid}`] }
 }
 
 export async function restartServer(deps: RestartDeps): Promise<RestartOutcome> {

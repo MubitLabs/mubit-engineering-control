@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { processStart } from '@mec/runtime'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { findServer, restartServer } from '../src/restart'
+import { findServer, restartServer, stopServer } from '../src/restart'
 
 let scratch: string
 let dataDir: string
@@ -148,6 +148,38 @@ describe('the proof', () => {
     child.kill('SIGKILL')
     while (child.exitCode === null && child.signalCode === null) await sleep(10)
     expect(findServer(dataDir)).toEqual({ status: 'none' })
+  })
+})
+
+describe('what mec stop says when it cannot finish', () => {
+  const stop = () => stopServer({ dataDir, stopBoundMs: 300 })
+
+  it('a server that ignores SIGTERM is reported by pid as still running, never killed', async () => {
+    fresh()
+    const { child, pid, sawTerm } = await standIn()
+    claim(pid, { started: processStart(pid), heartbeatAt: nowIso() })
+
+    const outcome = await stop()
+
+    expect(outcome.stopped).toBe(false)
+    expect(outcome.lines.join('\n')).toContain(`pid ${pid} did not stop within 0.3 s`)
+    expect(outcome.lines.join('\n')).toContain('still running')
+    expect(existsSync(sawTerm)).toBe(true)
+    expect(child.exitCode).toBeNull()
+    expect(child.signalCode).toBeNull()
+  })
+
+  it('a pid not proven to be this server is not signalled', async () => {
+    fresh()
+    const { pid, sawTerm } = await standIn()
+    claim(pid, { started: 'Thu Jan  1 00:00:00 2026', heartbeatAt: nowIso() })
+
+    const outcome = await stop()
+
+    expect(outcome.stopped).toBe(false)
+    expect(outcome.lines.join('\n')).toContain('nothing was signalled')
+    await sleep(100)
+    expect(existsSync(sawTerm)).toBe(false)
   })
 })
 

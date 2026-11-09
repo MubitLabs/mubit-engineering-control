@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url'
 import { readProcess } from '@mec/runtime'
 import { type BuildOptions, build } from 'esbuild'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { writeStopMarker } from '../src/stop-marker'
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), '..')
 const repoRoot = join(appDir, '..', '..')
@@ -170,6 +171,41 @@ afterEach(async () => {
 const fresh = (): void => {
   dataDir = mkdtempSync(join(scratch, 'data-'))
 }
+
+describe('mec stop', () => {
+  it(
+    'stops the running server: its pid is gone when it says so, and the stop is recorded',
+    async () => {
+      fresh()
+      const { pid, port } = await serve()
+      expect(await answers(port)).toBe(true)
+
+      const { code, output } = await mec('stop')
+
+      expect(output).toContain(`stopped pid ${pid}`)
+      expect(code).toBe(0)
+      expect(alive(pid)).toBe(false)
+      expect(await answers(port)).toBe(false)
+      expect(existsSync(join(dataDir, 'stop-marker'))).toBe(true)
+      // The recorded stop holds: a watchdog's restart does not bring it back.
+      const watchdog = await mec('restart', '--respect-stop')
+      expect(watchdog.output).toContain('not starting')
+      expect(scratchServers().filter(alive)).toEqual([])
+    },
+    TEST_MS,
+  )
+
+  it(
+    'says plainly when nothing was running',
+    async () => {
+      fresh()
+      const { code, output } = await mec('stop')
+      expect(code).toBe(0)
+      expect(output).toContain('no server was running')
+    },
+    TEST_MS,
+  )
+})
 
 describe('mec restart', () => {
   it(
@@ -340,7 +376,9 @@ describe('mec restart', () => {
     async () => {
       fresh()
       const { pid, port } = await serve()
-      expect((await mec('stop')).code).toBe(0)
+      // A marker standing beside a live server (`mec stop` now stops it too): the watchdog's
+      // restart must not touch that server either.
+      writeStopMarker(dataDir, 'the owner stopped it')
 
       const { code, output } = await mec('restart', '--respect-stop')
 

@@ -54,7 +54,7 @@ usage: mec [command]
 --version, -v   print the version
 help            this help
 status          health snapshot + setup state (exit 0–3)
-stop            record an intentional stop
+stop            stop the running server and record an intentional stop
 restart         stop the running server, start a new one on its port (--respect-stop honours an intentional stop)
 doctor          probe engines, sandbox and store; print a redacted report
 slot            add | list | probe | retire — local slot state (never a running server)

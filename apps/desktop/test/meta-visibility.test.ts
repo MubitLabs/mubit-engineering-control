@@ -110,6 +110,19 @@ function seedQuestion(id: string, answer?: string): void {
   }
 }
 
+/** The work in the same repository an older planner could aim its report at. */
+function seedOther(): void {
+  store.atomic(() =>
+    store.workItems.save({
+      id: 'wi_other',
+      repoId: 'repo_a',
+      state: 'executing',
+      createdAt: AT,
+      updatedAt: AT,
+    }),
+  )
+}
+
 /** Its turn has not ended: the receipt is what a finished turn writes. */
 function withoutAck(id: string): void {
   store.atomic(() => {
@@ -356,6 +369,40 @@ describe('a turn that ended with no plan is not work in progress', () => {
     expect(row.stage).toEqual({ key: 'ended/no-answer', label: 'No answer', waitingOn: 'none' })
     expect(row.turnOutcome).toBe('no-answer')
     expect(row.reason).toBe('The meta agent stopped without answering')
+    expect(row.answer).toBeNull()
+  })
+
+  it('an older answer the same turn reported against other work is still its answer', async () => {
+    // Before the turn's reports were its answer (#51), a planner could aim one at the work it asked about.
+    seedQuestion('wi_old')
+    seedOther()
+    event('work:wi_other', 1, 'result_reported', {
+      workItemId: 'wi_other',
+      summary: 'It exports wave(name).',
+      at: AT,
+    })
+    const row = await get('/api/inspect/work/wi_old')
+    expect(row.stage).toEqual({ key: 'ended/answered', label: 'Answered', waitingOn: 'none' })
+    expect(row.answer).toBe('It exports wave(name).')
+    expect(row.reason).toBeNull()
+    const [listed] = (await get('/api/inspect/work?repoId=repo_a')).items.filter(
+      (item: { id: string }) => item.id === 'wi_old',
+    )
+    expect(listed.turnOutcome).toBe('answered')
+  })
+
+  it("a report from another turn is not this one's answer", async () => {
+    seedQuestion('wi_quiet')
+    seedOther()
+    event(
+      'work:wi_other',
+      1,
+      'result_reported',
+      { workItemId: 'wi_other', summary: 'Unrelated.', at: LATER },
+      LATER,
+    )
+    const row = await get('/api/inspect/work/wi_quiet')
+    expect(row.turnOutcome).toBe('no-answer')
     expect(row.answer).toBeNull()
   })
 

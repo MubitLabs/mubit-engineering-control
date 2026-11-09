@@ -69,6 +69,12 @@ describe('planner context stage', () => {
     expect(stageIn(storeWith({ id: 'wi_1', hold: { at: AT, liftedAt: AT } }))).toBe('Working')
   })
 
+  it('a declined push reads as Work reads it, not Working', () => {
+    const store = storeWith({ id: 'wi_1', state: 'integrating' })
+    store.engines.save({ id: 'delivery/wi_1', stage: 'declined', pushCardId: 'conf_1', answer: 'denied' })
+    expect(stageIn(store)).toBe('Push declined')
+  })
+
   it('every attempt on quota is the quota stage', () => {
     const store = storeWith({ id: 'wi_1' })
     store.attempts.save({ id: 'att_1', workItemId: 'wi_1', state: 'quota_wait' })

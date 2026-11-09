@@ -336,6 +336,22 @@ export class InspectionReads {
     return rows.map((row) => ({ ...row, body: row.body === null ? null : (JSON.parse(row.body) as Json) }))
   }
 
+  /** The events of one type written at one instant on any of these streams, oldest first. */
+  eventsAt(streams: readonly string[], type: string, at: string): EventRow[] {
+    const out: EventRow[] = []
+    for (let i = 0; i < streams.length; i += 500) {
+      const chunk = streams.slice(i, i + 500)
+      const marks = chunk.map(() => '?').join(', ')
+      const rows = this.#prepare(
+        `SELECT stream, seq, at, type, body FROM events WHERE stream IN (${marks}) AND type = ? AND at = ? ORDER BY stream, seq`,
+      ).all(...chunk, type, at) as (Omit<EventRow, 'body'> & { body: string | null })[]
+      for (const row of rows) {
+        out.push({ ...row, body: row.body === null ? null : (JSON.parse(row.body) as Json) })
+      }
+    }
+    return out
+  }
+
   /** The highest seq of each stream; a stream with no events reads 0. */
   cursors(streams: readonly string[]): Record<string, number> {
     const out: Record<string, number> = Object.fromEntries(streams.map((stream) => [stream, 0]))

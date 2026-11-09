@@ -388,6 +388,64 @@ test.describe('Work', () => {
     expect(posts.map((post) => post.path)).toEqual(['/api/work/work_quota/stop'])
   })
 
+  test('an open stop survives the row changing group under a refresh, and still stops', async ({ page }) => {
+    // A delivery that blocks while the owner reads the stop card: the next read files the row under
+    // another group, which is a new section, so anything held only in the row's own subtree resets.
+    let blocked = false
+    const regrouped = <T extends { id: string }>(row: T): T =>
+      row.id === 'work_working' && blocked
+        ? {
+            ...row,
+            state: 'blocked',
+            stage: { key: 'person/blocked', label: 'Blocked', waitingOn: 'person' },
+          }
+        : row
+    const { posts } = await server(page, {
+      work: () => ({ status: 200, body: { ...workPage, items: workPage.items.map(regrouped) } }),
+      workDetail: (id) => ({ status: 200, body: regrouped(workDetails[id as keyof typeof workDetails]) }),
+    })
+    await open(page, 'repo/repo_a/work/work_working')
+    await expect(page.getByRole('region', { name: 'Working' })).toContainText('search for the console')
+    await page.getByRole('button', { name: /^Stop/ }).click()
+    await expect(page.getByRole('heading', { name: /^Stop / })).toBeVisible()
+    blocked = true
+    await refetch(page)
+    await expect(
+      page.locator('.work-group', { hasText: 'search for the console' }).locator(':scope > h2'),
+    ).not.toContainText('Working')
+    await expect(page.getByRole('heading', { name: /^Stop / })).toBeVisible()
+    await page.locator('.decision button[data-approve]').click()
+    await page.getByRole('button', { name: /^Confirm: stop this delivery/ }).click()
+    await expect(page.getByText('Stopped.')).toBeVisible()
+    expect(posts.map((post) => post.path)).toEqual(['/api/work/work_working/stop'])
+  })
+
+  test('a stop whose confirm lapsed says so, and arming again still stops', async ({ page }) => {
+    await page.clock.install()
+    const { posts } = await server(page)
+    await open(page, 'repo/repo_b/work/work_quota')
+    await page.getByRole('button', { name: 'Stop in sample-billing' }).click()
+    const primary = page.locator('.decision button[data-approve]')
+    await primary.click()
+    await expect(
+      page.getByRole('button', { name: 'Confirm: stop this delivery in sample-billing' }),
+    ).toBeVisible()
+    await page.clock.runFor(8100)
+    // The press that follows a lapse arms again: the card must say why, or it reads as a dead button.
+    await expect(primary).toHaveAttribute('data-armed', 'false')
+    await expect(page.locator('.armed-note')).toHaveText(
+      'Not done: the confirm lapsed after 8 seconds. Press it again to arm.',
+    )
+    expect(posts).toEqual([])
+    await primary.click()
+    await expect(page.locator('.armed-note')).toContainText(
+      'Armed: Confirm: stop this delivery in sample-billing',
+    )
+    await primary.click()
+    await expect(page.getByText('Stopped.')).toBeVisible()
+    expect(posts.map((post) => post.path)).toEqual(['/api/work/work_quota/stop'])
+  })
+
   test('a retry an unlinked tab sent says so in words and offers the link in place', async ({ page }) => {
     const { posts } = await server(page, {
       workDetail: (id) => ({

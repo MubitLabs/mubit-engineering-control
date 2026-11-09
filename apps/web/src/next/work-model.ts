@@ -299,6 +299,13 @@ export function workActions(
   ]
 }
 
+/**
+ * The stop being confirmed, if it belongs to the delivery on show. The view holds it, so a read that
+ * files the row under another group keeps the card open; another selection never inherits it.
+ */
+export const stopInView = (stopping: WorkAction | null, selectedId: string | null): WorkAction | null =>
+  stopping !== null && stopping.workItemId === selectedId ? stopping : null
+
 // ── Delivery ─────────────────────────────────────────────────────────────────────────────
 
 const TASK_LABELS: Record<string, { label: string; progress: TaskProgress }> = {

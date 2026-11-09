@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.7 (9 November 2026)
+
+Fixes from the owner's "build a horse tinder website" test on the installed 0.3.6. See `docs/changes/2026-11-09-follow-up-base/`. No migration.
+
+- **A follow-up builds on what the work already made.** A new task in a work that already has integrated tasks starts from the work's integration head by default (owner decision, 9 November 2026: "A"); a truly independent task can opt out.
+- **A replan restarts a blocked task** whose dependencies, base or goal changed, on a fresh worktree.
+- **The planner reads a declined push correctly**: the work is integrated locally; only the push to GitHub was declined.
+- **After a declined push, a fixed and checked result can be pushed** instead of leaving only Hold and Stop.
+- **The stage shows running work** instead of "Push declined" while fix tasks run.
+- **A page left open across an upgrade says "MEC was updated. Reload"** instead of "Could not read this delivery".
+
 ## 0.3.6 (9 November 2026)
 
 Fixes from real Codex and OpenCode requests on the installed 0.3.5. See `docs/changes/2026-11-09-codex-sandbox/` and `docs/changes/2026-11-09-moved-head/`. No migration.

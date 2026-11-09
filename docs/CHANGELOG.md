@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.5 (9 November 2026)
+
+Real Codex and OpenCode requests on the installed 0.3.4 surfaced three problems. Each is fixed and proven on the real binary. See `docs/changes/2026-11-09-opencode-2.2.6/`, `docs/changes/2026-11-09-codex-models/` and `docs/changes/2026-11-09-ui-leftovers/`. No migration.
+
+- **OpenCode 2.2.6 is accepted.** The engine version gate takes a set of proven versions; OpenCode accepts 2.2.5 and 2.2.6, proven by a real run.
+- **Codex runs only a model the signed-in account offers.** The connection's offered models are listed after the launch check (no login, no tokens), and placement never picks a model the connection doesn't offer: the next model at the same tier, then down the ladder only. The gpt-5.6 family comes first in the shipped table. A refused model reads "The connection cannot run the model chosen for this task: …" instead of "engine api error".
+- **A finished sign-in checks itself**, so a fresh Codex sign-in reads Healthy without pressing Check again.
+- **The unlinked send line updates once the tab is linked** and keeps Retry.
+
 ## 0.3.4 (9 November 2026)
 
 From the installed 0.3.3 walkthrough. See `docs/changes/2026-11-09-stop-confirm/`. No migration.

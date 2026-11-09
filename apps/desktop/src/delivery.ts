@@ -31,6 +31,7 @@ import {
   git,
   gitLines,
   headSha,
+  isMidMerge,
   mergeIntoIntegration,
   prepareMidMergeRepair,
   recordBootstrapOutput,
@@ -69,12 +70,14 @@ import { loadPolicy } from '@mec/policy'
 import { buildAgentEnv, runCheck } from '@mec/runtime'
 import { redact } from '@mec/slots'
 import { argvOf, commitIdentity, repoInherited } from './attempt-launch'
+import { reasonWords } from './reason-words'
 import {
   buildPrBody,
   type CardBlock,
   type CardOutcome,
   createPrBehindCard,
   defaultGhRun,
+  fetchGitHubBranches,
   type GhRun,
   type GitExec,
   movePrFlow,
@@ -115,8 +118,15 @@ const PROFILE_CHANGED = 'repo_profile_changed'
 /** How many cleared paths an event names; the count says the rest. */
 const CLEARED_PATHS = 50
 
-/** `repair`: the owner's Try again on blocked work, one fresh repair attempt (owner ruling 2026-11-07). */
-export type RetryKind = 'integration' | 'push' | 'pr' | 'repair'
+/** How many conflicted paths an update's words name; the rest are counted. */
+const UPDATE_PATHS = 10
+
+/**
+ * `repair`: the owner's Try again on blocked work, one fresh repair attempt (owner ruling 2026-11-07).
+ * `update`: Bring up to date, for an open pull request that is behind its target or whose head
+ * moved on GitHub (owner, 9 November 2026).
+ */
+export type RetryKind = 'integration' | 'push' | 'pr' | 'repair' | 'update'
 export type RetryOffer = { kind: RetryKind; reason: string }
 export type RetryOutcome =
   | { status: 'retrying'; kind: RetryKind }
@@ -170,9 +180,53 @@ export function retryOffer(store: Store, work: StoreDoc): RetryOffer | undefined
   }
   if (!OPEN_STATES.includes(String(work.state))) return undefined
   const doc = store.engines.get(deliveryDocId(id))
+  if (doc === undefined) return undefined
   const stop = deliveryStopped(doc)
-  if (doc === undefined || stop === undefined) return undefined
-  return { kind: stop.step, reason: clean(stoppedWords(doc)) }
+  if (stop !== undefined) return { kind: stop.step, reason: clean(stoppedWords(doc)) }
+  // Bringing up to date runs the repository's checks here, so it waits for the agreement too.
+  const update = updateWords(doc, String(work.default_branch ?? 'the target branch'))
+  if (update === undefined || !hostRunAgreed(store, String(work.repoId))) return undefined
+  return { kind: 'update', reason: clean(update) }
+}
+
+/** The head GitHub shows that MEC did not adopt, in words (owner, 9 November 2026). */
+export function movedWords(doc: StoreDoc): string | undefined {
+  const sha = (doc.headMoved as { sha?: unknown } | undefined)?.sha
+  return typeof sha === 'string'
+    ? `The branch changed on GitHub (now ${sha.slice(0, 7)}). MEC won’t merge commits it didn’t check.`
+    : undefined
+}
+
+/**
+ * Why an open pull request needs bringing up to date, or what the last try said: undefined when
+ * it does not, or while a try is on its way. A try that failed says so first, since it is the
+ * newer fact and the cause it answered still stands.
+ */
+export function updateWords(doc: StoreDoc, target: string): string | undefined {
+  if (doc.stage !== 'pr_open' && doc.stage !== 'ready') return undefined
+  const moved = movedWords(doc)
+  if (moved === undefined && doc.behind !== true) return undefined
+  const update = doc.update as
+    | { status?: string; paths?: string[]; failing?: string[]; sha?: string; reason?: string }
+    | undefined
+  const trying = `Bringing it up to date with ${target}`
+  switch (update?.status) {
+    case 'requested':
+      return undefined
+    case 'conflict': {
+      const paths = update.paths ?? []
+      const more = paths.length > UPDATE_PATHS ? ` and ${paths.length - UPDATE_PATHS} more` : ''
+      return `${trying} conflicted in ${paths.slice(0, UPDATE_PATHS).join(', ')}${more}. Nothing was pushed.`
+    }
+    case 'failed':
+      return update.failing !== undefined
+        ? `${trying} failed the checks on ${String(update.sha).slice(0, 7)}: ${update.failing.join(', ')}. Nothing was pushed.`
+        : `${trying} could not run: ${reasonWords(String(update.reason ?? 'no detail'))}. Nothing was pushed.`
+    case 'current':
+      return `It is already up to date with ${target} here, so there is nothing to push.`
+    default:
+      return moved ?? `The pull request is behind ${target}.`
+  }
 }
 
 /** What stopped a delivery short, in words: the card's answer, or the step's failure. */
@@ -285,6 +339,7 @@ export class Delivery {
         return { status: 'retrying', kind: 'repair' }
       }
       if (offer.kind === 'integration') this.#resumeIntegration(work, at)
+      else if (offer.kind === 'update') this.#write(workItemId, { update: { status: 'requested', at } })
       else this.#askAgain(workItemId, offer.kind)
       this.#workEvent(workItemId, 'retry_requested', { kind: offer.kind })
       return { status: 'retrying', kind: offer.kind }
@@ -368,6 +423,10 @@ export class Delivery {
       this.#store.atomic(() => blockWork(this.#store, id, reason, this.#now))
       return
     }
+    // An update a close or a kill cut short leaves its trial merge in the worktree: put it back
+    // first, or the integration would take that unchecked head for a move and check it as one.
+    const interrupted = this.#store.engines.get(integrationDocId(id))
+    if (interrupted?.updating !== undefined) await this.#putBack(interrupted)
     await this.#integrate(work, tasks)
     const integration = this.#store.engines.get(integrationDocId(id))
     if (integration === undefined) return
@@ -665,6 +724,13 @@ export class Delivery {
       pollAt: undefined,
       ci: undefined,
       ciAt: undefined,
+      ciSince: undefined,
+      ciQueued: undefined,
+      // What GitHub showed speaks for the old head; the new one is pushed, then read again.
+      prHead: undefined,
+      headMoved: undefined,
+      behind: undefined,
+      update: undefined,
     })
   }
 
@@ -677,7 +743,11 @@ export class Delivery {
     const { stage } = doc
     if (stage === 'local_complete' || stage === 'moved') await this.#openPush(work, doc)
     else if (stage === 'pushed') await this.#openPr(work, doc)
-    else if (stage === 'pr_open' || stage === 'ready') await this.#observe(work, doc)
+    else if (stage === 'pr_open' || stage === 'ready') {
+      const update = doc.update as { status?: string } | undefined
+      if (update?.status === 'requested') await this.#bringUpToDate(work, integration)
+      else await this.#observe(work, doc)
+    }
   }
 
   /** The reducer's output, once per head: an event for the record, a note for the next turn (§6). */
@@ -830,11 +900,27 @@ export class Delivery {
       this.#patch(id, { stage: 'closed', ready: undefined })
       return
     }
-    const notReady = (seen?: { ci: string; ciAt: string }): void =>
-      this.#patch(id, { stage: 'pr_open', limit: undefined, ci: seen?.ci, ciAt: seen?.ciAt })
-    if (pr.headRefOid !== doc.head) {
+    type Seen = { ci: string; ciAt: string; ciSince?: string; ciQueued?: true }
+    const notReady = (seen?: Seen): void =>
+      this.#patch(id, {
+        stage: 'pr_open',
+        limit: undefined,
+        ci: seen?.ci,
+        ciAt: seen?.ciAt,
+        ciSince: seen?.ciSince,
+        ciQueued: seen?.ciQueued,
+      })
+    // Behind its target: GitHub will not merge it under strict checks, so Bring up to date is offered.
+    const behind = pr.mergeStateStatus === 'BEHIND'
+    if (behind !== (doc.behind === true)) this.#patch(id, { behind: behind ? true : undefined })
+    // The head the delivery speaks for: the one MEC pushed, or a GitHub update MEC adopted (#c).
+    const speaksFor = String(doc.prHead ?? doc.head)
+    if (pr.headRefOid !== speaksFor) {
+      // Only a listed prflow row moves (ci_green to ci_pending); from pr_open this changes nothing.
       movePrFlow(this.release, repo, branch, 'target_moved')
-      return notReady()
+      if (!(await this.#adoptMoved(work, doc, speaksFor, pr.headRefOid))) return notReady()
+    } else if (doc.headMoved !== undefined) {
+      this.#patch(id, { headMoved: undefined })
     }
     const target = await remoteHead(run, repo, String(work.default_branch))
     if (target !== undefined && doc.targetSha !== target) {
@@ -846,20 +932,178 @@ export class Delivery {
         return notReady()
       }
     }
-    const { verdict } = await readRequiredChecks(run, repo, prNumber)
-    // What this read saw, for the page: it says nothing about a head read later.
-    const seen = { ci: verdict, ciAt: this.#now }
+    const { verdict, checks } = await readRequiredChecks(run, repo, prNumber)
+    // What this read saw, for the page: it says nothing about a head read later. A wait on GitHub
+    // keeps when it began, and says whether any required check has started (owner, 9 November 2026).
+    const waiting = verdict === 'ci_pending'
+    const since = doc.ci === 'ci_pending' && typeof doc.ciSince === 'string' ? doc.ciSince : this.#now
+    const started = checks.some((row) => String(row.state).toUpperCase() === 'IN_PROGRESS')
+    const seen: Seen = {
+      ci: verdict,
+      ciAt: this.#now,
+      ...(waiting && { ciSince: since }),
+      ...(waiting && !started && { ciQueued: true as const }),
+    }
     if (verdict === 'green' || verdict === 'no_required_checks') {
       movePrFlow(this.release, repo, branch, 'ci_passed')
       if (doc.stage !== 'ready') releaseEvent(this.release, repo, branch, 'pr_ready', { prNumber, verdict })
       // Decision #34: ready on local checks, with the limit stated. The merge card still holds.
-      this.#patch(id, { stage: 'ready', limit: verdict === 'green' ? undefined : verdict, ...seen })
+      this.#patch(id, {
+        stage: 'ready',
+        limit: verdict === 'green' ? undefined : verdict,
+        ...seen,
+        ciSince: undefined,
+        ciQueued: undefined,
+      })
       // After the patch: this frame makes the page read the stage back.
       if (doc.stage !== 'ready') workEvent(this.release, id, 'pr_ready', { prNumber, verdict })
       return
     }
     if (verdict === 'ci_failed') movePrFlow(this.release, repo, branch, 'ci_failed')
     notReady(seen)
+  }
+
+  /**
+   * The pull request's head on GitHub is not the one the delivery speaks for (owner, 9 November
+   * 2026). It is adopted without asking only when it is GitHub's Update branch and nothing else:
+   * the head MEC speaks for is one of its parents, every other parent is on the target branch, and
+   * its changes against the target are exactly the ones MEC checked, file for file. Then the new
+   * head is recorded with why, and this read goes on to its checks. Anything else is said in words
+   * and nothing merges. A head is judged once: the next reads of the same head only wait.
+   */
+  async #adoptMoved(work: StoreDoc, doc: StoreDoc, speaksFor: string, observed: string): Promise<boolean> {
+    const id = String(work.id)
+    const seen = doc.headMoved as { sha?: string; judged?: boolean } | undefined
+    if (seen?.sha === observed && seen.judged !== false) return false
+    const branch = String(doc.branch)
+    let why: string
+    try {
+      const github = await fetchGitHubBranches(this.release, String(work.repoId), branch)
+      why = github.head !== observed ? 'github_disagrees' : await baseMergeOf(github, speaksFor)
+    } catch (error) {
+      const refusal = refusalOf(error)
+      if (refusal === undefined) throw error
+      // Unreadable now is not judged: the next read tries again, and the page says what it saw.
+      this.#patch(id, { headMoved: { sha: observed, at: this.#now, why: refusal.error, judged: false } })
+      return false
+    }
+    if (why === 'adopted') {
+      this.#patch(id, { prHead: observed, headMoved: undefined, ci: undefined, ciAt: undefined })
+      const reason =
+        'GitHub merged the target branch into the pushed head, and the changes are the ones MEC checked'
+      this.#store.atomic(() => this.#workEvent(id, 'head_adopted', { from: speaksFor, to: observed, reason }))
+      return true
+    }
+    this.#patch(id, { headMoved: { sha: observed, at: this.#now, why } })
+    this.#store.atomic(() =>
+      this.#workEvent(id, 'head_moved_on_github', { from: speaksFor, sha: observed, why }),
+    )
+    return false
+  }
+
+  /**
+   * Bring up to date (owner, 9 November 2026): the target merges into the integration branch here,
+   * the repository's checks run on the result, and only a pass moves the branch, forward, from the
+   * head it was on. The push card then asks about exactly that commit, as for any new head. A
+   * conflict or a failing check moves nothing and says so. Starting from an adopted head keeps the
+   * push a fast-forward of what GitHub has; a branch that diverged otherwise is refused by the push.
+   */
+  async #bringUpToDate(work: StoreDoc, integration: StoreDoc): Promise<void> {
+    const id = String(work.id)
+    const worktree = String(integration.worktree)
+    const branch = String(integration.branch)
+    const from = String(integration.head)
+    const doc = this.#doc(id) as StoreDoc
+    const settle = (update: Record<string, Json>): void => {
+      this.#patch(id, { update: { ...update, at: this.#now } })
+      this.#store.atomic(() => this.#workEvent(id, 'update_not_pushed', update))
+    }
+    let github: Awaited<ReturnType<typeof fetchGitHubBranches>>
+    try {
+      github = await fetchGitHubBranches(this.release, String(work.repoId), branch)
+    } catch (error) {
+      const refusal = refusalOf(error)
+      if (refusal === undefined) throw error
+      return settle({ status: 'failed', reason: `${refusal.error}: ${refusal.detail}` })
+    }
+    const start = typeof doc.prHead === 'string' && github.head === doc.prHead ? doc.prHead : from
+    const contains = await git(['merge-base', '--is-ancestor', github.target, start], {
+      cwd: github.gitDir,
+      allowFailure: true,
+    })
+    if (contains.code === 0) return settle({ status: 'current' })
+
+    this.#store.atomic(() => {
+      const fresh = this.#store.engines.get(String(integration.id)) as StoreDoc
+      this.#store.engines.save({ ...fresh, updating: { from, at: this.#now }, updatedAt: this.#now })
+    })
+    const identity = await commitIdentity(this.#registeredUrl(work), String(work.git_dir))
+    let moved = false
+    try {
+      await git(['checkout', '--quiet', '--detach', start], { cwd: worktree })
+      await clearMergePath({ worktree, taskBranch: github.target })
+      const message = `mec: bring ${branch} up to date with ${github.targetBranch}`
+      const merged = await git(
+        [
+          ...['-c', `user.name=${identity.name}`, '-c', `user.email=${identity.email}`],
+          ...['merge', '--no-ff', '--no-edit', '-m', message, github.target],
+        ],
+        { cwd: worktree, allowFailure: true },
+      )
+      if (merged.code !== 0) {
+        if (!(await isMidMerge(worktree))) {
+          const said = redact(
+            (merged.stderr.trim() || merged.stdout.trim()).slice(-400),
+            this.#fingerprints(),
+            [],
+          )
+          return settle({ status: 'failed', reason: `integration: ${said}` })
+        }
+        const paths = await gitLines(['diff', '--name-only', '--diff-filter=U'], { cwd: worktree })
+        return settle({ status: 'conflict', paths })
+      }
+      const sha = await headSha(worktree)
+      const checks = await this.#combinedChecks(work, this.#repoOf(work), worktree)
+      if (this.#closing.signal.aborted) return
+      const failing = checks.filter((check) => check.status !== 'passed').map((check) => check.name)
+      if (failing.length > 0) return settle({ status: 'failed', sha, failing })
+      // Compare-and-set: the branch moves only from the head this started on, and only forward.
+      await git(['update-ref', `refs/heads/${branch}`, sha, from], { cwd: worktree })
+      await git(['checkout', '--quiet', branch], { cwd: worktree })
+      moved = true
+      this.#store.atomic(() => {
+        const fresh = this.#store.engines.get(String(integration.id)) as StoreDoc
+        const { updating: _updating, ...rest } = fresh
+        this.#store.engines.save({
+          ...rest,
+          head: sha,
+          combined: { sha, passed: true, checks: checks as unknown as Json },
+          diffBase: github.target,
+          updatedAt: this.#now,
+        })
+        this.#workEvent(id, 'brought_up_to_date', { from, to: sha, target: github.target })
+      })
+    } finally {
+      // Aborted by a close, the worktree is put back too; the request stands, so the next start runs it.
+      if (!moved) await this.#putBack(this.#store.engines.get(String(integration.id)) as StoreDoc)
+    }
+  }
+
+  /** Back to the integration branch as it was before an update tried a merge. Never moves the branch. */
+  async #putBack(integration: StoreDoc): Promise<void> {
+    const worktree = String(integration.worktree)
+    if (await isMidMerge(worktree)) await git(['merge', '--abort'], { cwd: worktree })
+    await git(['checkout', '--quiet', String(integration.branch)], { cwd: worktree })
+    this.#store.atomic(() => {
+      const fresh = this.#store.engines.get(String(integration.id)) as StoreDoc
+      const { updating: _updating, ...rest } = fresh
+      this.#store.engines.save({ ...rest, updatedAt: this.#now })
+    })
+  }
+
+  #registeredUrl(work: StoreDoc): string {
+    const repo = this.#repoOf(work)
+    return String(work.pin === undefined ? repo?.url : (work.pin as { url?: string }).url)
   }
 
   /** §14: only GitHub's own state says merged, and #29 ends the work there. */
@@ -1001,6 +1245,54 @@ function controllerTasks(tasks: readonly StoreDoc[]): ControllerTask[] {
       branch: String(task.acceptedBranch ?? ''),
       head: String(task.acceptedHead ?? ''),
     }))
+}
+
+/** A file's change as git states it: where, how, and what the file holds after it. */
+async function changesOf(gitDir: string, target: string, head: string): Promise<string[] | undefined> {
+  const base = await git(['merge-base', target, head], { cwd: gitDir, allowFailure: true })
+  if (base.code !== 0) return undefined
+  const { stdout } = await git(
+    ['diff', '--raw', '--no-renames', '--no-abbrev', '-z', base.stdout.trim(), head],
+    {
+      cwd: gitDir,
+    },
+  )
+  // `:<old mode> <new mode> <old blob> <new blob> <status>\0<path>\0`: the old side is the base's,
+  // which the target may have moved, so only the status, the path and the new side are compared.
+  const fields = stdout.split('\0')
+  const changes: string[] = []
+  for (let index = 0; index + 1 < fields.length; index += 2) {
+    const [, newMode = '', , newBlob = '', status = ''] = String(fields[index]).slice(1).split(' ')
+    changes.push(`${status} ${newMode} ${newBlob} ${String(fields[index + 1])}`)
+  }
+  return changes.sort()
+}
+
+/**
+ * Whether `observed` is GitHub's Update branch on `speaksFor` and nothing more (owner, 9 November
+ * 2026): `speaksFor` is one of its parents, every other parent is on the target, and its changes
+ * against the target are the ones `speaksFor` carries, file for file. `adopted`, or why not.
+ */
+async function baseMergeOf(
+  github: { gitDir: string; head: string; target: string },
+  speaksFor: string,
+): Promise<string> {
+  const cwd = github.gitDir
+  const [, ...parents] = (await gitLines(['rev-list', '--parents', '-n', '1', github.head], { cwd }))
+    .join(' ')
+    .split(' ')
+  if (!parents.includes(speaksFor)) return 'not_on_mec_head'
+  for (const parent of parents.filter((sha) => sha !== speaksFor)) {
+    const onTarget = await git(['merge-base', '--is-ancestor', parent, github.target], {
+      cwd,
+      allowFailure: true,
+    })
+    if (onTarget.code !== 0) return 'not_a_target_merge'
+  }
+  const checked = await changesOf(cwd, github.target, speaksFor)
+  const now = await changesOf(cwd, github.target, github.head)
+  if (checked === undefined || now === undefined) return 'changes_unreadable'
+  return checked.join('\n') === now.join('\n') ? 'adopted' : 'changes_differ'
 }
 
 function integrationEvidence(effect: Extract<IntegrationEffect, { kind: 'repair' }>): string {

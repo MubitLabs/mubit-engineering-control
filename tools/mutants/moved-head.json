@@ -1,0 +1,163 @@
+[
+  {
+    "name": "(c) a head without MEC's head as a parent is adopted",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "  if (!parents.includes(speaksFor)) return 'not_on_mec_head'\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(c) a merge of something not on the target is adopted",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (onTarget.code !== 0) return 'not_a_target_merge'\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(c) the changes are never compared",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "  return checked.join('\\n') === now.join('\\n') ? 'adopted' : 'changes_differ'\n",
+    "replace": "  return 'adopted'\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(c) a file's new content is not part of the comparison",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    changes.push(`${status} ${newMode} ${newBlob} ${String(fields[index + 1])}`)\n",
+    "replace": "    changes.push(`${status} ${newMode} ${String(fields[index + 1])}`)\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(c) a moved head is fetched and judged on every read",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (seen?.sha === observed && seen.judged !== false) return false\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(a) a branch put back on MEC's head keeps reading as moved",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      this.#patch(id, { headMoved: undefined })\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(b) bringing up to date ignores the adopted head, so the push is not a fast-forward",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    const start = typeof doc.prHead === 'string' && github.head === doc.prHead ? doc.prHead : from\n",
+    "replace": "    const start = from\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(b) a failing check still moves the branch",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      if (failing.length > 0) return settle({ status: 'failed', sha, failing })\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(b) an interrupted update is left in the worktree",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (interrupted?.updating !== undefined) await this.#putBack(interrupted)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(b) Bring up to date is offered before the owner agreed to run the commands",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "  if (update === undefined || !hostRunAgreed(store, String(work.repoId))) return undefined\n",
+    "replace": "  if (update === undefined) return undefined\n",
+    "tests": ["apps/desktop/test/delivery.test.ts", "apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "(b) behind is never recorded",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    if (behind !== (doc.behind === true)) this.#patch(id, { behind: behind ? true : undefined })\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(b) the push card measures the update from the old base",
+    "file": "apps/desktop/src/release.ts",
+    "find": "updated ? integration?.diffBase : work?.base_sha",
+    "replace": "work?.base_sha",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(d) every read restarts the wait",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "    const since = doc.ci === 'ci_pending' && typeof doc.ciSince === 'string' ? doc.ciSince : this.#now\n",
+    "replace": "    const since = this.#now\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(d) a running check still reads as queued",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      ...(waiting && !started && { ciQueued: true as const }),\n",
+    "replace": "      ...(waiting && { ciQueued: true as const }),\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(a) a moved branch is no stage",
+    "file": "packages/domain/src/stages.ts",
+    "find": "  if (moved !== undefined) return { branchMoved: moved.slice(0, 7) }\n",
+    "replace": "",
+    "tests": ["packages/domain/test/stages.test.ts"]
+  },
+  {
+    "name": "(d) a failing check reads as a wait on GitHub",
+    "file": "packages/domain/src/stages.ts",
+    "find": "  if (record.ci !== 'ci_pending') return {}\n",
+    "replace": "",
+    "tests": ["packages/domain/test/stages.test.ts"]
+  },
+  {
+    "name": "(d) queued and running read the same",
+    "file": "packages/domain/src/stages.ts",
+    "find": "${wait.queued ? 'queued' : 'running'} since",
+    "replace": "${'queued'} since",
+    "tests": ["packages/domain/test/stages.test.ts"]
+  },
+  {
+    "name": "(a) the moved row never offers Bring up to date",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "          nextAction: offer === undefined ? 'Look at the pull request on GitHub' : RETRY_NEXT[offer.kind],\n",
+    "replace": "          nextAction: 'Look at the pull request on GitHub',\n",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "(a) the work row never reads the wait",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "                ...deliveryWaiting(record),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "(a) the live line never says the branch moved",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "  if (wait.branchMoved !== undefined) return `The branch changed on GitHub (now ${wait.branchMoved})`\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "(a) the agent's context never reads the wait",
+    "file": "packages/meta/src/context.ts",
+    "find": "    ...deliveryWaiting(delivery),\n",
+    "replace": "",
+    "tests": ["packages/meta/test/context-stage.test.ts"]
+  },
+  {
+    "name": "(b) the page refuses Bring up to date",
+    "file": "apps/web/src/inspection-decode.ts",
+    "find": "['integration', 'push', 'pr', 'repair', 'update']",
+    "replace": "['integration', 'push', 'pr', 'repair']",
+    "tests": ["apps/web/test/inspection-decode.test.ts", "apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "(d) the page says queued for a running check",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "${ciQueued ? 'queued' : 'running'} since",
+    "replace": "${'queued'} since",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  }
+]

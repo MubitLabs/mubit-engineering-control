@@ -34,7 +34,14 @@ export type WorkItemView = {
   deliveryReady?: boolean
   /** A push or pull request card was declined, or its step failed: nothing moves until you ask again. */
   deliveryStopped?: DeliveryStop
+  /** The pull request's head on GitHub is not the commit MEC pushed or adopted: its short id. */
+  branchMoved?: string
+  /** GitHub's required checks on the pull request have not finished. */
+  checksWaiting?: ChecksWait
 }
+
+/** Required checks still waiting on GitHub: queued (none started) or running, and since when MEC saw it. */
+export type ChecksWait = { queued: boolean; since?: string }
 
 /** Where a delivery stopped short, and how. */
 export type DeliveryStop = { step: 'push' | 'pr'; outcome: 'declined' | 'failed' }
@@ -53,6 +60,10 @@ export type WorkFacts = {
   hostRunUnagreed?: boolean
   /** `deliveryStopped` of the item's delivery record; absent where the caller reads no delivery. */
   deliveryStopped?: DeliveryStop
+  /** `deliveryWaiting(record).branchMoved`; absent where the caller reads no delivery. */
+  branchMoved?: string
+  /** `deliveryWaiting(record).checksWaiting`; absent where the caller reads no delivery. */
+  checksWaiting?: ChecksWait
 }
 
 export type Stage = {
@@ -77,6 +88,13 @@ const hhmm = (iso: string | undefined): string | undefined => {
   if (Number.isNaN(at.getTime())) return undefined
   const pad = (n: number): string => String(n).padStart(2, '0')
   return `${pad(at.getHours())}:${pad(at.getMinutes())}`
+}
+
+/** `Waiting for GitHub checks (queued since 14:02)`: the stage's label, and the live line's words. */
+export function checksWaitLabel(wait: ChecksWait): string {
+  const since = hhmm(wait.since)
+  if (since === undefined) return 'Waiting for GitHub checks'
+  return `Waiting for GitHub checks (${wait.queued ? 'queued' : 'running'} since ${since})`
 }
 
 export const STAGE_TABLE: readonly StageRow[] = [
@@ -146,6 +164,14 @@ export const STAGE_TABLE: readonly StageRow[] = [
     },
   },
   {
+    // The branch changed on GitHub and MEC did not adopt it (owner, 9 November 2026): MEC will not
+    // merge commits it did not check, so a person decides what happens next.
+    key: 'person/branch-moved',
+    waitingOn: 'person',
+    match: (w) => w.branchMoved !== undefined,
+    label: () => 'Branch changed on GitHub',
+  },
+  {
     key: 'person/agreement',
     waitingOn: 'person',
     match: (w) => w.hostRunUnagreed === true,
@@ -161,6 +187,14 @@ export const STAGE_TABLE: readonly StageRow[] = [
         ? 'Waiting for quota (reset time unknown)'
         : `Waiting for quota (resets ${reset})`
     },
+  },
+  {
+    // GitHub's required checks have not finished (owner, 9 November 2026): a saturated runner pool
+    // reads as a wait on GitHub, with how long, never as Working.
+    key: 'waiting/checks',
+    waitingOn: 'system',
+    match: (w) => w.checksWaiting !== undefined,
+    label: (w) => checksWaitLabel(w.checksWaiting as ChecksWait),
   },
   {
     key: 'working/queued',
@@ -220,6 +254,22 @@ export function deliveryStopped(record: Record<string, unknown> | undefined): De
 const text = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
 
 /**
+ * What an open pull request (`delivery/<work item>` at `pr_open`) waits on outside MEC: a head that
+ * moved on GitHub, or required checks that have not finished. A moved head comes first, since the
+ * checks then speak for a commit MEC did not push.
+ */
+export function deliveryWaiting(
+  record: Record<string, unknown> | undefined,
+): Pick<WorkFacts, 'branchMoved' | 'checksWaiting'> {
+  if (record?.stage !== 'pr_open') return {}
+  const moved = text((record.headMoved as { sha?: unknown } | undefined)?.sha)
+  if (moved !== undefined) return { branchMoved: moved.slice(0, 7) }
+  if (record.ci !== 'ci_pending') return {}
+  const since = text(record.ciSince)
+  return { checksWaiting: { queued: record.ciQueued === true, ...(since !== undefined && { since }) } }
+}
+
+/**
  * §10's `waiting`: the turn ended with nothing pending. An ack-only turn leaves its item `planning`
  * for a reply, so this is what tells that from a turn still running: the item's latest message has
  * its receipt, it came from a planner turn (an attached follow-up can start another), and no answer
@@ -265,5 +315,7 @@ export function workViewOf(doc: Record<string, unknown>, facts: WorkFacts): Work
     ...(facts.turnEnded === true && text(doc.state) === 'planning' && { latestReport: 'waiting' as const }),
     ...(facts.hostRunUnagreed === true && { hostRunUnagreed: true }),
     ...(facts.deliveryStopped !== undefined && { deliveryStopped: facts.deliveryStopped }),
+    ...(facts.branchMoved !== undefined && { branchMoved: facts.branchMoved }),
+    ...(facts.checksWaiting !== undefined && { checksWaiting: facts.checksWaiting }),
   }
 }

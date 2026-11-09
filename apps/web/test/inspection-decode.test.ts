@@ -121,6 +121,27 @@ describe('inspection decoders', () => {
     )
   })
 
+  it('Bring up to date and a wait on GitHub decode (owner, 9 November 2026)', () => {
+    const { work_working } = workDetails
+    const update = { kind: 'update', reason: 'The pull request is behind main.' }
+    expect(decodeWorkDetail({ ...work_working, retry: update }).retry).toEqual(update)
+    const delivery = {
+      ...work_working.delivery,
+      stage: 'pr-open',
+      ci: 'running',
+      ciSince: '2026-11-05T09:40:00.000Z',
+      ciQueued: true,
+      movedTo: '63865a9',
+    }
+    expect(decodeWorkDetail({ ...work_working, delivery }).delivery).toMatchObject({
+      ciSince: '2026-11-05T09:40:00.000Z',
+      ciQueued: true,
+      movedTo: '63865a9',
+    })
+    const plain = decodeWorkDetail(work_working).delivery
+    expect([plain.ciSince, plain.ciQueued, plain.movedTo]).toEqual([undefined, undefined, undefined])
+  })
+
   it('an absent card detail stays marked absent', () => {
     expect(decodeCardEvidence({ ...cardEvidence.card_pending, absent: true }).absent).toBe(true)
     expect('absent' in decodeCardEvidence(cardEvidence.card_pending)).toBe(false)

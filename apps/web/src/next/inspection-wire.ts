@@ -58,6 +58,11 @@ export type DeliveryView = {
   /** What the last read of GitHub saw. Null when nothing has read it. */
   ci: 'passing' | 'none-required' | 'running' | 'failing' | 'unreadable' | null
   ciReadAt: string | null
+  /** While required checks wait on GitHub: since when, and whether none has started yet. Absent otherwise. */
+  ciSince?: string
+  ciQueued?: boolean
+  /** The pull request's head on GitHub when MEC did not adopt it, short. Absent otherwise. */
+  movedTo?: string
   /** Why delivery stopped, in a sentence. Null when nothing failed. */
   failure: string | null
   /** The open merge card: the question is already asked. */
@@ -78,7 +83,7 @@ export type WorkDetail = WorkRow & {
   delegation: DelegationRow[]
   delivery: DeliveryView
   /** What the owner may ask for again, and why it stopped. */
-  retry: { kind: 'integration' | 'push' | 'pr' | 'repair'; reason: string } | null
+  retry: { kind: 'integration' | 'push' | 'pr' | 'repair' | 'update'; reason: string } | null
   coverage: Coverage
   cursors: Record<string, number>
   /** Attempt streams left out of `cursors`. */

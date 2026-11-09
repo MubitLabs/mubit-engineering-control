@@ -21,6 +21,7 @@ import type { Caps, ModelAvailability, ModelTier, SlotModelsView, TierTableLike 
 import {
   availableTiersOnSlot,
   deliveryStopped,
+  deliveryWaiting,
   plannerTurnEnded,
   stageOf,
   tableEntries,
@@ -523,6 +524,7 @@ function stageFacts(store: Store, doc: StoreDoc, now: string): Parameters<typeof
     attempts: store.attempts.list({ workItemId: id }),
     merged: delivery?.stage === 'merged',
     ...(stopped !== undefined && { deliveryStopped: stopped }),
+    ...deliveryWaiting(delivery),
     turnEnded: plannerTurnEnded(
       store.messages.list({ workItemId: id }),
       store.engines.list({ workItemId: id }).filter((row) => String(row.id).startsWith('question/')),

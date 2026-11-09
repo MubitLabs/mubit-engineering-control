@@ -24,7 +24,15 @@
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import type { EngineEvent, Json, KeyFingerprint, Store, StoreDoc } from '@mec/contracts'
-import { deliveryStopped, plannerTurnEnded, type Stage, stageOf, workViewOf } from '@mec/domain'
+import {
+  checksWaitLabel,
+  deliveryStopped,
+  deliveryWaiting,
+  plannerTurnEnded,
+  type Stage,
+  stageOf,
+  workViewOf,
+} from '@mec/domain'
 import { git } from '@mec/git'
 import {
   assertRepoAdmission,
@@ -56,6 +64,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import {
   admittedUnderOtherCommands,
   deliveryDocId,
+  movedWords,
   type RetryKind,
   type RetryOffer,
   retryOffer,
@@ -118,6 +127,11 @@ export type DeliveryView = {
   /** What the last read of GitHub saw. Absent when nothing has read it. */
   ci?: 'passing' | 'none-required' | 'running' | 'failing' | 'unreadable'
   ciReadAt?: string
+  /** While required checks wait on GitHub: when MEC first saw them waiting, and whether none has started. */
+  ciSince?: string
+  ciQueued?: boolean
+  /** The pull request's head on GitHub when MEC did not adopt it, short (owner, 9 November 2026). */
+  movedTo?: string
   /** Why delivery stopped, in a sentence. Absent when nothing failed. */
   failure?: string
   /** The open merge card, so nothing asks twice. */
@@ -618,11 +632,17 @@ const DELIVERY_STAGES: Readonly<Record<string, DeliveryView['stage']>> = {
   ready: 'pr-ready',
   merged: 'merged',
 }
-/** The live line for work past integration, by delivery's stage; none while it integrates. */
-function deliveryLine(delivery: {
-  stage: DeliveryView['stage']
-  prNumber: number | null
-}): string | undefined {
+/**
+ * The live line for work past integration, by delivery's stage; none while it integrates. An open
+ * pull request waiting on GitHub says what for: a branch that moved, or checks not finished.
+ */
+function deliveryLine(
+  delivery: { stage: DeliveryView['stage']; prNumber: number | null },
+  record: StoreDoc | undefined,
+): string | undefined {
+  const wait = deliveryWaiting(record)
+  if (wait.branchMoved !== undefined) return `The branch changed on GitHub (now ${wait.branchMoved})`
+  if (wait.checksWaiting !== undefined) return checksWaitLabel(wait.checksWaiting)
   const pr = delivery.prNumber === null ? 'The pull request' : `Pull request #${delivery.prNumber}`
   const words: Partial<Record<DeliveryView['stage'], string>> = {
     'local-complete': 'Locally complete',
@@ -649,6 +669,7 @@ const RETRY_NEXT: Readonly<Record<RetryKind, string>> = {
   push: 'Ask to push again',
   pr: 'Ask to open the pull request again',
   repair: 'Try again',
+  update: 'Bring up to date',
 }
 /**
  * Work admitted under other commands is never delivered under them (§14, decision #41), and no
@@ -1101,7 +1122,12 @@ class Inspector {
     const reading = str(record.ci) ?? (record.stage === 'ready' ? (str(record.limit) ?? 'green') : null)
     const ci = reading === null ? undefined : CI_READINGS[reading]
     const readAt = str(record.ciAt)
-    return { ...(ci !== undefined && { ci }), ...(readAt !== null && { ciReadAt: shortText(readAt) }) }
+    const since = ci === 'running' ? str(record.ciSince) : null
+    return {
+      ...(ci !== undefined && { ci }),
+      ...(readAt !== null && { ciReadAt: shortText(readAt) }),
+      ...(since !== null && { ciSince: shortText(since), ciQueued: record.ciQueued === true }),
+    }
   }
 
   /** The detail's own fields: a list row reads none of this. */
@@ -1112,9 +1138,11 @@ class Inspector {
     const card = needs.find(
       (item) => item.kind === 'card' && item.cls === 'pr_merge' && item.workItemId === String(doc.id),
     )
+    const moved = deliveryWaiting(record).branchMoved
     return {
       ...(repo !== null && { repo: cutText(repo, LABEL_CAP) }),
       ...(record !== undefined && this.#ciOf(record)),
+      ...(moved !== undefined && { movedTo: moved }),
       ...(failure !== null && { failure }),
       ...(card !== undefined && { mergeCardId: card.id }),
     }
@@ -1207,6 +1235,22 @@ class Inspector {
                 : 'Resolve what blocks it',
         }
       }
+      case 'person/branch-moved': {
+        // Owner, 9 November 2026: said plainly, with the way on; no raw code reaches the page.
+        const record = this.#deliveryRecord(doc)
+        const offer = retryOffer(this.#store, doc)
+        return {
+          reason: offer?.reason ?? (record === undefined ? null : (movedWords(record) ?? null)),
+          nextAction: offer === undefined ? 'Look at the pull request on GitHub' : RETRY_NEXT[offer.kind],
+        }
+      }
+      case 'waiting/checks': {
+        const pr = num(this.#deliveryRecord(doc)?.prNumber)
+        return {
+          reason: `${pr === null ? 'The pull request' : `Pull request #${pr}`}: GitHub has not finished its required checks`,
+          nextAction: null,
+        }
+      }
       case 'person/review':
         return {
           reason: 'The pull request is ready for your review',
@@ -1274,7 +1318,8 @@ class Inspector {
         awaitingConfirmation: mine.some((item) => item.kind === 'card'),
       }
       const delivery = this.#deliveryOf(doc).stage
-      const stopped = deliveryStopped(this.#deliveryRecord(doc))
+      const record = this.#deliveryRecord(doc)
+      const stopped = deliveryStopped(record)
       const byStatus = counts[id] ?? {}
       const total = Object.values(byStatus).reduce((sum, n) => sum + n, 0)
       const turnEnded = plannerTurnEnded(messages.get(id) ?? [], questions.get(id) ?? [])
@@ -1291,6 +1336,7 @@ class Inspector {
                 deliveryReady: delivery === 'pr-ready',
                 hostRunUnagreed: awaitsAgreement(this.#store, doc),
                 ...(stopped !== undefined && { deliveryStopped: stopped }),
+                ...deliveryWaiting(record),
               }),
             )
       const repoId = repoIdOf(doc)
@@ -1675,7 +1721,7 @@ class Inspector {
       // The work item stays `integrating` through delivery: delivery's own stage says where it is.
       const doc = this.#store.workItems.get(integrating.id)
       const delivery = doc === undefined ? undefined : this.#deliveryOf(doc)
-      const words = delivery === undefined ? undefined : deliveryLine(delivery)
+      const words = delivery === undefined ? undefined : deliveryLine(delivery, this.#deliveryRecord(doc))
       if (words !== undefined) return quiet('delivering', `${words}: ${titled(integrating)}`, integrating)
       return quiet('integrating', `Integrating ${titled(integrating)}`, integrating)
     }

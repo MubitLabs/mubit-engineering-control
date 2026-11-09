@@ -53,7 +53,14 @@ import {
   MAX_PAGE_LIMIT,
 } from '@mec/store'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { deliveryDocId, type RetryKind, type RetryOffer, retryOffer, stoppedWords } from './delivery'
+import {
+  admittedUnderOtherCommands,
+  deliveryDocId,
+  type RetryKind,
+  type RetryOffer,
+  retryOffer,
+  stoppedWords,
+} from './delivery'
 import { reasonWords } from './reason-words'
 
 // ── The wire shape (handoff 30, "The wire shape") ────────────────────────────────────────────
@@ -1171,6 +1178,14 @@ class Inspector {
         }
       }
       case 'person/blocked': {
+        // Whatever stopped it, no retry can deliver work admitted under other commands: the row
+        // says so, the same way the integration step's own refusal reads.
+        if (admittedUnderOtherCommands(this.#store, doc)) {
+          return {
+            reason: `Blocked: ${reasonWords(PROFILE_CHANGED)}`,
+            nextAction: 'Stop this work and ask again',
+          }
+        }
         const record = this.#deliveryRecord(doc)
         const stop = deliveryStopped(record)
         if (record !== undefined && stop !== undefined && str(doc.state) !== 'blocked') {

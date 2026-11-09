@@ -979,6 +979,20 @@ describe('a person retries what blocked (§11: blocked work and failed deliverie
     expect(work(late.r).state).toBe('blocked')
   })
 
+  it('a retry is not offered once the repository commands changed: the press would be refused (§14, #41)', async () => {
+    const { r, lock } = await refusedMerge()
+    rmSync(lock)
+    expect(retryOffer(r.store, work(r))).toMatchObject({ kind: 'integration' })
+    r.store.atomic(() => {
+      const repo = r.store.engines.get(REPO) as StoreDoc
+      r.store.engines.save({ ...repo, checks: [{ name: 'unit', cmd: 'true' }] })
+    })
+    expect(retryOffer(r.store, work(r))).toBeUndefined()
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'repo_profile_changed' })
+    expect(work(r).state).toBe('blocked')
+    expect(count(r, 'retry_requested')).toBe(0)
+  })
+
   it('a block a retry cannot answer is not offered', async () => {
     const r = rig()
     r.accepted('task_a', 'b.txt', 'two\n')
@@ -1046,6 +1060,18 @@ describe('a person retries what blocked (§11: blocked work and failed deliverie
     expect(work(r).state).not.toBe('blocked')
     expect(r.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'nothing_to_retry' })
     expect(count(r, 'retry_requested')).toBe(1)
+  })
+
+  it('Try again is not offered once the repository commands changed: its launch would be refused', () => {
+    const r = rig()
+    usedUp(r)
+    r.store.atomic(() => {
+      const repo = r.store.engines.get(REPO) as StoreDoc
+      r.store.engines.save({ ...repo, bootstrap: [{ name: 'setup', cmd: 'true' }] })
+    })
+    expect(retryOffer(r.store, work(r))).toBeUndefined()
+    expect(r.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'repo_profile_changed' })
+    expect(r.store.tasks.get('task_c')?.status).toBe('blocked')
   })
 
   it('Try again honours a hold and waits for the agreement', () => {

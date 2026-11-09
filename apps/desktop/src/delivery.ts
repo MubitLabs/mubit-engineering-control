@@ -59,8 +59,9 @@ import {
   ownerRepairOffer,
   ownerRetryRepair,
   processingOf,
+  profileChanged,
+  RepoAdmissionError,
   repairEvidence,
-  repoFields,
   revalidateWork,
   workResultOf,
 } from '@mec/meta'
@@ -109,6 +110,8 @@ const OPEN_STATES: readonly string[] = ['executing', 'reviewing', 'integrating']
 const INTEGRATION_BLOCK = /^(integration: |bootstrap_failed: |checks failed on |could not run )/
 
 const OFFER_CHARS = 300
+/** The refusal of a retry on work admitted under other commands, in the gates' own code. */
+const PROFILE_CHANGED = 'repo_profile_changed'
 /** How many cleared paths an event names; the count says the rest. */
 const CLEARED_PATHS = 50
 
@@ -125,12 +128,29 @@ const refusedTask = (task: StoreDoc): boolean =>
   task.status === 'blocked' && typeof task.acceptedHead === 'string'
 
 /**
+ * Work admitted under commands that have since changed (§14, decision #41): every retry of it is
+ * refused, by the integration step or the launch gate, so none is offered. The same question
+ * those gates ask. A repository that is no longer registered is the gates' refusal, not this one.
+ */
+export function admittedUnderOtherCommands(store: Store, work: StoreDoc): boolean {
+  if (typeof work.repoId !== 'string') return false
+  try {
+    return profileChanged(store, work.repoId, work)
+  } catch (error) {
+    if (error instanceof RepoAdmissionError) return false
+    throw error
+  }
+}
+
+/**
  * What a person may ask for again (§11: blocked work and failed deliveries, never as a loop). A
  * delivery's retry is a new card (§13). Held and stopped work offers nothing, and neither does an
- * open repair, whose worktree is not a retry's to run in.
+ * open repair, whose worktree is not a retry's to run in, nor work whose commands changed since it
+ * was admitted, which no retry can deliver.
  */
 export function retryOffer(store: Store, work: StoreDoc): RetryOffer | undefined {
   if (isTerminal(work) || isHeld(work) || mandateOf(work).status === 'withdrawn') return undefined
+  if (admittedUnderOtherCommands(store, work)) return undefined
   const id = String(work.id)
   const clean = (text: string): string => redact(text, [], []).slice(0, OFFER_CHARS)
   if (work.state === 'blocked') {
@@ -253,6 +273,9 @@ export class Delivery {
       if (!authority.ok) return { status: 'refused', error: `mandate_${authority.reason}` }
       const offer = retryOffer(this.#store, work)
       if (offer === undefined) {
+        if (admittedUnderOtherCommands(this.#store, work)) {
+          return { status: 'refused', error: PROFILE_CHANGED }
+        }
         const waits = work.state === 'blocked' && !this.#agreed(work)
         return { status: 'refused', error: waits ? HOST_RUN_UNAGREED : 'nothing_to_retry' }
       }
@@ -340,11 +363,7 @@ export class Delivery {
     // Merging runs the repo's commands, so this waits with the launches, and a later pass goes on.
     if (!this.#agreed(work)) return
     // §14: the checks are the ones pinned at admission, as the launch gate holds them to be.
-    const pinned = (work.pin as { profileHash?: string } | undefined)?.profileHash
-    const current = repoFields(this.#store, String(work.repoId), this.#policyText).pin as {
-      profileHash?: string
-    }
-    if (pinned !== undefined && pinned !== current.profileHash) {
+    if (profileChanged(this.#store, String(work.repoId), work)) {
       const reason = 'repo_profile_changed: this work was admitted under other commands'
       this.#store.atomic(() => blockWork(this.#store, id, reason, this.#now))
       return

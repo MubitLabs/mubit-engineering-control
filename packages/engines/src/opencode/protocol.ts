@@ -44,6 +44,12 @@ import type { EngineEventBody, ErrorClass, Json, OperationKind, TerminalReason, 
 /** The V2 protocol revision the adapter and its fixtures were written against. */
 export const OPENCODE_ENGINE_VERSION = '2.2.5'
 
+/**
+ * Every version a real run proved through the runner (docs/log/HANDSHAKES.md). 2.2.6 added no
+ * change the adapter reads: a probe of its serve API and a real run on 9 November 2026.
+ */
+export const OPENCODE_PROVEN_VERSIONS: readonly string[] = [OPENCODE_ENGINE_VERSION, '2.2.6']
+
 type AnyRecord = Record<string, unknown>
 
 const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback)

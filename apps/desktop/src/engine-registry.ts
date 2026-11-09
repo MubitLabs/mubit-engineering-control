@@ -29,6 +29,7 @@ import {
   CodexAdapter,
   OPENCODE_ENGINE_VERSION,
   OPENCODE_FLAGS_VERIFIED,
+  OPENCODE_PROVEN_VERSIONS,
   OpenCodeAdapter,
 } from '@mec/engines'
 import {
@@ -113,8 +114,8 @@ export type EngineRow = {
   sandbox: IsolationProfile['sandbox']
   /** Domains the attempt's sandbox allows, which is the engine's own and nothing else. */
   domains: readonly string[]
-  /** What the proof ran on. `undefined` keeps today's unpinned launch (Claude, M2.1). */
-  pinned?: string
+  /** The versions a proof ran on. `undefined` keeps today's unpinned launch (Claude, M2.1). */
+  pinned?: readonly string[]
   /** What that proof showed, which is all a build may advertise (§9). */
   capabilities?: Capabilities
   /** Whether a launch can run with no model: an OpenCode session inherits none. */
@@ -277,7 +278,7 @@ const opencodeRow: EngineRow = {
   // No OS sandbox (§8.4). `off` is the truth, and the decider then refuses every shell ask.
   sandbox: 'off',
   domains: [],
-  pinned: OPENCODE_ENGINE_VERSION,
+  pinned: OPENCODE_PROVEN_VERSIONS,
   capabilities: OPENCODE_CAPABILITIES,
   modelRequired: true,
   // Project config stays off for a trusted repository too: nothing else stands in for a sandbox.
@@ -325,7 +326,7 @@ const codexRow: EngineRow = {
   kinds: ['codex-sub'],
   sandbox: 'required',
   domains: [],
-  pinned: CODEX_ENGINE_VERSION,
+  pinned: [CODEX_ENGINE_VERSION],
   capabilities: CODEX_CAPABILITIES,
   modelRequired: false,
   hygiene: () => ({}),
@@ -397,8 +398,8 @@ export function isLaunchableSlot(slot: StoreDoc): boolean {
 /** A version or a capability the proof relied on is gone: the slot degrades, and nothing runs. */
 export function driftOf(row: EngineRow, probe: EngineProbe): string | undefined {
   if (row.capabilities === undefined) return undefined
-  if (probe.capabilities.engine_version !== row.pinned) {
-    return `engine ${row.engine} is ${probe.capabilities.engine_version}; this build proved ${row.pinned}`
+  if (!row.pinned?.includes(probe.capabilities.engine_version)) {
+    return `engine ${row.engine} is ${probe.capabilities.engine_version}; this build proved ${row.pinned?.join(', ')}`
   }
   const drift = checkDrift(probe.capabilities, row.capabilities.flags_verified)
   return drift.degraded ? drift.detail : undefined

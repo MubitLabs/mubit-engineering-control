@@ -241,7 +241,7 @@ describe('Codex through the runner', { timeout: 180_000 }, () => {
       loginStatus: async () => ({ code: 0, stdout: '', stderr: 'Logged in using ChatGPT\n' }),
     }).probe()
     expect(ROW.capabilities).toEqual(capabilities)
-    expect(ROW.pinned).toBe(capabilities.engine_version)
+    expect(ROW.pinned).toContain(capabilities.engine_version)
   })
 
   it('a turn gives a report, a commit on the head, and checks on that head', async () => {
@@ -590,7 +590,7 @@ describe('OpenCode through the runner', { timeout: 180_000 }, () => {
       authList: async () => ({ code: 0, stdout: '[]', stderr: '' }),
     }).probe()
     expect(ROW.capabilities).toEqual(capabilities)
-    expect(ROW.pinned).toBe(capabilities.engine_version)
+    expect(ROW.pinned).toContain(capabilities.engine_version)
   })
 
   it('a turn gives a report, a commit on the head, and checks on that head', async () => {
@@ -807,6 +807,13 @@ describe('OpenCode through the runner', { timeout: 180_000 }, () => {
     expect(existsSync(join(bin, 'seen.json'))).toBe(false)
   })
 
+  it('2.2.6, proven on the real binary, launches as 2.2.5 does', async () => {
+    const { dataDir, repo } = scratch('opencode', { version: 'opencode v2.2.6', steps: OPENCODE_SUCCESS })
+    seed(dataDir, repo, { ...WITH_TASK, checks: CHECKS })
+    const end = await launched(dataDir, ['succeeded', 'checks_failed', 'failed'])
+    expect(end.state).toBe('succeeded')
+  })
+
   it('a drifted version degrades the slot and spends nothing', async () => {
     const { dataDir, repo, bin } = scratch('opencode', { version: 'opencode v2.3.0', steps: [] })
     seed(dataDir, repo, WITH_TASK)
@@ -862,6 +869,17 @@ describe('driftOf', () => {
   it('names a flag the probe lost', () => {
     const lost = { ...capabilities, flags_verified: capabilities.flags_verified.slice(1) }
     expect(driftOf(ROW, { capabilities: lost, auth: { logged_in: true } })).toContain('initialize')
+  })
+
+  it('is quiet on each OpenCode version the proof ran, and names them all on another', () => {
+    const opencode = ENGINE_ROWS.opencode
+    const proven = opencode?.capabilities
+    if (opencode === undefined || proven === undefined) throw new Error('no opencode row')
+    const on = (engine_version: string) =>
+      driftOf(opencode, { capabilities: { ...proven, engine_version }, auth: { logged_in: true } })
+    expect(on('2.2.5')).toBeUndefined()
+    expect(on('2.2.6')).toBeUndefined()
+    expect(on('2.2.7')).toBe('engine opencode is 2.2.7; this build proved 2.2.5, 2.2.6')
   })
 })
 

@@ -42,6 +42,7 @@ export {
   classifyOpencodeError,
   createOpenCodeEventParser,
   OPENCODE_ENGINE_VERSION,
+  OPENCODE_PROVEN_VERSIONS,
   type OpenCodeEventParser,
   parseOpenCodeEvents,
 } from './opencode/protocol'

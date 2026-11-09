@@ -30,6 +30,11 @@ export interface ApprovalProps extends DecisionFrame, FocusClaim {
   /** Names the exact effect, for the armed button and the announcement. */
   confirmLabel: string
   denyLabel: string
+  /**
+   * Set where a deny is an answer, not a cancel: Deny then asks for a second click as Approve does,
+   * naming what it denies. Left out, Deny is one click (a cancel that changes nothing).
+   */
+  denyConfirmLabel?: string
   consequences: readonly { heading: string; body: string }[]
   onConfirm: () => void
   onDeny: () => void
@@ -40,6 +45,10 @@ export interface QuestionProps extends DecisionFrame, FocusClaim {
   freeTextLabel: string
   onAnswer: (answer: string) => void
 }
+
+/** A fact over several lines (a PR body) keeps its lines; the rest sit on one. */
+const factClass = (fact: { value: string; mono?: boolean }): string | undefined =>
+  fact.value.includes('\n') ? 'fact-text' : fact.mono ? 'mono' : undefined
 
 function Frame({
   frame,
@@ -68,7 +77,7 @@ function Frame({
         {frame.evidence.map((fact) => (
           <div key={fact.label}>
             <dt>{fact.label}</dt>
-            <dd className={fact.mono ? 'mono' : undefined}>{fact.value}</dd>
+            <dd className={factClass(fact)}>{fact.value}</dd>
           </div>
         ))}
       </dl>
@@ -100,22 +109,44 @@ function useSettledFocus(status: DecisionStatus, claim = false) {
 }
 
 /**
- * Two-step approval. The frame holds only the arming: the effect itself is the caller's, so
- * this component cannot reach anything by itself.
+ * Both labels laid out in one cell, the one not in force unseen and unread: the button is as wide
+ * armed as at rest, so arming moves nothing under the pointer.
+ */
+function TwoLabels({ armed, rest, confirm }: { armed: boolean; rest: string; confirm: string }) {
+  return (
+    <span className="two-labels">
+      <span className="two-label" aria-hidden={armed || undefined}>
+        {rest}
+      </span>
+      <span className="two-label" aria-hidden={!armed || undefined}>
+        {confirm}
+      </span>
+    </span>
+  )
+}
+
+type Armed = 'approve' | 'deny' | null
+
+/**
+ * Two-step approval, and a two-step deny where a deny is an answer. Arming one disarms the other.
+ * The frame holds only the arming: the effect itself is the caller's, so this component cannot
+ * reach anything by itself.
  */
 export function Approval(props: ApprovalProps) {
-  const { status, onConfirm, onDeny } = props
+  const { status, onConfirm, onDeny, denyConfirmLabel } = props
   const heading = useSettledFocus(status, props.claimFocus)
-  const [armed, setArmed] = useState(false)
-  const confirm = useRef<HTMLButtonElement>(null)
+  const [armed, setArmed] = useState<Armed>(null)
+  const approveButton = useRef<HTMLButtonElement>(null)
+  const denyButton = useRef<HTMLButtonElement>(null)
   const open = status.state === 'open'
 
   useEffect(() => {
-    if (!armed) return
-    const disarm = () => setArmed(false)
+    if (armed === null) return
+    const disarm = () => setArmed(null)
     const timer = setTimeout(disarm, ARM_WINDOW_MS)
+    const button = armed === 'approve' ? approveButton : denyButton
     const onUnrelated = (event: Event) => {
-      if (event.target instanceof Node && confirm.current?.contains(event.target)) return
+      if (event.target instanceof Node && button.current?.contains(event.target)) return
       disarm()
     }
     const removeLayer = layers.push({ modal: false, onEscape: disarm })
@@ -130,13 +161,24 @@ export function Approval(props: ApprovalProps) {
   }, [armed])
 
   const onApprove = () => {
-    if (!armed) {
-      setArmed(true)
+    if (armed !== 'approve') {
+      setArmed('approve')
       return
     }
-    setArmed(false)
+    setArmed(null)
     onConfirm()
   }
+
+  const onDenyClick = () => {
+    if (denyConfirmLabel !== undefined && armed !== 'deny') {
+      setArmed('deny')
+      return
+    }
+    setArmed(null)
+    onDeny()
+  }
+
+  const armedLabel = armed === 'approve' ? props.confirmLabel : armed === 'deny' ? denyConfirmLabel : null
 
   return (
     <Frame frame={props} headingRef={heading}>
@@ -149,15 +191,24 @@ export function Approval(props: ApprovalProps) {
       {open && (
         <>
           <div className="actions">
-            <Button ref={confirm} variant="primary" data-armed={armed} onClick={onApprove}>
-              {armed ? props.confirmLabel : props.approveLabel}
+            <Button
+              ref={approveButton}
+              variant="primary"
+              data-armed={armed === 'approve'}
+              onClick={onApprove}
+            >
+              <TwoLabels armed={armed === 'approve'} rest={props.approveLabel} confirm={props.confirmLabel} />
             </Button>
-            <Button variant="quiet" onClick={onDeny}>
-              {props.denyLabel}
+            <Button ref={denyButton} variant="quiet" data-armed={armed === 'deny'} onClick={onDenyClick}>
+              {denyConfirmLabel === undefined ? (
+                props.denyLabel
+              ) : (
+                <TwoLabels armed={armed === 'deny'} rest={props.denyLabel} confirm={denyConfirmLabel} />
+              )}
             </Button>
           </div>
           <p role="status" className="small armed-note">
-            {armed ? `Armed: ${props.confirmLabel}. Escape or any other action cancels.` : ''}
+            {armedLabel ? `Armed: ${armedLabel}. Escape or any other action cancels.` : ''}
           </p>
         </>
       )}

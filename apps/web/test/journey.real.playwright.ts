@@ -204,7 +204,9 @@ test('declining keeps the local result', async ({ page }) => {
   expect(local).toBeDefined()
 
   await open(page, 'Needs you')
-  await page.getByRole('button', { name: 'Deny' }).click({ timeout: SLOW })
+  // Deny is two steps, as Approve is: the first click arms it, the second denies.
+  await page.getByRole('button', { name: 'Deny', exact: true }).click({ timeout: SLOW })
+  await page.getByRole('button', { name: /^Confirm: deny in / }).click()
   await expect(page.getByRole('heading', { name: 'Settled' })).toBeVisible(QUIET_TIME)
   await expect.poll(pendingClasses, QUIET_TIME).toEqual([])
   await page.waitForTimeout(SEVERAL_PASSES)

@@ -518,6 +518,7 @@ export function deliveryDetail(detail: WorkDetail, filter: RepoFilter | null): D
 const FINISHED_TASKS = new Set(['awaiting_review', 'accepted', 'integrated'])
 
 const short = (sha: string) => sha.slice(0, 7)
+const COMMIT_ID = /^[0-9a-f]{7,64}$/
 
 export function latestAttempt(attempts: readonly AttemptView[]): AttemptView | null {
   return attempts.reduce<AttemptView | null>(
@@ -1008,6 +1009,9 @@ export function approvalProps(
   const evidence = usableEvidence(served)
   const repository = repositoryOf(item)
   const verb = evidence?.verb ?? 'approve'
+  /** The commit the card is bound to, on its face: the full id stays in the inspector. */
+  const head = evidence?.facts.find((fact) => fact.label === 'Head')?.value ?? ''
+  const commit = COMMIT_ID.test(head) ? head : null
   return {
     id: item.id,
     label: cardLabel(item.cls),
@@ -1020,11 +1024,13 @@ export function approvalProps(
     evidence: [
       { label: 'Repository', value: repository },
       ...(evidence?.facts.filter((f) => !f.mono) ?? []),
+      ...(commit === null ? [] : [{ label: 'Commit', value: short(commit), mono: true }]),
     ].filter((fact, index, all) => all.findIndex((other) => other.label === fact.label) === index),
     status: cardStatus(item, outcome),
     approveLabel: 'Approve',
     confirmLabel: `Confirm: ${verb} in ${repository}`,
     denyLabel: 'Deny',
+    denyConfirmLabel: `Confirm: deny in ${repository}`,
     consequences: evidence
       ? [
           { heading: 'On approve', body: evidence.consequences.approve },

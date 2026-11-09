@@ -70,6 +70,8 @@ export interface Selected<T> {
 export interface CommandNotice {
   kind: 'done' | 'failed'
   text: string
+  /** The card this notice is about. It says something only while that card is open. */
+  cardId?: string
 }
 
 export interface InspectionState {
@@ -390,6 +392,14 @@ export function createInspection(client: InspectionClient) {
       })
   }
 
+  /** A notice about a card that is no longer waiting, answered here or anywhere else, has had its say. */
+  const noticeAfter = (items: readonly NeedItem[]): CommandNotice | null => {
+    const cardId = state.notice?.cardId
+    if (cardId === undefined) return state.notice
+    const card = items.find((item) => item.id === cardId)
+    return card === undefined || card.status === 'pending' ? state.notice : null
+  }
+
   const refresh = () => {
     refreshMeta()
     reading?.abort()
@@ -406,7 +416,7 @@ export function createInspection(client: InspectionClient) {
     walk(client.needs, controller.signal)
       .then((data) => {
         if (!live()) return
-        set({ needs: { status: 'ready', data, readAt: now() } })
+        set({ needs: { status: 'ready', data, readAt: now() }, notice: noticeAfter(data.items) })
         void readOpenEvidence(data.items, live)
       })
       .catch((error: unknown) => {
@@ -537,7 +547,10 @@ export function createInspection(client: InspectionClient) {
         .catch(failedOutcome)
         .then((outcome) => {
           settling.delete(id)
-          set({ outcomes: { ...state.outcomes, [id]: outcome } })
+          set({
+            outcomes: { ...state.outcomes, [id]: outcome },
+            ...(outcome.closes && state.notice?.cardId === id && { notice: null }),
+          })
           refresh()
         })
     },
@@ -573,7 +586,11 @@ export function createInspection(client: InspectionClient) {
           : client[action.kind](workItemId)
       run
         .then(
-          ({ status }): CommandNotice => ({ kind: 'done', text: COMMAND_WORDS[status] ?? status }),
+          ({ id, status }): CommandNotice => ({
+            kind: 'done',
+            text: COMMAND_WORDS[status] ?? status,
+            ...(status === 'card_open' && { cardId: id }),
+          }),
           (error: unknown): CommandNotice => ({ kind: 'failed', text: commandFailure(error) }),
         )
         .then((notice) => {

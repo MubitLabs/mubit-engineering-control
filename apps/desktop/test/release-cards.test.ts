@@ -1207,6 +1207,78 @@ describe('the card shows exactly what is approved (§13 "the exact diff or comma
     expect((await h.get('/api/inbox/conf_missing/detail')).status).toBe(404)
   })
 
+  describe('a delivery card serves the checks and diff of its own commit', () => {
+    /** A push card for work item `wi_card`, whose integration ran checks on `checkedSha`. */
+    const deliveryCard = async (checkedSha?: (head: string) => string) => {
+      const g = gitWorld()
+      const { run } = fakeGh(world())
+      const h = await harness(run)
+      const repoId = await register(h, g.work)
+      const base = g.git('rev-parse', 'main')
+      const head = g.git('rev-parse', 'HEAD')
+      const opened = await h.post('/api/release/push', { repoId, branch: BRANCH })
+      const id = String(opened.body.confirmationId)
+      h.store.atomic(() => {
+        h.store.workItems.save({ id: 'wi_card', repoId, git_dir: g.work, base_sha: base })
+        h.store.engines.save({
+          id: 'integration/wi_card',
+          head,
+          combined: {
+            sha: checkedSha?.(head) ?? head,
+            passed: false,
+            checks: [
+              { name: 'unit', status: 'passed', logTail: `ok with ${SECRET}` },
+              { name: 'lint', status: 'error', logTail: 'timed out' },
+            ],
+          },
+        })
+        h.store.confirmations.save({ ...(h.store.confirmations.get(id) as StoreDoc), workItemId: 'wi_card' })
+      })
+      return { h, id, base, head }
+    }
+
+    it('serves the checks the integration recorded on the bound commit, redacted', async () => {
+      const { h, id } = await deliveryCard()
+      const res = await h.get(`/api/inbox/${id}/detail`)
+      expect(res.status).toBe(200)
+      const checks = res.body.checks as Array<{ name: string; state: string; note: string | null }>
+      expect(checks.map(({ name, state }) => [name, state])).toEqual([
+        ['unit', 'passed'],
+        ['lint', 'failed'],
+      ])
+      expect(checks[1]?.note).toContain('timed out')
+      expect(JSON.stringify(res.body)).not.toContain(SECRET)
+    })
+
+    it('serves no checks from another commit: a verdict belongs to the head it ran on', async () => {
+      const { h, id } = await deliveryCard(() => MOVED)
+      const res = await h.get(`/api/inbox/${id}/detail`)
+      expect(res.body.checks).toEqual([])
+    })
+
+    it('serves the diff stat between the work’s base and the bound commit', async () => {
+      const { h, id, base, head } = await deliveryCard()
+      const res = await h.get(`/api/inbox/${id}/detail`)
+      const diff = res.body.diff as { summary: string; files: unknown[] }
+      expect(diff.files).toEqual([{ path: 'a.txt', added: 1, removed: 1 }])
+      expect(diff.summary).toContain('1 file changed, +1 -1')
+      expect(diff.summary).toContain(`${base.slice(0, 7)} to ${head.slice(0, 7)}`)
+      expect(diff.summary).not.toMatch(/not served/)
+    })
+
+    it('a card with no work behind it says the diff is not on record, and serves no checks', async () => {
+      const g = gitWorld()
+      const { run } = fakeGh(world())
+      const h = await harness(run)
+      const repoId = await register(h, g.work)
+      const opened = await h.post('/api/release/push', { repoId, branch: BRANCH })
+      const res = await h.get(`/api/inbox/${String(opened.body.confirmationId)}/detail`)
+      expect(res.body.checks).toEqual([])
+      expect((res.body.diff as { files: unknown[] }).files).toEqual([])
+      expect(String((res.body.diff as { summary: string }).summary)).not.toMatch(/not served/)
+    })
+  })
+
   describe('a card the meta agent opened with request_confirmation (§13 hard invariant 2)', () => {
     const REPO_ID = 'repo_main'
     const openPlannerCard = async (

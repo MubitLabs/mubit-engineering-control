@@ -177,12 +177,70 @@ test.describe('the audit defects, wide', () => {
     await harness(page, 'needs')
     const card = page.locator('.decision').filter({ hasText: 'push search to sample-console' })
     await expect(card.locator('.attention-label')).toHaveCount(1)
-    await card.getByRole('button', { name: 'Deny' }).click()
+    await card.getByRole('button', { name: 'Deny', exact: true }).click()
+    await card.getByRole('button', { name: 'Confirm: deny in sample-console' }).click()
     await expect(card.locator('.attention-label')).toHaveCount(0)
     await expect(card.locator('.settled-label')).toHaveText('Denied')
     const settled = page.locator('.decision[data-state="resolved"], .decision[data-state="expired"]')
     expect(await settled.count()).toBeGreaterThan(1)
     await expect(settled.locator('.attention-label')).toHaveCount(0)
+  })
+
+  test.describe('arming never puts the other answer under the pointer', () => {
+    for (const viewport of VIEWPORTS) {
+      test(`at ${viewport.name}: a second click where Approve was confirms, and Deny has not moved`, async ({
+        page,
+      }) => {
+        await page.setViewportSize(viewport)
+        await harness(page, 'needs')
+        const card = page.locator('.decision').filter({ hasText: 'push search to sample-console' })
+        const approve = card.getByRole('button', { name: 'Approve', exact: true })
+        const deny = card.getByRole('button', { name: 'Deny', exact: true })
+        // Boxes are measured in the viewport, so the card is scrolled to before anything is measured.
+        await approve.scrollIntoViewIfNeeded()
+        const before = { approve: await approve.boundingBox(), deny: await deny.boundingBox() }
+        await approve.click()
+        const confirm = card.getByRole('button', { name: 'Confirm: push in sample-console' })
+        await expect(confirm).toBeVisible()
+        expect(await confirm.boundingBox()).toEqual(before.approve)
+        expect(await deny.boundingBox()).toEqual(before.deny)
+        // The same spot, clicked again, is the confirm: never Deny.
+        const spot = before.approve as NonNullable<typeof before.approve>
+        await page.mouse.click(spot.x + spot.width / 2, spot.y + spot.height / 2)
+        await expect(card).toContainText('Pushed')
+        expect(await effects(page)).toEqual(['approve card_pending'])
+      })
+    }
+
+    test('one click on Deny arms it and settles nothing; the second denies', async ({ page }) => {
+      await harness(page, 'needs')
+      const card = page.locator('.decision').filter({ hasText: 'push search to sample-console' })
+      const deny = card.getByRole('button', { name: 'Deny', exact: true })
+      await deny.scrollIntoViewIfNeeded()
+      const before = await deny.boundingBox()
+      await deny.click()
+      const confirm = card.getByRole('button', { name: 'Confirm: deny in sample-console' })
+      await expect(confirm).toBeVisible()
+      expect(await confirm.boundingBox()).toEqual(before)
+      await expect(card).toHaveAttribute('data-state', 'open')
+      expect(await effects(page)).toEqual([])
+      await expect(card.getByRole('status')).toContainText('Armed: Confirm: deny in sample-console')
+      await confirm.click()
+      await expect(card.locator('.settled-label')).toHaveText('Denied')
+      expect(await effects(page)).toEqual(['deny card_pending'])
+    })
+
+    test('arming Deny disarms Approve, and Escape disarms Deny', async ({ page }) => {
+      await harness(page, 'needs')
+      const card = page.locator('.decision').filter({ hasText: 'push search to sample-console' })
+      await card.getByRole('button', { name: 'Approve', exact: true }).click()
+      await card.getByRole('button', { name: 'Deny', exact: true }).click()
+      await expect(card.getByRole('button', { name: 'Approve', exact: true })).toBeVisible()
+      await page.keyboard.press('Escape')
+      await expect(card.getByRole('button', { name: 'Deny', exact: true })).toBeVisible()
+      await expect(card.getByRole('status')).toHaveText('')
+      expect(await effects(page)).toEqual([])
+    })
   })
 
   test('13 expired is shown', async ({ page }) => {

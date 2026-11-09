@@ -714,6 +714,52 @@ describe('owner commands', () => {
     expect(inspection.getState().notice?.text).toContain('no_planner')
   })
 
+  describe('a notice about a card lasts only while that card is open', () => {
+    const merge = {
+      kind: 'merge',
+      label: 'Merge',
+      workItemId: 'work_working',
+      repoId: 'repo_a',
+      repo: 'owner/repo',
+      prNumber: 9,
+    } as const
+    const opened = { merge: async () => ({ id: needs.pending.id, status: 'card_open' }) }
+
+    it('settling the card here clears it', async () => {
+      const { inspection, settle } = rig(opened)
+      inspection.act(merge)
+      await settle()
+      expect(inspection.getState().notice?.text).toContain('merge card is in Needs you')
+      inspection.settle(needs.pending.id, 'approve')
+      await settle()
+      expect(inspection.getState().notice).toBeNull()
+    })
+
+    it('a read that finds the card settled elsewhere clears it', async () => {
+      let status: 'pending' | 'approved' = 'pending'
+      const { inspection, settle } = rig({
+        ...opened,
+        needs: async () => needsOf([{ ...needs.pending, status }]),
+      })
+      inspection.act(merge)
+      await settle()
+      expect(inspection.getState().notice).not.toBeNull()
+      status = 'approved'
+      inspection.refresh()
+      await settle()
+      expect(inspection.getState().notice).toBeNull()
+    })
+
+    it('a notice about something else stays when a card settles', async () => {
+      const { inspection, settle } = rig()
+      inspection.act(stop)
+      await settle()
+      inspection.settle(needs.pending.id, 'deny')
+      await settle()
+      expect(inspection.getState().notice).toMatchObject({ kind: 'done', text: 'Stopped.' })
+    })
+  })
+
   it('a lift on free work says it was not held', async () => {
     const { inspection, settle } = rig({ lift: async () => ({ id: 'x', status: 'free' }) })
     inspection.act({ ...stop, kind: 'lift' })

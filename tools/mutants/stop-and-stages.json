@@ -39,7 +39,11 @@
     "file": "packages/domain/src/stages.ts",
     "find": "  if (stage !== 'declined' && stage !== 'failed') return undefined\n  return { step:",
     "replace": "  if (stage !== 'never') return undefined\n  return { step:",
-    "tests": ["packages/domain/test/stages.test.ts", "apps/desktop/test/inspection-trace.test.ts", "packages/meta/test/context-stage.test.ts"]
+    "tests": [
+      "packages/domain/test/stages.test.ts",
+      "apps/desktop/test/inspection-trace.test.ts",
+      "packages/meta/test/context-stage.test.ts"
+    ]
   },
   {
     "name": "S2 a declined pull request reads as a push",

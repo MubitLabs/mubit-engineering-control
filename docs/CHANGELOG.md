@@ -1,11 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.3.2 (9 November 2026)
+
+Fixes from the installed 0.3.1 walkthrough (a real request to a merged pull request on `mec-sandbox`), and the classic shell removed. See `docs/changes/2026-11-09-approval-cards/`, `docs/changes/2026-11-09-stop-and-stages/` and `docs/changes/2026-11-09-remove-classic/`. No migration.
+
+- **Deny takes two clicks, and nothing moves.** On push, PR and merge cards Deny now arms first, like Approve, and neither button changes size when armed. The walkthrough denied a push by accident when an armed Approve pushed Deny under the cursor.
+- **The push card shows what goes out.** Its Checks tab shows the checks recorded on its exact commit, its Diff tab the files and line counts from the work's base, both redacted, and the card face shows the short commit.
+- **A PR body keeps its line breaks** on the card and in the inspector.
+- **Card notices clear.** "The merge card is in Needs you" goes away once that card is answered.
+- **`mec stop` stops the server.** It used to write the stop marker and print success without signalling anything. It now sends SIGTERM to the proven server pid, waits up to 45 s, and says `stopped pid N` only once it is gone; a survivor is reported with exit 1. Shutdown is bounded.
+- **A declined push says so.** Work reads *Push declined* (or *Pull request declined*, *Push failed*) with *Ask to push again*, not *Working* (spec §10, decision #63).
+- **Old answers show.** A question whose answer was filed on other work shows that answer instead of *stopped without answering*.
+- **Try again on a blocked integration** whose repairs are used up, and the blocked sentence in chat names the task and the reason.
 
 - **One shell.** The old workbench and its `?ui=` switch are removed (decision #35; merge held by #48). A leftover `?ui=` in an address or a stored choice in the browser is ignored and left as it is, with no migration. A view that throws while drawing is now contained to its pane. See `docs/changes/2026-11-09-remove-classic/`.
 - **Card shortcuts.** J moves to the next open card, A arms the focused card's approval (it never confirms), and G then W opens Work. None fires while typing or under a dialog.
 
-## 0.3.1 (in preparation)
+## 0.3.1 (8 November 2026)
 
 Core coordination, delivery, per-repository agreement, the approval key and meta-agent visibility. Prepared on `chore/version-0.3.1` from `origin/main` at `3b40f25` (#51), then brought onto `8d8bc8f` (#52) with the fixes of 8 November; see `docs/changes/2026-11-06-core-ship/`, `docs/changes/2026-11-06-host-run-agreement/`, `docs/changes/2026-11-07-real-run-defects/`, `docs/changes/2026-11-08-ceiling-and-reference/` and `docs/changes/2026-11-07-release-0.3.1/`. Not tagged or released yet.
 
@@ -16,7 +27,7 @@ Core coordination, delivery, per-repository agreement, the approval key and meta
 - **Meta-agent visibility.** Work and the live line show who a task is delegated to, what it is doing now, and which slot and model; a repository dropdown shows with two repositories or with unassigned history. Unassigned blocked work is listed but leaves every count.
 - **Slots and capacity.** A task is placed only on a slot this build can launch, preferring a proven one. A planner `slot_class` hint is a preference (decision #43). A queued attempt gives its capacity back on a policy change. An attempt whose process group refuses to die stays failed but holds its capacity until the group is gone (decision #45). Capacity is checked when a row runs, so an agreement cannot release more rows than a slot has room for.
 - **Meta slot units.** Specialists may use every unit of the meta slot; no reserved unit is enforced (spec §11 amended, decision #49).
-- **Classic stays until the next release.** `?ui=classic` still works. Removal is held until a real pull request and merge pass on the installed build (decision #48).
+- **Classic stays until the next release.** `?ui=classic` still works. Removal is held until a real pull request and merge pass on the installed build (decision #48); that pass came on 8 November and classic is removed in 0.3.2 (decision #62).
 - **What the real runs found (#52).** A specialist that ends its turn on the base with no report, or whose last message opens with *Blocked:*, no longer counts as done (decision #57); a commit outside a task's owned paths goes back for repair. Specialists ignore your personal `~/.claude/CLAUDE.md` and get the repository's own `CLAUDE.md` and `AGENTS.md` in their brief (decisions #54, #56). Blocked work offers **Try again**, one fresh repair attempt, and your go-ahead in chat lifts the block so newly planned tasks start (decision #55). Integration repairs keep the tier you asked for. Waits and blocks read as words, not codes, and a failed setup command posts one chat line.
 - **The approval key covers more.** Answering a question (decision #58) and sending a chat message (decision #59) need the key, like the cards, the agreement and Try again. A tab with no key keeps its draft and says the browser is not linked.
 - **The ceiling is 95%.** New work starts on a connection until it reaches 95% of its limit (was 80%; decision #60). When work waits on it, Work, the live line and Delegation say so: "Waiting: Claude account preflight-a is at 96% of its weekly limit; MEC stops at 95%. Resets Tue 10 Nov 07:00", and chat gets one line the first time.

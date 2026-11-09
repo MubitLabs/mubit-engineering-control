@@ -75,6 +75,18 @@ describe('planner context stage', () => {
     expect(stageIn(store)).toBe('Push declined')
   })
 
+  it('a branch that changed on GitHub reads as Work reads it, not Working (owner, 9 November 2026)', () => {
+    const store = storeWith({ id: 'wi_1', state: 'integrating' })
+    store.engines.save({ id: 'delivery/wi_1', stage: 'pr_open', headMoved: { sha: 'c'.repeat(40) } })
+    expect(stageIn(store)).toBe('Branch changed on GitHub')
+  })
+
+  it('checks GitHub has not finished read as a wait on GitHub, not Working', () => {
+    const store = storeWith({ id: 'wi_1', state: 'integrating' })
+    store.engines.save({ id: 'delivery/wi_1', stage: 'pr_open', ci: 'ci_pending' })
+    expect(stageIn(store)).toBe('Waiting for GitHub checks')
+  })
+
   it('every attempt on quota is the quota stage', () => {
     const store = storeWith({ id: 'wi_1' })
     store.attempts.save({ id: 'att_1', workItemId: 'wi_1', state: 'quota_wait' })

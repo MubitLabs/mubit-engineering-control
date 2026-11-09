@@ -186,6 +186,12 @@ function delivery(path: string, value: unknown, what: string): DeliveryView {
             'unreadable',
           ]),
     ciReadAt: raw.ciReadAt == null ? null : str(path, raw.ciReadAt, `${what}.ciReadAt`),
+    // Owner, 9 November 2026: only while true, so a record without them decodes as it always did.
+    ...(raw.ciSince != null && {
+      ciSince: str(path, raw.ciSince, `${what}.ciSince`),
+      ciQueued: raw.ciQueued === true,
+    }),
+    ...(raw.movedTo != null && { movedTo: str(path, raw.movedTo, `${what}.movedTo`) }),
     failure: raw.failure == null ? null : str(path, raw.failure, `${what}.failure`),
     mergeCardId: raw.mergeCardId == null ? null : str(path, raw.mergeCardId, `${what}.mergeCardId`),
   }
@@ -356,7 +362,7 @@ export function decodeWorkDetail(raw: unknown): WorkDetail {
       retry === null
         ? null
         : {
-            kind: oneOf(path, retry.kind, 'retry.kind', ['integration', 'push', 'pr', 'repair']),
+            kind: oneOf(path, retry.kind, 'retry.kind', ['integration', 'push', 'pr', 'repair', 'update']),
             reason: str(path, retry.reason, 'retry.reason'),
           },
     coverage: coverage(path, body.coverage, 'coverage'),

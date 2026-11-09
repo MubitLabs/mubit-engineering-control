@@ -142,6 +142,32 @@ describe('the delivery section says what is true (§14, §18 honest state)', () 
     expect(view(detail({ stage: 'pr-open', ci: 'unreadable' })).ci).toContain('could not be read')
   })
 
+  it('checks waiting on GitHub say queued or running, and since when (owner, 9 November 2026)', () => {
+    const since = '2026-11-05T09:40:00.000Z'
+    const queued = view(
+      detail({ stage: 'pr-open', ci: 'running', ciSince: since, ciQueued: true, ciReadAt: READ_AT }),
+    ).ci
+    expect(queued).toMatch(/^Waiting for GitHub’s required checks: queued since .+\. Read /)
+    const running = view(detail({ stage: 'pr-open', ci: 'running', ciSince: since, ciQueued: false })).ci
+    expect(running).toMatch(/^Waiting for GitHub’s required checks: running since .+\./)
+  })
+
+  it('a branch that changed on GitHub offers Bring up to date, and says why beside the stage', () => {
+    const reason = 'The branch changed on GitHub (now 63865a9). MEC won’t merge commits it didn’t check.'
+    const work = detail(
+      { stage: 'pr-open', ci: null, movedTo: '63865a9' },
+      {
+        stage: { key: 'person/branch-moved', label: 'Branch changed on GitHub', waitingOn: 'person' },
+        retry: { kind: 'update', reason },
+      },
+    )
+    const shown = deliveryDetail(work, ALL)
+    expect(shown.lead).toMatchObject({ kind: 'retry' })
+    expect(shown.lead?.label).toMatch(/^Bring up to date in /)
+    expect(shown.plan.footnote).toContain(reason)
+    expect(shown.actions.map((action) => action.kind)).not.toContain('merge')
+  })
+
   it('no reading stays no reading', () => {
     expect(view(detail({ stage: 'pr-open', ci: null })).ci).toBe('GitHub’s checks have not been read yet.')
     expect(view(detail({ stage: 'local-complete', ci: null, prNumber: null })).ci).toBeNull()

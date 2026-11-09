@@ -712,3 +712,91 @@ describe('the diff of a recorded head (§15)', () => {
     expect(detail.diff).toMatchObject({ summary: 'Stored', files: [{ path: 'a', added: 1, removed: 0 }] })
   })
 })
+
+describe('an open pull request that waits on GitHub reads in words (owner, 9 November 2026)', () => {
+  const MOVED = '63865a9'.padEnd(40, 'c')
+  const seedPr = (fields: Record<string, Json>): void => {
+    store.atomic(() => {
+      store.engines.save({
+        ...(store.engines.get('repo_a') as Record<string, Json>),
+        id: 'repo_a',
+        hostRunAgreedAt: AT,
+      })
+      store.workItems.save({
+        id: 'wi_pr',
+        repoId: 'repo_a',
+        state: 'integrating',
+        default_branch: 'main',
+        title: 'Add the audit log',
+        createdAt: AT,
+        updatedAt: AT,
+      })
+      store.engines.save({
+        id: deliveryDocId('wi_pr'),
+        workItemId: 'wi_pr',
+        repo: 'acme/alpha',
+        branch: 'mec/pr/integration',
+        head: 'a'.repeat(40),
+        prNumber: 7,
+        ...fields,
+      })
+    })
+  }
+  const row = async () => (await get('/api/inspect/work')).items.find((entry: any) => entry.id === 'wi_pr')
+  const moved = 'The branch changed on GitHub (now 63865a9). MEC won’t merge commits it didn’t check.'
+  const hhmm = (iso: string): string => {
+    const at = new Date(iso)
+    return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+  }
+
+  it('a branch that changed on GitHub says so, waits on you, and offers Bring up to date', async () => {
+    seedPr({ stage: 'pr_open', headMoved: { sha: MOVED, at: AT, why: 'not_on_mec_head' } })
+    expect(await row()).toMatchObject({
+      stage: { key: 'person/branch-moved', label: 'Branch changed on GitHub', waitingOn: 'person' },
+      reason: moved,
+      nextAction: 'Bring up to date',
+    })
+    const need = (await get('/api/inspect/needs')).items.find((entry: any) => entry.id === 'wi_pr')
+    expect(need).toMatchObject({ reason: moved, nextAction: 'Bring up to date' })
+    const detail = await get('/api/inspect/work/wi_pr')
+    expect(detail.retry).toEqual({ kind: 'update', reason: moved })
+    expect(detail.delivery).toMatchObject({ stage: 'pr-open', movedTo: '63865a9' })
+    expect((await get('/api/inspect/meta')).repositories[0]).toMatchObject({
+      state: 'delivering',
+      line: 'The branch changed on GitHub (now 63865a9): Add the audit log',
+    })
+  })
+
+  it('with nothing to run it under, the moved branch still says so, and points at GitHub', async () => {
+    seedPr({ stage: 'pr_open', headMoved: { sha: MOVED, at: AT, why: 'not_on_mec_head' } })
+    store.atomic(() => {
+      const { hostRunAgreedAt: _agreed, ...repo } = store.engines.get('repo_a') as Record<string, Json>
+      store.engines.save({ ...repo, id: 'repo_a' })
+    })
+    expect(await row()).toMatchObject({ reason: moved, nextAction: 'Look at the pull request on GitHub' })
+  })
+
+  it('required checks GitHub has not finished read as a wait on GitHub, and since when', async () => {
+    const since = '2026-11-05T11:40:00.000Z'
+    seedPr({ stage: 'pr_open', ci: 'ci_pending', ciAt: AT, ciSince: since, ciQueued: true })
+    const label = `Waiting for GitHub checks (queued since ${hhmm(since)})`
+    expect(await row()).toMatchObject({
+      stage: { key: 'waiting/checks', label, waitingOn: 'system' },
+      reason: 'Pull request #7: GitHub has not finished its required checks',
+      nextAction: null,
+    })
+    const detail = await get('/api/inspect/work/wi_pr')
+    expect(detail.delivery).toMatchObject({ ci: 'running', ciSince: since, ciQueued: true })
+    expect(detail.retry).toBeNull()
+    expect((await get('/api/inspect/meta')).repositories[0].line).toBe(`${label}: Add the audit log`)
+    const needs = (await get('/api/inspect/needs')).items
+    expect(needs.find((entry: any) => entry.id === 'wi_pr')).toBeUndefined()
+  })
+
+  it('a pull request behind its target offers Bring up to date beside its stage', async () => {
+    seedPr({ stage: 'ready', ci: 'green', ciAt: AT, behind: true })
+    const detail = await get('/api/inspect/work/wi_pr')
+    expect(detail.retry).toEqual({ kind: 'update', reason: 'The pull request is behind main.' })
+    expect((await row()).stage.key).toBe('person/review')
+  })
+})

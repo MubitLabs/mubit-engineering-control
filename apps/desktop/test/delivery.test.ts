@@ -20,6 +20,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { commitWork } from '../src/attempt-launch'
 import { Delivery, deliveryDocId, retryOffer } from '../src/delivery'
 import {
+  cardEvidence,
   createPrBehindCard,
   type GhResult,
   type GhRun,
@@ -57,7 +58,7 @@ const fail = (stderr: string): GhResult => ({ code: 1, stdout: '', stderr })
 
 type World = {
   prs: { number: number; headRefName: string; files: string[] }[]
-  pr: { state: string; headRefOid: string } | undefined
+  pr: { state: string; headRefOid: string; mergeStateStatus?: string } | undefined
   checks: GhResult
   target: string
   create: GhResult
@@ -86,10 +87,10 @@ function fakeGh(rig: { bare: () => string }, world: World) {
         ? fail('not found')
         : ok(
             JSON.stringify({
+              mergeStateStatus: 'CLEAN',
               ...world.pr,
               title: 'T',
               headRefName: BRANCH,
-              mergeStateStatus: 'CLEAN',
             }),
           )
     }
@@ -1210,5 +1211,363 @@ describe('a person retries what blocked (§11: blocked work and failed deliverie
     await r.passes()
     expect(r.doc().stage).toBe('declined')
     expect(r.cards('push')).toHaveLength(1)
+  })
+})
+
+describe('a pull request head that moved on GitHub (owner, 9 November 2026: "Say + offer update")', () => {
+  const BARE = (r: Rig): string => join(r.root, 'github.git')
+  let clones = 0
+  /** A clone of the GitHub stand-in, to do there what GitHub or a person does. */
+  const onGitHub = (r: Rig): string => {
+    clones += 1
+    const path = join(r.root, `gh-${clones}`)
+    gitIn(r.root, 'clone', '--quiet', BARE(r), path)
+    return path
+  }
+  /** Another change lands on main; the fake gh reports it as the target. */
+  const mainMoves = (r: Rig, file = 'm.txt', text = 'main\n'): string => {
+    const path = onGitHub(r)
+    writeFileSync(join(path, file), text)
+    gitIn(path, 'add', '--all')
+    gitIn(path, 'commit', '--quiet', '-m', `main: ${file}`)
+    gitIn(path, 'push', '--quiet', 'origin', 'main')
+    const sha = gitIn(path, 'rev-parse', 'HEAD')
+    r.world.target = sha
+    return sha
+  }
+  /** GitHub's Update branch: main merged into the PR branch, optionally with something extra in it. */
+  const updateBranch = (r: Rig, extra?: { file: string; text: string }): string => {
+    const path = onGitHub(r)
+    gitIn(path, 'checkout', '--quiet', BRANCH)
+    gitIn(path, 'merge', '--quiet', '--no-ff', '--no-commit', 'origin/main')
+    if (extra !== undefined) {
+      writeFileSync(join(path, extra.file), extra.text)
+      gitIn(path, 'add', '--all')
+    }
+    gitIn(path, 'commit', '--quiet', '-m', "Merge branch 'main' into the PR")
+    gitIn(path, 'push', '--quiet', 'origin', BRANCH)
+    const sha = gitIn(path, 'rev-parse', 'HEAD')
+    if (r.world.pr !== undefined) r.world.pr = { ...r.world.pr, headRefOid: sha, mergeStateStatus: 'CLEAN' }
+    return sha
+  }
+  /** Somebody pushes their own commit to the PR branch. */
+  const foreignCommit = (r: Rig): string => {
+    const path = onGitHub(r)
+    gitIn(path, 'checkout', '--quiet', BRANCH)
+    writeFileSync(join(path, 'theirs.txt'), 'not checked by MEC\n')
+    gitIn(path, 'add', '--all')
+    gitIn(path, 'commit', '--quiet', '-m', 'theirs')
+    gitIn(path, 'push', '--quiet', 'origin', BRANCH)
+    const sha = gitIn(path, 'rev-parse', 'HEAD')
+    if (r.world.pr !== undefined) r.world.pr = { ...r.world.pr, headRefOid: sha }
+    return sha
+  }
+  const work = (r: Rig): StoreDoc => r.store.workItems.get(WORK) as StoreDoc
+  const workEvents = (r: Rig, type: string) =>
+    r.store.events.read(`work:${WORK}`).filter((event) => event.type === type)
+  const short = (sha: string): string => sha.slice(0, 7)
+  const repairs = (r: Rig) =>
+    r.store.tasks.list({ workItemId: WORK }).filter((task) => task.repairOf !== undefined)
+
+  async function readyPr(over?: Parameters<typeof rig>[0]): Promise<Rig> {
+    const r = await openPr(over)
+    await r.passes(1)
+    expect(r.doc().stage).toBe('ready')
+    return r
+  }
+
+  async function behind(over?: Parameters<typeof rig>[0], file?: string, text?: string) {
+    const r = await readyPr(over)
+    const before = String(r.doc().head)
+    const target = mainMoves(r, file, text)
+    r.world.pr = { state: 'OPEN', headRefOid: before, mergeStateStatus: 'BEHIND' }
+    await r.passes(1)
+    return { r, before, target }
+  }
+
+  describe("(c) GitHub's Update branch is adopted when it is only a merge of the target", () => {
+    it('records the new head with why, pushes nothing, and the merge card pins the adopted head', async () => {
+      const r = await readyPr()
+      const pushed = String(r.doc().head)
+      mainMoves(r)
+      const adopted = updateBranch(r)
+      await r.passes(3)
+      expect(r.doc()).toMatchObject({ stage: 'ready', head: pushed, prHead: adopted })
+      expect(r.doc().headMoved).toBeUndefined()
+      expect(workEvents(r, 'head_adopted').map((event) => event.body)).toEqual([
+        expect.objectContaining({ from: pushed, to: adopted }),
+      ])
+      expect(r.cards('push')).toHaveLength(1)
+      expect(r.remote(`refs/heads/${BRANCH}`)).toBe(adopted)
+      const { confirmationId } = await openMergeCard(r.delivery.release, {
+        repo: SLUG,
+        prNumber: PR,
+        workItemId: WORK,
+      })
+      expect(r.store.confirmations.get(confirmationId)?.inputSha).toBe(adopted)
+      await mergeBehindCard(r.delivery.release, {
+        confirmationId,
+        repo: SLUG,
+        prNumber: PR,
+        answer: 'approve',
+      })
+      const [merge] = merges(r.calls)
+      expect(merge?.[merge.indexOf('--match-head-commit') + 1]).toBe(adopted)
+    })
+
+    it('a commit someone added is not adopted: the work says so in words, and is not ready', async () => {
+      const r = await readyPr()
+      const theirs = foreignCommit(r)
+      await r.passes(3)
+      expect(r.doc().stage).toBe('pr_open')
+      expect(r.doc().prHead).toBeUndefined()
+      expect(r.doc().headMoved).toMatchObject({ sha: theirs })
+      expect(workEvents(r, 'head_moved_on_github')).toHaveLength(1)
+      expect(workEvents(r, 'head_adopted')).toEqual([])
+      expect(retryOffer(r.store, work(r))).toEqual({
+        kind: 'update',
+        reason: `The branch changed on GitHub (now ${short(theirs)}). MEC won’t merge commits it didn’t check.`,
+      })
+      await expect(
+        openMergeCard(r.delivery.release, { repo: SLUG, prNumber: PR, workItemId: WORK }),
+      ).rejects.toThrow('delivery_not_ready')
+    })
+
+    it("an Update branch on top of someone's commit is not adopted", async () => {
+      const r = await readyPr()
+      foreignCommit(r)
+      mainMoves(r)
+      const merged = updateBranch(r)
+      await r.passes(3)
+      expect(r.doc()).toMatchObject({ stage: 'pr_open', headMoved: { sha: merged } })
+      expect(r.doc().prHead).toBeUndefined()
+    })
+
+    it('a base merge that carries a change of its own is not adopted', async () => {
+      const r = await readyPr()
+      mainMoves(r)
+      const merged = updateBranch(r, { file: 'b.txt', text: 'edited in the merge\n' })
+      await r.passes(3)
+      expect(r.doc()).toMatchObject({ stage: 'pr_open', headMoved: { sha: merged } })
+      expect(r.doc().prHead).toBeUndefined()
+    })
+
+    it('a merge whose other parent is not on the target is not adopted', async () => {
+      const r = await readyPr()
+      const path = onGitHub(r)
+      // A commit that changes no file: only the parent rule tells this merge from an Update branch.
+      gitIn(path, 'checkout', '--quiet', '-b', 'side', 'origin/main')
+      gitIn(path, 'commit', '--quiet', '--allow-empty', '-m', 'side')
+      gitIn(path, 'checkout', '--quiet', BRANCH)
+      gitIn(path, 'merge', '--quiet', '--no-ff', '-m', 'merge side', 'side')
+      gitIn(path, 'push', '--quiet', 'origin', BRANCH)
+      const merged = gitIn(path, 'rev-parse', 'HEAD')
+      r.world.pr = { state: 'OPEN', headRefOid: merged }
+      await r.passes(3)
+      expect(r.doc()).toMatchObject({ stage: 'pr_open', headMoved: { sha: merged } })
+    })
+
+    it('a rebase onto main is not adopted, whatever it changes: the pushed head is not in it', async () => {
+      const r = await readyPr()
+      const target = mainMoves(r)
+      const path = onGitHub(r)
+      gitIn(path, 'checkout', '--quiet', BRANCH)
+      gitIn(path, 'rebase', '--quiet', target)
+      gitIn(path, 'push', '--quiet', '--force', 'origin', BRANCH)
+      const rebased = gitIn(path, 'rev-parse', 'HEAD')
+      r.world.pr = { state: 'OPEN', headRefOid: rebased }
+      await r.passes(3)
+      expect(r.doc()).toMatchObject({ stage: 'pr_open', headMoved: { sha: rebased, why: 'not_on_mec_head' } })
+      expect(r.doc().prHead).toBeUndefined()
+    })
+
+    it('a head MEC already looked at is not judged again on every read', async () => {
+      const r = await readyPr()
+      foreignCommit(r)
+      await r.passes(4)
+      expect(workEvents(r, 'head_moved_on_github')).toHaveLength(1)
+    })
+
+    it('a branch put back on the head MEC pushed reads as it did before', async () => {
+      const r = await readyPr()
+      const pushed = String(r.doc().head)
+      foreignCommit(r)
+      await r.passes(2)
+      expect(r.doc().headMoved).toBeDefined()
+      r.world.pr = { state: 'OPEN', headRefOid: pushed }
+      await r.passes(2)
+      expect(r.doc().headMoved).toBeUndefined()
+      expect(r.doc().stage).toBe('ready')
+    })
+  })
+
+  describe('(b) Bring up to date: merge the target here, check it, and ask with a push card', () => {
+    it('is offered when GitHub says the pull request is behind, and not once it is not', async () => {
+      const { r } = await behind()
+      await r.passes(1)
+      expect(r.doc().behind).toBe(true)
+      expect(retryOffer(r.store, work(r))).toEqual({
+        kind: 'update',
+        reason: 'The pull request is behind main.',
+      })
+      r.world.pr = { ...(r.world.pr as NonNullable<World['pr']>), mergeStateStatus: 'CLEAN' }
+      await r.passes(1)
+      expect(r.doc().behind).toBeUndefined()
+      expect(retryOffer(r.store, work(r))).toBeUndefined()
+    })
+
+    it('merges main locally, runs the checks on the result, and opens a push card for exactly it', async () => {
+      const { r, before, target } = await behind()
+      expect(r.delivery.retry(WORK)).toEqual({ status: 'retrying', kind: 'update' })
+      expect(r.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'nothing_to_retry' })
+      await r.delivery.idle()
+      await r.passes(3)
+      const merged = String(r.integration().head)
+      expect(merged).not.toBe(before)
+      expect(gitIn(r.cache, 'rev-parse', `${merged}^1`, `${merged}^2`).split('\n')).toEqual([before, target])
+      expect(r.integration().combined).toMatchObject({ sha: merged, passed: true })
+      expect(gitIn(String(r.integration().worktree), 'symbolic-ref', 'HEAD')).toBe(`refs/heads/${BRANCH}`)
+      const card = r.cards('push').at(-1) as StoreDoc
+      expect(card).toMatchObject({ status: 'pending', inputSha: merged })
+      expect(r.cards('push')[0]?.status).toBe('approved')
+      expect(r.remote(`refs/heads/${BRANCH}`)).toBe(before)
+      expect(workEvents(r, 'brought_up_to_date').map((event) => event.body)).toEqual([
+        expect.objectContaining({ from: before, to: merged, target }),
+      ])
+      // The card's diff is what the pull request changes against main, not main's own commits.
+      const evidence = (await cardEvidence(r.delivery.release, card)) as {
+        diff: { files: { path: string }[] }
+        checks: { name: string; state: string }[]
+      }
+      expect(evidence.diff.files.map((file) => file.path)).toEqual(['b.txt'])
+      expect(evidence.checks).toEqual([expect.objectContaining({ name: 'unit', state: 'passed' })])
+
+      await resolveReleaseCard(r.delivery.release, String(card.id), 'approve')
+      await r.delivery.idle()
+      expect(r.remote(`refs/heads/${BRANCH}`)).toBe(merged)
+      expect(r.cards('pr_create')).toHaveLength(1)
+      r.world.pr = { state: 'OPEN', headRefOid: merged, mergeStateStatus: 'CLEAN' }
+      await r.passes(2)
+      expect(r.doc()).toMatchObject({ stage: 'ready', head: merged })
+      expect(r.doc().update).toBeUndefined()
+    })
+
+    it('after adopting an Update branch, bringing up to date builds on it, so the push is a fast-forward', async () => {
+      const r = await readyPr()
+      mainMoves(r)
+      const adopted = updateBranch(r)
+      await r.passes(3)
+      expect(r.doc().prHead).toBe(adopted)
+      const target = mainMoves(r, 'n.txt')
+      r.world.pr = { state: 'OPEN', headRefOid: adopted, mergeStateStatus: 'BEHIND' }
+      await r.passes(1)
+      expect(r.delivery.retry(WORK)).toEqual({ status: 'retrying', kind: 'update' })
+      await r.delivery.idle()
+      await r.passes(3)
+      const merged = String(r.integration().head)
+      expect(gitIn(r.cache, 'rev-parse', `${merged}^1`, `${merged}^2`).split('\n')).toEqual([adopted, target])
+      await resolveReleaseCard(r.delivery.release, String(r.cards('push').at(-1)?.id), 'approve')
+      await r.delivery.idle()
+      expect(r.remote(`refs/heads/${BRANCH}`)).toBe(merged)
+      // The pushed head speaks for itself now: the adopted one is history, not judged again.
+      r.world.pr = { state: 'OPEN', headRefOid: merged, mergeStateStatus: 'CLEAN' }
+      await r.passes(2)
+      expect(r.doc()).toMatchObject({ stage: 'ready', head: merged })
+      expect(r.doc().prHead).toBeUndefined()
+      expect(workEvents(r, 'head_adopted')).toHaveLength(1)
+    })
+
+    it('a conflict says so in words, pushes nothing, and leaves the integration branch where it was', async () => {
+      const { r, before } = await behind(undefined, 'b.txt', 'main wrote this\n')
+      r.delivery.retry(WORK)
+      await r.delivery.idle()
+      await r.passes(2)
+      expect(r.doc().update).toMatchObject({ status: 'conflict', paths: ['b.txt'] })
+      expect(r.integration().head).toBe(before)
+      const worktree = String(r.integration().worktree)
+      expect(gitIn(worktree, 'rev-parse', 'HEAD')).toBe(before)
+      expect(gitIn(worktree, 'symbolic-ref', 'HEAD')).toBe(`refs/heads/${BRANCH}`)
+      expect(gitIn(worktree, 'status', '--porcelain')).toBe('')
+      expect(r.cards('push')).toHaveLength(1)
+      expect(r.remote(`refs/heads/${BRANCH}`)).toBe(before)
+      expect(repairs(r)).toEqual([])
+      expect(retryOffer(r.store, work(r))).toEqual({
+        kind: 'update',
+        reason: 'Bringing it up to date with main conflicted in b.txt. Nothing was pushed.',
+      })
+    })
+
+    it('a failing check says so in words, pushes nothing, and leaves the integration branch where it was', async () => {
+      const { r, before } = await behind({ checks: [{ name: 'unit', cmd: 'test ! -f m.txt' }] })
+      r.delivery.retry(WORK)
+      await r.delivery.idle()
+      await r.passes(2)
+      expect(r.doc().update).toMatchObject({ status: 'failed', failing: ['unit'] })
+      expect(r.integration().head).toBe(before)
+      expect(r.integration().combined).toMatchObject({ sha: before, passed: true })
+      const worktree = String(r.integration().worktree)
+      expect(gitIn(worktree, 'rev-parse', 'HEAD')).toBe(before)
+      expect(gitIn(worktree, 'symbolic-ref', 'HEAD')).toBe(`refs/heads/${BRANCH}`)
+      expect(r.cards('push')).toHaveLength(1)
+      expect(repairs(r)).toEqual([])
+      expect(String(retryOffer(r.store, work(r))?.reason)).toMatch(
+        /^Bringing it up to date with main failed the checks on [0-9a-f]{7}: unit\. Nothing was pushed\.$/,
+      )
+    })
+
+    it('an update a close interrupted is put back on the next start, and runs again', async () => {
+      const { r, before, target } = await behind()
+      // What a kill mid-check leaves: the worktree detached on the trial merge, the marker on record.
+      const worktree = String(r.integration().worktree)
+      gitIn(r.cache, 'fetch', '--quiet', URL_ON_GITHUB, 'main')
+      gitIn(worktree, 'checkout', '--quiet', '--detach')
+      gitIn(worktree, 'merge', '--quiet', '--no-ff', '-m', 'trial', target)
+      r.store.atomic(() => {
+        r.store.engines.save({ ...r.integration(), updating: { from: before, at: AT } })
+        r.store.engines.save({ ...r.doc(), update: { status: 'requested', at: AT } })
+      })
+      await r.passes(1)
+      expect(r.integration().updating).toBeUndefined()
+      expect(repairs(r)).toEqual([])
+      await r.passes(2)
+      expect(r.integration().head).not.toBe(before)
+      expect(r.cards('push').at(-1)).toMatchObject({ status: 'pending', inputSha: r.integration().head })
+    })
+
+    it('is not offered before the owner agreed to run the repository commands', async () => {
+      const { r } = await behind()
+      expect(retryOffer(r.store, work(r))?.kind).toBe('update')
+      r.store.atomic(() => {
+        const { hostRunAgreedAt: _agreed, ...repo } = r.store.engines.get(REPO) as StoreDoc
+        r.store.engines.save(repo)
+      })
+      expect(retryOffer(r.store, work(r))).toBeUndefined()
+    })
+  })
+
+  describe('(d) required checks GitHub has not finished say so, and since when', () => {
+    it('records when the wait began and whether anything started, and forgets it once they pass', async () => {
+      const r = await openPr({ world: { checks: ok('[{"name":"check","state":"QUEUED"}]') } })
+      await r.passes(1)
+      expect(r.doc()).toMatchObject({
+        stage: 'pr_open',
+        ci: 'ci_pending',
+        ciQueued: true,
+        ciSince: r.doc().ciAt,
+      })
+      // An earlier start on record stands: each read keeps when the wait began, not when it read.
+      const since = AT
+      r.store.atomic(() => r.store.engines.save({ ...r.doc(), ciSince: since }))
+      await r.passes(1)
+      expect(r.doc().ciSince).toBe(since)
+      r.world.checks = ok('[{"name":"check","state":"IN_PROGRESS"}]')
+      await r.passes(1)
+      expect(r.doc()).toMatchObject({ ci: 'ci_pending', ciSince: since })
+      expect(r.doc().ciQueued).toBeUndefined()
+      r.world.checks = ok('[{"name":"check","state":"SUCCESS"}]')
+      await r.passes(1)
+      expect(r.doc().stage).toBe('ready')
+      expect(r.doc().ciSince).toBeUndefined()
+    })
   })
 })

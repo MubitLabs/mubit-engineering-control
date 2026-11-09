@@ -912,7 +912,7 @@ async function answerMerge(
 }
 
 /** The registered repository a push goes through; resolved from the registry on every use. */
-type PushTarget = { gitDir: string; repo: string; remoteUrl: string }
+type PushTarget = { gitDir: string; repo: string; remoteUrl: string; defaultBranch: string }
 
 const REMOTE_FORMS = [
   /^(?:https|ssh):\/\/(?:[^/@]+@)?([^/@]+)\/([^/]+\/[^/]+?)(?:\.git)?\/?$/,
@@ -969,7 +969,50 @@ export async function pushTarget(deps: ReleaseDeps, repoId: string, branch: stri
     throw codedError('remote_unreadable', `the default branch of ${repo} cannot be read`)
   if (branch === defaultBranch)
     throw codedError('default_branch', `${branch} is the default branch of ${repo}`)
-  return { gitDir, repo, remoteUrl }
+  return { gitDir, repo, remoteUrl, defaultBranch }
+}
+
+/** Where GitHub's side of a delivery branch is kept in the clone it was built in: outside `refs/heads/`. */
+const githubRef = (branch: string, side: 'head' | 'target'): string => `refs/mec/github/${branch}/${side}`
+
+export type GitHubBranches = { gitDir: string; head: string; target: string; targetBranch: string }
+
+/**
+ * Owner, 9 November 2026: GitHub's delivery branch and the branch it targets, fetched into the
+ * clone the branch was built in, so a moved head can be judged and a target merged locally. A
+ * read: nothing leaves the machine. The repository and URL are `pushTarget`'s, never a caller's,
+ * and the refs land under `refs/mec/github/`, so no branch MEC pushes from moves.
+ */
+export async function fetchGitHubBranches(
+  deps: ReleaseDeps,
+  repoId: string,
+  branch: string,
+): Promise<GitHubBranches> {
+  const target = await pushTarget(deps, repoId, branch)
+  assertBranch(target.defaultBranch)
+  const git = deps.git ?? defaultGitExec
+  const fetched = await git([
+    '-C',
+    target.gitDir,
+    'fetch',
+    '--quiet',
+    '--no-tags',
+    '--no-write-fetch-head',
+    target.remoteUrl,
+    `+refs/heads/${branch}:${githubRef(branch, 'head')}`,
+    `+refs/heads/${target.defaultBranch}:${githubRef(branch, 'target')}`,
+  ])
+  if (fetched.code !== 0)
+    throw codedError('remote_unreadable', `${target.repo} could not be fetched: ${evidence(fetched.stderr)}`)
+  const read = async (ref: string): Promise<string | undefined> => {
+    const sha = await git(['-C', target.gitDir, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
+    return sha.code === 0 ? shaOf(sha.stdout) : undefined
+  }
+  const head = await read(githubRef(branch, 'head'))
+  const tip = await read(githubRef(branch, 'target'))
+  if (head === undefined || tip === undefined)
+    throw codedError('head_unreadable', `${target.repo} ${branch} or ${target.defaultBranch}`)
+  return { gitDir: target.gitDir, head, target: tip, targetBranch: target.defaultBranch }
 }
 
 async function localHead(deps: ReleaseDeps, gitDir: string, branch: string): Promise<string | undefined> {
@@ -1343,10 +1386,17 @@ function recordedChecks(store: Store, doc: StoreDoc): CardRecord['checks'] {
   })
 }
 
-/** Names and line counts between the work's base and the card's commit, read from git; no contents. */
+/**
+ * Names and line counts between the work's base and the card's commit, read from git; no contents.
+ * A head brought up to date with its target is measured from that target (`diffBase`), so the card
+ * shows what the pull request changes, not the target's own commits.
+ */
 async function recordedDiff(deps: ReleaseDeps, doc: StoreDoc): Promise<CardRecord['diff']> {
   const work = typeof doc.workItemId === 'string' ? deps.store.workItems.get(doc.workItemId) : undefined
-  const [gitDir, base, head] = [work?.git_dir, work?.base_sha, doc.inputSha]
+  const integration =
+    typeof doc.workItemId === 'string' ? deps.store.engines.get(integrationDocId(doc.workItemId)) : undefined
+  const updated = integration?.head === doc.inputSha && typeof integration?.diffBase === 'string'
+  const [gitDir, base, head] = [work?.git_dir, updated ? integration?.diffBase : work?.base_sha, doc.inputSha]
   if (typeof gitDir !== 'string' || !isAbsolute(gitDir)) return NO_RECORD.diff
   if (typeof base !== 'string' || typeof head !== 'string' || !COMMIT.test(base) || !COMMIT.test(head))
     return NO_RECORD.diff

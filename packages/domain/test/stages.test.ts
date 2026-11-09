@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkItemView } from '../src'
-import { deliveryStopped, plannerTurnEnded, STAGE_TABLE, stageOf, workViewOf } from '../src'
+import { deliveryStopped, deliveryWaiting, plannerTurnEnded, STAGE_TABLE, stageOf, workViewOf } from '../src'
 
 /** The neutral view: open, mid-execution, no hold, no question, nothing reported. */
 const view = (overrides: Partial<WorkItemView> = {}): WorkItemView => ({
@@ -24,8 +24,10 @@ const fixtures: readonly WorkItemView[] = [
   view({ state: 'blocked' }),
   view({ holdStatus: 'held' }),
   view({ deliveryStopped: { step: 'push', outcome: 'declined' } }),
+  view({ branchMoved: '63865a9' }),
   view({ hostRunUnagreed: true }),
   view({ quotaWait: { resetAt: '2026-11-05T14:05:00.000Z' } }),
+  view({ checksWaiting: { queued: true, since: '2026-11-05T14:02:00.000Z' } }),
   view({ queued: true }),
   view({ latestReport: 'waiting' }),
   view(),
@@ -44,8 +46,10 @@ describe('STAGE_TABLE', () => {
       'person/blocked',
       'held',
       'person/blocked',
+      'person/branch-moved',
       'person/agreement',
       'waiting/quota',
+      'waiting/checks',
       'working/queued',
       'idle',
       'working',
@@ -256,5 +260,57 @@ describe('a planner turn that ended with no plan (§10: `waiting`, the turn ende
     expect(stage('planning', true)).toBe('idle')
     expect(stage('planning', false)).toBe('working')
     expect(stage('executing', true)).toBe('working')
+  })
+})
+
+describe('an open pull request that waits on GitHub, not on MEC (owner, 9 November 2026)', () => {
+  const facts = { openQuestions: 0, awaitingConfirmation: false, attempts: [], merged: false }
+  const stage = (record: Record<string, unknown>) =>
+    stageOf(workViewOf({ state: 'integrating' }, { ...facts, ...deliveryWaiting(record) }))
+  const local = (iso: string): string => {
+    const at = new Date(iso)
+    return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+  }
+
+  it('a branch that changed on GitHub waits on you, with the head it is on now', () => {
+    const record = { stage: 'pr_open', headMoved: { sha: '63865a9'.padEnd(40, '0'), at: 'x' } }
+    expect(deliveryWaiting(record)).toEqual({ branchMoved: '63865a9' })
+    expect(stage(record)).toEqual({
+      key: 'person/branch-moved',
+      label: 'Branch changed on GitHub',
+      waitingOn: 'person',
+    })
+  })
+
+  it('pending required checks read as a wait on GitHub, queued or running, and since when', () => {
+    const since = '2026-11-05T14:02:00.000Z'
+    const queued = { stage: 'pr_open', ci: 'ci_pending', ciSince: since, ciQueued: true }
+    expect(stage(queued)).toEqual({
+      key: 'waiting/checks',
+      label: `Waiting for GitHub checks (queued since ${local(since)})`,
+      waitingOn: 'system',
+    })
+    expect(stage({ ...queued, ciQueued: false }).label).toBe(
+      `Waiting for GitHub checks (running since ${local(since)})`,
+    )
+    expect(stage({ stage: 'pr_open', ci: 'ci_pending' }).label).toBe('Waiting for GitHub checks')
+  })
+
+  it('nothing else is a wait on GitHub: failing, green, unread, or another stage', () => {
+    for (const record of [
+      { stage: 'pr_open', ci: 'ci_failed' },
+      { stage: 'pr_open' },
+      { stage: 'ready', ci: 'green' },
+      { stage: 'push_card', ci: 'ci_pending' },
+      { stage: 'local_complete', headMoved: { sha: 'a'.repeat(40) } },
+    ]) {
+      expect(deliveryWaiting(record)).toEqual({})
+    }
+    expect(deliveryWaiting(undefined)).toEqual({})
+  })
+
+  it('a moved branch outranks its checks: they no longer speak for the head MEC pushed', () => {
+    const record = { stage: 'pr_open', ci: 'ci_pending', headMoved: { sha: 'b'.repeat(40) } }
+    expect(deliveryWaiting(record)).toEqual({ branchMoved: 'bbbbbbb' })
   })
 })

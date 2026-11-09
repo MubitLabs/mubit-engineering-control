@@ -249,6 +249,8 @@ const RETRY_LABELS: Record<NonNullable<WorkDetail['retry']>['kind'], string> = {
   pr: 'Ask to open the pull request again',
   // One fresh repair attempt on blocked work: the owner asks, MEC runs it once.
   repair: 'Try again',
+  // Merge the target here and check it; the push still comes to you as a card (owner, 9 November 2026).
+  update: 'Bring up to date',
 }
 
 /** §14: only a ready pull request, only asked once, and never on work the owner holds. */
@@ -352,9 +354,14 @@ const CI_WORDS: Record<NonNullable<DeliveryView['ci']>, string> = {
 }
 
 /** What GitHub said and when. Nothing here reads a state in: no reading is no reading. */
-function ciLine({ ci, ciReadAt, prNumber }: DeliveryView): string | null {
+function ciLine({ ci, ciReadAt, ciSince, ciQueued, prNumber }: DeliveryView): string | null {
   if (ci === null) return prNumber === null ? null : 'GitHub’s checks have not been read yet.'
-  return ciReadAt === null ? CI_WORDS[ci] : `${CI_WORDS[ci]} Read ${timeLabel(ciReadAt)}.`
+  // A wait on GitHub says for how long (owner, 9 November 2026): a saturated runner pool is not MEC working.
+  const words =
+    ci === 'running' && ciSince !== undefined
+      ? `Waiting for GitHub’s required checks: ${ciQueued ? 'queued' : 'running'} since ${timeLabel(ciSince)}.`
+      : CI_WORDS[ci]
+  return ciReadAt === null ? words : `${words} Read ${timeLabel(ciReadAt)}.`
 }
 
 export interface DeliverySection {

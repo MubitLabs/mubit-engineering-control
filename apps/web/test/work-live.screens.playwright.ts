@@ -432,11 +432,15 @@ test.describe('Needs you', () => {
   })
 
   test('deny says denied, not approved', async ({ page }) => {
-    await server(page)
+    const { posts } = await server(page)
     await open(page, 'repo/repo_a/needs')
     const card = page.locator('article.decision', { hasText: 'push search to sample-console' })
-    await card.getByRole('button', { name: 'Deny' }).click()
+    await card.getByRole('button', { name: 'Deny', exact: true }).click()
+    // One click arms: nothing is sent until the confirm.
+    expect(posts).toEqual([])
+    await card.getByRole('button', { name: 'Confirm: deny in sample-console' }).click()
     await expect(card.locator('.settled-label')).toHaveText('Denied')
+    expect(posts).toEqual([{ path: '/api/inbox/card_pending/resolve', body: { answer: 'deny' } }])
     await expect(card).toContainText('Nothing ran.')
   })
 

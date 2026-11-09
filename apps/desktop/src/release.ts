@@ -14,6 +14,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import type { Effects, Json, Store, StoreDoc } from '@mec/contracts'
 import { type PrEvent, type PrState, prTransition, yieldToDuplicate } from '@mec/integration'
+import { integrationDocId } from '@mec/meta'
 import { ALWAYS_CONFIRM, type ConfirmationRecord, openConfirmation, resolveConfirmation } from '@mec/policy'
 import { redact } from '@mec/slots'
 
@@ -1303,8 +1304,101 @@ function plannerCardDetail(doc: StoreDoc): Record<string, Json> | undefined {
   }
 }
 
+/** What a delivery card's commit carries on record: the integration's checks on it, and its diff. */
+export type CardRecord = {
+  checks: Array<{ name: string; state: 'passed' | 'failed' | 'none'; note: string | null }>
+  diff: { summary: string; files: Array<{ path: string; added: number; removed: number }> }
+}
+
+/** A commit id, the only thing a stored ref may be before it reaches `git`. */
+const COMMIT = /^[0-9a-f]{7,64}$/
+const CHECK_NOTE_CAP = 500
+const DIFF_FILE_CAP = 300
+const shortSha = (sha: string): string => sha.slice(0, 7)
+
+const NO_RECORD: CardRecord = {
+  checks: [],
+  diff: { summary: 'No diff is on record: this card names no work with a base commit.', files: [] },
+}
+
+/**
+ * The combined checks the integration ran on exactly the card's bound commit (§14). A verdict on
+ * another head is not this card's, so it is not served. Log tails are redacted before they leave.
+ */
+function recordedChecks(store: Store, doc: StoreDoc): CardRecord['checks'] {
+  const { inputSha: head, workItemId } = doc
+  if (typeof head !== 'string' || typeof workItemId !== 'string') return []
+  const combined = store.engines.get(integrationDocId(workItemId))?.combined
+  if (!isFields(combined) || combined.sha !== head || !Array.isArray(combined.checks)) return []
+  return combined.checks.flatMap((entry): CardRecord['checks'] => {
+    if (!isFields(entry) || typeof entry.name !== 'string') return []
+    const { status, logTail } = entry
+    return [
+      {
+        name: shownSafe(entry.name).slice(0, 120),
+        state: status === 'passed' ? 'passed' : status === 'failed' || status === 'error' ? 'failed' : 'none',
+        note: typeof logTail === 'string' ? shownSafe(logTail).slice(-CHECK_NOTE_CAP) : null,
+      },
+    ]
+  })
+}
+
+/** Names and line counts between the work's base and the card's commit, read from git; no contents. */
+async function recordedDiff(deps: ReleaseDeps, doc: StoreDoc): Promise<CardRecord['diff']> {
+  const work = typeof doc.workItemId === 'string' ? deps.store.workItems.get(doc.workItemId) : undefined
+  const [gitDir, base, head] = [work?.git_dir, work?.base_sha, doc.inputSha]
+  if (typeof gitDir !== 'string' || !isAbsolute(gitDir)) return NO_RECORD.diff
+  if (typeof base !== 'string' || typeof head !== 'string' || !COMMIT.test(base) || !COMMIT.test(head))
+    return NO_RECORD.diff
+  const git = deps.git ?? defaultGitExec
+  const read = await git([
+    '-C',
+    gitDir,
+    'diff',
+    '--no-ext-diff',
+    '--no-renames',
+    '--numstat',
+    '-z',
+    base,
+    head,
+  ])
+  if (read.code !== 0)
+    return {
+      summary: `The changes from ${shortSha(base)} to ${shortSha(head)} could not be read.`,
+      files: [],
+    }
+  const all = read.stdout
+    .split('\0')
+    .filter((entry) => entry !== '')
+    .map((entry) => {
+      const [added = '', removed = '', ...path] = entry.split('\t')
+      return {
+        path: shownSafe(path.join('\t')).slice(0, 300),
+        added: Number(added) || 0,
+        removed: Number(removed) || 0,
+      }
+    })
+  const added = all.reduce((sum, file) => sum + file.added, 0)
+  const removed = all.reduce((sum, file) => sum + file.removed, 0)
+  const count = `${all.length} ${all.length === 1 ? 'file' : 'files'} changed`
+  const cut = all.length > DIFF_FILE_CAP ? ` (the first ${DIFF_FILE_CAP} are listed)` : ''
+  return {
+    summary: `${count}, +${added} -${removed}, ${shortSha(base)} to ${shortSha(head)}${cut}`,
+    files: all.slice(0, DIFF_FILE_CAP),
+  }
+}
+
+/** The card's evidence with what its commit carries on record: what `/api/inbox/:id/detail` serves. */
+export async function cardEvidence(
+  deps: ReleaseDeps,
+  doc: StoreDoc,
+): Promise<Record<string, Json> | undefined> {
+  if (!isReleaseCard(doc)) return cardDetail(doc)
+  return cardDetail(doc, { checks: recordedChecks(deps.store, doc), diff: await recordedDiff(deps, doc) })
+}
+
 /** A decision card's evidence in the workbench's `DecisionDetail` shape (§13 "the exact diff or command"). */
-export function cardDetail(doc: StoreDoc): Record<string, Json> | undefined {
+export function cardDetail(doc: StoreDoc, record: CardRecord = NO_RECORD): Record<string, Json> | undefined {
   if (!isReleaseCard(doc)) return plannerCardDetail(doc)
   const payload = doc.payload as Record<string, Json>
   const head = String(doc.inputSha ?? 'not bound')
@@ -1326,9 +1420,9 @@ export function cardDetail(doc: StoreDoc): Record<string, Json> | undefined {
     operation: String(doc.operationHash ?? ''),
     requestedBy: 'The release agent',
     consequences: { approve: fields.approve, deny: fields.deny },
-    checks: [],
+    checks: record.checks,
     findings: [],
-    diff: { summary: 'not served for this card', files: [] },
+    diff: record.diff,
   })
   if (doc.cls === 'push') {
     return card({

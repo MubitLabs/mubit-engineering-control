@@ -408,6 +408,8 @@ describe('the merge command (§13)', () => {
     expect(inspection.getState().notice).toEqual({
       kind: 'done',
       text: 'The merge card is in Needs you. Nothing merges until you approve it.',
+      // The notice is about this card, so it goes once the card settles.
+      cardId: 'conf_1',
     })
   })
 

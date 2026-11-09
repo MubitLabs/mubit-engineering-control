@@ -1,0 +1,86 @@
+[
+  {
+    "name": "A1 a check on another head is served as this card's",
+    "file": "apps/desktop/src/release.ts",
+    "find": "if (!isFields(combined) || combined.sha !== head || !Array.isArray(combined.checks)) return []",
+    "replace": "if (!isFields(combined) || !Array.isArray(combined.checks)) return []",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "A2 a check that errored reads as not run",
+    "file": "apps/desktop/src/release.ts",
+    "find": "status === 'failed' || status === 'error' ? 'failed' : 'none'",
+    "replace": "status === 'failed' ? 'failed' : 'none'",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "A3 the route serves the card without its commit's record",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  return cardDetail(doc, { checks: recordedChecks(deps.store, doc), diff: await recordedDiff(deps, doc) })",
+    "replace": "  return cardDetail(doc)",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "A4 the diff is read from the wrong base",
+    "file": "apps/desktop/src/release.ts",
+    "find": "    '-z',\n    base,\n    head,\n",
+    "replace": "    '-z',\n    head,\n    head,\n",
+    "tests": ["apps/desktop/test/release-cards.test.ts"]
+  },
+  {
+    "name": "B1 Deny loses its confirm label",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "    denyConfirmLabel: `Confirm: deny in ${repository}`,\n",
+    "replace": "",
+    "tests": ["apps/web/test/decision-card.test.ts"]
+  },
+  {
+    "name": "B2 the card face loses its commit",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  const commit = COMMIT_ID.test(head) ? head : null\n",
+    "replace": "  const commit = null as string | null\n",
+    "tests": ["apps/web/test/decision-card.test.ts"]
+  },
+  {
+    "name": "B3 Approve shows one label, so arming resizes it",
+    "file": "apps/web/src/next/Decision.tsx",
+    "find": "              <TwoLabels armed={armed === 'approve'} rest={props.approveLabel} confirm={props.confirmLabel} />",
+    "replace": "              {armed === 'approve' ? props.confirmLabel : props.approveLabel}",
+    "tests": ["apps/web/test/decision-card.test.ts"]
+  },
+  {
+    "name": "B4 a multi-line fact collapses to one line",
+    "file": "apps/web/src/next/Decision.tsx",
+    "find": "  fact.value.includes('\\n') ? 'fact-text' : fact.mono ? 'mono' : undefined",
+    "replace": "  fact.mono ? 'mono' : undefined",
+    "tests": ["apps/web/test/decision-card.test.ts"]
+  },
+  {
+    "name": "B5 the multi-line style drops pre-wrap",
+    "file": "apps/web/src/next/shell.css",
+    "find": "  font-family: var(--mono);\n  white-space: pre-wrap;\n  text-align: left;",
+    "replace": "  font-family: var(--mono);\n  text-align: left;",
+    "tests": ["apps/web/test/decision-card.test.ts"]
+  },
+  {
+    "name": "C1 a card notice outlives a card settled elsewhere",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "    return card === undefined || card.status === 'pending' ? state.notice : null",
+    "replace": "    return state.notice",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  },
+  {
+    "name": "C2 a merge notice is not tied to its card",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "            ...(status === 'card_open' && { cardId: id }),\n",
+    "replace": "",
+    "tests": ["apps/web/test/inspection-feed.test.ts", "apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "C3 a card notice clears for any card",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "    if (cardId === undefined) return state.notice\n",
+    "replace": "    if (cardId === undefined) return null\n",
+    "tests": ["apps/web/test/inspection-feed.test.ts"]
+  }
+]

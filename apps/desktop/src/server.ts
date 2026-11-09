@@ -76,6 +76,7 @@ import { type CardEvent, LoginCardManager } from './login-cards'
 import { metaSlotRefusal } from './readiness'
 import {
   cardDetail,
+  cardEvidence,
   createPrBehindCard,
   defaultGhRun,
   type GhRun,
@@ -980,12 +981,13 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   app.get('/api/inbox/:id/detail', async (request, reply) => {
     const id = String((request.params as { id?: string }).id ?? '')
     const doc = releaseDeps.store.confirmations.get(id)
-    const detail = doc === undefined ? undefined : cardDetail(doc)
+    const detail = doc === undefined ? undefined : await cardEvidence(releaseDeps, doc)
     if (detail === undefined) {
       reply.code(404).send({ error: 'no detail for this confirmation' })
       return
     }
-    return detail
+    // Every string once more on the way out: an older card was stored before its writes were redacted.
+    return scrub(detail)
   })
 
   app.get('/api/work', async (request) =>

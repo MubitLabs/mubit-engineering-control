@@ -903,6 +903,19 @@ kbd {
   text-align: right;
 }
 
+/* A fact over several lines (a PR body) reads as written, under its label. */
+.facts div:has(> .fact-text) {
+  flex-direction: column;
+}
+
+.facts dd.fact-text {
+  max-height: 320px;
+  overflow: auto;
+  font-family: var(--mono);
+  white-space: pre-wrap;
+  text-align: left;
+}
+
 .consequence {
   margin: 16px 0;
   font-size: 13px;
@@ -922,6 +935,23 @@ kbd {
   align-items: center;
   gap: 8px;
   margin-top: 24px;
+}
+
+/* Both labels share one cell, so a button is as wide armed as at rest and nothing moves. */
+.two-labels {
+  display: inline-grid;
+}
+
+.two-label {
+  grid-area: 1 / 1;
+}
+
+.two-label[aria-hidden="true"] {
+  visibility: hidden;
+}
+
+.btn-quiet[data-armed="true"] {
+  border-color: var(--amber);
 }
 
 .armed-note {

@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
-import webPackage from '../package.json'
+import webPackage from '../package.json' with { type: 'json' }
 import {
   cardEvidence,
   chatLines,

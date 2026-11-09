@@ -21,4 +21,5 @@ The real test was first run on a scratch copy of the fake CLI (zero spend) to ch
 
 ## Mutants
 
-See the mutant results below.
+- `python3 tools/mutants/run.py tools/mutants/opencode-226.json` on `0bb3be2`: 4 of 4 killed (2.2.6 left out, 2.2.5 dropped, any version passes, the refusal names one version).
+- `m2.4b.json`'s `opencode claims a sandbox`, its `find` repointed at `OPENCODE_PROVEN_VERSIONS`, run alone on `0bb3be2`: killed. The other m2.4b mutants were not rerun.

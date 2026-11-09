@@ -58,4 +58,12 @@ The engine-registry refusal test first ran on a synthetic message. It now carrie
 
 ## Mutants
 
-MUTANTS
+`python3 tools/mutants/run.py tools/mutants/codex-models.json`: **21 of 21 killed** on the final tree. The first run killed 20 of 21, and M13 survived (see Failing first). The mutants cover:
+
+- resolution: unoffered rows ignored, a named unoffered model accepted, the walk down read as "provider has no", passed-over rows unsaid, every unoffered row called passed over;
+- the scheduler: resolving without the slot's marks, and not recording what was passed over;
+- the listing: the wrong id field, a no-list answer read as empty, only the first page read, hidden models left out, the listing server left running;
+- the refusal: read as an api error, the words-only pattern removed, the whole body returned as the reason;
+- the launch and placement: resolving without the listing, not keeping it, marks ignoring it, a listing kept for another engine used;
+- the refusal code with no words;
+- the shipped table without a fast gpt-5.6 row.

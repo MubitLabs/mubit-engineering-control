@@ -289,17 +289,30 @@ export function launchFailure(store: Store, payload: Json): string | undefined {
   return attempt?.state === 'failed' ? String(attempt.terminal_reason) : undefined
 }
 
-/** The machine refuses a second block, so blocked work keeps its first reason. */
-export function blockWork(store: Store, workItemId: string, reason: string, at: string): void {
+/**
+ * The machine refuses a second block, so blocked work keeps its first reason. `taskId` names the
+ * blocked task the reason is, so the block clears once no task is blocked (owner, 9 November 2026);
+ * a block with none is not a task's, and only a person's action clears it.
+ */
+export function blockWork(
+  store: Store,
+  workItemId: string,
+  reason: string,
+  at: string,
+  taskId?: string,
+): void {
   const work = store.workItems.get(workItemId)
   if (work === undefined || !canTransition(WORK_ITEM_MACHINE, String(work.state), 'block')) return
+  const { blockedTask: _earlier, ...rest } = work
   store.workItems.save({
-    ...work,
+    ...rest,
     state: transition(WORK_ITEM_MACHINE, String(work.state), 'block'),
     blockedReason: reason,
+    ...(taskId !== undefined && { blockedTask: taskId }),
     updatedAt: at,
   })
-  appendEvent(store, `work:${workItemId}`, 'work_blocked', { workItemId, reason, at }, at)
+  const body = { workItemId, reason, ...(taskId !== undefined && { taskId }), at }
+  appendEvent(store, `work:${workItemId}`, 'work_blocked', body, at)
 }
 
 /** Records a hold; a second hold on held work keeps the first. Legacy rows take no hold (#36). */

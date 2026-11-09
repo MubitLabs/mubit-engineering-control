@@ -1238,6 +1238,7 @@ export class MetaAgentService {
           // nothing else is open. A planner turn the owner did not cause never gets here.
           work.state = transition(WORK_ITEM_MACHINE, 'blocked', 'resume_executing')
           delete work.blockedReason
+          delete work.blockedTask
           this.#appendEvent(
             `work:${workItemId}`,
             'block_lifted',

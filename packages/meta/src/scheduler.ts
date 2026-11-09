@@ -550,7 +550,7 @@ export function ownerRetryRepair(store: Store, workItemId: string, at: string): 
       const id = `task_${randomBytes(6).toString('hex')}`
       const next: Continuation = { kind: 'repair', role: 'repair_agent', evidence, round, origin: 'owner' }
       saveRepairTask(store, task, { id, objective: evidence, next: { ...next, ...offer.integration }, at })
-      const { blockedReason: _blocked, ...free } = work
+      const { blockedReason: _blocked, blockedTask: _task, ...free } = work
       store.workItems.save({
         ...free,
         state: transition(WORK_ITEM_MACHINE, String(work.state), 'resume_integrating'),
@@ -586,7 +586,7 @@ export function ownerRetryRepair(store: Store, workItemId: string, at: string): 
       const { blockedReason: _why, ...kept } = dependent
       moveTask(store, kept, 'unblock', {}, at)
     }
-    const { blockedReason: _blocked, ...free } = work
+    const { blockedReason: _blocked, blockedTask: _task, ...free } = work
     store.workItems.save({
       ...free,
       state: transition(WORK_ITEM_MACHINE, String(work.state), 'resume_executing'),
@@ -657,10 +657,83 @@ function settleTasks(deps: SchedulerDeps, workItemId: string, at: string): void 
   advanceWork(store, workItemId, at)
   const tasks = store.tasks.list({ workItemId })
   const blocked = tasks.find((task) => task.status === 'blocked')
-  const open = tasks.some((task) => ['ready', 'active', 'awaiting_review'].includes(String(task.status)))
+  settleBlock(store, workItemId, tasks, blocked, at)
+  // §14: an accepted task merges in dependency order, and a blocked sibling is not its dependency.
+  const open =
+    tasks.some((task) => ['ready', 'active', 'awaiting_review'].includes(String(task.status))) ||
+    awaitingMerge(tasks)
   if (blocked !== undefined && !open) {
-    blockWork(store, workItemId, String(blocked.blockedReason ?? 'a task is blocked'), at)
+    const reason = String(blocked.blockedReason ?? 'a task is blocked')
+    blockWork(store, workItemId, reason, at, String(blocked.id))
   }
+}
+
+/**
+ * The task a work's block is, if it is one. 0.3.7 and earlier recorded none, so a `task_blocked`
+ * event with the very reason the work carries names it. A block with neither is not a task's.
+ */
+function blockingTaskOf(store: Store, work: StoreDoc): string | undefined {
+  if (typeof work.blockedTask === 'string') return work.blockedTask
+  const reason = work.blockedReason
+  if (typeof reason !== 'string') return undefined
+  const said = store.events
+    .read(`work:${String(work.id)}`)
+    .findLast(
+      (event) => event.type === 'task_blocked' && (event.body as { reason?: unknown }).reason === reason,
+    )
+  const taskId = (said?.body as { taskId?: unknown } | undefined)?.taskId
+  return typeof taskId === 'string' ? taskId : undefined
+}
+
+/**
+ * Owner, 9 November 2026: a block a task caused lasts as long as a task is blocked. Once none is,
+ * the work goes on where its tasks are, and says why; while another still is, the reason is that
+ * one's, never one that no longer holds. A block no task caused waits for a person, as before.
+ */
+function settleBlock(
+  store: Store,
+  workItemId: string,
+  tasks: readonly StoreDoc[],
+  blocked: StoreDoc | undefined,
+  at: string,
+): void {
+  const work = store.workItems.get(workItemId) as StoreDoc
+  if (work.state !== 'blocked') return
+  const taskId = blockingTaskOf(store, work)
+  if (taskId === undefined) return
+  if (blocked !== undefined) {
+    if (tasks.find((task) => task.id === taskId)?.status === 'blocked') return
+    const reason = String(blocked.blockedReason ?? 'a task is blocked')
+    store.workItems.save({ ...work, blockedReason: reason, blockedTask: String(blocked.id), updatedAt: at })
+    const body = { workItemId, taskId: String(blocked.id), reason, at }
+    appendEvent(store, `work:${workItemId}`, 'block_reason_changed', body, at)
+    return
+  }
+  // Back to executing, then §10's own steps: on to integrating when a task is accepted or integrated.
+  const { blockedReason: _reason, blockedTask: _task, ...free } = work
+  const state = transition(WORK_ITEM_MACHINE, 'blocked', 'resume_executing')
+  store.workItems.save({ ...free, state, updatedAt: at })
+  const body = { workItemId, taskId, reason: 'no task is blocked any more', at }
+  appendEvent(store, `work:${workItemId}`, 'block_cleared', body, at)
+  advanceWork(store, workItemId, at)
+}
+
+/**
+ * Accepted tasks the integration will merge without a person: each one's prerequisites are
+ * integrated, or accepted and as mergeable. All of them, because the queue takes the first in
+ * dependency order and waits on it (§14), so one stuck task holds the rest.
+ */
+function awaitingMerge(tasks: readonly StoreDoc[]): boolean {
+  const byId = new Map(tasks.map((task) => [String(task.id), task]))
+  const mergeable = (task: StoreDoc, seen: ReadonlySet<string>): boolean =>
+    dependsOnOf(task).every((dep) => {
+      const prerequisite = byId.get(dep)
+      if (prerequisite?.status === 'integrated') return true
+      if (prerequisite?.status !== 'accepted' || seen.has(dep)) return false
+      return mergeable(prerequisite, new Set([...seen, dep]))
+    })
+  const waiting = tasks.filter((task) => task.status === 'accepted' && task.repairOf === undefined)
+  return waiting.length > 0 && waiting.every((task) => mergeable(task, new Set([String(task.id)])))
 }
 
 /** A blocked or cancelled prerequisite blocks its dependents, transitively, each with its reason. */

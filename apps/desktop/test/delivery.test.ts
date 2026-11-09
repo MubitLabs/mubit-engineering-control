@@ -8,10 +8,12 @@ import { dirname, join } from 'node:path'
 import type { StoreDoc } from '@mec/contracts'
 import { DEFAULT_CAPS } from '@mec/domain'
 import {
+  FollowUps,
   holdWorkItem,
   integrationDocId,
   repoFields,
   saveProcessing,
+  schedulePass,
   stopWorkItem,
   workResultOf,
 } from '@mec/meta'
@@ -1156,6 +1158,77 @@ describe('a person retries what blocked (§11: blocked work and failed deliverie
     expect(r.doc().answer).toBeUndefined()
     expect(r.remote(`refs/heads/${BRANCH}`)).toBeUndefined()
     expect(count(r, 'local_result')).toBe(1)
+  })
+
+  // Live, 9 November 2026 (wi_mw9kvv161fy597y, installed 0.3.7): the owner denied the push, a
+  // follow-up's task was accepted while two older tasks were blocked, and the work blocked with an
+  // old reason. The planner cancelled both; the work stayed blocked, nothing integrated the accepted
+  // task, and no button could clear it. What 0.3.7 left on disk clears on the next pass, untouched.
+  it('blocked work whose blocked tasks were cancelled integrates its accepted task and asks to push the new head', async () => {
+    const r = await localComplete()
+    await resolveReleaseCard(r.delivery.release, String(r.cards('push')[0]?.id), 'deny')
+    await r.delivery.idle()
+    await r.passes()
+    const built = String(r.integration().head)
+    const OLD = 'attempt att_13 reported blocked: the rename broke the page'
+    r.accepted('task_popup', 'c.txt', 'three\n', built)
+    r.store.atomic(() => {
+      for (const [id, reason] of [
+        ['task_fix_top', OLD],
+        ['task_zindex', 'attempt att_14 reported blocked: still red'],
+      ] as const) {
+        r.store.tasks.save({ id, localKey: id, workItemId: WORK, repoId: REPO, role: 'implementer' })
+        r.store.tasks.save({
+          ...(r.store.tasks.get(id) as StoreDoc),
+          status: 'blocked',
+          blockedReason: reason,
+        })
+      }
+      r.store.workItems.save({ ...work(r), state: 'blocked', blockedReason: OLD })
+      const stream = `work:${WORK}`
+      const seq = (r.store.events.read(stream).at(-1)?.seq ?? 0) + 1
+      const body = { taskId: 'task_fix_top', reason: OLD, at: AT }
+      r.store.events.append(stream, { stream, seq, at: AT, type: 'task_blocked', body })
+    })
+    const followups = new FollowUps({ store: r.store, effects: r.store.effects, now: () => AT })
+    const settle = () =>
+      r.store.atomic(() =>
+        schedulePass(
+          {
+            store: r.store,
+            effects: r.store.effects,
+            caps: DEFAULT_CAPS,
+            slots: () => [],
+            table: () => undefined,
+            followups,
+          },
+          { at: AT },
+        ),
+      )
+    settle()
+    await r.passes()
+    expect(r.store.tasks.get('task_popup')?.status).toBe('accepted')
+
+    r.store.atomic(() => {
+      for (const id of ['task_fix_top', 'task_zindex']) {
+        const doc = r.store.tasks.get(id) as StoreDoc
+        r.store.tasks.save({ ...doc, status: 'cancelled', cancelledReason: 'cancelled by the planner' })
+      }
+    })
+    settle()
+    expect(work(r)).toMatchObject({ state: 'integrating' })
+    expect(work(r).blockedReason).toBeUndefined()
+    await r.passes()
+    expect(r.store.tasks.get('task_popup')?.status).toBe('integrated')
+    const head = String(r.integration().head)
+    expect(head).not.toBe(built)
+    expect(r.integration().combined).toMatchObject({ sha: head, passed: true })
+    expect(r.cards('push').map((card) => [card.status, card.inputSha])).toEqual([
+      ['denied', built],
+      ['pending', head],
+    ])
+    expect(r.doc()).toMatchObject({ stage: 'push_card', head })
+    expect(r.remote(`refs/heads/${BRANCH}`)).toBeUndefined()
   })
 
   it('a declined PR card asks again with one new card, and the push is not asked again', async () => {

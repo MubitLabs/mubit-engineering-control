@@ -244,6 +244,81 @@ describe('Needs you lists work a person must act on (§18.2)', () => {
   })
 })
 
+describe('a blocked row names the way forward the server offers (§11 Retry)', () => {
+  const agreed = (): void => {
+    store.atomic(() => {
+      store.engines.save({
+        ...(store.engines.get('repo_a') as Record<string, Json>),
+        id: 'repo_a',
+        hostRunAgreedAt: AT,
+      })
+    })
+  }
+
+  it('a retry on offer is the Next line, in the row and in Needs you', async () => {
+    agreed()
+    seedWork('wi_retry', { state: 'blocked', blockedReason: 'integration: the merge was refused' })
+    store.atomic(() => {
+      store.tasks.save({
+        id: 'task_1',
+        workItemId: 'wi_retry',
+        repoId: 'repo_a',
+        status: 'accepted',
+        createdAt: AT,
+        updatedAt: AT,
+      })
+    })
+    expect((await get('/api/inspect/work/wi_retry')).retry).toMatchObject({ kind: 'integration' })
+    const row = (await get('/api/inspect/work')).items.find((entry: any) => entry.id === 'wi_retry')
+    expect(row.nextAction).toBe('Retry integration')
+    const need = (await get('/api/inspect/needs')).items.find((entry: any) => entry.id === 'wi_retry')
+    expect(need.nextAction).toBe('Retry integration')
+  })
+
+  it('with nothing on offer, the Next line stays the general one', async () => {
+    seedWork('wi_plain', { state: 'blocked', blockedReason: 'integration: the merge was refused' })
+    const row = (await get('/api/inspect/work')).items.find((entry: any) => entry.id === 'wi_plain')
+    expect(row.nextAction).toBe('Resolve what blocks it')
+  })
+
+  it('changed repository commands say so in words, with stop-and-ask-again as the way forward', async () => {
+    agreed()
+    seedWork('wi_profile', {
+      state: 'blocked',
+      blockedReason: 'repo_profile_changed: this work was admitted under other commands',
+    })
+    const words =
+      'The repository’s setup or check commands changed since this work was planned, so MEC will not deliver it under the old ones'
+    const need = (await get('/api/inspect/needs')).items.find((entry: any) => entry.id === 'wi_profile')
+    expect(need.reason).toBe(`Blocked: ${words}`)
+    expect(need.nextAction).toBe('Stop this work and ask again')
+    const detail = await get('/api/inspect/work/wi_profile')
+    expect(detail.delivery.failure).toBe(words)
+    expect(JSON.stringify(detail)).not.toContain('repo_profile_changed')
+  })
+
+  it.each([
+    [
+      'bootstrap_failed: pnpm install: no lockfile',
+      'The repository’s setup command failed: pnpm install: no lockfile',
+    ],
+    ['policy_changed', 'The policy changed since this work was admitted'],
+    ['engine_missing: claude is not on PATH', 'An engine is not installed: claude is not on PATH'],
+    ['auth_required: max-1', 'A connection needs signing in again: max-1'],
+    ['model_refused: no model', 'No model could be chosen for this task: no model'],
+    [
+      'no_commit_identity: the repository sets no user.name/email',
+      'The repository sets no commit name or email',
+    ],
+    ['some_new_code: detail', 'some new code: detail'],
+  ])('a coded reason reads in words: %s', async (blockedReason, words) => {
+    seedWork('wi_coded', { state: 'blocked', blockedReason })
+    const row = (await get('/api/inspect/work')).items.find((entry: any) => entry.id === 'wi_coded')
+    expect(row.reason).toBe(`Blocked: ${words}`)
+    expect(row.reason).not.toMatch(/\b[a-z]+_[a-z_]+:/)
+  })
+})
+
 describe('a planner turn that ended with no plan (§10)', () => {
   it('is not left Working: nothing runs, and the row says so', async () => {
     const id = await say('What does the audit view do?')
@@ -375,7 +450,7 @@ describe('delivery says what happened (§14)', () => {
     })
     const detail = await get('/api/inspect/work/wi_boot')
     expect(detail.coverage.delivery).toBe(true)
-    expect(detail.delivery.failure).toBe('bootstrap_failed: pnpm install: no lockfile')
+    expect(detail.delivery.failure).toBe('The repository’s setup command failed: pnpm install: no lockfile')
   })
 
   it.each(['checks failed on abc1234: unit', 'could not run pnpm test'])(
@@ -429,7 +504,7 @@ describe('delivery says what happened (§14)', () => {
       })
     })
     expect((await get('/api/inspect/work/wi_hold')).delivery.failure).toBe(
-      'remote_unreadable: origin. MEC tries this step again.',
+      'The repository’s remote could not be read: origin. MEC tries this step again.',
     )
   })
 

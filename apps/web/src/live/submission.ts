@@ -107,6 +107,22 @@ export function createSubmissions(deps: {
       return true
     },
 
+    /**
+     * A send whose answer this tab never saw (a reload, a closed tab, a turn that outlived the
+     * page) that the thread shows the server stored under its key: it landed, so it is done. Its
+     * text leaves the box and storage, or a reload or the next day would offer it again.
+     */
+    landed(repoId: string, stored: (key: string) => boolean): boolean {
+      const held = view(repoId)
+      if (held?.state !== 'failed' || !stored(held.frozen.key)) return false
+      const scope = draftScope(held.frozen)
+      current.delete(repoId)
+      deps.drafts.releasePending(repoId)
+      deps.drafts.write(repoId, scope, withoutSent(deps.drafts.read(repoId, scope), held.frozen.text))
+      changed()
+      return true
+    },
+
     retry(repoId: string): boolean {
       const held = view(repoId)
       if (held === null || held.state === 'pending') return false

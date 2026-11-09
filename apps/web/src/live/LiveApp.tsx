@@ -56,7 +56,7 @@ import {
   workRowView,
 } from '../next/work-model'
 import { repositoryName } from '../repo-target'
-import { ApprovalLink } from './ApprovalLink'
+import { ApprovalLink, NotLinkedNotice } from './ApprovalLink'
 import { createConfigStore } from './config-store'
 import { createDrafts, type Intent, resolveIntent } from './drafts'
 import { createInspection, liveInspectionClient } from './inspection'
@@ -436,7 +436,9 @@ export function LiveApp() {
   const chosenCard = [...needs.waiting, ...needs.settled].find((item) => item.id === cardId)
   const chosenEvidence = chosenCard ? usableEvidence(inspected.evidence[chosenCard.id] ?? null) : null
   const approvalInspector =
-    chosenCard?.kind === 'card' && chosenEvidence ? approvalScope(chosenCard, chosenEvidence) : null
+    chosenCard?.kind === 'card' && chosenEvidence
+      ? approvalScope(chosenCard, chosenEvidence, inspected.outcomes[chosenCard.id] ?? null)
+      : null
 
   const chatQuestions = threadQuestions(items, repoId, (id) => inspected.answers[id] ?? null)
 
@@ -458,6 +460,10 @@ export function LiveApp() {
   })
 
   const thread = readData(chatRead) ?? []
+  // A send this tab never saw answered, which the thread shows stored: done, and out of the box.
+  useEffect(() => {
+    if (repoId !== null && thread.length > 0) submissions.landed(repoId, (key) => sentAlready(thread, key))
+  }, [repoId, thread, submissions])
   const echo =
     submission?.state === 'pending' && !sentAlready(thread, submission.frozen.key)
       ? submission.frozen.text
@@ -653,11 +659,15 @@ export function LiveApp() {
   )
   const commandNotice = inspected.notice && (
     <div className="live-notice">
-      <StateNotice
-        kind={inspected.notice.kind === 'done' ? 'completed' : 'error'}
-        title={inspected.notice.kind === 'done' ? 'Done' : 'That did not go through'}
-        body={inspected.notice.text}
-      />
+      {inspected.notice.link ? (
+        <NotLinkedNotice text={inspected.notice.text} />
+      ) : (
+        <StateNotice
+          kind={inspected.notice.kind === 'done' ? 'completed' : 'error'}
+          title={inspected.notice.kind === 'done' ? 'Done' : 'That did not go through'}
+          body={inspected.notice.text}
+        />
+      )}
     </div>
   )
   const resetNotice = state.resetAt && (

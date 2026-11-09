@@ -16,6 +16,7 @@ import {
   approvalScope,
   attemptSubscription,
   conversationView,
+  DENIED,
   deliveryDetail,
   needsCount,
   needsList,
@@ -479,6 +480,20 @@ describe('delivery detail', () => {
     const blocked = { ...declined, retry: { kind: 'integration' as const, reason: 'integration: refused' } }
     expect(deliveryDetail(decodeWorkDetail(blocked), null).plan.footnote).not.toContain('refused')
   })
+
+  it('a retry on offer leads the detail, beside the Blocked line; nothing on offer leads nothing', () => {
+    const blocked = {
+      ...workDetails.work_failed,
+      retry: { kind: 'integration' as const, reason: 'integration: merge refused' },
+    }
+    const view = deliveryDetail(decodeWorkDetail(blocked), null)
+    expect(view.lead).toMatchObject({ kind: 'retry', workItemId: 'work_failed' })
+    expect(view.lead?.label).toMatch(/^Retry integration/)
+    expect(view.lead).toBe(view.actions[0])
+    expect(deliveryDetail(decodeWorkDetail(workDetails.work_failed), null).lead).toBeNull()
+    const held = { ...blocked, hold: { since: 'now', reason: null } }
+    expect(deliveryDetail(decodeWorkDetail(held), null).lead).toBeNull()
+  })
 })
 
 describe('inspector scope', () => {
@@ -566,6 +581,23 @@ describe('inspector scope', () => {
     const approval = approvalScope(needs.pending, cardEvidence.card_pending)
     expect(approval.kind).toBe('approval')
     expect(approval.id).not.toBe(task('task_done').id)
+  })
+
+  it('a card answered while inspected follows to its settled state, never shown as still open', () => {
+    const open = approvalScope(needs.pending, cardEvidence.card_pending)
+    const approved = approvalScope({ ...needs.pending, status: 'approved' }, cardEvidence.card_pending)
+    // A new id: the tabs go back to Overview, off the Diff of a card that is no longer asking.
+    expect(approved.id).not.toBe(open.id)
+    expect(approved.context).toContain('Approved')
+    expect(approved.overview.sections[0]).toMatchObject({ heading: 'Approved' })
+    expect(open.overview.sections[0]?.heading).toBe('Why this asks you')
+    // An answer this tab gave settles it before the next read says so.
+    const answered = approvalScope(needs.pending, cardEvidence.card_pending, DENIED)
+    expect(answered.id).toBe(
+      approvalScope({ ...needs.pending, status: 'denied' }, cardEvidence.card_pending).id,
+    )
+    expect(answered.overview.sections[0]).toMatchObject({ heading: 'Denied', body: 'Nothing ran.' })
+    expect(approvalScope(needs.expired, cardEvidence.card_pending).context).toContain('Expired')
   })
 
   it('approval evidence is the card’s own', () => {

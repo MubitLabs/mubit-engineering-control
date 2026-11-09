@@ -10,6 +10,11 @@
  */
 
 export const APPROVAL_HEADER = 'x-mec-approval'
+/** The server's refusal of an owner's word from a tab with no key (or a key from before a restart). */
+export const APPROVAL_REQUIRED = 'approval_required'
+/** What that refusal means, in words, wherever it lands. The page offers the link beside it. */
+export const NOT_LINKED =
+  'This browser is not linked yet, so nothing was done. Link this browser, then try again.'
 const STORED = 'mec.approval-key'
 const CHANNEL = 'mec-approval'
 const PAIR = /^#pair=([0-9a-f]{64})$/

@@ -161,7 +161,12 @@ export function Shell({
   const [paletteAfter, setPaletteAfter] = useState<(() => void) | null>(null)
   const [taskOpen, setTaskOpen] = useState(initialInspectorOpen)
   const [approvalOpen, setApprovalOpen] = useState(false)
-  const [initialTab, setInitialTab] = useState<InspectorTab | undefined>()
+  /**
+   * The tab an Inspect asked for, and the subject it was asked for (null until the next commit
+   * names it). A scope that changes its id on its own, as a card does once it settles, is a new
+   * subject: it opens on Overview, not on the tab asked of the one before.
+   */
+  const [tabRequest, setTabRequest] = useState<{ tab?: InspectorTab; for: string | null }>({ for: null })
 
   const scroller = useRef<HTMLDivElement>(null)
   const menuButton = useRef<HTMLButtonElement>(null)
@@ -175,6 +180,12 @@ export function Shell({
   const scope =
     route === 'needs' ? approvalInspector : CONFIGURATION_ROUTES.includes(route) ? null : taskInspector
   const inspectorOpen = scope !== null && (route === 'needs' ? approvalOpen : taskOpen)
+  const scopeId = inspectorOpen ? (scope?.id ?? null) : null
+  useEffect(() => {
+    if (scopeId !== null)
+      setTabRequest((request) => (request.for === null ? { ...request, for: scopeId } : request))
+  }, [scopeId])
+  const initialTab = tabRequest.for === null || tabRequest.for === scopeId ? tabRequest.tab : undefined
   const canCompose = route === 'chat' && composer !== null
 
   const setInspector = useCallback(
@@ -188,7 +199,7 @@ export function Shell({
   const openInspector = useCallback(
     (tab?: InspectorTab) => {
       inspectorOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
-      setInitialTab(tab)
+      setTabRequest({ tab, for: null })
       setInspector(true)
     },
     [setInspector],
@@ -196,7 +207,7 @@ export function Shell({
 
   const closeInspector = useCallback(() => {
     setInspector(false)
-    setInitialTab(undefined)
+    setTabRequest({ for: null })
     if (!overlayInspector) restoreFocus(inspectorOpener.current)
   }, [overlayInspector, setInspector])
 

@@ -468,6 +468,8 @@ export interface DeliveryDetailView {
   outcome: TurnOutcomeView | null
   delivery: DeliverySection
   actions: readonly WorkAction[]
+  /** The retry the server offers, shown at the top beside the Blocked line rather than below Delivery. */
+  lead: WorkAction | null
   discuss: DiscussAction | null
 }
 
@@ -478,6 +480,7 @@ export function deliveryDetail(detail: WorkDetail, filter: RepoFilter | null): D
   const titles = new Map(detail.tasks.map((task) => [task.id, task.title]))
   const count = detail.tasks.length
   const row = workRowView(detail)
+  const actions = workActions(detail, filter ?? { kind: 'all' }, detail.hold, detail.retry, detail.delivery)
   return {
     plan: {
       title: row.title,
@@ -507,7 +510,8 @@ export function deliveryDetail(detail: WorkDetail, filter: RepoFilter | null): D
     delegation: detail.delegation.map(delegationView),
     outcome: turnOutcome(detail),
     delivery: deliverySection(detail),
-    actions: workActions(detail, filter ?? { kind: 'all' }, detail.hold, detail.retry, detail.delivery),
+    actions,
+    lead: actions.find((action) => action.kind === 'retry') ?? null,
     discuss: discussAction(detail, filter),
   }
 }
@@ -857,15 +861,26 @@ function cardChecks(evidence: CardEvidence): InspectorChecks {
   }
 }
 
-export function approvalScope(item: CardItem, evidence: CardEvidence): InspectorScope {
+/**
+ * A card answered while it is inspected follows to its settled state: a new id puts the tabs back
+ * on Overview, which says how it settled first, so a resolved card is never shown as still asking.
+ */
+export function approvalScope(
+  item: CardItem,
+  evidence: CardEvidence,
+  outcome: ApprovalOutcome | null = null,
+): InspectorScope {
+  const status = cardStatus(item, outcome)
+  const settled = status.state === 'open' ? null : status
   return {
-    id: `approval:${item.id}`,
+    id: settled === null ? `approval:${item.id}` : `approval:${item.id}:${settled.label}`,
     kind: 'approval',
-    context: `${cardLabel(item.cls)}, ${repositoryOf(item)}`,
+    context: `${cardLabel(item.cls)}, ${repositoryOf(item)}${settled === null ? '' : `, ${settled.label}`}`,
     title: evidence.what,
     overview: {
       sections: [
-        { heading: 'Why this asks you', body: evidence.why },
+        ...(settled === null ? [] : [{ heading: settled.label, body: settled.detail }]),
+        { heading: settled === null ? 'Why this asks you' : 'Why it asked you', body: evidence.why },
         { heading: 'Requested by', body: evidence.requestedBy },
       ],
       facts: evidence.facts.filter((fact) => !fact.mono),

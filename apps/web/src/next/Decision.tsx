@@ -5,6 +5,18 @@ import { Button } from './primitives'
 /** Any unrelated action, Escape or eight seconds disarms. */
 export const ARM_WINDOW_MS = 8000
 
+/**
+ * Said once the window runs out by itself. Without it the press that follows arms again with no
+ * effect sent, which reads as a confirm button that does nothing.
+ */
+export const LAPSED_NOTE = `Not done: the confirm lapsed after ${ARM_WINDOW_MS / 1000} seconds. Press it again to arm.`
+
+/** The line under the buttons: what is armed, else that an arm ran out by itself, else nothing. */
+export function armedNote(armedLabel: string | null | undefined, lapsed: boolean): string {
+  if (armedLabel) return `Armed: ${armedLabel}. Escape or any other action cancels.`
+  return lapsed ? LAPSED_NOTE : ''
+}
+
 export type DecisionStatus =
   | { state: 'open'; expires: string }
   | { state: 'resolved'; label: string; detail: string }
@@ -136,6 +148,7 @@ export function Approval(props: ApprovalProps) {
   const { status, onConfirm, onDeny, denyConfirmLabel } = props
   const heading = useSettledFocus(status, props.claimFocus)
   const [armed, setArmed] = useState<Armed>(null)
+  const [lapsed, setLapsed] = useState(false)
   const approveButton = useRef<HTMLButtonElement>(null)
   const denyButton = useRef<HTMLButtonElement>(null)
   const open = status.state === 'open'
@@ -143,7 +156,10 @@ export function Approval(props: ApprovalProps) {
   useEffect(() => {
     if (armed === null) return
     const disarm = () => setArmed(null)
-    const timer = setTimeout(disarm, ARM_WINDOW_MS)
+    const timer = setTimeout(() => {
+      setArmed(null)
+      setLapsed(true)
+    }, ARM_WINDOW_MS)
     const button = armed === 'approve' ? approveButton : denyButton
     const onUnrelated = (event: Event) => {
       if (event.target instanceof Node && button.current?.contains(event.target)) return
@@ -161,6 +177,7 @@ export function Approval(props: ApprovalProps) {
   }, [armed])
 
   const onApprove = () => {
+    setLapsed(false)
     if (armed !== 'approve') {
       setArmed('approve')
       return
@@ -170,6 +187,7 @@ export function Approval(props: ApprovalProps) {
   }
 
   const onDenyClick = () => {
+    setLapsed(false)
     if (denyConfirmLabel !== undefined && armed !== 'deny') {
       setArmed('deny')
       return
@@ -209,7 +227,7 @@ export function Approval(props: ApprovalProps) {
             </Button>
           </div>
           <p role="status" className="small armed-note">
-            {armedLabel ? `Armed: ${armedLabel}. Escape or any other action cancels.` : ''}
+            {armedNote(armedLabel, lapsed)}
           </p>
         </>
       )}

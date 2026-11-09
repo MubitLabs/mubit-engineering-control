@@ -1,0 +1,44 @@
+[
+  {
+    "name": "S1 another selection inherits the open stop",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  stopping !== null && stopping.workItemId === selectedId ? stopping : null",
+    "replace": "  stopping",
+    "tests": ["apps/web/test/stop-confirm.test.ts"]
+  },
+  {
+    "name": "S2 the open stop is dropped for its own delivery",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "  stopping !== null && stopping.workItemId === selectedId ? stopping : null",
+    "replace": "  stopping !== null && stopping.workItemId !== selectedId ? stopping : null",
+    "tests": ["apps/web/test/stop-confirm.test.ts"]
+  },
+  {
+    "name": "S3 a lapsed confirm says nothing",
+    "file": "apps/web/src/next/Decision.tsx",
+    "find": "  return lapsed ? LAPSED_NOTE : ''",
+    "replace": "  return ''",
+    "tests": ["apps/web/test/stop-confirm.test.ts"]
+  },
+  {
+    "name": "S4 the lapse note shows at rest too",
+    "file": "apps/web/src/next/Decision.tsx",
+    "find": "  return lapsed ? LAPSED_NOTE : ''",
+    "replace": "  return LAPSED_NOTE",
+    "tests": ["apps/web/test/stop-confirm.test.ts"]
+  },
+  {
+    "name": "S5 the lapse note hides what is armed",
+    "file": "apps/web/src/next/Decision.tsx",
+    "find": "  if (armedLabel) return `Armed: ${armedLabel}. Escape or any other action cancels.`",
+    "replace": "  if (armedLabel && !lapsed) return `Armed: ${armedLabel}. Escape or any other action cancels.`",
+    "tests": ["apps/web/test/stop-confirm.test.ts"]
+  },
+  {
+    "name": "S6 the lapse note names a window the timer does not keep",
+    "file": "apps/web/src/next/Decision.tsx",
+    "find": "after ${ARM_WINDOW_MS / 1000} seconds",
+    "replace": "after ${ARM_WINDOW_MS / 100} seconds",
+    "tests": ["apps/web/test/stop-confirm.test.ts"]
+  }
+]

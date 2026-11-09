@@ -15,7 +15,7 @@ import type {
   WorkGroupView,
   WorkRowView,
 } from './work-model'
-import { repoScopeApplies } from './work-model'
+import { repoScopeApplies, stopInView } from './work-model'
 
 /** A failed read sits above what is kept, and a loading one always has somewhere to end. */
 export function ReadNotice({
@@ -125,6 +125,8 @@ function DeliveryDetail({
   onOpenTask,
   onAction,
   onDiscuss,
+  stopping,
+  setStopping,
 }: {
   row: WorkRowView
   detail: DeliveryDetailView
@@ -132,9 +134,11 @@ function DeliveryDetail({
   onOpenTask: (id: string) => void
   onAction: (action: WorkAction) => void
   onDiscuss: (action: DiscussAction) => void
+  /** Held by the view, not here: a read that refiles the row under another group remounts this. */
+  stopping: WorkAction | null
+  setStopping: (action: WorkAction | null) => void
 }) {
   const { openInspector } = useShellActions()
-  const [stopping, setStopping] = useState<WorkAction | null>(null)
   const { discuss } = detail
   const root = useRef<HTMLDivElement>(null)
   const stopButton = useRef<HTMLButtonElement>(null)
@@ -273,7 +277,19 @@ export interface WorkViewProps {
   parkedNotice?: (workItemId: string) => ReactNode
 }
 
-function WorkEntry({ row, props, acted }: { row: WorkRowView; props: WorkViewProps; acted: boolean }) {
+function WorkEntry({
+  row,
+  props,
+  acted,
+  stopping,
+  setStopping,
+}: {
+  row: WorkRowView
+  props: WorkViewProps
+  acted: boolean
+  stopping: WorkAction | null
+  setStopping: (action: WorkAction | null) => void
+}) {
   const selected = row.id === props.selectedId
   const { delivery } = props
   const kept = delivery.status === 'loading' ? null : delivery.data
@@ -321,6 +337,8 @@ function WorkEntry({ row, props, acted }: { row: WorkRowView; props: WorkViewPro
           onOpenTask={props.onOpenTask}
           onAction={props.onAction}
           onDiscuss={props.onDiscuss}
+          stopping={stopping}
+          setStopping={setStopping}
         />
       )}
       {selected && delivery.status === 'loading' && <p className="freshness">Reading this delivery.</p>}
@@ -332,6 +350,14 @@ export function WorkView(props: WorkViewProps) {
   const { surface, groups } = props
   /** The delivery last acted on. It keeps focus through a regroup until a pointer goes elsewhere. */
   const [acted, setActed] = useState<string | null>(null)
+  /** The stop being confirmed. It outlives a regroup, and closes when the selection moves. */
+  const [stopping, setStopping] = useState<WorkAction | null>(null)
+  const [stopSelection, setStopSelection] = useState(props.selectedId)
+  if (stopSelection !== props.selectedId) {
+    setStopSelection(props.selectedId)
+    setStopping(null)
+  }
+  const openStop = stopInView(stopping, props.selectedId)
   useEffect(() => {
     if (acted === null) return
     const release = () => setActed(null)
@@ -366,7 +392,14 @@ export function WorkView(props: WorkViewProps) {
             </h2>
             <ul>
               {group.rows.map((row) => (
-                <WorkEntry key={row.id} row={row} props={tracked} acted={row.id === acted} />
+                <WorkEntry
+                  key={row.id}
+                  row={row}
+                  props={tracked}
+                  acted={row.id === acted}
+                  stopping={row.id === openStop?.workItemId ? openStop : null}
+                  setStopping={setStopping}
+                />
               ))}
             </ul>
           </section>

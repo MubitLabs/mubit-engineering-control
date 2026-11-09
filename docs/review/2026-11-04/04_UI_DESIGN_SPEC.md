@@ -1,6 +1,6 @@
 # MEC workbench — design specification
 
-> Superseded, 6 November 2026. This described the classic shell, removed in `docs/changes/2026-11-06-remove-classic-shell/CHANGE.md`. The design now lives in `docs/plan/spec.md` §18 and `apps/web/src/next/tokens.css`. Kept as history. Its rule that no runtime font or asset request leaves the machine still holds (§10 below).
+> Superseded, 6 November 2026. This described the classic shell, removed in `docs/changes/2026-11-09-remove-classic/CHANGE.md`. The design now lives in `docs/plan/spec.md` §18 and `apps/web/src/next/tokens.css`. Kept as history. Its rule that no runtime font or asset request leaves the machine still holds (§10 below).
 
 Item 6 of the 4 November request. The clickable prototype in `prototype/` (open `index.html`) is the reference; `tokens.css` and `workbench.css` are drop-in stylesheets for `apps/web`; the screenshots in `screens/` show every screen in light and dark. This document says what the prototype is for, the rules behind it, and how to port it.
 

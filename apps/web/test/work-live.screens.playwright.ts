@@ -545,7 +545,7 @@ async function tabTo(page: Page, target: ReturnType<Page['locator']>): Promise<v
 }
 
 // Ported from the classic suite when that shell went (decision #35). The equals are listed in
-// docs/changes/2026-11-06-remove-classic-shell/CHANGE.md.
+// docs/changes/2026-11-09-remove-classic/CHANGE.md.
 test.describe('the old shell’s journeys, on this one', () => {
   test.use({ viewport: { width: 1440, height: 900 } })
 

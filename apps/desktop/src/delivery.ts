@@ -354,7 +354,7 @@ export class Delivery {
       const status = transition(TASK_MACHINE, String(task.status), 'integration_retry')
       this.#store.tasks.save({ ...rest, status, updatedAt: at })
     }
-    const { blockedReason: _reason, ...rest } = work
+    const { blockedReason: _reason, blockedTask: _task, ...rest } = work
     const state = transition(WORK_ITEM_MACHINE, String(work.state), 'resume_integrating')
     this.#store.workItems.save({ ...rest, state, updatedAt: at })
   }

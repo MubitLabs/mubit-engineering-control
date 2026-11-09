@@ -1,0 +1,86 @@
+[
+  {
+    "name": "(1) a block whose task is no longer blocked never clears",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  const taskId = blockingTaskOf(store, work)\n  if (taskId === undefined) return\n",
+    "replace": "  const taskId = blockingTaskOf(store, work)\n  if (taskId !== '') return\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "(1) a block no task caused clears once no task is blocked",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  const taskId = blockingTaskOf(store, work)\n  if (taskId === undefined) return\n",
+    "replace": "  const taskId = blockingTaskOf(store, work)\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "(1) what 0.3.7 left on disk is not read: only a recorded task counts",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (typeof work.blockedTask === 'string') return work.blockedTask\n",
+    "replace": "  return typeof work.blockedTask === 'string' ? work.blockedTask : undefined\n",
+    "tests": ["packages/meta/test/scheduler.test.ts", "apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(1) a cleared block stays in executing: the accepted task never integrates",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  appendEvent(store, `work:${workItemId}`, 'block_cleared', body, at)\n  advanceWork(store, workItemId, at)\n",
+    "replace": "  appendEvent(store, `work:${workItemId}`, 'block_cleared', body, at)\n",
+    "tests": ["packages/meta/test/scheduler.test.ts", "apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(1) the scheduler's block does not name its task",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    blockWork(store, workItemId, reason, at, String(blocked.id))\n",
+    "replace": "    blockWork(store, workItemId, reason, at)\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "(1) a later block keeps the task an earlier block named",
+    "file": "packages/meta/src/authority.ts",
+    "find": "  const { blockedTask: _earlier, ...rest } = work\n",
+    "replace": "  const rest = work\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "(2) an accepted task waits behind blocked siblings it does not depend on",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    tasks.some((task) => ['ready', 'active', 'awaiting_review'].includes(String(task.status))) ||\n    awaitingMerge(tasks)\n",
+    "replace": "    tasks.some((task) => ['ready', 'active', 'awaiting_review'].includes(String(task.status)))\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "(2) an accepted task whose prerequisite is blocked counts as mergeable",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "      if (prerequisite?.status !== 'accepted' || seen.has(dep)) return false\n",
+    "replace": "      if (prerequisite === undefined || seen.has(dep)) return false\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "(2) an integrated task still holds the work open",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  const waiting = tasks.filter((task) => task.status === 'accepted' && task.repairOf === undefined)\n",
+    "replace": "  const waiting = tasks.filter((task) => ['accepted', 'integrated'].includes(String(task.status)) && task.repairOf === undefined)\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "(3) cancel_task answers with the status before the cancel",
+    "file": "packages/meta/src/tools.ts",
+    "find": "    return { ok: true, task: taskId, state: 'cancelled', was: state }\n",
+    "replace": "    return { ok: true, task: taskId, state, was: state }\n",
+    "tests": ["packages/meta/test/admission.test.ts"]
+  },
+  {
+    "name": "(4) the reason keeps naming a task that is no longer blocked",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    if (tasks.find((task) => task.id === taskId)?.status === 'blocked') return\n",
+    "replace": "    return\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  },
+  {
+    "name": "(4) the moved reason does not name its new task",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    store.workItems.save({ ...work, blockedReason: reason, blockedTask: String(blocked.id), updatedAt: at })\n",
+    "replace": "    store.workItems.save({ ...work, blockedReason: reason, updatedAt: at })\n",
+    "tests": ["packages/meta/test/scheduler.test.ts"]
+  }
+]

@@ -1211,3 +1211,157 @@ describe('the utilisation ceiling, in words (owner, 8 November 2026)', () => {
     expect(notices(store)).toEqual([])
   })
 })
+
+// Live, 9 November 2026 (wi_mw9kvv161fy597y): a task accepted while two siblings it does not depend
+// on were blocked blocked the work with an old reason; cancelling both left it blocked for good, its
+// accepted task never integrated, and no button could clear it.
+describe('a block whose task is no longer blocked (owner, 9 November 2026)', () => {
+  const OLD = 'attempt att_13 reported blocked: the rename broke the page'
+  const OTHER = 'attempt att_14 reported blocked: app.js is still red'
+
+  /** Two blocked tasks, one integrated, and the one the owner's follow-up just added, accepted. */
+  function siblings(store: MemoryRepositories): void {
+    work(store)
+    task(store, 'task_1', { status: 'integrated' })
+    task(store, 'task_fix_top', { status: 'blocked', blockedReason: OLD, dependsOn: ['task_1'] })
+    task(store, 'task_zindex', { status: 'blocked', blockedReason: OTHER })
+    task(store, 'task_popup', { status: 'accepted', basePolicy: 'integration' })
+  }
+
+  const patch = (store: MemoryRepositories, id: string, fields: StoreDoc): void => {
+    store.atomic(() => store.tasks.save({ ...(store.tasks.get(id) as StoreDoc), ...fields }))
+  }
+
+  const cancel = (store: MemoryRepositories, ...ids: string[]): void => {
+    for (const id of ids)
+      patch(store, id, { status: 'cancelled', cancelledReason: 'cancelled by the planner' })
+  }
+
+  /** What 0.3.7 left on disk: the work blocked with att_13's reason, recorded only by its events. */
+  function installed(store: MemoryRepositories): void {
+    siblings(store)
+    store.atomic(() => {
+      const doc = store.workItems.get('wi_1') as StoreDoc
+      store.workItems.save({ ...doc, state: 'blocked', blockedReason: OLD })
+      const stream = 'work:wi_1'
+      const body = { taskId: 'task_fix_top', reason: OLD, at: AT }
+      store.events.append(stream, { stream, seq: 1, at: AT, type: 'task_blocked', body })
+      const blocked = { workItemId: 'wi_1', reason: OLD, at: AT }
+      store.events.append(stream, { stream, seq: 2, at: AT, type: 'work_blocked', body: blocked })
+    })
+  }
+
+  const types = (store: MemoryRepositories) => store.events.read('work:wi_1').map((event) => event.type)
+
+  it('an accepted task does not wait behind blocked siblings it does not depend on (§14)', () => {
+    const { store, pass } = rig()
+    siblings(store)
+    pass()
+    expect(store.workItems.get('wi_1')).toMatchObject({ state: 'integrating' })
+    expect(store.workItems.get('wi_1')?.blockedReason).toBeUndefined()
+    expect(types(store)).not.toContain('work_blocked')
+  })
+
+  it('once it is integrated, a sibling still blocked blocks the work with its own reason', () => {
+    const { store, pass } = rig()
+    siblings(store)
+    pass()
+    patch(store, 'task_popup', { status: 'integrated' })
+    pass()
+    expect(store.workItems.get('wi_1')).toMatchObject({ state: 'blocked', blockedReason: OLD })
+  })
+
+  it('an accepted task that depends on a blocked one still waits, and the work blocks', () => {
+    const { store, pass } = rig()
+    siblings(store)
+    patch(store, 'task_popup', { dependsOn: ['task_zindex'] })
+    pass()
+    expect(store.workItems.get('wi_1')).toMatchObject({ state: 'blocked' })
+  })
+
+  it('the exact sequence: accepted beside two blocked, both cancelled, the next pass integrates', () => {
+    const { store, pass } = rig()
+    installed(store)
+    pass()
+    expect(store.workItems.get('wi_1')).toMatchObject({ state: 'blocked', blockedReason: OLD })
+
+    cancel(store, 'task_fix_top', 'task_zindex')
+    pass()
+    const work = store.workItems.get('wi_1') as StoreDoc
+    expect(work.state).toBe('integrating')
+    expect(work.blockedReason).toBeUndefined()
+    const cleared = store.events.read('work:wi_1').find((event) => event.type === 'block_cleared')
+    expect(cleared?.body).toMatchObject({ workItemId: 'wi_1', reason: 'no task is blocked any more' })
+    pass()
+    expect(types(store).filter((type) => type === 'block_cleared')).toHaveLength(1)
+  })
+
+  it('with nothing accepted, cleared work goes back to executing and launches what is ready', () => {
+    const { store, pass } = rig()
+    installed(store)
+    patch(store, 'task_popup', { status: 'ready' })
+    patch(store, 'task_1', { status: 'cancelled' })
+    cancel(store, 'task_fix_top', 'task_zindex')
+    expect(pass().map((row) => row.taskId)).toEqual(['task_popup'])
+    expect(store.workItems.get('wi_1')).toMatchObject({ state: 'executing' })
+  })
+
+  it('a block the scheduler records names its task, and clears when that task is cancelled', () => {
+    const { store, pass } = rig()
+    siblings(store)
+    patch(store, 'task_popup', { status: 'integrated' })
+    pass()
+    expect(store.workItems.get('wi_1')).toMatchObject({ state: 'blocked', blockedTask: 'task_fix_top' })
+    cancel(store, 'task_fix_top', 'task_zindex')
+    pass()
+    expect(store.workItems.get('wi_1')).toMatchObject({ state: 'integrating' })
+    expect(store.workItems.get('wi_1')?.blockedTask).toBeUndefined()
+  })
+
+  it('the reason never names a task that is no longer blocked: it moves to one that is', () => {
+    const { store, pass } = rig()
+    installed(store)
+    cancel(store, 'task_fix_top')
+    pass()
+    expect(store.workItems.get('wi_1')).toMatchObject({
+      state: 'blocked',
+      blockedReason: OTHER,
+      blockedTask: 'task_zindex',
+    })
+    expect(types(store)).toContain('block_reason_changed')
+  })
+
+  it('a block no task caused stays, even with no task blocked', () => {
+    for (const reason of ['policy_changed', 'integration: merge failed', 'bootstrap_failed: npm ci: red']) {
+      const { store, pass } = rig()
+      siblings(store)
+      cancel(store, 'task_fix_top', 'task_zindex')
+      store.atomic(() => {
+        const doc = store.workItems.get('wi_1') as StoreDoc
+        store.workItems.save({ ...doc, state: 'blocked', blockedReason: reason })
+      })
+      pass()
+      expect(store.workItems.get('wi_1')).toMatchObject({ state: 'blocked', blockedReason: reason })
+      expect(types(store)).not.toContain('block_cleared')
+    }
+  })
+
+  it('a later block no task caused does not inherit the task an earlier block named', () => {
+    const { store, pass } = rig()
+    siblings(store)
+    cancel(store, 'task_fix_top', 'task_zindex')
+    store.atomic(() => {
+      const doc = store.workItems.get('wi_1') as StoreDoc
+      store.workItems.save({ ...doc, state: 'executing', blockedTask: 'task_fix_top' })
+      refuseLaunch(
+        store,
+        { attempt_id: 'att_9', task_id: 'task_popup', work_item_id: 'wi_1' },
+        'policy_changed',
+        AT,
+      )
+    })
+    pass()
+    expect(store.workItems.get('wi_1')).toMatchObject({ state: 'blocked', blockedReason: 'policy_changed' })
+    expect(store.workItems.get('wi_1')?.blockedTask).toBeUndefined()
+  })
+})

@@ -1,7 +1,7 @@
 import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { MetaBrain, MetaDecision } from '../src'
-import { fakeBrain, MetaAgentService, RepoAdmissionError } from '../src'
+import type { MetaBrain, MetaDecision, PlannerContextInput } from '../src'
+import { fakeBrain, MetaAgentService, PlannerTools, RepoAdmissionError } from '../src'
 
 /**
  * Repo and canonical identity (M1.2, spec §10, §12.1, decisions #10 and #19): the planner's
@@ -407,6 +407,21 @@ describe('repo admission and canonical identity', () => {
 
     expect(Object.keys(results)).toHaveLength(8)
     for (const [name, result] of Object.entries(results)) expect([name, result.ok]).toEqual([name, false])
+  })
+
+  it("cancel_task answers with the task's status after the cancel, not before (live, 9 November 2026)", async () => {
+    const snapshot = {
+      work: [{ id: 'wi_1', tasks: [{ id: 'task_fix_top', state: 'blocked' }] }],
+    } as unknown as PlannerContextInput
+    const tools = new PlannerTools({ turn: { messageId: 'msg_1' }, snapshot, table: {} as never, slots: [] })
+
+    expect(tools.execute('cancel_task', { task: 'task_fix_top' })).toEqual({
+      ok: true,
+      task: 'task_fix_top',
+      state: 'cancelled',
+      was: 'blocked',
+    })
+    expect(tools.journal().cancels).toEqual([{ taskId: 'task_fix_top' }])
   })
 
   it('a scripted decision that reaches across repos is dropped by the service', async () => {

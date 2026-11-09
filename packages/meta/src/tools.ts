@@ -816,6 +816,7 @@ export class PlannerTools {
     if (TASK_TERMINAL.includes(state))
       return { ok: false, issues: [`task '${taskId}' is already '${state}'`] }
     this.#journal.cancels.push({ taskId })
-    return { ok: true, task: taskId, state }
+    // The cancel commits with the turn: the planner reads what the task is then, and what it was.
+    return { ok: true, task: taskId, state: 'cancelled', was: state }
   }
 }

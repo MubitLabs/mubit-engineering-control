@@ -6,7 +6,7 @@ export type {
   ParkedState,
   StopReason,
 } from './attempt-runner'
-export { AttemptRunner, NotWiredError, replayJournal } from './attempt-runner'
+export { AttemptRunner, modelRefusalOf, NotWiredError, replayJournal } from './attempt-runner'
 export type { CheckOutcome, CheckSpec } from './checks'
 export { LOG_TAIL_BYTES, runCheck, runChecks } from './checks'
 export type {

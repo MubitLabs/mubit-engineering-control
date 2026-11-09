@@ -26,6 +26,24 @@ describe('modelRefusalOf', () => {
     )
   })
 
+  // Verbatim from Codex run 7 (0.148.0, a ChatGPT sign-in asked for gpt-6-luna, 9 Nov 2026).
+  it('reads the real 0.148.0 refusal', () => {
+    const real =
+      '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-6-luna\' model is not supported when using Codex with a ChatGPT account.","code":"model_not_found"}}'
+    expect(
+      modelRefusalOf([error(real, { message: real, codexErrorInfo: 'other', additionalDetails: null })]),
+    ).toBe("The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account.")
+  })
+
+  // The ChatGPT backend's other body shape: the words alone, under `detail`, with no code.
+  it('knows the words alone, from a {detail} body', () => {
+    const detail =
+      'unexpected status 400 Bad Request: {"detail":"The \'gpt-6-luna\' model is not supported when using Codex with a ChatGPT account."}'
+    expect(modelRefusalOf([error(detail)])).toBe(
+      "The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account.",
+    )
+  })
+
   it('knows the code alone, when the words sit only in the raw event', () => {
     expect(modelRefusalOf([error('turn failed', { codexErrorInfo: 'model_not_found' })])).toBe('turn failed')
   })

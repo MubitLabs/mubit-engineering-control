@@ -48,14 +48,17 @@ Nothing is spent: no thread starts. On 0.148.0 the call starts none of the home'
 `vendor_says` is model/list's own description of each. Putting them first means a home whose listing fails still runs the proven rows. The gpt-6 rows stay for connections that list them. Codex keeps no `frontier` row, so `frontier→strong` holds.
 
 **A refused model is said as one.**
-- `packages/runtime/src/attempt-runner.ts` `modelRefusalOf(events)` looks for an `error` event matching `model_not_found`, "model is not supported", or "model … does not exist". It returns the vendor's sentence, taken from the body's `"message"` and capped at 300 characters.
+- `packages/runtime/src/attempt-runner.ts` `modelRefusalOf(events)` looks for an `error` event matching `model_not_found`, "model is not supported", or "model … does not exist". It returns the vendor's sentence, taken from the body's `"message"` (or `"detail"`) and capped at 300 characters. The real 0.148.0 refusal, captured in Codex run 7, is an `error` event whose detail is `{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account.","code":"model_not_found"}}`.
 - `#finish` then fails `model_unsupported: <model> on <slot>: <sentence>` in place of `engine_api_error`. A park still comes first.
 - `apps/desktop/src/reason-words.ts`: `model_unsupported` reads "The connection cannot run the model chosen for this task: gpt-6-luna on codex-1: The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account."
 
 **Test support.**
 - `packages/testkit/fake-cli/codex` answers `model/list` from `scenario.models`, with `modelPageSize` and `modelListError`. With none of them set it answers `{}`, as it does any method.
 - `packages/testkit/fixtures/codex/0.148.0/model_list/` is a real recording of 0.148.0's answer on an empty scratch home, with `recorded_by: real` and a redacted path. The signed-in listing was not recorded as a fixture: it is the account's catalogue, so only its ids are written down, in VERIFICATION.md.
-- `apps/desktop/test/codex-models.real.test.ts` is the gated canary (`MEC_REAL_CODEX=1`). It runs the row's own probe and listing on a real home and checks that the shipped table resolves every tier to a listed id.
+- `apps/desktop/test/codex-models.real.test.ts` holds two gated canaries:
+  - with `MEC_REAL_CODEX=1`, the row's own probe and listing on a real home, checking that the shipped table resolves every tier to a listed id (zero tokens);
+  - with `MEC_REAL_CODEX_REFUSAL=1` as well, one turn asked of `gpt-6-luna` on the launch's own argv, checking that the runner reads the refusal.
+- `apps/desktop/test/codex-runner.real.test.ts` (`MEC_REAL_CODEX=1`) runs one seeded fast task through the real server and launch path.
 
 ## Not changed, and why
 

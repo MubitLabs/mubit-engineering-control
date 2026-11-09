@@ -478,11 +478,12 @@ describe('Codex through the runner', { timeout: 180_000 }, () => {
       expect(threadModel(lines)).toBeUndefined()
     })
 
-    // The 400's shape is synthetic (no recording of it exists): the message is the one the owner saw
-    // on 0.3.4, inside the error envelope and the failed turn the 0.148.0 fixtures show.
+    // The error's `message` is what a real 0.148.0 ChatGPT sign-in sent for gpt-6-luna (Codex run 7,
+    // 9 Nov 2026), with the model renamed to the one this launch resolves; the failed turn is the
+    // shape the 0.148.0 fixtures show.
     it('an engine that refuses the model fails in words naming the model and the connection', async () => {
       const message =
-        'unexpected status 400 Bad Request: {"error":{"message":"The \'gpt-5.6-luna\' model is not supported when using Codex with a ChatGPT account.","type":"invalid_request_error","param":"model","code":"model_not_found"}}'
+        '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-5.6-luna\' model is not supported when using Codex with a ChatGPT account.","code":"model_not_found"}}'
       const steps = [
         {
           notify: {

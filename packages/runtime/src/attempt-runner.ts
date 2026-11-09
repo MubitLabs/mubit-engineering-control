@@ -158,8 +158,8 @@ const keyOf = (attempt: AttemptRef): string => `${attempt.attempt_id} ${attempt.
  */
 const MODEL_REFUSAL = /model_not_found|model is not supported|model\b[^.]{0,80}\bdoes not exist/i
 
-/** A JSON body's `"message"` inside an error's text: the vendor's own sentence, unescaped. */
-const BODY_MESSAGE = /"message"\s*:\s*"((?:[^"\\]|\\.)*)"/
+/** A JSON body's `"message"` or `"detail"` inside an error's text: the vendor's own sentence. */
+const BODY_MESSAGE = /"(?:message|detail)"\s*:\s*"((?:[^"\\]|\\.)*)"/
 
 /** The longest refusal sentence a reason carries; a whole response body is not words. */
 const REFUSAL_CHARS = 300

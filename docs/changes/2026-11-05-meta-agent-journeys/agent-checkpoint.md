@@ -1,6 +1,16 @@
 # Meta-agent journey checkpoint
 
-Updated 6 November 2026, reconciled with `origin/main` at `1900dcb`. **Execution authorized by the owner and in progress (5 November 2026).** Authority is bounded by the Execution contract below and `docs/DECISIONS.md` #14-46.
+Updated 9 November 2026, reconciled with `origin/main` at the v0.3.4 bump (#62). **Execution authorized by the owner and in progress (5 November 2026).** Authority is bounded by the Execution contract below and `docs/DECISIONS.md` #14-64. Sections below "State on 9 November" are history.
+
+## State on 9 November 2026
+
+- **Installed:** v0.3.4 on the owner's machine, port 61610, real runner on; only `MubitLabs/mec-sandbox` is agreed for host runs. Backups of each prior tarball and a database copy per release are in `~/mec-releases`.
+- **Released since 0.3.1:** 0.3.2 (#54 release cards: two-step Deny, no layout shift, checks/diff/commit served, PR body line breaks, card notices; #55 `mec stop` stops the server, declined-push stage, stored answers, Try again on blocked integration; #56 classic shell removed with shortcuts; #57 bump), 0.3.3 (#58 stuck work reads plainly, link in place, no raw codes, drafts, inspector follows a settled card; #59 A never denies, no retry offered that is sure to be refused; #60 bump), 0.3.4 (#61 a lapsed confirm says so, an open stop survives a regroup; #62 bump). Every PR merged through journalled cards with the 9 required checks green (#55 and #58 each went red once, on a JSON format error and committed `node_modules` symlinks, fixed on the same PR).
+- **Real evidence (installed):** run 30 on 0.3.1 (shout.js to merged mec-sandbox PR #5) opened decision #48's gate; run 31 on 0.3.2 (clap.js to merged PR #6, `5a9254e`) showed the 0.3.2 card fixes on a real card. Chrome checks on 0.3.3: the stale 6 November wave.js item read in words with "Stop this work and ask again", no dead retry; stopped from the UI. Claude runs: 31 of a working cap of 50 (owner extension, #64). Codex and OpenCode unchanged.
+- **Synthetic evidence:** each lane's failing-first tests, mutants (all killed) and screens (1039 passed on the last lane). No separate verifier (owner rule, #41). Full local `pnpm check` not run on this loaded machine; CI is the gate.
+- **Decisions added:** #62 (classic removed, #48 gate passed), #63 (declined-push stage, spec §10, coordinator record; owner may overrule), #64 (real-run extension).
+- **Open:** a one-press way forward for work admitted under changed repository commands (new server behaviour; owner call); whether 8 s is the right confirm window; Codex and OpenCode composed journey on the final build; phone-width check; `--setting-sources user` loads the linked home's settings; agreed repositories run setup and checks unsandboxed; a low 5-hour usage reading can hide the weekly one.
+- **Next action:** owner review of 0.3.4. Further fixes ship the same way: lane, cards, CI, tag, backup, reinstall, Chrome check.
 
 ## Goal and decisions
 

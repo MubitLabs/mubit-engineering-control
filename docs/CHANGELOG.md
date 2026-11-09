@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.6 (9 November 2026)
+
+Fixes from real Codex and OpenCode requests on the installed 0.3.5. See `docs/changes/2026-11-09-codex-sandbox/` and `docs/changes/2026-11-09-moved-head/`. No migration.
+
+- **Codex can run Node checks in its worktree.** MEC's sandbox profile for Codex no longer hides the worktree's parent folder, which made `node --test` fail with EPERM. Other attempts' folders stay unreadable by name, and keys, engines and the store stay fenced (blockers-only review: no blockers). Each Codex file edit's paths and status are now recorded.
+- **A pull request that changed on GitHub says so.** If the branch head is no longer the commit MEC pushed, Work and Needs you read "The branch changed on GitHub (now <sha>). MEC won't merge commits it didn't check." instead of "Working" indefinitely.
+- **Bring up to date.** A pull request that is behind its target, or whose head moved, can be brought up to date: MEC merges the target in locally, runs the repository's checks, and asks to push on a card.
+- **GitHub's Update branch is accepted** when it only merges the target into MEC's commit and the pull request's changes are unchanged.
+- **Queued checks say so.** While GitHub's required checks wait, the work reads "Waiting for GitHub checks (queued since HH:MM)".
+
 ## 0.3.5 (9 November 2026)
 
 Real Codex and OpenCode requests on the installed 0.3.4 surfaced three problems. Each is fixed and proven on the real binary. See `docs/changes/2026-11-09-opencode-2.2.6/`, `docs/changes/2026-11-09-codex-models/` and `docs/changes/2026-11-09-ui-leftovers/`. No migration.

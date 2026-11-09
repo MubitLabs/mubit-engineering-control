@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.4 (9 November 2026)
+
+From the installed 0.3.3 walkthrough. See `docs/changes/2026-11-09-stop-confirm/`. No migration.
+
+- **A lapsed confirm says so.** An armed Approve, Deny or Stop disarms after 8 seconds; it now reads "Not done: the confirm lapsed after 8 seconds. Press it again to arm." instead of going quiet.
+- **An open stop card stays open** when a refresh moves its delivery to another Work group.
+
 ## 0.3.3 (9 November 2026)
 
 Fixes from Chrome walkthroughs of the installed 0.3.2, including real run 31 (a request to merged PR #6 on `mec-sandbox`, where the 0.3.2 card fixes held on a real card). See `docs/changes/2026-11-09-stuck-clarity/` and `docs/changes/2026-11-09-retry-truth/`. No migration.

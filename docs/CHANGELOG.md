@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.3 (9 November 2026)
+
+Fixes from Chrome walkthroughs of the installed 0.3.2, including real run 31 (a request to merged PR #6 on `mec-sandbox`, where the 0.3.2 card fixes held on a real card). See `docs/changes/2026-11-09-stuck-clarity/` and `docs/changes/2026-11-09-retry-truth/`. No migration.
+
+- **Blocked work says what to press.** The Next line names the retry on offer ("Retry integration", "Ask to push again", "Try again") in Work and Needs you, and the detail puts that button at the top.
+- **An unlinked tab says so in place.** A keyed action from a tab that isn't linked offers **Link this browser** where you pressed, instead of "refused this: approval_required". Known refusals read in words.
+- **No raw codes.** Reasons such as `repo_profile_changed` and the launch and release refusals read as sentences. Work admitted under repository commands that have since changed reads that way, with "Stop this work and ask again", and no longer offers a retry that would be refused (spec §14, decision #41).
+- **A sent message's draft stays gone** after a reload.
+- **The inspector follows a card once it settles** instead of presenting it as open.
+- **The A shortcut never denies.** It arms only the focused card's Approve; a second A used to press Deny.
+
 ## 0.3.2 (9 November 2026)
 
 Fixes from the installed 0.3.1 walkthrough (a real request to a merged pull request on `mec-sandbox`), and the classic shell removed. See `docs/changes/2026-11-09-approval-cards/`, `docs/changes/2026-11-09-stop-and-stages/` and `docs/changes/2026-11-09-remove-classic/`. No migration.

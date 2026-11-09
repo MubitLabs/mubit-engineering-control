@@ -38,6 +38,45 @@ const OPTIONS = {
   readOnly: false,
 }
 
+/** Names a sibling attempt (or anything else) may take under the shared parent, the own one's near misses first. */
+const SIBLINGS = [
+  'att_2',
+  'att_10',
+  'att_',
+  'att',
+  'a',
+  'btt_1',
+  'att-1',
+  'att_1x',
+  '.mec',
+  'integration-1',
+  'x',
+]
+
+/** The `deny` entries of a `permissions.mec` line. */
+function denyGlobs(profile: string): string[] {
+  return [...profile.matchAll(/"([^"]+)"="deny"/g)].map((match) => match[1] as string)
+}
+
+/**
+ * Whether Codex 0.148.0 refuses `path` under these deny entries, as `codex sandbox` showed it: a
+ * plain path refuses itself and everything under it; a glob refuses only what it matches, `*` and
+ * `?` stop at a separator, `[!c]` negates, and a trailing `/**` refuses what is under the stem.
+ */
+function covers(denied: readonly string[], path: string): boolean {
+  return denied.some((entry) => {
+    if (!/[*?[]/.test(entry)) return path === entry || path.startsWith(`${entry}/`)
+    const tree = entry.endsWith('/**')
+    const stem = tree ? entry.slice(0, -3) : entry
+    const body = stem
+      .replace(/[.+^${}()|\\]/g, '\\$&')
+      .replace(/\[!/g, '[^')
+      .replace(/\*/g, '[^/]*')
+      .replace(/\?/g, '[^/]')
+    return new RegExp(`^${body}${tree ? '/.*' : ''}$`).test(path)
+  })
+}
+
 function start(name: string, env: Record<string, string> = {}) {
   const dir = join(root, name)
   mkdirSync(dir, { recursive: true })
@@ -138,10 +177,31 @@ describe('the attempt arguments', () => {
   })
 
   it("refuses reading sibling attempts' worktrees and temp dirs, and keeps this attempt's own", () => {
-    expect(profile).toContain('"/data/work"="deny"')
-    expect(profile).toContain('"/data/tmp"="deny"')
+    const denied = denyGlobs(profile)
+    for (const parent of ['/data/work', '/data/tmp']) {
+      for (const sibling of SIBLINGS) {
+        expect(covers(denied, `${parent}/${sibling}`), `${parent}/${sibling}`).toBe(true)
+        expect(covers(denied, `${parent}/${sibling}/.mec/mcp.json`), `${sibling}/.mec`).toBe(true)
+      }
+      expect(covers(denied, `${parent}/att_1`)).toBe(false)
+      expect(covers(denied, `${parent}/att_1/.mec/mcp.json`)).toBe(false)
+    }
     expect(profile).toContain('"/data/work/att_1"="write"')
     expect(profile).toContain('"/data/tmp/att_1"="write"')
+  })
+
+  // 0.3.5, att_7: a deny on the parent refuses its own lstat, and Node realpaths every ancestor of
+  // the worktree, so `node --test` died EPERM (and the fs helper's canonicalize too).
+  it('leaves the parents of the worktree and temp dir readable, so a realpath of either works', () => {
+    expect(profile).not.toContain('"/data/work"="deny"')
+    expect(profile).not.toContain('"/data/tmp"="deny"')
+    expect(covers(denyGlobs(profile), '/data/work')).toBe(false)
+    expect(covers(denyGlobs(profile), '/data/tmp')).toBe(false)
+  })
+
+  it('refuses an attempt name it cannot spell in a glob, rather than fence nothing', () => {
+    expect(() => codexAttemptArgs({ ...OPTIONS, worktree: '/data/work/a*b' })).toThrow('cannot fence')
+    expect(() => codexAttemptArgs({ ...OPTIONS, tempDir: '/data/tmp/a[1]' })).toThrow('cannot fence')
   })
 
   it('never lets thread/start trust the repo cache, so project config stays off', () => {

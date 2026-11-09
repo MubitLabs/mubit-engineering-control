@@ -449,6 +449,65 @@ describe('CodexAdapter answers every server request', () => {
   })
 })
 
+// 0.3.5, att_7: three fileChange items failed and the journal said only `input: null`, and an
+// applied one said nothing. Both name their files now, from the item's `changes`.
+describe('a fileChange item in the journal', () => {
+  const item = (status: string) =>
+    JSON.stringify({
+      method: 'item/completed',
+      params: {
+        item: {
+          type: 'fileChange',
+          id: 'call_1',
+          changes: [
+            { path: '/wt/gallop.js', kind: { type: 'add' }, diff: 'export const x = 1\n' },
+            { path: '/wt/old.js', kind: { type: 'update', move_path: null }, diff: '@@\n-a\n+b\n' },
+          ],
+          status,
+        },
+      },
+    })
+  const CHANGES = [
+    { path: '/wt/gallop.js', kind: 'add' },
+    { path: '/wt/old.js', kind: 'update' },
+  ]
+
+  it('an applied change is a tool call that worked, with its paths and kinds', () => {
+    expect(parseCodexEvents([item('completed')], { exitCode: 0 })[0]).toEqual({
+      type: 'tool_call',
+      tool: 'fileChange',
+      input: { changes: CHANGES, status: 'completed' },
+      ok: true,
+    })
+  })
+
+  it('a failed or declined change says which, and its files, and never carries the diff', () => {
+    for (const status of ['failed', 'declined']) {
+      const [event] = parseCodexEvents([item(status)], { exitCode: 0 })
+      expect(event).toEqual({
+        type: 'tool_call',
+        tool: 'fileChange',
+        input: { changes: CHANGES, status },
+        ok: false,
+      })
+      expect(JSON.stringify(event)).not.toContain('export const')
+    }
+  })
+
+  it('a change with no list still journals, as no files', () => {
+    const bare = JSON.stringify({
+      method: 'item/completed',
+      params: { item: { type: 'fileChange', id: 'c', status: 'failed' } },
+    })
+    expect(parseCodexEvents([bare], { exitCode: 0 })[0]).toEqual({
+      type: 'tool_call',
+      tool: 'fileChange',
+      input: { changes: [], status: 'failed' },
+      ok: false,
+    })
+  })
+})
+
 describe('classifyCodexError', () => {
   it('maps the real and documented failure shapes', () => {
     // the real auth-expired shape: the message alone says nothing (docs/engines.md)

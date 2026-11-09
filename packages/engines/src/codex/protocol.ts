@@ -16,7 +16,9 @@ import type { EngineEventBody, ErrorClass, OperationKind, TerminalReason, Window
  *   (`thread/resume` needs it) and `params.thread.cliVersion` is the engine version.
  * - `item/completed` with `params.item.type === 'agentMessage'` → assistant `message`
  *   (deltas `item/agentMessage/delta` stay raw-only); `commandExecution` items → `tool_call`
- *   with the item's `exitCode`/`aggregatedOutput`/`durationMs`; `userMessage` echoes are skipped.
+ *   with the item's `exitCode`/`aggregatedOutput`/`durationMs`; `fileChange` items → `tool_call`
+ *   with each change's `path` and `kind.type`, ok only when `completed`; `userMessage` echoes are
+ *   skipped.
  * - approvals arrive as REQUESTS, not notifications: `item/commandExecution|fileChange|
  *   permissions/requestApproval` with the request id at the TOP level (`params.id` does not
  *   exist). `command` is a single shell line string, not argv; `fileChange` params carry no
@@ -153,6 +155,15 @@ function permissionBody(
   }
 }
 
+/** `{path, kind}` for each entry of a fileChange item's `changes` (0.148.0: `kind: {type}`). */
+function fileChangesOf(item: AnyRecord): { path: string; kind: string }[] {
+  const changes = Array.isArray(item.changes) ? (item.changes as AnyRecord[]) : []
+  return changes.map((change) => ({
+    path: str(change?.path),
+    kind: str(((change?.kind ?? {}) as AnyRecord).type) || str(change?.kind),
+  }))
+}
+
 /** A turn item that did not run: the bridge declined it, or it failed before it started. */
 const refused = (item: AnyRecord): boolean => ['declined', 'failed'].includes(str(item.status))
 
@@ -192,9 +203,14 @@ function mapCodexNotification(
         ok: exitCode === undefined ? (refused(item) ? false : undefined) : exitCode === 0,
         duration_ms: num(item.durationMs),
       })
-    } else if (itemType === 'fileChange' && refused(item)) {
-      // An applied change shows in the head; one that was refused shows nowhere else.
-      events.push({ type: 'tool_call', tool: 'fileChange', input: null, ok: false })
+    } else if (itemType === 'fileChange') {
+      // Paths and kinds only: the diff is the head's to show, and a failure names its files.
+      events.push({
+        type: 'tool_call',
+        tool: 'fileChange',
+        input: { changes: fileChangesOf(item), status: str(item.status) },
+        ok: str(item.status) === 'completed',
+      })
     } else if (itemType === 'mcpToolCall') {
       events.push({
         type: 'tool_call',

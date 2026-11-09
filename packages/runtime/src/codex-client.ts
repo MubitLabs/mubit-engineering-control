@@ -16,11 +16,14 @@
  *   home's config.toml, then loads the repository's `.codex/` (§8.4 says never). Naming the cache
  *   `untrusted` stops both; `project_root_markers=[]` does not.
  * - `:root` reads, so other attempts' worktrees and temp dirs go by name: a sibling's `.mec/mcp.json`
- *   is a live bearer. The most specific entry wins, which keeps this attempt's own.
+ *   is a live bearer. The parents themselves stay readable: a deny on `<data>/work` refuses its own
+ *   lstat, and Node realpaths every ancestor of the worktree, as the fs helper's canonicalize does
+ *   (0.3.5, att_7: `node --test` died EPERM). A glob always beats a path, so the siblings are
+ *   refused by globs that cannot match this attempt's own name.
  * - A `-c` table merges into the user's, so MCP servers do not go by replacing the table: each is
  *   named and disabled, and a server that cannot be named refuses the launch.
  */
-import { dirname } from 'node:path'
+import { basename, dirname } from 'node:path'
 import type { Writable } from 'node:stream'
 import type { OwnedSpawn } from './owned-spawn'
 
@@ -51,6 +54,9 @@ const DISABLED_FEATURES = [
 /** A name that is safe as a bare TOML key on a `-c` line. */
 const BARE_KEY = /^[A-Za-z0-9_-]+$/
 
+/** A directory name that spells itself in a Codex glob: no metacharacter, no separator. */
+const GLOB_LITERAL = /^[A-Za-z0-9._-]+$/
+
 export type CodexServerRef = { name: string; transport: string }
 
 export type CodexAttemptOptions = {
@@ -76,18 +82,37 @@ function disabledServer({ name, transport }: CodexServerRef): string {
   return `mcp_servers.${name}={${body},enabled=false}`
 }
 
+/**
+ * Deny globs for every entry of `path`'s parent but `path` itself, later ones included, that leave
+ * the parent readable. On 0.148.0 a glob only denies, `*` stops at a separator, `[!c]` is the one
+ * negation and a glob wins over any path, so the complement is spelled out: a name that leaves this
+ * one at some character, one that stops short of it, and one that runs past it, each with its tree.
+ */
+export function siblingDenyGlobs(path: string): string[] {
+  const parent = dirname(path)
+  const own = basename(path)
+  if (!GLOB_LITERAL.test(own)) throw new Error(`codex: cannot fence the siblings of ${JSON.stringify(path)}`)
+  const names = [`${own}?*`]
+  for (let i = 0; i < own.length; i += 1) {
+    names.push(`${own.slice(0, i)}[!${own[i]}]*`)
+    if (i > 0) names.push(`${own.slice(0, i - 1)}[${own[i - 1]}]`)
+  }
+  return names.flatMap((name) => [`${parent}/${name}`, `${parent}/${name}/**`])
+}
+
 /** The `codex app-server` argv for one attempt. It names the token's variable, never the token. */
 export function codexAttemptArgs(opts: CodexAttemptOptions): string[] {
-  const filesystem: Record<string, string> = {
-    ':root': 'read',
-    [dirname(opts.worktree)]: 'deny',
-    [dirname(opts.tempDir)]: 'deny',
+  const filesystem: Record<string, string> = { ':root': 'read' }
+  for (const glob of [...siblingDenyGlobs(opts.worktree), ...siblingDenyGlobs(opts.tempDir)]) {
+    filesystem[glob] = 'deny'
+  }
+  Object.assign(filesystem, {
     [opts.worktree]: opts.readOnly ? 'read' : 'write',
     [opts.tempDir]: 'write',
     [opts.sharedClone]: 'read',
     [`${opts.worktree}/.mec`]: 'read',
     [`${opts.worktree}/.git`]: 'read',
-  }
+  })
   for (const path of opts.denyRead) filesystem[path] = 'deny'
   const entries = Object.entries(filesystem).map(([path, access]) => `${toml(path)}=${toml(access)}`)
   const overrides = [

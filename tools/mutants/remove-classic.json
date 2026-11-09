@@ -1,0 +1,23 @@
+[
+  {
+    "name": "the shell mounts without reading the approval code",
+    "file": "apps/web/src/main.tsx",
+    "find": "startApproval()\n  .then(() => import('./live/entry'))",
+    "replace": "Promise.resolve()\n  .then(() => import('./live/entry'))",
+    "tests": ["apps/web/test/bootstrap.test.ts"]
+  },
+  {
+    "name": "the shell mounts while the code is still being redeemed",
+    "file": "apps/web/src/main.tsx",
+    "find": "startApproval()\n  .then(() => import('./live/entry'))",
+    "replace": "import('./live/entry').then((entry) => {\n    void startApproval()\n    return entry\n  })",
+    "tests": ["apps/web/test/bootstrap.test.ts"]
+  },
+  {
+    "name": "a shell that cannot load leaves a blank page",
+    "file": "apps/web/src/main.tsx",
+    "find": "    container.textContent = 'The workbench could not load. Reload the page to try again.'",
+    "replace": "    container.textContent = ''",
+    "tests": ["apps/web/test/bootstrap.test.ts"]
+  }
+]

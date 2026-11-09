@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **One shell.** The old workbench and its `?ui=` switch are removed (decision #35; merge held by #48). A leftover `?ui=` in an address or a stored choice in the browser is ignored and left as it is, with no migration. A view that throws while drawing is now contained to its pane. See `docs/changes/2026-11-09-remove-classic/`.
+- **Card shortcuts.** J moves to the next open card, A arms the focused card's approval (it never confirms), and G then W opens Work. None fires while typing or under a dialog.
+
 ## 0.3.1 (in preparation)
 
 Core coordination, delivery, per-repository agreement, the approval key and meta-agent visibility. Prepared on `chore/version-0.3.1` from `origin/main` at `3b40f25` (#51), then brought onto `8d8bc8f` (#52) with the fixes of 8 November; see `docs/changes/2026-11-06-core-ship/`, `docs/changes/2026-11-06-host-run-agreement/`, `docs/changes/2026-11-07-real-run-defects/`, `docs/changes/2026-11-08-ceiling-and-reference/` and `docs/changes/2026-11-07-release-0.3.1/`. Not tagged or released yet.

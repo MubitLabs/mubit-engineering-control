@@ -56,7 +56,7 @@ import {
   workRowView,
 } from '../next/work-model'
 import { repositoryName } from '../repo-target'
-import { ApprovalLink, NotLinkedNotice } from './ApprovalLink'
+import { ApprovalLink, NotLinkedNotice, useApprovalKey } from './ApprovalLink'
 import { createConfigStore } from './config-store'
 import { createDrafts, type Intent, resolveIntent } from './drafts'
 import { createInspection, liveInspectionClient } from './inspection'
@@ -138,10 +138,13 @@ function createLive() {
   }
 }
 
-function failureText(submission: Submission): string {
+function failureText(submission: Submission, linked: boolean): string {
   const { error } = submission
   if (error instanceof HttpError && error.reason === 'approval_required') {
-    return 'This browser is not linked, so the message was not sent. It is kept here: link this browser, then Retry.'
+    // The refusal stands for this send; the link that came after it is what changed.
+    return linked
+      ? 'This browser is linked now. The message was not sent before and is kept here: press Retry to send it.'
+      : 'This browser is not linked, so the message was not sent. It is kept here: link this browser, then Retry.'
   }
   if (error instanceof HttpError) {
     return `The workbench refused this message${error.reason ? ` (${error.reason})` : ''}. It is kept here. Retry sends the original text.`
@@ -165,6 +168,7 @@ export function LiveApp() {
   const state = useSyncExternalStore(workspace.subscribe, workspace.getState)
   const inspected = useSyncExternalStore(inspection.subscribe, inspection.getState)
   useSyncExternalStore(live.subscribe, live.version)
+  const linked = useApprovalKey()
   useWorkspaceUpkeep(workspace)
   const [configStore] = useState(createConfigStore)
   const pause = usePause()
@@ -331,7 +335,7 @@ export function LiveApp() {
       }),
     ...(submission?.state === 'failed' &&
       repoId !== null && {
-        failure: { text: failureText(submission), onRetry: () => void submissions.retry(repoId) },
+        failure: { text: failureText(submission, linked), onRetry: () => void submissions.retry(repoId) },
       }),
     approval: <ApprovalLink purpose="chat" />,
   }

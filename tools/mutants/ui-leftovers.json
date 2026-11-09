@@ -1,0 +1,37 @@
+[
+  {
+    "name": "a finished sign-in no longer checks its connection",
+    "file": "apps/desktop/src/server.ts",
+    "find": "      if (slot !== undefined) await probeSignedInSlot({ store, now, probeCmd }, slot)",
+    "replace": "      if (slot === undefined) await probeSignedInSlot({ store, now, probeCmd }, slot as never)",
+    "tests": ["apps/desktop/test/login-cards.test.ts"]
+  },
+  {
+    "name": "the check looks for the slot by the wrong home",
+    "file": "apps/desktop/src/server.ts",
+    "find": "            doc.home === home &&",
+    "replace": "            doc.home !== home &&",
+    "tests": ["apps/desktop/test/login-cards.test.ts"]
+  },
+  {
+    "name": "the card reports its end before the check is saved",
+    "file": "apps/desktop/src/login-cards.ts",
+    "find": "    if (card.afterExit === undefined) {\n      this.emit(card, { kind: 'exit', code })\n      return\n    }",
+    "replace": "    this.emit(card, { kind: 'exit', code })\n    if (card.afterExit === undefined) {\n      return\n    }",
+    "tests": ["apps/desktop/test/login-cards.test.ts"]
+  },
+  {
+    "name": "a failed check leaves the card never ending",
+    "file": "apps/desktop/src/login-cards.ts",
+    "find": "      () => this.emit(card, { kind: 'exit', code }),\n    )",
+    "replace": "      () => {},\n    )",
+    "tests": ["apps/desktop/test/login-cards.test.ts"]
+  },
+  {
+    "name": "the machine stays busy while the check runs",
+    "file": "apps/desktop/src/login-cards.ts",
+    "find": "    // The process is gone, so the machine is free for the next login while the check runs.\n    this.clearIfCurrent(card)\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/login-cards.test.ts"]
+  }
+]

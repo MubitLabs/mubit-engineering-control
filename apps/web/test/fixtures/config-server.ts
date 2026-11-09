@@ -291,6 +291,15 @@ export function sampleServer({
       frozenDrafts = draftsNow()
     },
 
+    /** What the server's own check after a finished sign-in leaves: the connection reads healthy. */
+    checkedAfterSignIn(label: string) {
+      const slot = slots.find((entry) => entry.label === label)
+      if (slot === undefined) return
+      slot.state = 'healthy'
+      slot.lastProbeAt = '2026-11-05T09:30:00.000Z'
+      delete slot.stateReason
+    },
+
     respond(path: string, method: string, rawBody: unknown): Response {
       const body = (typeof rawBody === 'string' ? JSON.parse(rawBody) : {}) as Record<string, unknown>
       if (fail.includes(path)) return json({ error: 'sample failure' }, 500)

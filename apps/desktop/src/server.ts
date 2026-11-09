@@ -67,7 +67,13 @@ import {
 import type { InspectionReads } from '@mec/store'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
 import { APPROVAL_HEADER, ApprovalKey } from './approval'
-import { type BackupControl, liveSlot, registerConfigRoutes, repositoryRevision } from './config-routes'
+import {
+  type BackupControl,
+  liveSlot,
+  probeSignedInSlot,
+  registerConfigRoutes,
+  repositoryRevision,
+} from './config-routes'
 import type { RetryOutcome } from './delivery'
 import { buildDoctorReport } from './doctor'
 import type { HealthSnapshot, PartEntry } from './health'
@@ -1134,7 +1140,25 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     // §5.6 serialised: while a card runs, this returns the running card's id with
     // busy=true and spawns nothing — the client's terminal attaches to that card
     // through /api/slots/login/current. The POST itself never sees stream data.
-    const started = loginCards.start({ engine, slotHome }, () => {})
+    // When the vendor command exits, the slot it signed in is checked before the card
+    // reports its end (§5.6 "the subsequent probe result"), so a fresh sign-in reads
+    // Healthy without a Check again.
+    const home = slotHome
+    const started = loginCards.start(
+      { engine, slotHome },
+      () => {},
+      async () => {
+        const slot = store.slots
+          .list()
+          .find(
+            (doc) =>
+              doc.home === home &&
+              doc.state !== 'retired' &&
+              (doc.kind === 'claude-sub' || doc.kind === 'codex-sub'),
+          )
+        if (slot !== undefined) await probeSignedInSlot({ store, now, probeCmd }, slot)
+      },
+    )
     return { id: started.id, busy: started.busy }
   })
 

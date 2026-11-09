@@ -130,6 +130,23 @@ test('Sign in again that starts shows its card', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Cancel sign-in' })).toBeVisible()
 })
 
+test('a sign-in that finishes reads Healthy with no Check again', async ({ page }) => {
+  await open(page, 'slots')
+  await page.getByRole('button', { name: 'Add connection' }).click()
+  await startSignIn(page)
+  await expect(page.getByText('Waiting for the sign-in command…')).toBeVisible()
+  const row = connection(page, 'sample-new')
+  await expect(row).toContainText('Not checked yet')
+  // The vendor command exits; the server checks the connection before the card's end is sent.
+  await page.evaluate(() => {
+    window.__server.checkedAfterSignIn('sample-new')
+    const card = window.__sources.find((source) => source.url.includes('/api/slots/login/current'))
+    card?.onmessage?.({ data: JSON.stringify({ kind: 'exit', code: 0 }) })
+  })
+  await expect(row).toContainText('Healthy')
+  await expect(row).not.toContainText('Not checked yet')
+})
+
 test('trust arms and disarms', async ({ page }) => {
   await open(page, 'settings')
   await page.getByRole('button', { name: 'Repositories' }).click()

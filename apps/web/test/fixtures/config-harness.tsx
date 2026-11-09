@@ -25,10 +25,13 @@ declare global {
   interface Window {
     __server: typeof server
     __held: Array<() => void>
+    /** Every stream the page opened, so a test can deliver a frame the real server would send. */
+    __sources: Array<{ url: string; onmessage: ((message: { data: string }) => void) | null }>
   }
 }
 window.__server = server
 window.__held = []
+window.__sources = []
 
 const hold = params.has('hold')
 window.fetch = async (input, init) => {
@@ -40,8 +43,11 @@ window.fetch = async (input, init) => {
   return response
 }
 window.EventSource = class {
-  addEventListener() {}
   onmessage = null
+  constructor(readonly url: string) {
+    window.__sources.push(this)
+  }
+  addEventListener() {}
   close() {}
 } as unknown as typeof EventSource
 

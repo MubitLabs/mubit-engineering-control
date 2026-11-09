@@ -111,6 +111,10 @@ export type PlannerWorkItem = {
   openQuestions: string[]
   holds: string[]
   blockers: string[]
+  /** Tasks merged on the work's local integration branch, and where its head is now (§14). */
+  integration?: { branch: string; head: string; tasks: string[] }
+  /** What happened to the push or pull request, in words; absent before any card. */
+  delivery?: string
 }
 
 export type PlannerAttemptRow = {
@@ -258,6 +262,13 @@ function workSection(input: PlannerContextInput): string {
         (item.blockers.length > 0 ? ` blockers=${item.blockers.join(',')}` : '') +
         (taskOmitted > 0 ? ` (+${taskOmitted} more tasks omitted)` : ''),
       ...taskLines,
+      ...(item.integration === undefined
+        ? []
+        : [
+            `    integrated locally: ${item.integration.tasks.join(', ')} on ${item.integration.branch} at ${item.integration.head}` +
+              ' (merged on this machine; a new task builds on it)',
+          ]),
+      ...(item.delivery === undefined ? [] : [`    push to GitHub: ${item.delivery}`]),
     ].join('\n')
   })
   return [
@@ -502,6 +513,49 @@ export function modelRowsFromTable(
  * Budgets read off task docs when they carry one — no budget ledger exists yet, so
  * absence prints unknown, never a made-up number.
  */
+/**
+ * The work's local integration and its delivery, as two facts (walkthrough, 9 November 2026): a
+ * declined push leaves what was integrated in place on the integration branch, so the planner must
+ * not read it as work that never merged.
+ */
+function integrationFacts(store: Store, id: string): Pick<PlannerWorkItem, 'integration' | 'delivery'> {
+  const record = store.engines.get(`integration/${id}`)
+  const merged = Object.keys((record?.integrated ?? {}) as Record<string, unknown>)
+  const keyOf = (taskId: string): string => {
+    const key = store.tasks.get(taskId)?.localKey
+    return typeof key === 'string' ? key : taskId
+  }
+  const integration =
+    merged.length > 0 && typeof record?.head === 'string'
+      ? {
+          branch: String(record.branch ?? 'the integration branch'),
+          head: record.head,
+          tasks: merged.map(keyOf),
+        }
+      : undefined
+  const delivery = deliveryWords(store.engines.get(`delivery/${id}`))
+  return {
+    ...(integration !== undefined && { integration }),
+    ...(delivery !== undefined && { delivery }),
+  }
+}
+
+function deliveryWords(record: StoreDoc | undefined): string | undefined {
+  const stopped = deliveryStopped(record)
+  if (stopped !== undefined) {
+    const what = stopped.step === 'pr' ? 'the pull request' : 'the push'
+    const how = stopped.outcome === 'failed' ? `failed (${String(record?.error ?? 'no detail')})` : 'declined'
+    return (
+      `${how}: ${what} card for ${String(record?.head ?? 'the head')} was ${stopped.outcome === 'failed' ? 'approved and failed' : String(record?.answer ?? 'declined')}` +
+      '; nothing has left this machine; the integrated commits are still here, and a new head gets a new push card'
+    )
+  }
+  const stage = record?.stage
+  if (stage === 'push_card') return 'a push card waits for the owner'
+  if (stage === 'pushed' || stage === 'pr_card' || stage === 'pr_open' || stage === 'ready') return 'pushed'
+  return undefined
+}
+
 /** The facts of §10's stage, joined as Work joins them: a card only by a stored id or its mandate. */
 function stageFacts(store: Store, doc: StoreDoc, now: string): Parameters<typeof workViewOf>[1] {
   const id = String(doc.id)
@@ -522,6 +576,9 @@ function stageFacts(store: Store, doc: StoreDoc, now: string): Parameters<typeof
           (card.workItemId === undefined && mandateId !== undefined && card.mandateId === mandateId),
       ),
     attempts: store.attempts.list({ workItemId: id }),
+    tasksOpen: store.tasks
+      .list({ workItemId: id })
+      .some((task) => ['ready', 'active'].includes(String(task.status))),
     merged: delivery?.stage === 'merged',
     ...(stopped !== undefined && { deliveryStopped: stopped }),
     ...deliveryWaiting(delivery),
@@ -599,7 +656,8 @@ export function plannerContextFromStore(
         ...(modelRequest?.tier !== undefined && { tier: modelRequest.tier }),
         ...(latest !== undefined && typeof latest.slotId === 'string' && { slotId: latest.slotId }),
         ...(typeof task.status === 'string' && { state: task.status }),
-        ...(latest !== undefined && typeof latest.headSha === 'string' && { head: latest.headSha }),
+        // An attempt stores `head_sha`; `headSha` was never written, so the planner saw no head.
+        ...(latest !== undefined && typeof latest.head_sha === 'string' && { head: latest.head_sha }),
       }
     })
     const hold = doc.hold as { reason?: string; at?: string; liftedAt?: string } | undefined
@@ -614,6 +672,7 @@ export function plannerContextFromStore(
         .map((q) => String(q.id)),
       holds: hold !== undefined && hold.liftedAt === undefined ? [`held since ${hold.at ?? '?'}`] : [],
       blockers: typeof doc.blockedReason === 'string' ? [doc.blockedReason] : [],
+      ...integrationFacts(store, id),
     }
   })
 

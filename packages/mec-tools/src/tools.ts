@@ -102,7 +102,7 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
                 type: 'string',
                 enum: ['integration', 'contract'],
                 description:
-                  'integration (default): starts from the merged result of its dependencies. contract: starts from the pinned base once they are accepted',
+                  "integration (default): starts from the work's integration head: the merged result of its dependencies, or with none, of every task this work already integrated, so a follow-up sees what was just built. contract: starts from the pinned base (the commit when the work was requested), once any dependencies are accepted; use it only for a task that must not build on this work's earlier tasks",
               },
               model_request: {
                 type: 'object',

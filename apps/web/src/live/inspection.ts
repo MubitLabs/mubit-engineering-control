@@ -26,6 +26,7 @@ import {
   type WorkAction,
 } from '../next/work-model'
 import { describeApproval } from '../release-cards'
+import { isStalePage, liveServerVersion } from './stale'
 
 /**
  * The reads behind Work, Needs you and search, across every repository. Decoded pages go in and
@@ -94,6 +95,14 @@ export interface InspectionState {
   query: string
   search: Read<Page<SearchHit>>
   notice: CommandNotice | null
+  /** The server names another version than this page's build: a reload is what reads its answers. */
+  stale: boolean
+}
+
+/** How the page learns it is stale: the server's version, and its own. */
+export interface StaleCheck {
+  serverVersion: () => Promise<string | undefined>
+  pageVersion?: string
 }
 
 const NO_ACTIVITY: InspectionState['activity'] = { attemptId: null, read: { status: 'loading' } }
@@ -220,7 +229,7 @@ async function walk<T>(
   return { items, nextCursor: cursor, observedAt }
 }
 
-export function createInspection(client: InspectionClient) {
+export function createInspection(client: InspectionClient, staleCheck?: StaleCheck) {
   let state: InspectionState = {
     work: { status: 'loading' },
     needs: { status: 'loading' },
@@ -235,6 +244,7 @@ export function createInspection(client: InspectionClient) {
     query: '',
     search: { status: 'ready', data: EMPTY_SEARCH, readAt: '' },
     notice: null,
+    stale: false,
   }
   const watchers = new Set<() => void>()
   /** Anything answering under an older controller is out of date. */
@@ -259,6 +269,28 @@ export function createInspection(client: InspectionClient) {
   }
 
   const now = () => new Date().toISOString()
+
+  /**
+   * An answer this page could not decode asks the server its version, once at a time. Another
+   * version than the page's own means MEC was updated under an open tab (9 November 2026); the same
+   * version is a real decode bug, and keeps its words.
+   */
+  let askingVersion = false
+  const checkStale = (error: unknown) => {
+    if (!(error instanceof DecodeError) || staleCheck === undefined || state.stale || askingVersion) return
+    askingVersion = true
+    staleCheck
+      .serverVersion()
+      .then((server) => {
+        if (isStalePage(server, staleCheck.pageVersion)) set({ stale: true })
+      })
+      .catch(() => {
+        // No answer is no evidence of an upgrade.
+      })
+      .finally(() => {
+        askingVersion = false
+      })
+  }
 
   const readEvidence = (id: string): Promise<void> =>
     client
@@ -290,6 +322,7 @@ export function createInspection(client: InspectionClient) {
       })
       .catch((error: unknown) => {
         if (live()) set({ delivery: { id, read: failedRead(state.delivery.read, error) } })
+        checkStale(error)
       })
   }
 
@@ -318,6 +351,7 @@ export function createInspection(client: InspectionClient) {
       })
       .catch((error: unknown) => {
         if (live()) set({ activity: { attemptId: id, read: failedRead(state.activity.read, error) } })
+        checkStale(error)
       })
       .then(() => {
         if (!live()) return
@@ -393,6 +427,7 @@ export function createInspection(client: InspectionClient) {
       })
       .catch((error: unknown) => {
         if (live()) set({ task: { id, read: failedRead(state.task.read, error) } })
+        checkStale(error)
       })
   }
 
@@ -407,6 +442,7 @@ export function createInspection(client: InspectionClient) {
       })
       .catch((error: unknown) => {
         if (live()) set({ meta: failedRead(state.meta, error) })
+        checkStale(error)
       })
   }
 
@@ -430,6 +466,7 @@ export function createInspection(client: InspectionClient) {
       })
       .catch((error: unknown) => {
         if (live()) set({ work: failedRead(state.work, error) })
+        checkStale(error)
       })
     walk(client.needs, controller.signal)
       .then((data) => {
@@ -439,6 +476,7 @@ export function createInspection(client: InspectionClient) {
       })
       .catch((error: unknown) => {
         if (live()) set({ needs: failedRead(state.needs, error) })
+        checkStale(error)
       })
     if (state.delivery.id !== null) readDelivery(state.delivery.id)
     if (state.task.id !== null) readTask(state.task.id)
@@ -650,3 +688,6 @@ export function createInspection(client: InspectionClient) {
 export type Inspection = ReturnType<typeof createInspection>
 
 export const liveInspectionClient: InspectionClient = inspectApi
+
+/** The live page asks the live server. */
+export const liveStaleCheck: StaleCheck = { serverVersion: liveServerVersion }

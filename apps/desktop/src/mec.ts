@@ -14,6 +14,7 @@ import { runBackupCli, runRestoreCli } from './backup-cli'
 import { buildDoctorJson, buildDoctorReport, defaultVersionRunner } from './doctor'
 import type { HealthSnapshot } from './health'
 import { parseHealthSnapshot } from './health'
+import { ownVersion } from './own-version'
 import { type RestartOutcome, restartServer, type StopOutcome, stopServer } from './restart'
 import { runSlotCli } from './slot-cli'
 import { formatStatus, statusFromSnapshot } from './status'
@@ -138,7 +139,7 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
  * by design; nothing here ever fetches.
  */
 export function buildUpdateReport(io: CliIo): string {
-  const version = (io.readVersion ?? defaultReadVersion)()
+  const version = (io.readVersion ?? ownVersion)()
   const env = io.env ?? process.env
   const registry =
     env.MEC_REGISTRY ??
@@ -150,20 +151,6 @@ export function buildUpdateReport(io: CliIo): string {
     'internal distribution: reinstall from the repository (pnpm install && pnpm build:desktop)',
     'no auto-update exists by design',
   ].join('\n')
-}
-
-/** The nearest package.json — apps/desktop's in dev, the staged one in an internal install. */
-function defaultReadVersion(): string {
-  try {
-    const pkg = JSON.parse(
-      readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'),
-    ) as {
-      version?: unknown
-    }
-    return typeof pkg.version === 'string' && pkg.version !== '' ? pkg.version : 'unknown'
-  } catch {
-    return 'unknown'
-  }
 }
 
 /** The install's git origin, when this checkout is a repository (local git only, no network). */

@@ -437,11 +437,13 @@ export class AttemptLauncher {
     // Cache and pinned base (§14, decision #36): the first dispatch pins it for the whole work item.
     const registered = (work.pin as { url?: string } | undefined)?.url ?? String(repo.url)
     const { gitDir } = await this.#cache.ensure(cacheUrl(registered))
-    const baseSha = this.#baseFor(task, await this.#pinBase(fields.workItemId, gitDir))
-
     // §15: a repair or a review works where the attempt before it did, on what it left.
     const stayed = (field: unknown): string | undefined =>
       resuming && typeof field === 'string' ? field : undefined
+    const newTree = continuation?.worktree === undefined && stayed(attempt.worktree) === undefined
+    const integration = store.engines.get(integrationDocId(fields.workItemId))
+    const pin = await this.#pinBase(fields.workItemId, gitDir)
+    const baseSha = taskBase(task, pin, integration, newTree)
     const worktree = continuation?.worktree ?? stayed(attempt.worktree) ?? join(dataDir, 'work', attemptId)
     const tempDir = join(dataDir, 'tmp', attemptId)
     const branch = continuation?.branch ?? stayed(attempt.branch) ?? branchOf(store, fields, attempt)
@@ -513,6 +515,11 @@ export class AttemptLauncher {
       `Worktree: ${worktree}`,
       `Branch: ${branch}`,
       `Pinned base: ${baseSha}`,
+      ...(baseSha === pin
+        ? []
+        : [
+            `This base is the work's integration head (branch ${String(integration?.branch ?? 'the integration branch')}): what this work's earlier tasks built is already in it.`,
+          ]),
       `Temp dir: ${tempDir}`,
       `Attempt: ${attemptId}`,
       ...row.notes,
@@ -798,14 +805,6 @@ export class AttemptLauncher {
     return tip
   }
 
-  /** §14: an `integration` dependent starts from the integration commit, anything else from the pin. */
-  #baseFor(task: StoreDoc, pinned: string): string {
-    const waits = Array.isArray(task.dependsOn) && task.dependsOn.length > 0
-    if (!waits || task.basePolicy === 'contract') return pinned
-    const head = this.#deps.store.engines.get(integrationDocId(String(task.workItemId)))?.head
-    return typeof head === 'string' ? head : pinned
-  }
-
   /**
    * §3 rule 2: what the slot's home offers now, kept for planning between launches. A listing that
    * failed is no listing: the table alone decides, as it did before, and the last good one stays.
@@ -893,6 +892,9 @@ export class AttemptLauncher {
 function briefOf(continuation: Continuation): string {
   if (continuation.kind === 'repair') return `Repair this, from this evidence:\n${continuation.evidence}`
   if (continuation.kind === 'handoff') return continuation.evidence
+  if (continuation.kind === 'restart') {
+    return `A new start, in a fresh worktree on the base above. An earlier attempt stopped here:\n${continuation.evidence}`
+  }
   return [
     continuation.evidence,
     `This is review round ${continuation.round}: put round {count: ${continuation.round}} on your report.`,
@@ -917,6 +919,27 @@ function slotEnv(slot: StoreDoc, row: EngineRow): Record<string, string> {
 }
 
 /** `mec/<work-item8>/<task>/a<n>` (§14); n is this attempt's place among the task's attempts. */
+/**
+ * Where an attempt's worktree starts (§14, owner decision #66, "A"). An `integration` dependent
+ * starts from the integration commit, a `contract` one from the pin. A task with no dependencies
+ * starts from the integration head once a task of its work is integrated there, so a follow-up
+ * sees what was just built; `contract` opts a truly independent task out, and before anything is
+ * integrated the pin is all there is. A continuation in an existing worktree (`fresh` false) keeps
+ * the rule that worktree was made under: a repair works on what its attempt left (§15).
+ */
+export function taskBase(
+  task: StoreDoc,
+  pinned: string,
+  integration: StoreDoc | undefined,
+  fresh: boolean,
+): string {
+  if (task.basePolicy === 'contract') return pinned
+  const head = typeof integration?.head === 'string' ? integration.head : undefined
+  if (Array.isArray(task.dependsOn) && task.dependsOn.length > 0) return head ?? pinned
+  const built = Object.keys((integration?.integrated ?? {}) as Record<string, unknown>).length > 0
+  return fresh && built && head !== undefined ? head : pinned
+}
+
 function branchOf(store: Store, fields: LaunchPayload, attempt: StoreDoc): string {
   const place = store.attempts
     .list({ taskId: fields.taskId })

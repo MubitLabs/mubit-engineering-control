@@ -34,6 +34,8 @@ export type WorkItemView = {
   deliveryReady?: boolean
   /** A push or pull request card was declined, or its step failed: nothing moves until you ask again. */
   deliveryStopped?: DeliveryStop
+  /** An attempt is queued or running, or a task is ready or active: work is under way. */
+  underWay?: boolean
   /** The pull request's head on GitHub is not the commit MEC pushed or adopted: its short id. */
   branchMoved?: string
   /** GitHub's required checks on the pull request have not finished. */
@@ -60,6 +62,8 @@ export type WorkFacts = {
   hostRunUnagreed?: boolean
   /** `deliveryStopped` of the item's delivery record; absent where the caller reads no delivery. */
   deliveryStopped?: DeliveryStop
+  /** A task is `ready` or `active`; absent where the caller reads no tasks. */
+  tasksOpen?: boolean
   /** `deliveryWaiting(record).branchMoved`; absent where the caller reads no delivery. */
   branchMoved?: string
   /** `deliveryWaiting(record).checksWaiting`; absent where the caller reads no delivery. */
@@ -154,10 +158,12 @@ export const STAGE_TABLE: readonly StageRow[] = [
     label: () => 'Held by you',
   },
   {
-    // A declined card or a failed step: the delivery waits for you to ask again (walkthrough, 9 November 2026).
+    // A declined card or a failed step: the delivery waits for you to ask again (walkthrough, 9 November
+    // 2026). Work under way after it, a follow-up's fix, is not waiting on you: its head is a new
+    // commit, and a new card asks about it (§13).
     key: 'person/blocked',
     waitingOn: 'person',
-    match: (w) => w.deliveryStopped !== undefined,
+    match: (w) => w.deliveryStopped !== undefined && w.underWay !== true,
     label: (w) => {
       const stop = w.deliveryStopped as DeliveryStop
       return `${stop.step === 'pr' ? 'Pull request' : 'Push'} ${stop.outcome}`
@@ -315,6 +321,7 @@ export function workViewOf(doc: Record<string, unknown>, facts: WorkFacts): Work
     ...(facts.turnEnded === true && text(doc.state) === 'planning' && { latestReport: 'waiting' as const }),
     ...(facts.hostRunUnagreed === true && { hostRunUnagreed: true }),
     ...(facts.deliveryStopped !== undefined && { deliveryStopped: facts.deliveryStopped }),
+    ...((live.length > 0 || facts.tasksOpen === true) && { underWay: true }),
     ...(facts.branchMoved !== undefined && { branchMoved: facts.branchMoved }),
     ...(facts.checksWaiting !== undefined && { checksWaiting: facts.checksWaiting }),
   }

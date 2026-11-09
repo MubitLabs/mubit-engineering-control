@@ -79,6 +79,7 @@ import { buildDoctorReport } from './doctor'
 import type { HealthSnapshot, PartEntry } from './health'
 import { hostIsLoopback, registerInspectionRoutes, scrub } from './inspection'
 import { type CardEvent, LoginCardManager } from './login-cards'
+import { ownVersion } from './own-version'
 import { metaSlotRefusal } from './readiness'
 import {
   cardDetail,
@@ -652,6 +653,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 
   app.get('/api/status', async () => ({
     ...buildHealthSnapshot(store, deps.health),
+    // A page from an older build compares this with its own and asks for a reload (9 November 2026).
+    version: ownVersion(),
     // What the workbench may offer. False is said before the click, never after it.
     capabilities: {
       switchWork: deps.parked !== undefined,

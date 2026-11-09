@@ -1335,6 +1335,7 @@ class Inspector {
                 merged: delivery === 'merged',
                 deliveryReady: delivery === 'pr-ready',
                 hostRunUnagreed: awaitsAgreement(this.#store, doc),
+                tasksOpen: (byStatus.ready ?? 0) + (byStatus.active ?? 0) > 0,
                 ...(stopped !== undefined && { deliveryStopped: stopped }),
                 ...deliveryWaiting(record),
               }),

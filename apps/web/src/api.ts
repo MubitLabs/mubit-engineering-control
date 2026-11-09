@@ -23,6 +23,8 @@ export type StatusSnapshot = {
   runtime: { state: RuntimeState; instances: number; answering: boolean }
   parts: Record<string, PartEntry>
   setup: { has_slot: boolean; has_repository: boolean }
+  /** The server build's version; a page from another build is stale. Absent before 0.3.7. */
+  version?: string
 }
 
 /**

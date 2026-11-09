@@ -51,6 +51,21 @@ export function verdictsOf(store: Store, attempt: StoreDoc): CheckVerdict[] {
   })
 }
 
+/** Why a task the planner cancelled with `cancel_task` is not in the result. */
+export const PLANNER_CANCELLED = 'cancelled by the planner'
+
+/**
+ * Why a cancelled task is excluded. Before 0.3.7 the planner's `cancel_task` stored no reason, so
+ * its own `task_cancelled` event is the record that a cancel was asked for, and it says the same.
+ * A cancel with neither stays unexplained, and the result stays incomplete.
+ */
+function excludedReason(store: Store, task: StoreDoc): string | undefined {
+  if (typeof task.cancelledReason === 'string') return task.cancelledReason
+  if (task.status !== 'cancelled') return undefined
+  const asked = store.events.read(`task:${String(task.id)}`).some((event) => event.type === 'task_cancelled')
+  return asked ? PLANNER_CANCELLED : undefined
+}
+
 /** The reducer's answer for one work item. The planner's `report_result` carries this beside its words. */
 export function workResultOf(store: Store, workItemId: string): WorkResult {
   const doc = store.engines.get(integrationDocId(workItemId))
@@ -60,11 +75,12 @@ export function workResultOf(store: Store, workItemId: string): WorkResult {
   return workResult({
     tasks: tasks.map((task) => {
       const id = String(task.id)
+      const excluded = excludedReason(store, task)
       return {
         id,
         status: String(task.status),
         ...(integrated[id] !== undefined && { sha: integrated[id] }),
-        ...(typeof task.cancelledReason === 'string' && { excludedReason: task.cancelledReason }),
+        ...(excluded !== undefined && { excludedReason: excluded }),
       }
     }),
     ...(typeof doc?.head === 'string' && { head: doc.head }),

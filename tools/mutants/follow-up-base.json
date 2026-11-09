@@ -1,0 +1,177 @@
+[
+  {
+    "name": "(1) a task with no dependencies starts from the head before anything is integrated",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "  return fresh && built && head !== undefined ? head : pinned\n",
+    "replace": "  return fresh && head !== undefined ? head : pinned\n",
+    "tests": ["apps/desktop/test/follow-up-base.test.ts"]
+  },
+  {
+    "name": "(1) a task with no dependencies keeps the pinned base (the old rule)",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "  return fresh && built && head !== undefined ? head : pinned\n",
+    "replace": "  return pinned\n",
+    "tests": ["apps/desktop/test/follow-up-base.test.ts", "apps/desktop/test/delivery-flow.test.ts"]
+  },
+  {
+    "name": "(1) a continuation in an existing worktree moves to the head",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "  return fresh && built && head !== undefined ? head : pinned\n",
+    "replace": "  return built && head !== undefined ? head : pinned\n",
+    "tests": ["apps/desktop/test/follow-up-base.test.ts"]
+  },
+  {
+    "name": "(1) contract no longer opts an independent task out",
+    "file": "apps/desktop/src/attempt-launch.ts",
+    "find": "  if (task.basePolicy === 'contract') return pinned\n",
+    "replace": "  if (task.basePolicy === 'contract' && Array.isArray(task.dependsOn) && task.dependsOn.length > 0) return pinned\n",
+    "tests": ["apps/desktop/test/follow-up-base.test.ts"]
+  },
+  {
+    "name": "(2) a planner turn the owner did not cause restarts a blocked task",
+    "file": "packages/meta/src/service.ts",
+    "find": "          prior?.status === 'blocked' && ownerAhead && inputsChanged(prior, { ...task, basePolicy })\n",
+    "replace": "          prior?.status === 'blocked' && inputsChanged(prior, { ...task, basePolicy })\n",
+    "tests": ["packages/meta/test/follow-up.test.ts"]
+  },
+  {
+    "name": "(2) a changed objective is no change",
+    "file": "packages/meta/src/service.ts",
+    "find": "    prior.objective !== next.objective || ids(before) !== ids(next.dependsOn) || policy !== next.basePolicy\n",
+    "replace": "    ids(before) !== ids(next.dependsOn) || policy !== next.basePolicy\n",
+    "tests": ["packages/meta/test/follow-up.test.ts"]
+  },
+  {
+    "name": "(2) a changed dependency is no change",
+    "file": "packages/meta/src/service.ts",
+    "find": "    prior.objective !== next.objective || ids(before) !== ids(next.dependsOn) || policy !== next.basePolicy\n",
+    "replace": "    prior.objective !== next.objective || policy !== next.basePolicy\n",
+    "tests": ["packages/meta/test/follow-up.test.ts"]
+  },
+  {
+    "name": "(2) a changed base policy is no change",
+    "file": "packages/meta/src/service.ts",
+    "find": "    prior.objective !== next.objective || ids(before) !== ids(next.dependsOn) || policy !== next.basePolicy\n",
+    "replace": "    prior.objective !== next.objective || ids(before) !== ids(next.dependsOn)\n",
+    "tests": ["packages/meta/test/follow-up.test.ts"]
+  },
+  {
+    "name": "(2) a restarted task is ready with no fresh attempt queued",
+    "file": "packages/meta/src/service.ts",
+    "find": "          ...(restart ? { ...free, next: next as unknown as Json } : kept),\n",
+    "replace": "          ...(restart ? free : kept),\n",
+    "tests": ["packages/meta/test/follow-up.test.ts"]
+  },
+  {
+    "name": "(2) a report says nothing of a task left blocked",
+    "file": "packages/meta/src/service.ts",
+    "find": "  if (blocked.length === 0 || decision.reports === undefined) return decision\n",
+    "replace": "  return decision\n",
+    "tests": ["packages/meta/test/follow-up.test.ts"]
+  },
+  {
+    "name": "(3) the planner is not told what is integrated locally",
+    "file": "packages/meta/src/context.ts",
+    "find": "      ...integrationFacts(store, id),\n",
+    "replace": "",
+    "tests": ["packages/meta/test/follow-up.test.ts"]
+  },
+  {
+    "name": "(3) a declined push says nothing of what stays on this machine",
+    "file": "packages/meta/src/context.ts",
+    "find": "  if (stopped !== undefined) {\n",
+    "replace": "  if (stopped !== undefined && stopped.step === 'pr') {\n",
+    "tests": ["packages/meta/test/follow-up.test.ts"]
+  },
+  {
+    "name": "(3) a task's head is read from the field nothing writes",
+    "file": "packages/meta/src/context.ts",
+    "find": "        ...(latest !== undefined && typeof latest.head_sha === 'string' && { head: latest.head_sha }),\n",
+    "replace": "        ...(latest !== undefined && typeof latest.headSha === 'string' && { head: latest.headSha }),\n",
+    "tests": ["packages/meta/test/follow-up.test.ts"]
+  },
+  {
+    "name": "(4) a declined push hides running work",
+    "file": "packages/domain/src/stages.ts",
+    "find": "    match: (w) => w.deliveryStopped !== undefined && w.underWay !== true,\n",
+    "replace": "    match: (w) => w.deliveryStopped !== undefined,\n",
+    "tests": ["packages/domain/test/stages.test.ts"]
+  },
+  {
+    "name": "(4) a ready task is not work under way",
+    "file": "packages/domain/src/stages.ts",
+    "find": "    ...((live.length > 0 || facts.tasksOpen === true) && { underWay: true }),\n",
+    "replace": "    ...(live.length > 0 && { underWay: true }),\n",
+    "tests": ["packages/domain/test/stages.test.ts"]
+  },
+  {
+    "name": "(4) Work reads no open tasks",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "                tasksOpen: (byStatus.ready ?? 0) + (byStatus.active ?? 0) > 0,\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/inspection-trace.test.ts"]
+  },
+  {
+    "name": "(4) the planner's stage reads no open tasks",
+    "file": "packages/meta/src/context.ts",
+    "find": "    tasksOpen: store.tasks\n",
+    "replace": "    tasksOpen: false && store.tasks\n",
+    "tests": ["packages/meta/test/context-stage.test.ts"]
+  },
+  {
+    "name": "(5) any failure asks the server its version",
+    "file": "apps/web/src/live/inspection.ts",
+    "find": "    if (!(error instanceof DecodeError) || staleCheck === undefined || state.stale || askingVersion) return\n",
+    "replace": "    if (staleCheck === undefined || state.stale || askingVersion) return\n",
+    "tests": ["apps/web/test/stale-page.test.ts"]
+  },
+  {
+    "name": "(5) a server that cannot read its own version reads as an upgrade",
+    "file": "apps/web/src/live/stale.ts",
+    "find": "  return server !== undefined && server !== 'unknown' && server !== own\n",
+    "replace": "  return server !== undefined && server !== own\n",
+    "tests": ["apps/web/test/stale-page.test.ts"]
+  },
+  {
+    "name": "(5) the same version reads as stale",
+    "file": "apps/web/src/live/stale.ts",
+    "find": "  return server !== undefined && server !== 'unknown' && server !== own\n",
+    "replace": "  return server !== undefined && server !== 'unknown'\n",
+    "tests": ["apps/web/test/stale-page.test.ts"]
+  },
+  {
+    "name": "(5) a stale page keeps the old notice",
+    "file": "apps/web/src/next/WorkView.tsx",
+    "find": "  if (props.stale) {\n",
+    "replace": "  if (props.stale && props.kept) {\n",
+    "tests": ["apps/web/test/stale-page.test.ts"]
+  },
+  {
+    "name": "(5) the server does not name its version",
+    "file": "apps/desktop/src/server.ts",
+    "find": "    version: ownVersion(),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/server.test.ts"]
+  },
+  {
+    "name": "(6) a planner cancel stores no reason",
+    "file": "packages/meta/src/service.ts",
+    "find": "          cancelledReason: PLANNER_CANCELLED,\n",
+    "replace": "",
+    "tests": ["packages/meta/test/follow-up.test.ts"]
+  },
+  {
+    "name": "(6) a cancel stored before 0.3.7 leaves the result incomplete",
+    "file": "packages/meta/src/work-facts.ts",
+    "find": "  return asked ? PLANNER_CANCELLED : undefined\n",
+    "replace": "  return undefined\n",
+    "tests": ["packages/meta/test/follow-up.test.ts"]
+  },
+  {
+    "name": "(6) a denial stays on the record of the new head",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      // §13: a card's answer binds its input SHA. A denial was about the old head, not this one.\n      answer: undefined,\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery-flow.test.ts"]
+  }
+]

@@ -14,7 +14,7 @@ import { runBackupCli, runRestoreCli } from './backup-cli'
 import { buildDoctorJson, buildDoctorReport, defaultVersionRunner } from './doctor'
 import type { HealthSnapshot } from './health'
 import { parseHealthSnapshot } from './health'
-import { type RestartOutcome, restartServer } from './restart'
+import { type RestartOutcome, restartServer, type StopOutcome, stopServer } from './restart'
 import { runSlotCli } from './slot-cli'
 import { formatStatus, statusFromSnapshot } from './status'
 import { clearStopMarker, readStopMarker, writeStopMarker } from './stop-marker'
@@ -35,6 +35,8 @@ export type CliIo = {
   stdout: (line: string) => void
   /** called on 'restart' when allowed: says what it did, and whether a server came of it */
   restartServer: () => Promise<RestartOutcome>
+  /** called on 'stop' after the marker: says stopped only once the server's pid is gone */
+  stopServer: () => Promise<StopOutcome>
   /** `mec update` seams; defaults read the nearest package.json, git and process.env. */
   readVersion?: () => string
   gitRemote?: () => string | null
@@ -64,9 +66,12 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
   }
 
   if (command === 'stop') {
+    // The marker first: a watchdog restarting between the signal and the exit must find it.
     writeStopMarker(io.markerDir)
+    const outcome = await io.stopServer()
+    for (const line of outcome.lines) io.stdout(line)
     io.stdout('intentional stop recorded; mec restart --respect-stop will not start the server')
-    return 0
+    return outcome.stopped ? 0 : 1
   }
 
   if (command === 'restart') {
@@ -201,6 +206,7 @@ export async function cliMain(): Promise<void> {
     // `src/` and `dist/` both sit beside `bin/`, so this is the install that is running.
     restartServer: () =>
       restartServer({ dataDir: home, binPath: fileURLToPath(new URL('../bin/mec.js', import.meta.url)) }),
+    stopServer: () => stopServer({ dataDir: home }),
   })
 }
 

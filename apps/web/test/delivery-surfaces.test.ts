@@ -267,9 +267,38 @@ describe('Conversation shows that its work blocked (§18.1)', () => {
     expect(view.blocked).toEqual([
       {
         id: 'wi_b',
-        title: 'Add audit view is blocked',
-        body: 'Blocked: the build broke. Next: Resolve what blocks it.',
+        title: 'Add audit view is blocked: the build broke.',
+        body: 'Next: Resolve what blocks it.',
       },
+    ])
+  })
+
+  it('reads as one plain sentence for any block: the work, then why', () => {
+    const declined: WorkRow = {
+      ...blocked,
+      state: 'integrating',
+      stage: { key: 'person/blocked', label: 'Push declined', waitingOn: 'person' },
+      reason: 'The push card was denied',
+      nextAction: 'Ask to push again',
+    }
+    const failed: WorkRow = {
+      ...blocked,
+      id: 'wi_x',
+      stage: { key: 'person/blocked', label: 'Failed', waitingOn: 'person' },
+      reason: 'Failed: GitHub refused the push',
+      nextAction: null,
+    }
+    const silent: WorkRow = { ...blocked, id: 'wi_s', reason: null, nextAction: null }
+    const view = conversationView({
+      row: quiet,
+      detail: null,
+      messages: [],
+      work: [declined, failed, silent],
+    })
+    expect(view.blocked.map(({ title, body }) => ({ title, body }))).toEqual([
+      { title: 'Add audit view is blocked: the push card was denied.', body: 'Next: Ask to push again.' },
+      { title: 'Add audit view failed: GitHub refused the push.', body: 'No next step was recorded.' },
+      { title: 'Add audit view is blocked.', body: 'No reason was recorded.' },
     ])
   })
 

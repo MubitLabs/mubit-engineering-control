@@ -67,6 +67,7 @@ function cliIo(dataDir: string) {
       lines.push(line)
     },
     restartServer: async () => ({ started: true, lines: [] }),
+    stopServer: async () => ({ stopped: true, lines: [] }),
   }
   return { io, lines }
 }

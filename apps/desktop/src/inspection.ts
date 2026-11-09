@@ -24,7 +24,7 @@
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import type { EngineEvent, Json, KeyFingerprint, Store, StoreDoc } from '@mec/contracts'
-import { plannerTurnEnded, type Stage, stageOf, workViewOf } from '@mec/domain'
+import { deliveryStopped, plannerTurnEnded, type Stage, stageOf, workViewOf } from '@mec/domain'
 import { git } from '@mec/git'
 import {
   assertRepoAdmission,
@@ -53,7 +53,7 @@ import {
   MAX_PAGE_LIMIT,
 } from '@mec/store'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { deliveryDocId, type RetryOffer, retryOffer } from './delivery'
+import { deliveryDocId, type RetryOffer, retryOffer, stoppedWords } from './delivery'
 
 // ── The wire shape (handoff 30, "The wire shape") ────────────────────────────────────────────
 
@@ -1157,7 +1157,15 @@ class Inspector {
           nextAction: 'Tell the meta agent to go ahead when ready',
         }
       }
-      case 'person/blocked':
+      case 'person/blocked': {
+        const record = this.#deliveryRecord(doc)
+        const stop = deliveryStopped(record)
+        if (record !== undefined && stop !== undefined && str(doc.state) !== 'blocked') {
+          return {
+            reason: cutAtWord(redactText(stoppedWords(record)), 200),
+            nextAction: stop.step === 'pr' ? 'Ask to open the pull request again' : 'Ask to push again',
+          }
+        }
         return {
           reason:
             str(doc.blockedReason) === null
@@ -1165,6 +1173,7 @@ class Inspector {
               : `Blocked: ${cutAtWord(redactText(String(doc.blockedReason)), 200)}`,
           nextAction: 'Resolve what blocks it',
         }
+      }
       case 'person/review':
         return {
           reason: 'The pull request is ready for your review',
@@ -1194,7 +1203,7 @@ class Inspector {
     if (str(doc.state) === 'done') return 'answered'
     if (str(doc.state) !== 'planning' || !turnEnded) return null
     if (this.#metaTurns().some((turn) => turn.workItemId === String(doc.id))) return null
-    return this.#lastReport(doc) === null ? 'no-answer' : 'answered'
+    return this.#lastReport(doc) === null && this.#sameTurnReport(doc) === null ? 'no-answer' : 'answered'
   }
 
   /** A ready task waiting on a connection's ceiling, in the scheduler's words (owner, 8 November 2026). */
@@ -1232,6 +1241,7 @@ class Inspector {
         awaitingConfirmation: mine.some((item) => item.kind === 'card'),
       }
       const delivery = this.#deliveryOf(doc).stage
+      const stopped = deliveryStopped(this.#deliveryRecord(doc))
       const byStatus = counts[id] ?? {}
       const total = Object.values(byStatus).reduce((sum, n) => sum + n, 0)
       const turnEnded = plannerTurnEnded(messages.get(id) ?? [], questions.get(id) ?? [])
@@ -1247,6 +1257,7 @@ class Inspector {
                 merged: delivery === 'merged',
                 deliveryReady: delivery === 'pr-ready',
                 hostRunUnagreed: awaitsAgreement(this.#store, doc),
+                ...(stopped !== undefined && { deliveryStopped: stopped }),
               }),
             )
       const repoId = repoIdOf(doc)
@@ -1400,7 +1411,32 @@ class Inspector {
       .findLast((event) => event.type === 'work_answered')
     const messageId = str(obj(ended?.body ?? undefined)?.messageId)
     const said = str(this.#store.messages.get(messageId ?? '')?.ackText)
-    return said === null ? this.#lastReport(doc) : cutText(said, ANSWER_CAP)
+    return said === null ? (this.#lastReport(doc) ?? this.#sameTurnReport(doc)) : cutText(said, ANSWER_CAP)
+  }
+
+  /**
+   * An older turn's answer aimed at other work. Before a turn's reports were its answer (#51), the
+   * planner could report against the work a question asked about; the turn wrote that report and
+   * its receipt in one write, at one instant, so that instant is what ties them. Read only for a turn
+   * with no report of its own, and only across its repository's work.
+   */
+  #sameTurnReport(doc: StoreDoc): string | null {
+    const id = String(doc.id)
+    const moved = (message: StoreDoc): string => str(message.updatedAt) ?? str(message.createdAt) ?? ''
+    const latest = this.#store.messages
+      .list({ workItemId: id })
+      .filter((message) => str(message.ackText) !== null)
+      .sort((a, b) => moved(a).localeCompare(moved(b)))
+      .at(-1)
+    const at = latest === undefined ? '' : moved(latest)
+    const repoId = repoIdOf(doc)
+    if (at === '' || repoId === null) return null
+    const streams = this.#reads
+      .docsByField('work_item', 'repoId', [repoId])
+      .flatMap((work) => (String(work.id) === id ? [] : [`work:${String(work.id)}`]))
+    const report = this.#reads.eventsAt(streams, 'result_reported', at).at(-1)
+    const summary = str(obj(report?.body ?? undefined)?.summary)
+    return summary === null ? null : cutText(summary, ANSWER_CAP)
   }
 
   /** An older item's answer has only this: its report names no message, but it is what was said. */

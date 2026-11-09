@@ -29,8 +29,8 @@ export type {
   SlotView,
 } from './scheduling'
 export { planDispatches } from './scheduling'
-export type { Stage, StageRow, WorkItemView } from './stages'
-export { plannerTurnEnded, STAGE_TABLE, stageOf, workViewOf } from './stages'
+export type { DeliveryStop, Stage, StageRow, WorkItemView } from './stages'
+export { deliveryStopped, plannerTurnEnded, STAGE_TABLE, stageOf, workViewOf } from './stages'
 export type {
   AttemptEvent,
   AttemptState,

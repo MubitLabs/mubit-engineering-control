@@ -12,6 +12,7 @@
  * - **Placement grants, the planner only asks.** A pin is honoured, a model request must resolve
  *   on the slot, and nothing unavailable silently becomes a default (§3, §11).
  */
+import { randomBytes } from 'node:crypto'
 import type { Effects, EngineId, Json, Report, Store, StoreDoc } from '@mec/contracts'
 import { ModelRequest } from '@mec/contracts'
 import type {
@@ -52,7 +53,7 @@ import { ceilingWords, UTILISATION_CEILING } from './ceiling'
 import { enqueueWake, type FollowUps } from './followups'
 import { type Continuation, nextRepair, nextReview, repairLedger } from './repair'
 import { classifyWake } from './wakes'
-import { requiredChecks, verdictsOf } from './work-facts'
+import { integrationDocId, requiredChecks, verdictsOf } from './work-facts'
 
 /** The capability table `resolveModel` reads; the planner's seam supplies it. */
 export type PlacementTable = Parameters<typeof resolveModel>[2]
@@ -424,6 +425,16 @@ export function openRepairTask(
     wakeOnUsedUp(effects, root, step.block)
     return
   }
+  saveRepairTask(store, root, { id, objective: evidence, next: step.next, at })
+}
+
+/** The repair task of an integration, in its worktree, ready for the next pass to place. */
+function saveRepairTask(
+  store: Store,
+  root: StoreDoc,
+  input: { id: string; objective: string; next: Continuation; at: string },
+): void {
+  const { id, objective, next, at } = input
   const number = store.tasks.list({ workItemId: String(root.workItemId) }).length + 1
   store.tasks.save({
     id,
@@ -432,7 +443,7 @@ export function openRepairTask(
     localKey: `repair-${number}`,
     repairOf: root.id ?? null,
     planRevision: root.planRevision ?? null,
-    objective: evidence,
+    objective,
     dependsOn: [],
     role: 'repair_agent',
     basePolicy: 'integration',
@@ -441,7 +452,7 @@ export function openRepairTask(
     originalRequestRef: root.originalRequestRef ?? null,
     // The tier the planner asked for, and why, holds for the repair of its work too.
     ...(root.modelRequest !== undefined && { modelRequest: root.modelRequest }),
-    next: step.next as unknown as Json,
+    next: next as unknown as Json,
     createdAt: at,
     updatedAt: at,
   })
@@ -457,7 +468,12 @@ export function openRepairTask(
 /** What a person, and only a person, may answer with one more repair (owner ruling 2026-11-07). */
 const OWNER_RETRYABLE = /^(repairs used up |attempt \S+ (reported blocked|ended blocked with no report): )/
 
-export type OwnerRepairOffer = { taskId: string; reason: string }
+/** `integration` is set when the repair belongs in the integration worktree: its task is already integrated. */
+export type OwnerRepairOffer = {
+  taskId: string
+  reason: string
+  integration?: { worktree: string; branch: string }
+}
 export type OwnerRepairOutcome =
   | { status: 'retrying'; taskId: string }
   | { status: 'missing' }
@@ -478,12 +494,33 @@ export function ownerRepairOffer(store: Store, work: StoreDoc): OwnerRepairOffer
     .filter((task) => task.status === 'blocked' && OWNER_RETRYABLE.test(String(task.blockedReason ?? '')))
     .sort((a, b) => String(a.updatedAt ?? '').localeCompare(String(b.updatedAt ?? '')))
     .at(-1)
-  if (target === undefined) return undefined
+  const offer =
+    target === undefined
+      ? integrationRepairOffer(store, work)
+      : { taskId: String(target.id), reason: String(target.blockedReason) }
+  if (offer === undefined) return undefined
   const live = store.attempts.list({ workItemId }).some((attempt) => {
     const state = String(attempt.state) as AttemptState
     return state === 'queued' || ACTIVE_ATTEMPT_STATES.includes(state)
   })
-  return live ? undefined : { taskId: String(target.id), reason: String(target.blockedReason) }
+  return live ? undefined : offer
+}
+
+/**
+ * Combined checks that failed after their task was integrated: the used-up block lands on the work,
+ * since that task cannot block, so no task carries it. The integration record names the task and
+ * its worktree, which is where one more repair runs (§14, decision #36).
+ */
+function integrationRepairOffer(store: Store, work: StoreDoc): OwnerRepairOffer | undefined {
+  const reason = String(work.blockedReason ?? '')
+  if (!OWNER_RETRYABLE.test(reason)) return undefined
+  const record = store.engines.get(integrationDocId(String(work.id)))
+  const failed = record?.failed as { taskId?: unknown; repairing?: unknown } | undefined
+  if (failed?.repairing !== true || typeof failed.taskId !== 'string') return undefined
+  const { worktree, branch } = record ?? {}
+  if (typeof worktree !== 'string' || typeof branch !== 'string') return undefined
+  if (store.tasks.get(failed.taskId)?.status !== 'integrated') return undefined
+  return { taskId: failed.taskId, reason, integration: { worktree, branch } }
 }
 
 /**
@@ -507,11 +544,32 @@ export function ownerRetryRepair(store: Store, workItemId: string, at: string): 
     const task = store.tasks.get(offer.taskId) as StoreDoc
     const latest = latestOf(store.attempts.list({ taskId: offer.taskId }))
     const { attempts, reports } = familyOf(store, task)
+    const evidence = `The owner asked to try again. Where it stopped:\n${offer.reason}`
+    const round = repairLedger(attempts, reports).rounds
+    if (offer.integration !== undefined) {
+      const id = `task_${randomBytes(6).toString('hex')}`
+      const next: Continuation = { kind: 'repair', role: 'repair_agent', evidence, round, origin: 'owner' }
+      saveRepairTask(store, task, { id, objective: evidence, next: { ...next, ...offer.integration }, at })
+      const { blockedReason: _blocked, ...free } = work
+      store.workItems.save({
+        ...free,
+        state: transition(WORK_ITEM_MACHINE, String(work.state), 'resume_integrating'),
+        updatedAt: at,
+      })
+      appendEvent(
+        store,
+        `work:${workItemId}`,
+        'retry_requested',
+        { workItemId, kind: 'repair', taskId: id, origin: 'owner', at },
+        at,
+      )
+      return { status: 'retrying', taskId: id }
+    }
     const next: Continuation = {
       kind: 'repair',
       role: 'repair_agent',
-      evidence: `The owner asked to try again. Where it stopped:\n${offer.reason}`,
-      round: repairLedger(attempts, reports).rounds,
+      evidence,
+      round,
       origin: 'owner',
       ...(typeof latest?.worktree === 'string' && { worktree: latest.worktree }),
       ...(typeof latest?.branch === 'string' && { branch: latest.branch }),

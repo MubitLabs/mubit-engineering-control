@@ -11,7 +11,10 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
-function io(restartServer: CliIo['restartServer']) {
+function io(
+  restartServer: CliIo['restartServer'],
+  stopServer: CliIo['stopServer'] = async () => ({ stopped: true, lines: ['no server was running'] }),
+) {
   const lines: string[] = []
   const markerDir = mkdtempSync(join(tmpdir(), 'mec-cli-'))
   dirs.push(markerDir)
@@ -26,9 +29,37 @@ function io(restartServer: CliIo['restartServer']) {
         lines.push(line)
       },
       restartServer,
+      stopServer,
     },
   }
 }
+
+describe('mec stop', () => {
+  it('a server that did not stop is said plainly, with its pid, and the command fails', async () => {
+    const { io: cli, lines } = io(
+      async () => ({ started: true, lines: [] }),
+      async () => ({
+        stopped: false,
+        lines: ['not stopped: pid 4242 did not stop within 45 s; it is still running'],
+      }),
+    )
+    const code = await runCli(['stop'], cli)
+    expect(code).toBe(1)
+    expect(lines.join('\n')).toContain('pid 4242')
+    expect(lines.join('\n')).not.toContain('stopped pid')
+    // The intent stands either way: a watchdog must not start what the owner meant to stop.
+    expect(readStopMarker(cli.markerDir).present).toBe(true)
+  })
+
+  it('says what it stopped', async () => {
+    const { io: cli, lines } = io(
+      async () => ({ started: true, lines: [] }),
+      async () => ({ stopped: true, lines: ['stopped pid 4242'] }),
+    )
+    expect(await runCli(['stop'], cli)).toBe(0)
+    expect(lines[0]).toBe('stopped pid 4242')
+  })
+})
 
 describe('mec restart', () => {
   it('restart does not claim success without starting', async () => {

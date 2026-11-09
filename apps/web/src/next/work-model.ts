@@ -1111,6 +1111,17 @@ const whyAndNext = (reason: string | null, next: string | null): string =>
     ? 'No reason was recorded.'
     : sentences(reason, next === null ? null : `Next: ${next}`)
 
+/** A served reason may open with its label ("Blocked: …"); the sentence says that once, in its own words. */
+function blockedSentence(row: WorkRow): string {
+  const title = row.title ?? 'Untitled request'
+  const verb = row.stage.label === 'Failed' ? 'failed' : 'is blocked'
+  const why = row.reason?.replace(/^(Blocked|Failed):\s*/, '').trim() ?? ''
+  if (why === '') return `${title} ${verb}.`
+  // "The push card" reads "the push card" mid-sentence; "GitHub" and "CI" keep their capitals.
+  const lead = /^[A-Z][a-z]*(\s|$)/.test(why) ? `${why[0]?.toLowerCase()}${why.slice(1)}` : why
+  return sentences(`${title} ${verb}: ${lead}`)
+}
+
 function workNeedProps(item: WorkNeedItem): WorkNeedView {
   return {
     id: item.id,
@@ -1354,8 +1365,13 @@ export function conversationView(input: {
       )
       .map((row) => ({
         id: row.id,
-        title: `${row.title ?? 'Untitled request'} is ${row.stage.label.toLowerCase()}`,
-        body: whyAndNext(row.reason, row.nextAction),
+        title: blockedSentence(row),
+        body:
+          row.nextAction !== null
+            ? sentences(`Next: ${row.nextAction}`)
+            : row.reason === null
+              ? 'No reason was recorded.'
+              : 'No next step was recorded.',
       })),
   }
 }

@@ -336,6 +336,43 @@ describe('evidence from the records M2 wrote', () => {
     expect((await get('/api/inspect/work')).json().items[0].stage.label).toBe('Merged')
   })
 
+  it('a declined push reads as declined, waiting on you, with the ask again: never Working', async () => {
+    save('workItems', { ...(store.workItems.get('wi_1') as StoreDoc), state: 'integrating' })
+    save('engines', {
+      id: 'delivery/wi_1',
+      workItemId: 'wi_1',
+      stage: 'declined',
+      pushCardId: 'conf_push',
+      answer: 'denied',
+      head: HEAD,
+    })
+    const [row] = (await get('/api/inspect/work')).json().items
+    expect(row.stage).toEqual({ key: 'person/blocked', label: 'Push declined', waitingOn: 'person' })
+    expect(row.reason).toBe('The push card was denied')
+    expect(row.nextAction).toBe('Ask to push again')
+    const needs = (await get('/api/inspect/needs')).json().items
+    expect(needs).toEqual([
+      expect.objectContaining({ kind: 'work', workItemId: 'wi_1', stageLabel: 'Push declined' }),
+    ])
+    expect((await get('/api/inspect/work/wi_1')).json().retry).toMatchObject({ kind: 'push' })
+  })
+
+  it('a failed pull request step says so, and what to do', async () => {
+    save('workItems', { ...(store.workItems.get('wi_1') as StoreDoc), state: 'integrating' })
+    save('engines', {
+      id: 'delivery/wi_1',
+      workItemId: 'wi_1',
+      stage: 'failed',
+      prCardId: 'conf_pr',
+      error: 'GitHub refused the request',
+      head: HEAD,
+    })
+    const [row] = (await get('/api/inspect/work')).json().items
+    expect(row.stage.label).toBe('Pull request failed')
+    expect(row.reason).toBe('The pull request failed: GitHub refused the request')
+    expect(row.nextAction).toBe('Ask to open the pull request again')
+  })
+
   it('a clean exit with a failed check is not delivered on any route', async () => {
     const task = (await get('/api/inspect/tasks/task_1')).json()
     const work = (await get('/api/inspect/work/wi_1')).json()

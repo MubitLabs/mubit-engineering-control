@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkItemView } from '../src'
-import { plannerTurnEnded, STAGE_TABLE, stageOf, workViewOf } from '../src'
+import { deliveryStopped, plannerTurnEnded, STAGE_TABLE, stageOf, workViewOf } from '../src'
 
 /** The neutral view: open, mid-execution, no hold, no question, nothing reported. */
 const view = (overrides: Partial<WorkItemView> = {}): WorkItemView => ({
@@ -23,6 +23,7 @@ const fixtures: readonly WorkItemView[] = [
   view({ latestReport: 'failed' }),
   view({ state: 'blocked' }),
   view({ holdStatus: 'held' }),
+  view({ deliveryStopped: { step: 'push', outcome: 'declined' } }),
   view({ hostRunUnagreed: true }),
   view({ quotaWait: { resetAt: '2026-11-05T14:05:00.000Z' } }),
   view({ queued: true }),
@@ -42,6 +43,7 @@ describe('STAGE_TABLE', () => {
       'person/blocked',
       'person/blocked',
       'held',
+      'person/blocked',
       'person/agreement',
       'waiting/quota',
       'working/queued',
@@ -179,6 +181,46 @@ describe('a delivery ready for review (§10)', () => {
     expect(stageOf(asked).label).toBe('Needs your approval')
     const merged = workViewOf({ state: 'done' }, { ...facts, merged: true, deliveryReady: true })
     expect(stageOf(merged).key).toBe('ended/merged')
+  })
+})
+
+describe('a delivery whose card was declined or whose step failed (walkthrough, 9 November 2026)', () => {
+  const facts = { openQuestions: 0, awaitingConfirmation: false, attempts: [], merged: false }
+  const declinedPush = { stage: 'declined', pushCardId: 'conf_1', answer: 'denied' }
+
+  it('reads what stopped it, waiting on you, never Working', () => {
+    const stage = stageOf(
+      workViewOf({ state: 'integrating' }, { ...facts, deliveryStopped: deliveryStopped(declinedPush) }),
+    )
+    expect(stage).toEqual({ key: 'person/blocked', label: 'Push declined', waitingOn: 'person' })
+  })
+
+  it('names the step and how it stopped', () => {
+    const label = (record: Record<string, unknown>) =>
+      stageOf(workViewOf({ state: 'integrating' }, { ...facts, deliveryStopped: deliveryStopped(record) }))
+        .label
+    expect(label({ stage: 'failed', error: 'remote hung up' })).toBe('Push failed')
+    expect(label({ stage: 'declined', prCardId: 'conf_2', answer: 'denied' })).toBe('Pull request declined')
+    expect(label({ stage: 'failed', prCardId: 'conf_2', error: 'no token' })).toBe('Pull request failed')
+  })
+
+  it('any other delivery stage is no stop', () => {
+    for (const stage of ['local_complete', 'push_card', 'pushed', 'pr_card', 'pr_open', 'ready']) {
+      expect(deliveryStopped({ stage })).toBeUndefined()
+    }
+    expect(deliveryStopped(undefined)).toBeUndefined()
+  })
+
+  it('a hold outranks it, and an ended item shows its outcome', () => {
+    const stopped = deliveryStopped(declinedPush)
+    const held = workViewOf(
+      { state: 'integrating', hold: { at: '2026-11-09T09:00:00.000Z' } },
+      { ...facts, deliveryStopped: stopped },
+    )
+    expect(stageOf(held).key).toBe('held')
+    expect(stageOf(workViewOf({ state: 'stopped' }, { ...facts, deliveryStopped: stopped })).key).toBe(
+      'ended/stopped',
+    )
   })
 })
 

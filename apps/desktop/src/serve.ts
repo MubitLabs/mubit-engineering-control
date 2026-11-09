@@ -55,6 +55,36 @@ export function startupLines(handle: Pick<RunningServer, 'url' | 'portMoved'>): 
   return [`mec server listening on ${url}`, ...(moved ? [moved] : [])]
 }
 
+/**
+ * §20: the close's own steps are bounded (10 s each, the planner's 5 s grace), and this bounds them
+ * all, inside the 45 s a stop waits (`STOP_BOUND_MS`): a close that never settles must not keep a
+ * SIGTERM'd server alive. `bin/mec.js` exits once this returns, whatever is still open.
+ */
+export const SHUTDOWN_BOUND_MS = 40_000
+
+export async function closeWithin(
+  close: () => Promise<void>,
+  boundMs: number,
+  log: (line: string) => void,
+): Promise<void> {
+  let timer: NodeJS.Timeout | undefined
+  const bound = new Promise<'bound'>((resolve) => {
+    timer = setTimeout(() => resolve('bound'), boundMs)
+  })
+  const closed = close().then(
+    () => 'closed' as const,
+    (error: unknown) => {
+      log(`mec server shutdown error: ${error instanceof Error ? error.message : String(error)}`)
+      return 'closed' as const
+    },
+  )
+  const outcome = await Promise.race([closed, bound])
+  clearTimeout(timer)
+  if (outcome === 'bound') {
+    log(`mec server shutdown did not finish within ${boundMs / 1000} s; exiting without it`)
+  }
+}
+
 /** `approvalKeyFd`: the deliberate path (`--approval-key-fd=N`). Nothing else sets a key. */
 export async function serveMain(dataDir: string, flags: { approvalKeyFd?: number } = {}): Promise<void> {
   if (readStopMarker(dataDir).present) {
@@ -82,12 +112,11 @@ export async function serveMain(dataDir: string, flags: { approvalKeyFd?: number
       process.off('SIGINT', onSigint)
       process.off('SIGTERM', onSigterm)
       console.log(`mec server stopping on ${signal}`)
-      handle
-        .close()
-        .catch((error: unknown) => {
-          console.log(`mec server shutdown error: ${error instanceof Error ? error.message : String(error)}`)
-        })
-        .then(() => resolve())
+      void closeWithin(
+        () => handle.close(),
+        SHUTDOWN_BOUND_MS,
+        (line) => console.log(line),
+      ).then(() => resolve())
     }
     const onSigint = (): void => shutdown('SIGINT')
     const onSigterm = (): void => shutdown('SIGTERM')

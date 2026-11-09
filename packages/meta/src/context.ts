@@ -20,6 +20,7 @@ import type { Store, StoreDoc } from '@mec/contracts'
 import type { Caps, ModelAvailability, ModelTier, SlotModelsView, TierTableLike } from '@mec/domain'
 import {
   availableTiersOnSlot,
+  deliveryStopped,
   plannerTurnEnded,
   stageOf,
   tableEntries,
@@ -504,6 +505,8 @@ export function modelRowsFromTable(
 function stageFacts(store: Store, doc: StoreDoc, now: string): Parameters<typeof workViewOf>[1] {
   const id = String(doc.id)
   const mandateId = (doc.mandate as { id?: unknown } | undefined)?.id
+  const delivery = store.engines.get(`delivery/${id}`)
+  const stopped = deliveryStopped(delivery)
   return {
     openQuestions: store.engines
       .list()
@@ -518,7 +521,8 @@ function stageFacts(store: Store, doc: StoreDoc, now: string): Parameters<typeof
           (card.workItemId === undefined && mandateId !== undefined && card.mandateId === mandateId),
       ),
     attempts: store.attempts.list({ workItemId: id }),
-    merged: store.engines.get(`delivery/${id}`)?.stage === 'merged',
+    merged: delivery?.stage === 'merged',
+    ...(stopped !== undefined && { deliveryStopped: stopped }),
     turnEnded: plannerTurnEnded(
       store.messages.list({ workItemId: id }),
       store.engines.list({ workItemId: id }).filter((row) => String(row.id).startsWith('question/')),

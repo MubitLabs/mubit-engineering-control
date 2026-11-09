@@ -525,7 +525,7 @@ export async function startServer(opts: {
     // Before the tools go: an engine that loses its tools mid-turn fails instead of stopping.
     if (launcher !== undefined) await within(opts.closeBoundMs ?? CLOSE_BOUND_MS, launcher.close())
     if (delivery !== undefined) await within(opts.closeBoundMs ?? CLOSE_BOUND_MS, delivery.close())
-    await tools.stop()
+    await within(opts.closeBoundMs ?? CLOSE_BOUND_MS, tools.stop())
     // §20, decision #36: only work already in flight finishes, within the bound. A drain would
     // start paid planner turns on the way out; pending rows are for the next start. Past the
     // bound the engine is stopped, or its pipes would keep this process up. A turn that still

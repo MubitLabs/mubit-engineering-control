@@ -264,6 +264,26 @@ test.describe('Work', () => {
     await expect(dock.getByRole('button', { name: 'Link this browser' })).toBeVisible()
   })
 
+  test('a send refused unlinked says linked and Retry once the tab is linked', async ({ page }) => {
+    await server(page, {
+      chatPost: async () => ({ status: 403, body: { error: 'approval_required' } }),
+    })
+    await open(page, 'repo/repo_a/chat')
+    const dock = page.locator('.composer-dock')
+    const box = page.getByRole('textbox', { name: 'Message the meta agent' })
+    await box.fill('keep this draft')
+    await page.keyboard.press('Enter')
+    await expect(dock.getByRole('alert')).toContainText('This browser is not linked')
+    // The tab MEC opened hands its key over, as a press of Link this browser leads to.
+    await page.evaluate(() => new BroadcastChannel('mec-approval').postMessage({ key: 'k'.repeat(64) }))
+    await expect(dock).not.toContainText('This browser cannot send yet')
+    await expect(dock.getByRole('alert')).toContainText('This browser is linked now')
+    await expect(dock.getByRole('alert')).toContainText('Retry')
+    await expect(dock.getByRole('alert')).not.toContainText('not linked')
+    await expect(dock.getByRole('button', { name: 'Retry' })).toBeVisible()
+    await expect(box).toHaveValue('keep this draft')
+  })
+
   test('a request sent yesterday whose answer the tab never saw does not come back in the box', async ({
     page,
   }) => {

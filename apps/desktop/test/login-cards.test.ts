@@ -7,6 +7,7 @@ import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { type CardEvent, LoginCardManager, type PtyProcess, type PtySpawn } from '../src/login-cards'
 import { buildServer, type ServerDeps } from '../src/server'
+import { type ConfigServer, makeConfigServer } from './config-server'
 
 /** Flushes pending microtasks (exitCode resolutions, .then callbacks). */
 async function settled(): Promise<void> {
@@ -182,6 +183,45 @@ describe('LoginCardManager (§5.6)', () => {
     detach?.()
   })
 
+  it('reports exit only once the after-exit check settles, and still ends when the check fails', async () => {
+    const fake = fakePtyFactory()
+    const manager = new LoginCardManager({ ptySpawn: fake.spawn })
+    let release: () => void = () => {}
+    const checked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const events: CardEvent[] = []
+    const codes: number[] = []
+    manager.start(
+      { engine: 'codex', slotHome: tmpHome() },
+      (event) => events.push(event),
+      async (code) => {
+        codes.push(code)
+        await checked
+      },
+    )
+    fake.spawned[0]?.exit(0)
+    await settled()
+    expect(codes).toEqual([0])
+    expect(events).toEqual([]) // the card has not ended for anyone yet
+    expect(manager.active()).toBe(null) // but the machine is free for the next login
+    release()
+    await settled()
+    expect(events).toEqual([{ kind: 'exit', code: 0 }])
+
+    const failing: CardEvent[] = []
+    manager.start(
+      { engine: 'codex', slotHome: tmpHome() },
+      (event) => failing.push(event),
+      async () => {
+        throw new Error('the status command broke')
+      },
+    )
+    fake.spawned[1]?.exit(1)
+    await settled()
+    expect(failing).toEqual([{ kind: 'exit', code: 1 }])
+  })
+
   it('never writes to disk: a login run with a tmpdir cwd leaves both it and the home empty', async () => {
     const cwd = mkdtempSync(join(tmpdir(), `mec-login-cwd-${randomBytes(4).toString('hex')}-`))
     const home = tmpHome()
@@ -302,6 +342,65 @@ describe('login card routes (§5.6)', () => {
     expect(manager.active()).toBe(null)
     const after = await app.inject({ method: 'GET', url: '/api/slots/login/current' })
     expect(after.statusCode).toBe(404)
+  })
+})
+
+describe('a finished sign-in checks its own connection (§5.6 "the subsequent probe result")', () => {
+  const servers: ConfigServer[] = []
+  afterEach(async () => {
+    while (servers.length > 0) await servers.pop()?.close()
+  })
+
+  /** A config server whose login cards run on the fake pty; Codex's status says signed in. */
+  function signInServer(): {
+    ctx: ConfigServer
+    manager: LoginCardManager
+    fake: ReturnType<typeof fakePtyFactory>
+    probes: string[]
+  } {
+    const fake = fakePtyFactory()
+    const manager = new LoginCardManager({ ptySpawn: fake.spawn })
+    const ctx = makeConfigServer({ loginCards: manager })
+    servers.push(ctx)
+    const probes: string[] = []
+    ctx.setProbe(async (cmd, args) => {
+      probes.push(`${cmd} ${args.join(' ')}`)
+      return args[0] === 'login'
+        ? { code: 0, stdout: '', stderr: 'Logged in using ChatGPT' }
+        : { code: 0, stdout: `${cmd} 9.9.9\n`, stderr: '' }
+    })
+    return { ctx, manager, fake, probes }
+  }
+
+  it('a Codex sign-in that exits turns its new connection Healthy with no Check again', async () => {
+    const { ctx, manager, fake, probes } = signInServer()
+    await ctx.post('/api/slots/dedicated', { engine: 'codex', label: 'cx' })
+    expect(ctx.store.slots.get('slot_cx')).toMatchObject({ state: 'home_ready' })
+    await ctx.post('/api/slots/login', { engine: 'codex', label: 'cx' })
+    const seen: Array<{ event: CardEvent; state: unknown }> = []
+    manager.subscribe((event) => seen.push({ event, state: ctx.store.slots.get('slot_cx')?.state }))
+
+    fake.spawned[0]?.exit(0)
+    await vi.waitFor(() => expect(seen.at(-1)?.event).toEqual({ kind: 'exit', code: 0 }))
+
+    expect(probes).toContain('codex login status')
+    expect(ctx.store.slots.get('slot_cx')).toMatchObject({ state: 'healthy' })
+    expect(ctx.store.events.read('slot:cx').map((event) => event.type)).toContain('slot_healthy')
+    // The card's end reaches the page only once the check is saved, so a refresh then reads Healthy.
+    expect(seen.at(-1)?.state).toBe('healthy')
+  })
+
+  it('a sign-in that is cancelled checks nothing', async () => {
+    const { ctx, fake, probes } = signInServer()
+    await ctx.post('/api/slots/dedicated', { engine: 'codex', label: 'cx' })
+    const started = (await ctx.post('/api/slots/login', { engine: 'codex', label: 'cx' })).json() as {
+      id: string
+    }
+    await ctx.post('/api/slots/login/cancel', { id: started.id })
+    await settled()
+    expect(fake.spawned[0]?.killed).toBe(true)
+    expect(probes.filter((probe) => probe.includes('login status'))).toEqual([])
+    expect(ctx.store.slots.get('slot_cx')).toMatchObject({ state: 'home_ready' })
   })
 })
 

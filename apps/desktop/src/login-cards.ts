@@ -117,6 +117,8 @@ type RunningCard = {
   urls: Set<string>
   /** A terminal event was emitted (or the card was cancelled): report nothing further. */
   done: boolean
+  /** Runs once the process exits, before `exit` is reported (§5.6 "the subsequent probe result"). */
+  afterExit: ((code: number) => Promise<unknown>) | undefined
 }
 
 /**
@@ -132,9 +134,15 @@ export class LoginCardManager {
    * Starts a login card for `req`. While a card runs, the call is refused, not
    * queued: it returns the running card's id with `busy: true` (the §5.6 queue
    * lives in the UI, which keeps the refused request). `onData` becomes the
-   * card's first live subscriber.
+   * card's first live subscriber. `afterExit` runs once the vendor command
+   * exits (never on a cancel or a timeout) and `exit` is reported only after
+   * it settles, so whoever sees the card end sees the slot already checked.
    */
-  start(req: LoginRequest, onData: (event: CardEvent) => void): { id: string; busy: boolean } {
+  start(
+    req: LoginRequest,
+    onData: (event: CardEvent) => void,
+    afterExit?: (code: number) => Promise<unknown>,
+  ): { id: string; busy: boolean } {
     if (this.current !== null) return { id: this.current.id, busy: true }
 
     const engine = ENGINE_LOGIN[req.engine]
@@ -161,6 +169,7 @@ export class LoginCardManager {
       done: false,
       proc,
       timer: undefined,
+      afterExit,
     }
     // The slot home must exist before the process starts (§5.3, Codex). It is
     // idempotent — the slots layer created it at `home_created` — and it is a
@@ -228,8 +237,17 @@ export class LoginCardManager {
   private onExit(card: RunningCard, code: number): void {
     if (card.done) return
     card.done = true
+    // The process is gone, so the machine is free for the next login while the check runs.
     this.clearIfCurrent(card)
-    this.emit(card, { kind: 'exit', code })
+    if (card.afterExit === undefined) {
+      this.emit(card, { kind: 'exit', code })
+      return
+    }
+    // A failed check is the check's own record to make; the card still ends.
+    void card.afterExit(code).then(
+      () => this.emit(card, { kind: 'exit', code }),
+      () => this.emit(card, { kind: 'exit', code }),
+    )
   }
 
   private clearIfCurrent(card: RunningCard): void {

@@ -305,33 +305,8 @@ export function registerConfigRoutes(
       reply.code(400).send({ error: 'an API-key slot uses Validate, not a local probe' })
       return
     }
-    const outcome =
-      doc.engine === 'claude' ? await probeClaude(probeCmd, doc) : await probeCodex(probeCmd, doc)
-    const at = now().toISOString()
-    const saved = store.atomic(() => {
-      const fresh = liveSlot(store, id)
-      if (fresh === undefined) return false
-      const next: StoreDoc = {
-        ...fresh,
-        state: outcome.state,
-        last_probe_at: at,
-        updatedAt: at,
-        ...(outcome.identity !== undefined && { identity: outcome.identity }),
-        ...(outcome.version !== undefined && { engine_version: outcome.version }),
-      }
-      if (outcome.reason !== undefined) next.state_reason = outcome.reason
-      else delete next.state_reason
-      store.slots.save(next)
-      appendEvent(
-        store,
-        `slot:${String(doc.label)}`,
-        outcome.state === 'healthy' ? 'slot_healthy' : 'slot_degraded',
-        { slotId: id, ...(outcome.reason !== undefined && { reason: outcome.reason }), at },
-        at,
-      )
-      return true
-    })
-    if (!saved) {
+    const outcome = await probeSignedInSlot({ store, now, probeCmd }, doc)
+    if (outcome === 'retired') {
       reply.code(409).send({ error: 'slot is retired' })
       return
     }
@@ -796,6 +771,44 @@ export function registerConfigRoutes(
   }
 
   return applyDraft
+}
+
+/**
+ * §5.6 Verified, §5.8: one local status check of a sign-in slot, saved with its event. The slot
+ * may be retired while the engine answers; then nothing is saved and the answer is `retired`.
+ */
+export async function probeSignedInSlot(
+  deps: Pick<ConfigDeps, 'store' | 'now' | 'probeCmd'>,
+  doc: StoreDoc,
+): Promise<ProbeOutcome | 'retired'> {
+  const { store, now, probeCmd } = deps
+  const id = String(doc.id)
+  const outcome = doc.engine === 'claude' ? await probeClaude(probeCmd, doc) : await probeCodex(probeCmd, doc)
+  const at = now().toISOString()
+  const saved = store.atomic(() => {
+    const fresh = liveSlot(store, id)
+    if (fresh === undefined) return false
+    const next: StoreDoc = {
+      ...fresh,
+      state: outcome.state,
+      last_probe_at: at,
+      updatedAt: at,
+      ...(outcome.identity !== undefined && { identity: outcome.identity }),
+      ...(outcome.version !== undefined && { engine_version: outcome.version }),
+    }
+    if (outcome.reason !== undefined) next.state_reason = outcome.reason
+    else delete next.state_reason
+    store.slots.save(next)
+    appendEvent(
+      store,
+      `slot:${String(doc.label)}`,
+      outcome.state === 'healthy' ? 'slot_healthy' : 'slot_degraded',
+      { slotId: id, ...(outcome.reason !== undefined && { reason: outcome.reason }), at },
+      at,
+    )
+    return true
+  })
+  return saved ? outcome : 'retired'
 }
 
 type ProbeOutcome = {

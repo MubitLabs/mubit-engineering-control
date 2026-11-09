@@ -131,40 +131,45 @@ function useConnectionFlow(onChanged: () => void) {
     [],
   )
 
-  const begin = useCallback(async (slotId: string, label: string, engine: string) => {
-    setError(null)
-    let started: Awaited<ReturnType<typeof configApi.startLogin>>
-    try {
-      started = await configApi.startLogin(engine, label)
-    } catch (failure) {
-      setError(`The sign-in did not start, so ${label} is not signed in: ${failureText(failure)}`)
-      return
-    }
-    // The card opens only once a command runs: it must never wait for one that failed to start.
-    setSignIn({
-      slotId,
-      label,
-      cardId: started.id,
-      lines: [],
-      url: null,
-      ended: false,
-      note: started.busy ? 'Another sign-in is running, so this card is attached to it.' : null,
-    })
-    detach.current?.()
-    detach.current = subscribeLoginCard((event: LoginCardEvent) => {
-      setSignIn((current) => {
-        if (current === null) return current
-        if (event.kind === 'output') {
-          return { ...current, lines: [...current.lines.slice(1 - LINE_LIMIT), event.data] }
-        }
-        if (event.kind === 'url') return { ...current, url: event.url }
-        if (event.kind === 'exit') {
-          return { ...current, ended: true, note: `The sign-in command ended with code ${event.code}.` }
-        }
-        return { ...current, ended: true, note: 'The sign-in timed out after ten minutes.' }
+  const begin = useCallback(
+    async (slotId: string, label: string, engine: string) => {
+      setError(null)
+      let started: Awaited<ReturnType<typeof configApi.startLogin>>
+      try {
+        started = await configApi.startLogin(engine, label)
+      } catch (failure) {
+        setError(`The sign-in did not start, so ${label} is not signed in: ${failureText(failure)}`)
+        return
+      }
+      // The card opens only once a command runs: it must never wait for one that failed to start.
+      setSignIn({
+        slotId,
+        label,
+        cardId: started.id,
+        lines: [],
+        url: null,
+        ended: false,
+        note: started.busy ? 'Another sign-in is running, so this card is attached to it.' : null,
       })
-    })
-  }, [])
+      detach.current?.()
+      detach.current = subscribeLoginCard((event: LoginCardEvent) => {
+        setSignIn((current) => {
+          if (current === null) return current
+          if (event.kind === 'output') {
+            return { ...current, lines: [...current.lines.slice(1 - LINE_LIMIT), event.data] }
+          }
+          if (event.kind === 'url') return { ...current, url: event.url }
+          if (event.kind === 'exit') {
+            return { ...current, ended: true, note: `The sign-in command ended with code ${event.code}.` }
+          }
+          return { ...current, ended: true, note: 'The sign-in timed out after ten minutes.' }
+        })
+        // The server checks the connection before it sends the end, so a read now shows the verdict.
+        if (event.kind === 'exit') onChanged()
+      })
+    },
+    [onChanged],
+  )
 
   const submit = useCallback(
     async (request: ConnectionRequest) => {

@@ -56,6 +56,6 @@ The other 4 new tests pass before the fix, as they should: they pin what already
 
 - `pnpm typecheck`: every package Done.
 - `npx biome check .`: 0 errors. The 150 warnings and 2 infos are all in files this change does not touch. The touched files report none.
-- `pnpm exec vitest run packages/meta packages/domain`: 38 files passed, 1 skipped; **721 passed, 1 skipped (722)**.
+- `pnpm exec vitest run packages/meta packages/domain`: 38 files passed, 1 skipped; **722 passed, 1 skipped (723)** at head. inspection and delivery: 141 passed (141).
 - `pnpm exec vitest run apps/desktop`, the whole suite at once (load average 7.1): 44 failed, 972 passed, 2 skipped. Every failure is a time bound: 20 s, 40 s, 60 s or 120 s timeouts, or waits that ran out ("no announce after 40000ms"). They are in 9 files: approval-key, attempt-launch, bundle-defaults, composition, coordination, delivery-flow, engine-registry, recovery and ui-evidence. None of these touches the changed code paths.
 - Those 9 files rerun alone, with `--no-file-parallelism`: **9 files passed, 282 passed (282)**.

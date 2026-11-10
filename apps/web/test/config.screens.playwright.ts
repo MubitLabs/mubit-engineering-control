@@ -161,6 +161,24 @@ test('trust arms and disarms', async ({ page }) => {
   await expect(page.getByText('Trusted: engines honour')).toBeVisible()
 })
 
+test('screenshots before review: off by default, turned on in plain words, and saved', async ({ page }) => {
+  await open(page, 'settings')
+  await page.getByRole('button', { name: 'Repositories' }).click()
+  const toggle = page.getByLabel('Require before and after screenshots for changes people can see')
+  await expect(toggle).not.toBeChecked()
+  await expect(page.getByText('changes no work in progress')).toBeVisible()
+  await toggle.check()
+  await page.getByLabel('Pages to capture').fill('/ /about.html')
+  await page.getByRole('button', { name: 'Save screenshot setting' }).click()
+  await expect(toggle).toBeChecked()
+  await expect(page.getByLabel('Pages to capture')).toHaveValue('/ /about.html')
+
+  await page.getByLabel('Pages to capture').fill('about')
+  await page.getByRole('button', { name: 'Save screenshot setting' }).click()
+  await expect(page.locator('.ui-evidence').getByRole('alert')).toContainText('Each page starts with /')
+  await noHorizontalScroll(page)
+})
+
 test('the agreement says what it allows, arms, and can be withdrawn', async ({ page }) => {
   await open(page, 'settings')
   await page.getByRole('button', { name: 'Repositories' }).click()

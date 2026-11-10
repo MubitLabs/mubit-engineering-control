@@ -41,6 +41,7 @@ import { loadPolicy } from '../../policy/src/policy'
 import type { AttemptOutcome } from '../../scorecards/src/project'
 import { hintsFor, projectTiers } from '../../scorecards/src/tiers'
 import { unreadNotes } from './followups'
+import { screenshotWait } from './ui-evidence'
 
 /**
  * The capability table as the context reads it — a structural stand-in for the T1
@@ -572,6 +573,12 @@ function deliveryWords(record: StoreDoc | undefined): string | undefined {
   return undefined
 }
 
+/** UI evidence (§15): what a task waits on for its screenshots, when anything does. */
+function withScreenshots(store: Store, doc: StoreDoc): Pick<ReturnType<typeof stageFacts>, 'screenshots'> {
+  const screenshots = screenshotWait(store, doc)
+  return screenshots === undefined ? {} : { screenshots }
+}
+
 /** The facts of §10's stage, joined as Work joins them: a card only by a stored id or its mandate. */
 function stageFacts(store: Store, doc: StoreDoc, now: string): Parameters<typeof workViewOf>[1] {
   const id = String(doc.id)
@@ -598,6 +605,7 @@ function stageFacts(store: Store, doc: StoreDoc, now: string): Parameters<typeof
     merged: delivery?.stage === 'merged',
     ...(stopped !== undefined && { deliveryStopped: stopped }),
     ...deliveryWaiting(delivery),
+    ...withScreenshots(store, doc),
     turnEnded: plannerTurnEnded(
       store.messages.list({ workItemId: id }),
       store.engines.list({ workItemId: id }).filter((row) => String(row.id).startsWith('question/')),

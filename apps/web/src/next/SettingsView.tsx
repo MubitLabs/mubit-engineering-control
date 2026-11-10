@@ -15,6 +15,8 @@ import {
   policySummary,
   type RepositoryView,
   saveBar,
+  type UiEvidenceEdit,
+  type UiEvidenceView,
 } from './config-model'
 import { Button, useFormFocus } from './primitives'
 import { BOOTSTRAP_HINT, CHECKS_HINT } from './RepositoryForm'
@@ -575,6 +577,143 @@ export function HostRunControl({ repository, busy, error, onAgree, onWithdraw }:
   )
 }
 
+/** What the form holds, as words, before it becomes the API's setting. */
+function uiEvidenceForm(setting: UiEvidenceView) {
+  return {
+    required: setting.required,
+    start: setting.start?.argv.join(' ') ?? '',
+    port: setting.start?.port === undefined ? '' : String(setting.start.port),
+    paths: setting.paths.join(' '),
+  }
+}
+
+/**
+ * The setting a save sends. A start command is split on spaces, as argv (never a shell); the globs
+ * the record holds are kept as they are, and none means MEC's defaults.
+ */
+export function uiEvidencePatch(
+  form: ReturnType<typeof uiEvidenceForm>,
+  current: UiEvidenceView,
+): UiEvidenceEdit | string {
+  const argv = form.start.trim() === '' ? [] : form.start.trim().split(/\s+/)
+  const portText = form.port.trim()
+  const port = portText === '' ? undefined : Number(portText)
+  if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535))
+    return 'The port must be a number from 1 to 65535.'
+  if (port !== undefined && argv.length === 0) return 'A port needs the start command that listens on it.'
+  const paths = form.paths.trim() === '' ? ['/'] : form.paths.trim().split(/\s+/)
+  const bad = paths.find((path) => !path.startsWith('/') || path.startsWith('//'))
+  if (bad !== undefined) return `Each page starts with /, like /about.html (not ${bad}).`
+  const url = current.start?.url
+  return {
+    required: form.required,
+    ...(argv.length > 0 && {
+      start: {
+        argv,
+        ...(port !== undefined && { port }),
+        ...(port === undefined && url !== undefined && { url }),
+      },
+    }),
+    paths,
+    ...(current.patterns.length > 0 && { patterns: current.patterns }),
+  }
+}
+
+/**
+ * §14, §15: whether a change users see needs before and after screenshots before it is ready. It is
+ * read when MEC next decides whether a task is done, so turning it on or off stops no work.
+ */
+export function UiEvidenceControl({
+  repository,
+  busy,
+  error,
+  onSave,
+}: {
+  repository: RepositoryView
+  busy: boolean
+  error: string | null
+  onSave: (setting: UiEvidenceEdit) => void
+}) {
+  const [form, setForm] = useState(() => uiEvidenceForm(repository.uiEvidence))
+  const [invalid, setInvalid] = useState<string | null>(null)
+  const id = `ui-evidence-${repository.id}`
+  return (
+    <form
+      className="config-form ui-evidence"
+      onSubmit={(event) => {
+        event.preventDefault()
+        const patch = uiEvidencePatch(form, repository.uiEvidence)
+        if (typeof patch === 'string') {
+          setInvalid(patch)
+          return
+        }
+        setInvalid(null)
+        onSave(patch)
+      }}
+    >
+      <label className="field field-check" htmlFor={id}>
+        <input
+          id={id}
+          type="checkbox"
+          checked={form.required}
+          onChange={(event) => setForm({ ...form, required: event.target.checked })}
+        />
+        Require before and after screenshots for changes people can see
+      </label>
+      <small className="muted">
+        MEC takes them itself in a browser: one of the commit the change started from, one of its result. A
+        change to pages, styles, scripts or images is not ready for review until both exist. Turning this on
+        or off changes no work in progress; it applies the next time MEC checks whether a task is done.
+      </small>
+      <label className="field">
+        Start command (optional)
+        <input
+          type="text"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="Leave empty to show the repository’s files as they are"
+          value={form.start}
+          onChange={(event) => setForm({ ...form, start: event.target.value })}
+        />
+        <small>
+          Runs on this machine, like setup and checks, once you agree. MEC gives it a free port as PORT.
+        </small>
+      </label>
+      <label className="field">
+        Port (optional)
+        <input
+          type="text"
+          inputMode="numeric"
+          autoComplete="off"
+          value={form.port}
+          onChange={(event) => setForm({ ...form, port: event.target.value })}
+        />
+      </label>
+      <label className="field">
+        Pages to capture
+        <input
+          type="text"
+          autoComplete="off"
+          spellCheck={false}
+          value={form.paths}
+          onChange={(event) => setForm({ ...form, paths: event.target.value })}
+        />
+        <small>Paths separated by spaces, up to five. The same pages are captured before and after.</small>
+      </label>
+      {(invalid ?? error) !== null && (
+        <p className="field-error" role="alert">
+          {invalid ?? error}
+        </p>
+      )}
+      <div className="form-actions">
+        <Button type="submit" variant="primary" disabled={busy}>
+          {busy ? 'Saving…' : 'Save screenshot setting'}
+        </Button>
+      </div>
+    </form>
+  )
+}
+
 export interface RepositoryEditorProps {
   repository: RepositoryView
   bootstrap: EditorProps
@@ -584,6 +723,7 @@ export interface RepositoryEditorProps {
   isolation: { editable: boolean; reason: string | null }
   onSetTrust: (trust: boolean) => void
   hostRun: Omit<HostRunControlProps, 'repository'>
+  uiEvidence: { busy: boolean; error: string | null; onSave: (setting: UiEvidenceEdit) => void }
 }
 
 export function RepositoryEditor({
@@ -595,6 +735,7 @@ export function RepositoryEditor({
   isolation,
   onSetTrust,
   hostRun,
+  uiEvidence,
 }: RepositoryEditorProps) {
   return (
     <article className="repository">
@@ -615,6 +756,8 @@ export function RepositoryEditor({
           {trustError}
         </p>
       )}
+      <h4>Screenshots before review</h4>
+      <UiEvidenceControl repository={repository} {...uiEvidence} />
       <h4>Isolation profile</h4>
       <p className="muted">
         The default profile, the same for every repository. {isolation.editable ? null : isolation.reason}

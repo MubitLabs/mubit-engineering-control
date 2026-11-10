@@ -889,10 +889,31 @@ function RepositoryItem({
   const [trustError, setTrustError] = useState<string | null>(null)
   const isolation = capabilityGate(capabilities, 'isolationEdit')
   const hostRun = useHostRun(repository, onChanged)
+  const [shotsBusy, setShotsBusy] = useState(false)
+  const [shotsError, setShotsError] = useState<string | null>(null)
   return (
     <RepositoryEditor
       repository={repository}
       hostRun={hostRun}
+      uiEvidence={{
+        busy: shotsBusy,
+        error: shotsError,
+        onSave: (uiEvidence) => {
+          setShotsBusy(true)
+          setShotsError(null)
+          configApi
+            .editRepository(repository.id, repository.revision, { uiEvidence })
+            .then(onChanged)
+            .catch((error: unknown) =>
+              setShotsError(
+                error instanceof StaleError
+                  ? 'This repository changed elsewhere, so the setting was not saved. Reload it and try again.'
+                  : failureText(error),
+              ),
+            )
+            .finally(() => setShotsBusy(false))
+        },
+      }}
       bootstrap={bootstrapProps}
       checks={checksProps}
       trustBusy={trustBusy}

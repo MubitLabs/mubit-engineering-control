@@ -42,7 +42,7 @@ const NATIVE: BuildOptions = {
   platform: 'node',
   target: 'node22',
   bundle: true,
-  external: ['better-sqlite3', 'node-pty'],
+  external: ['better-sqlite3', 'node-pty', 'playwright-core'],
   banner: {
     js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
   },

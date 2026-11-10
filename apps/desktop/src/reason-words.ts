@@ -31,6 +31,9 @@ const WORDS: Readonly<Record<string, readonly [string, boolean?]>> = {
   unknown_role: ['The plan names a role MEC does not know'],
   launch_mismatch: ['MEC’s records for this launch disagree'],
   no_commit_identity: ['The repository sets no commit name or email', true],
+  // §15: acceptance waits for MEC's before and after screenshots; the detail says which and why.
+  ui_evidence_waiting: ['Waiting for before and after screenshots', true],
+  ui_evidence_failed: ['UI evidence is incomplete'],
   host_run_unagreed: ['You have not agreed to run this repository’s commands on this machine', true],
   // The release step's refusals (`release.ts` REFUSALS), stored on a delivery record.
   unknown_repo: ['The repository is not registered'],

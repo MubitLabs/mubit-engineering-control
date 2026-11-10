@@ -16,6 +16,8 @@ import type {
   NeedItem,
   Page,
   QuestionItem,
+  ScreenshotSet,
+  ScreenshotSide,
   SearchHit,
   TaskDetail,
   WorkDetail,
@@ -251,6 +253,8 @@ const RETRY_LABELS: Record<NonNullable<WorkDetail['retry']>['kind'], string> = {
   repair: 'Try again',
   // Merge the target here and check it; the push still comes to you as a card (owner, 9 November 2026).
   update: 'Bring up to date',
+  // §15: MEC takes the before and after screenshots again; acceptance then decides.
+  screenshots: 'Take the screenshots again',
 }
 
 /** §14: only a ready pull request, only asked once, and never on work the owner holds. */
@@ -339,7 +343,7 @@ function deliveryLabel(detail: WorkDetail): string {
   const label = DELIVERY_LABELS[stage]
   const line = prNumber !== null ? `${label}, pull request #${prNumber}` : label
   // A blocked item already shows its reason; a declined card leaves the work in its working group.
-  return detail.retry === null || detail.retry.kind === 'integration' || detail.retry.kind === 'repair'
+  return detail.retry === null || ['integration', 'repair', 'screenshots'].includes(detail.retry.kind)
     ? line
     : `${line}. ${detail.retry.reason}`
 }
@@ -484,6 +488,8 @@ export interface DeliveryDetailView {
   actions: readonly WorkAction[]
   /** The retry the server offers, shown at the top beside the Blocked line rather than below Delivery. */
   lead: WorkAction | null
+  /** §15: before and after screenshots per task, labelled with their short revisions. */
+  screenshots: readonly ScreenshotsView[]
   discuss: DiscussAction | null
 }
 
@@ -527,6 +533,52 @@ export function deliveryDetail(detail: WorkDetail, filter: RepoFilter | null): D
     actions,
     lead: actions.find((action) => action.kind === 'retry') ?? null,
     discuss: discussAction(detail, filter),
+    screenshots: detail.screenshots.map((set) => screenshotsView(set, titles.get(set.taskId) ?? set.taskId)),
+  }
+}
+
+export interface ScreenshotSideView {
+  /** `Before, 1a2b3c4`: the side and the revision it shows. */
+  label: string
+  images: readonly { src: string; alt: string; path: string }[]
+  /** Why there is no image, in words. */
+  note: string | null
+}
+export interface ScreenshotsView {
+  key: string
+  title: string
+  note: string | null
+  before: ScreenshotSideView
+  after: ScreenshotSideView
+}
+
+function screenshotSide(side: ScreenshotSide | null, name: 'Before' | 'After'): ScreenshotSideView {
+  if (side === null) return { label: name, images: [], note: 'Not taken yet' }
+  const label = `${name}, ${side.short}`
+  if (side.status === 'could_not')
+    return { label, images: [], note: `Couldn't take it: ${side.reason ?? 'no reason recorded'}` }
+  return {
+    label,
+    images: side.shots.map((shot) => ({
+      src: shot.url,
+      alt: `${name} at ${side.short}: ${shot.path}`,
+      path: shot.path,
+    })),
+    note: null,
+  }
+}
+
+function screenshotsView(set: ScreenshotSet, title: string): ScreenshotsView {
+  const size = set.viewport === null ? '' : ` at ${set.viewport.width}x${set.viewport.height}`
+  return {
+    key: set.attemptId,
+    title,
+    note:
+      set.state === 'taking' || set.state === 'requested'
+        ? 'MEC is taking the screenshots now.'
+        : `Taken by MEC from the real application${size}.`,
+    before: screenshotSide(set.before, 'Before'),
+    after: screenshotSide(set.after, 'After'),
   }
 }
 

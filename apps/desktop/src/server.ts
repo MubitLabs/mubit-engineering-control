@@ -25,7 +25,7 @@ import type {
   StoreDoc,
 } from '@mec/contracts'
 import { matchesSecret } from '@mec/contracts'
-import { WORK_ITEM_TERMINAL, type WorkItemState } from '@mec/domain'
+import { uiEvidenceSetting, WORK_ITEM_TERMINAL, type WorkItemState } from '@mec/domain'
 import type { LiveWork, MetaTurn } from '@mec/meta'
 // T7 (review 2026-11-04 §7): the setup agent for Chat's Setup mode — the Settings API's
 // read side plus a safe slot subset, every write a user-applied draft.
@@ -99,6 +99,7 @@ import {
   resolveReleaseCard,
 } from './release'
 import { type SwitchAnswer, switchCardBlocked, withdrawSwitchCard } from './slot-switch'
+import { registerScreenshotRoutes } from './ui-evidence'
 
 export type ServerDeps = {
   store: Store
@@ -1609,6 +1610,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         bootstrap: Array.isArray(doc.bootstrap) ? doc.bootstrap : [],
         checks: Array.isArray(doc.checks) ? doc.checks : [],
         trust: doc.trust === true,
+        uiEvidence: uiEvidenceSetting(doc.uiEvidence),
         revision: repositoryRevision(doc),
         hostRunAgreedAt: typeof doc.hostRunAgreedAt === 'string' ? doc.hostRunAgreedAt : null,
         waiting: waitingForAgreement(store, String(doc.id)),
@@ -2427,6 +2429,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     const metaTurns = () => deps.metaAgent?.turnsInFlight?.() ?? []
     registerInspectionRoutes(app, { store, reads: deps.inspection, now, exactsFor, metaTurns })
   }
+
+  // §15 UI evidence: the captures MEC took, and each PNG by the name its record gives it. The data
+  // dir is the keystore root (§5.4), so a scratch server never reads real captures.
+  registerScreenshotRoutes(app, store, keystoreRoot)
 
   // M3.3 setup and configuration: readiness, connections, policy, repository edits, drafts, backups.
   const applyConfigDraft = registerConfigRoutes(app, {

@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Json, ProviderId, Store, StoreDoc } from '@mec/contracts'
+import { parseUiEvidence, type UiEvidenceSetting, uiEvidenceSetting } from '@mec/domain'
 import { agreeHostRun, type SetupDraftRecord, withdrawHostRun } from '@mec/meta'
 import { loadPolicy } from '@mec/policy'
 import { loadModelsTable } from '@mec/prompts'
@@ -96,12 +97,15 @@ export type DraftOutcome =
   | { ok: true; detail?: string }
   | { ok: false; error: string; status?: number; detail?: string }
 
-/** A repository's stale-edit base: what a pin hashes, so an edit that changes nothing is not stale. */
+/** A repository's stale-edit base: what a pin hashes, plus UI evidence once set, so an edit that changes nothing is not stale. */
 export function repositoryRevision(doc: StoreDoc): string {
   const profile = JSON.stringify({
     bootstrap: doc.bootstrap ?? [],
     checks: doc.checks ?? [],
     trust: doc.trust === true,
+    // Only once set, so a repository that never had it keeps its revision. Not in the pin's hash
+    // (`profileHashOf`): the flag reaches the next acceptance and refuses no work in flight.
+    ...(doc.uiEvidence !== undefined && { uiEvidence: doc.uiEvidence }),
   })
   return createHash('sha256').update(profile, 'utf8').digest('hex')
 }
@@ -440,7 +444,7 @@ export function registerConfigRoutes(
   })
 
   // ─── Repository edit ──────────────────────────────────────────────────────────
-  // §14: bootstrap, checks and trust, never the URL. A pin holds a hash, not the commands, so work
+  // §14: bootstrap, checks, trust and UI evidence, never the URL. A pin holds a hash, not the commands, so work
   // admitted before an edit is refused at its next launch (`repo_profile_changed`), never rerun.
   app.patch('/api/repositories/:id', async (request, reply) => {
     const id = String((request.params as { id?: string }).id ?? '')
@@ -454,6 +458,7 @@ export function registerConfigRoutes(
       bootstrapCmds?: unknown
       checkCmds?: unknown
       trusted?: unknown
+      uiEvidence?: unknown
     }
     if (typeof body.base_revision !== 'string' || body.base_revision === '') {
       reply.code(400).send({ error: 'base_revision is required' })
@@ -465,9 +470,11 @@ export function registerConfigRoutes(
     }
     let bootstrap: string[] | undefined
     let checks: Array<{ name: string; cmd: string }> | undefined
+    let uiEvidence: UiEvidenceSetting | undefined
     try {
       if (body.bootstrapCmds !== undefined) bootstrap = deps.bootstrapOf(body.bootstrapCmds)
       if (body.checkCmds !== undefined) checks = deps.checksOf(body.checkCmds)
+      if (body.uiEvidence !== undefined) uiEvidence = parseUiEvidence(body.uiEvidence)
     } catch (error) {
       reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid repository payload' })
       return
@@ -482,13 +489,17 @@ export function registerConfigRoutes(
       ...(bootstrap !== undefined ? ['bootstrap'] : []),
       ...(checks !== undefined ? ['checks'] : []),
       ...(trust !== (doc.trust === true) ? ['trust'] : []),
+      ...(uiEvidence !== undefined ? ['ui_evidence'] : []),
     ]
+    const wasRequired = uiEvidenceSetting(doc.uiEvidence).required
     const at = now().toISOString()
     const next: StoreDoc = {
       ...doc,
       ...(bootstrap !== undefined && { bootstrap }),
       ...(checks !== undefined && { checks }),
       trust,
+      // §14, §15: read at each acceptance judgement, never pinned, so nothing in flight is refused.
+      ...(uiEvidence !== undefined && { uiEvidence: uiEvidence as unknown as Json }),
       updatedAt: at,
     }
     store.atomic(() => {
@@ -501,6 +512,7 @@ export function registerConfigRoutes(
           repositoryId: id,
           changed,
           ...(changed.includes('trust') && { trust: { from: !trust, to: trust } }),
+          ...(uiEvidence !== undefined && { uiEvidence: { from: wasRequired, to: uiEvidence.required } }),
           at,
         },
         at,

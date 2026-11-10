@@ -158,6 +158,8 @@ export type PrBodyInput = {
   checks: Array<{ name: string; status: string }>
   findings: string[]
   decisions: string[]
+  /** §15: one line per task with before and after screenshots, by revision. Text only: no image leaves the machine. */
+  uiEvidence?: string[]
 }
 
 /**
@@ -182,6 +184,11 @@ export function buildPrBody(input: PrBodyInput): string {
   if (input.findings.length === 0) out.push('- None.')
   for (const finding of input.findings) out.push(`- ${finding}`)
   out.push('')
+  if (input.uiEvidence !== undefined && input.uiEvidence.length > 0) {
+    out.push('## UI evidence', '')
+    for (const line of input.uiEvidence) out.push(`- ${line}`)
+    out.push('')
+  }
   out.push('## Decisions')
   if (input.decisions.length === 0) out.push('- None.')
   for (const decision of input.decisions) out.push(`- ${decision}`)

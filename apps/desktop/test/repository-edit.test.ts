@@ -139,6 +139,74 @@ describe('PATCH /api/repositories/:id', () => {
   })
 })
 
+describe('UI evidence required (§14, §15)', () => {
+  type Row = Repo & { uiEvidence: Record<string, unknown> }
+  const row = async (ctx: ConfigServer) => ((await ctx.get('/api/repositories')).json() as Row[])[0] as Row
+
+  it('is off by default, and a revision it never touched stays as it was', async () => {
+    const ctx = await withRepository()
+    expect((await row(ctx)).uiEvidence).toEqual({
+      required: false,
+      paths: ['/'],
+      patterns: expect.any(Array),
+    })
+    expect((await row(ctx)).revision).toBe(ctx.repo.revision)
+  })
+
+  it('turns on with a start command and paths, says so in the stream, and GET shows it', async () => {
+    const ctx = await withRepository()
+    const uiEvidence = {
+      required: true,
+      start: { argv: ['npm', 'start'], port: 3000 },
+      paths: ['/', '/about'],
+    }
+    const res = await ctx.patch(`/api/repositories/${ctx.repo.id}`, {
+      base_revision: ctx.repo.revision,
+      uiEvidence,
+    })
+    expect(res.statusCode).toBe(200)
+    const after = await row(ctx)
+    expect(after.uiEvidence).toMatchObject(uiEvidence)
+    expect(after.revision).not.toBe(ctx.repo.revision)
+    expect(ctx.store.events.read('repositories').at(-1)).toMatchObject({
+      body: { changed: ['ui_evidence'], uiEvidence: { from: false, to: true } },
+    })
+  })
+
+  it('does not touch the pinned profile: work admitted before still launches', async () => {
+    const ctx = await withRepository()
+    const { profileChanged, repoFields } = await import('@mec/meta')
+    ctx.store.workItems.save({
+      id: 'wi_1',
+      state: 'executing',
+      ...repoFields(ctx.store, ctx.repo.id, '{"preAuthorised":{}}'),
+    })
+    await ctx.patch(`/api/repositories/${ctx.repo.id}`, {
+      base_revision: ctx.repo.revision,
+      uiEvidence: { required: true },
+    })
+    const work = ctx.store.workItems.get('wi_1') as Record<string, unknown>
+    expect(profileChanged(ctx.store, ctx.repo.id, work as never)).toBe(false)
+  })
+
+  it('refuses a setting it cannot run, in words, and changes nothing', async () => {
+    const ctx = await withRepository()
+    for (const uiEvidence of [
+      { required: 'yes' },
+      { required: true, start: { argv: ['x'], url: 'https://example.com/' } },
+      { required: true, paths: ['no-slash'] },
+      { required: true, start: { argv: ['npm start; rm -rf /'] } },
+    ]) {
+      const res = await ctx.patch(`/api/repositories/${ctx.repo.id}`, {
+        base_revision: ctx.repo.revision,
+        uiEvidence,
+      })
+      expect(res.statusCode, JSON.stringify(uiEvidence)).toBe(400)
+    }
+    expect((await row(ctx)).uiEvidence).toMatchObject({ required: false })
+  })
+})
+
 describe('a setup proposal and trust (§22, requirement 13)', () => {
   const proposal = (ctx: ConfigServer, id: string, patch: Record<string, unknown>) => {
     const path = join(ctx.dir, id)

@@ -210,6 +210,32 @@ function DeliveryDetail({
           )}
         </section>
       )}
+      {detail.screenshots.length > 0 && (
+        <section className="work-links work-screenshots" aria-label="Screenshots">
+          <h3>Screenshots</h3>
+          {detail.screenshots.map((set) => (
+            <div key={set.key} className="screenshot-set">
+              <p>
+                <strong>{set.title}</strong>
+                {set.note ? `. ${set.note}` : ''}
+              </p>
+              <div className="screenshot-pair">
+                {[set.before, set.after].map((side) => (
+                  <figure key={side.label}>
+                    <figcaption className="mono">{side.label}</figcaption>
+                    {side.images.map((image) => (
+                      <a key={image.src} href={image.src} target="_blank" rel="noreferrer">
+                        <img src={image.src} alt={image.alt} loading="lazy" />
+                      </a>
+                    ))}
+                    {side.note && <p className="muted">{side.note}</p>}
+                  </figure>
+                ))}
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
       {detail.dependencies.length > 0 && (
         <section className="work-links">
           <h3>Dependencies</h3>

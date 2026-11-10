@@ -83,11 +83,30 @@ export type WorkDetail = WorkRow & {
   delegation: DelegationRow[]
   delivery: DeliveryView
   /** What the owner may ask for again, and why it stopped. */
-  retry: { kind: 'integration' | 'push' | 'pr' | 'repair' | 'update'; reason: string } | null
+  retry: { kind: 'integration' | 'push' | 'pr' | 'repair' | 'update' | 'screenshots'; reason: string } | null
+  /** §15: before and after screenshots MEC took, by revision. Empty from a server that takes none. */
+  screenshots: ScreenshotSet[]
   coverage: Coverage
   cursors: Record<string, number>
   /** Attempt streams left out of `cursors`. */
   cursorsTruncated: number
+}
+
+/** One side of a capture: its commit, and each image by the route that serves it. */
+export type ScreenshotSide = {
+  sha: string
+  short: string
+  status: 'captured' | 'could_not'
+  reason: string | null
+  shots: { path: string; url: string; at: string; status: number | null }[]
+}
+export type ScreenshotSet = {
+  taskId: string
+  attemptId: string
+  state: string
+  viewport: { width: number; height: number } | null
+  before: ScreenshotSide | null
+  after: ScreenshotSide | null
 }
 
 export type AttemptView = {

@@ -28,7 +28,8 @@ const common = {
   platform: 'node',
   target: 'node22',
   bundle: true,
-  external: ['better-sqlite3', 'node-pty'],
+  // playwright-core carries its own files and loads Chromium at run time: installed, not inlined.
+  external: ['better-sqlite3', 'node-pty', 'playwright-core'],
   banner: {
     js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
   },

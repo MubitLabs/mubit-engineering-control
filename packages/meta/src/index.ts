@@ -79,7 +79,14 @@ export type {
   PlacementTable,
   SchedulerDeps,
 } from './scheduler'
-export { blockTask, openRepairTask, ownerRepairOffer, ownerRetryRepair, schedulePass } from './scheduler'
+export {
+  blockTask,
+  openRepairTask,
+  ownerRepairOffer,
+  ownerRetryRepair,
+  schedulePass,
+  taskAcceptance,
+} from './scheduler'
 export type {
   MetaBrain,
   MetaDecision,
@@ -116,6 +123,18 @@ export type {
   PlannerTurnJournal,
 } from './tools'
 export { decodeToolArgs, PlannerTools } from './tools'
+export type { ScreenshotDue } from './ui-evidence'
+export {
+  capturesOf,
+  evidenceAttempt,
+  evidenceDocId,
+  retakeScreenshots,
+  screenshotsDue,
+  screenshotsOffer,
+  screenshotWait,
+  UI_EVIDENCE_PREFIX,
+  uiEvidenceInput,
+} from './ui-evidence'
 export type { CandidateEvent } from './wakes'
 export { classifyWake } from './wakes'
 export { cutAtWord, TITLE_WORDS } from './words'

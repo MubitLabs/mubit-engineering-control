@@ -503,6 +503,10 @@ export function sampleServer({
         if (body.base_revision !== repo.revision) return json({ error: 'stale_base' }, 409)
         if (typeof body.trusted === 'boolean') repo.trust = body.trusted
         if (Array.isArray(body.bootstrapCmds)) repo.bootstrap = body.bootstrapCmds as string[]
+        // The sample server keeps what a save sent, as the real one stores it (§14, §15).
+        if (typeof body.uiEvidence === 'object' && body.uiEvidence !== null) {
+          ;(repo as Record<string, unknown>).uiEvidence = body.uiEvidence
+        }
         repo.revision = `${repo.revision}x`
         return json({ id: repo.id, revision: repo.revision })
       }

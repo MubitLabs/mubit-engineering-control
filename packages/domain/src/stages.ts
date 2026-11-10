@@ -42,7 +42,12 @@ export type WorkItemView = {
   branchForeign?: boolean
   /** GitHub's required checks on the pull request have not finished. */
   checksWaiting?: ChecksWait
+  /** UI evidence (§15): MEC is taking the before and after screenshots, or could not take one. */
+  screenshots?: ScreenshotWait
 }
+
+/** A task held back for its screenshots: still being taken, or one that could not be. */
+export type ScreenshotWait = { state: 'waiting' } | { state: 'could_not'; side: 'before' | 'after' }
 
 /** Required checks still waiting on GitHub: queued (none started) or running, and since when MEC saw it. */
 export type ChecksWait = { queued: boolean; since?: string }
@@ -72,6 +77,8 @@ export type WorkFacts = {
   branchForeign?: boolean
   /** `deliveryWaiting(record).checksWaiting`; absent where the caller reads no delivery. */
   checksWaiting?: ChecksWait
+  /** `screenshotWait(store, work)`; absent where the caller reads no captures. */
+  screenshots?: ScreenshotWait
 }
 
 export type Stage = {
@@ -187,6 +194,22 @@ export const STAGE_TABLE: readonly StageRow[] = [
     waitingOn: 'person',
     match: (w) => w.hostRunUnagreed === true,
     label: () => 'Waiting for your agreement',
+  },
+  {
+    // UI evidence (§15): a capture MEC could not take keeps the handoff incomplete until you look.
+    key: 'person/screenshots',
+    waitingOn: 'person',
+    match: (w) => w.screenshots?.state === 'could_not',
+    label: (w) => {
+      const wait = w.screenshots as Extract<ScreenshotWait, { state: 'could_not' }>
+      return `Couldn't take the ${wait.side} screenshot`
+    },
+  },
+  {
+    key: 'waiting/screenshots',
+    waitingOn: 'system',
+    match: (w) => w.screenshots?.state === 'waiting',
+    label: () => 'Waiting for before and after screenshots',
   },
   {
     key: 'waiting/quota',
@@ -333,5 +356,6 @@ export function workViewOf(doc: Record<string, unknown>, facts: WorkFacts): Work
     ...(facts.branchMoved !== undefined && { branchMoved: facts.branchMoved }),
     ...(facts.branchForeign === true && { branchForeign: true }),
     ...(facts.checksWaiting !== undefined && { checksWaiting: facts.checksWaiting }),
+    ...(facts.screenshots !== undefined && { screenshots: facts.screenshots }),
   }
 }

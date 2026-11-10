@@ -192,6 +192,7 @@ const quietDetail = {
   delegation: [],
   delivery: NO_DELIVERY,
   retry: null,
+  screenshots: [],
   coverage: UNCOVERED,
   cursors: {},
   cursorsTruncated: 0,

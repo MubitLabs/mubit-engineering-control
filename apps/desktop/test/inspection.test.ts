@@ -612,6 +612,16 @@ describe('inspection routes: stage', () => {
     expect(rows.wi_done.nextAction).toBeNull()
   })
 
+  it('work whose every task ended says so and what to do, never Working (live, 10 November 2026)', async () => {
+    const blockedReason =
+      'every task ended with no result to deliver: task_1 was cancelled (attempt att_17 dropped it: nothing)'
+    seedWork('wi_ended', { repoId: 'repo_a', state: 'blocked', blockedReason })
+    const row = (await get('/api/inspect/work')).json().items[0]
+    expect(row.stage).toEqual({ key: 'person/blocked', label: 'Blocked', waitingOn: 'person' })
+    expect(row.reason).toContain('every task ended with no result to deliver')
+    expect(row.nextAction).toBe('Stop this work and ask again')
+  })
+
   it('a reset the park recorded reaches the stage', async () => {
     seedWork('wi_1', { repoId: 'repo_a' })
     const reset = new Date(2026, 10, 5, 16, 30, 0)

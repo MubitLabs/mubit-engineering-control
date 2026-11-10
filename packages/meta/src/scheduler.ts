@@ -118,14 +118,10 @@ function occupies(deps: SchedulerDeps, attempt: StoreDoc): boolean {
 /** Numbered ids sort as numbers: `att_10` is later than `att_9`. */
 const attemptOrder = (doc: StoreDoc): number => Number(/^att_(\d+)$/.exec(String(doc.id))?.[1] ?? 0)
 
-const latestOf = (attempts: readonly StoreDoc[]): StoreDoc | undefined =>
-  [...attempts]
-    .sort(
-      (a, b) =>
-        String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')) ||
-        attemptOrder(a) - attemptOrder(b),
-    )
-    .at(-1)
+const byAge = (a: StoreDoc, b: StoreDoc): number =>
+  String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')) || attemptOrder(a) - attemptOrder(b)
+
+const latestOf = (attempts: readonly StoreDoc[]): StoreDoc | undefined => [...attempts].sort(byAge).at(-1)
 
 function failure(deps: SchedulerDeps, attempt: StoreDoc): string | undefined {
   const id = String(attempt.id)
@@ -191,6 +187,9 @@ function settleOnReport(store: Store, task: StoreDoc, attempt: StoreDoc, at: str
     return true
   }
   if (report?.kind !== 'dropped' || !passedOrUnjudged) return false
+  // §15: a repair that found nothing to fix declined its findings, and did not drop the task. The
+  // task goes on to be judged on the head it has; `acceptTask` records the declined findings.
+  if (kindOf(attempt) === 'repair') return false
   const { deferred: _deferred, ...rest } = task
   moveTask(store, rest, 'cancel', { cancelledReason: `attempt ${id} dropped it: ${report.summary}` }, at)
   appendEvent(
@@ -259,8 +258,20 @@ function workFacts(task: StoreDoc, attempt: StoreDoc) {
   }
 }
 
-/** What a reviewer said, bound to the commit it read (§15): the report's `finding` artifacts. */
+/** The roles that review work (§15); every other role does the work it would review. */
+const REVIEWER_ROLES: ReadonlySet<string> = new Set(['code_reviewer', 'pr_reviewer', 'security_checker'])
+
+/** An independent reviewer: a review continuation, or an attempt in a reviewing role. */
+const isReviewer = (attempt: StoreDoc): boolean =>
+  kindOf(attempt) === 'review' || REVIEWER_ROLES.has(String(attempt.role))
+
+/**
+ * What a reviewer said, bound to the commit it read (§15): the report's `finding` artifacts. An
+ * implementer's or a repair's own `finding` artifacts are notes about its work, never findings
+ * (live, 10 November 2026: an implementer's notes on the files it made started a repair).
+ */
 function findingsOf(doc: StoreDoc | undefined, attempt: StoreDoc): BoundFinding[] {
+  if (!isReviewer(attempt)) return []
   const artifacts = (doc?.report as { artifacts?: { kind: string; ref: string }[] } | undefined)?.artifacts
   return (artifacts ?? []).flatMap((artifact) =>
     artifact.kind === 'finding' ? [{ text: artifact.ref, sha: String(attempt.head_sha) }] : [],
@@ -293,10 +304,40 @@ function familyOf(store: Store, task: StoreDoc): { attempts: StoreDoc[]; reports
   return { attempts, reports }
 }
 
-/** Every finding this task's reviewers made. Accepting the task means a later head answered them. */
-function foundOn(store: Store, attempts: readonly StoreDoc[]): { text: string; disposition: string }[] {
-  const found = attempts.flatMap((doc) => findingsOf(lastReportDoc(store, doc), doc))
-  return [...new Set(found.map((finding) => finding.text))].map((text) => ({ text, disposition: 'fixed' }))
+type Disposition =
+  | { text: string; disposition: 'fixed' }
+  | { text: string; disposition: 'declined'; reason: string }
+
+/** A declined finding's one factual sentence (§15): the first of the repair's own words. */
+const SENTENCE_CHARS = 200
+function oneSentence(summary: string): string {
+  const text = summary.trim()
+  const first = /^.*?[.!?](?=\s|$)/s.exec(text)?.[0] ?? text
+  return first.length > SENTENCE_CHARS ? `${first.slice(0, SENTENCE_CHARS - 1)}…` : first
+}
+
+/**
+ * Every finding this task's reviewers made, and what answered it. Accepting the task means a later
+ * head answered them: fixed, resolved silently, unless the repair after the review reported
+ * `dropped`, saying nothing needed fixing, and then declined with its one sentence (§15).
+ */
+function foundOn(store: Store, attempts: readonly StoreDoc[]): Disposition[] {
+  const ordered = [...attempts].sort(byAge)
+  const answered = new Map<string, Disposition>()
+  ordered.forEach((doc, index) => {
+    const found = findingsOf(lastReportDoc(store, doc), doc)
+    const answer = ordered.slice(index + 1).find((later) => kindOf(later) === 'repair')
+    const said = answer === undefined ? undefined : lastReport(store, answer)
+    for (const { text } of found) {
+      answered.set(
+        text,
+        said?.kind === 'dropped'
+          ? { text, disposition: 'declined', reason: oneSentence(String(said.summary ?? '')) }
+          : { text, disposition: 'fixed' },
+      )
+    }
+  })
+  return [...answered.values()]
 }
 
 function acceptTask(
@@ -697,6 +738,31 @@ function settleTasks(deps: SchedulerDeps, workItemId: string, at: string): void 
     const reason = String(blocked.blockedReason ?? 'a task is blocked')
     blockWork(store, workItemId, reason, at, String(blocked.id))
   }
+  settleEnded(deps, workItemId, tasks, at)
+}
+
+/** The opening of the block on work whose every task ended; the inspection reads it to say what to do. */
+export const ALL_TASKS_ENDED = 'every task ended with no result to deliver'
+
+/**
+ * Live, 10 November 2026: work whose every task is cancelled has nothing to run, review or merge,
+ * so it must not read as reviewing and Working. Once no attempt holds a place, it blocks with each
+ * task's reason, in plain words. No task caused that block, so it stays until a person acts; a
+ * cancelled task never comes back by itself.
+ */
+function settleEnded(deps: SchedulerDeps, workItemId: string, tasks: readonly StoreDoc[], at: string): void {
+  const { store } = deps
+  const work = store.workItems.get(workItemId)
+  if (work?.state !== 'executing' && work?.state !== 'reviewing') return
+  if (tasks.length === 0 || tasks.some((task) => task.status !== 'cancelled')) return
+  if (store.attempts.list({ workItemId }).some((attempt) => occupies(deps, attempt))) return
+  const words = tasks
+    .filter((task) => task.repairOf === undefined)
+    .map((task) => {
+      const why = String(task.cancelledReason ?? 'no reason given')
+      return `${dependencyName(task, String(task.id))} was cancelled (${why})`
+    })
+  blockWork(store, workItemId, `${ALL_TASKS_ENDED}: ${words.join('; ')}`, at)
 }
 
 /**

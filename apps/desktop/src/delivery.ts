@@ -243,6 +243,12 @@ export function updateWords(doc: StoreDoc, target: string): string | undefined {
   }
 }
 
+/** A finding's line in the pull request body: its disposition, and a declined one's one sentence (§15). */
+export function findingLine(finding: { text: string; disposition: string; reason?: string }): string {
+  const why = finding.disposition === 'declined' && finding.reason !== undefined ? `: ${finding.reason}` : ''
+  return `${finding.text} (${finding.disposition}${why})`
+}
+
 /** What stopped a delivery short, in words: the card's answer, or the step's failure. */
 export function stoppedWords(doc: StoreDoc): string {
   const step = typeof doc.prCardId === 'string' ? 'pull request' : 'push'
@@ -889,9 +895,7 @@ export class Delivery {
       checks: result.checks,
       findings: tasks.flatMap((task) =>
         Array.isArray(task.findings)
-          ? (task.findings as { text: string; disposition: string }[]).map(
-              (finding) => `${finding.text} (${finding.disposition})`,
-            )
+          ? (task.findings as { text: string; disposition: string; reason?: string }[]).map(findingLine)
           : [],
       ),
       decisions: [

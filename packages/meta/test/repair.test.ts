@@ -609,3 +609,167 @@ describe('work state (§10)', () => {
     expect(events).toContain('task_accepted')
   })
 })
+
+describe("an implementer's own notes and a repair that found nothing (live, 10 November 2026)", () => {
+  /** The implementer's ready report, its artifacts of kind `finding` describing what it made. */
+  const notes: Report = {
+    kind: 'ready',
+    summary: 'Created the home page.',
+    artifacts: [
+      { kind: 'finding', ref: 'index.html — new home page markup' },
+      { kind: 'finding', ref: 'style.css — warm palette' },
+    ],
+  }
+  const nothingToFix: Report = {
+    kind: 'dropped',
+    summary: 'Neither finding reproduces as a defect. Both describe the content, so no fix was applied.',
+  }
+  const one = (ref: string): Report => ({
+    kind: 'ready',
+    summary: 'one',
+    artifacts: [{ kind: 'finding', ref }],
+  })
+  const repair = { kind: 'repair', role: 'repair_agent', evidence: 'x', round: 0 }
+  const review = { kind: 'review', role: 'code_reviewer', evidence: 'x', round: 1 }
+
+  it("the implementer's own finding artifacts start no repair, and the task is accepted", () => {
+    const { store, pass } = rig()
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    report(store, 'att_1', notes)
+    pass()
+    expect(queued(store)).toEqual([])
+    expect(store.tasks.get('task_a')).toMatchObject({ status: 'accepted', acceptedHead: H1 })
+    expect(store.tasks.get('task_a')?.findings).toBeUndefined()
+  })
+
+  it('a planned reviewer role still finds: its findings route to a repair', () => {
+    const { store, pass } = rig({ role: 'code_reviewer' })
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    store.atomic(() => {
+      const doc = store.attempts.get('att_1') as StoreDoc
+      store.attempts.save({ ...doc, role: 'code_reviewer' })
+    })
+    report(store, 'att_1', one('no alt text'))
+    pass()
+    expect(queued(store)[0]?.continuation).toMatchObject({ kind: 'repair' })
+  })
+
+  it('the live replay: a repair sent on self-notes that drops is judged on its head, never cancelled', () => {
+    const { store, pass } = rig()
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    report(store, 'att_1', notes)
+    finished(store, 'att_2', { state: 'succeeded', status: 'passed', head: H1, continuation: repair })
+    report(store, 'att_2', nothingToFix)
+    pass()
+    expect(store.tasks.get('task_a')).toMatchObject({ status: 'accepted', acceptedHead: H1 })
+    const events = store.events.read('work:wi_1').map((event) => event.type)
+    expect(events).not.toContain('task_cancelled')
+  })
+
+  it("a reviewer's findings a repair declined are recorded declined with one factual sentence", () => {
+    const { store, pass } = rig()
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    finished(store, 'att_2', { state: 'succeeded', status: 'passed', head: H1, continuation: review })
+    report(store, 'att_2', one('no alt text'))
+    finished(store, 'att_3', { state: 'succeeded', status: 'passed', head: H1, continuation: repair })
+    report(store, 'att_3', nothingToFix)
+    pass()
+    expect(store.tasks.get('task_a')).toMatchObject({
+      status: 'accepted',
+      acceptedHead: H1,
+      findings: [
+        { text: 'no alt text', disposition: 'declined', reason: 'Neither finding reproduces as a defect.' },
+      ],
+    })
+  })
+
+  it('a finding a repair fixed stays fixed, silently', () => {
+    const { store, pass } = rig()
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    finished(store, 'att_2', { state: 'succeeded', status: 'passed', head: H1, continuation: review })
+    report(store, 'att_2', one('no alt text'))
+    finished(store, 'att_3', { state: 'succeeded', status: 'passed', head: H2, continuation: repair })
+    report(store, 'att_3', { kind: 'ready', summary: 'Added the alt text.' })
+    pass()
+    expect(store.tasks.get('task_a')).toMatchObject({
+      status: 'accepted',
+      findings: [{ text: 'no alt text', disposition: 'fixed' }],
+    })
+  })
+
+  it('each finding is answered by the repair after its own review', () => {
+    const { store, pass } = rig()
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    finished(store, 'att_2', { state: 'succeeded', status: 'passed', head: H1, continuation: review })
+    report(store, 'att_2', one('no alt text'))
+    finished(store, 'att_3', { state: 'succeeded', status: 'passed', head: H1, continuation: repair })
+    report(store, 'att_3', nothingToFix)
+    finished(store, 'att_4', { state: 'succeeded', status: 'passed', head: H1, continuation: review })
+    report(store, 'att_4', one('the link is broken'))
+    finished(store, 'att_5', { state: 'succeeded', status: 'passed', head: H2, continuation: repair })
+    report(store, 'att_5', { kind: 'ready', summary: 'Fixed the link.' })
+    pass()
+    expect(store.tasks.get('task_a')).toMatchObject({
+      status: 'accepted',
+      acceptedHead: H2,
+      findings: [
+        { text: 'no alt text', disposition: 'declined', reason: 'Neither finding reproduces as a defect.' },
+        { text: 'the link is broken', disposition: 'fixed' },
+      ],
+    })
+  })
+
+  it('sensitive work: a declined repair goes on to the next review of the same head', () => {
+    const { store, pass } = rig({ sensitive: true })
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    finished(store, 'att_2', { state: 'succeeded', status: 'passed', head: H1, continuation: review })
+    report(store, 'att_2', one('no alt text'))
+    finished(store, 'att_3', { state: 'succeeded', status: 'passed', head: H1, continuation: repair })
+    report(store, 'att_3', nothingToFix)
+    pass()
+    expect(store.tasks.get('task_a')?.status).not.toBe('cancelled')
+    expect(queued(store)[0]?.continuation).toMatchObject({ kind: 'review', round: 2 })
+  })
+
+  it("a dropped report from the task's own implementer still ends it", () => {
+    const { store, pass } = rig()
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    report(store, 'att_1', { kind: 'dropped', summary: 'already done upstream' })
+    pass()
+    expect(store.tasks.get('task_a')?.status).toBe('cancelled')
+  })
+})
+
+describe('work whose every task ended (live, 10 November 2026)', () => {
+  const cancelled = (store: Store): void =>
+    store.atomic(() => {
+      const doc = store.tasks.get('task_a') as StoreDoc
+      store.tasks.save({ ...doc, status: 'cancelled', cancelledReason: 'attempt att_2 dropped it: nothing' })
+    })
+
+  it('blocks in plain words instead of sitting at reviewing with nothing running', () => {
+    const { store, pass } = rig()
+    finished(store, 'att_1', { state: 'succeeded', status: 'passed', head: H1 })
+    cancelled(store)
+    pass()
+    const work = store.workItems.get('wi_1')
+    expect(work?.state).toBe('blocked')
+    expect(String(work?.blockedReason)).toBe(
+      'every task ended with no result to deliver: a was cancelled (attempt att_2 dropped it: nothing)',
+    )
+    expect(work?.blockedTask).toBeUndefined()
+    // Nothing comes back by itself: the cancelled task stays cancelled, and nothing is queued.
+    expect(store.tasks.get('task_a')?.status).toBe('cancelled')
+    expect(queued(store)).toEqual([])
+    pass()
+    expect(store.workItems.get('wi_1')?.state).toBe('blocked')
+  })
+
+  it('waits while an attempt still holds its place', () => {
+    const { store, pass } = rig()
+    finished(store, 'att_1', { state: 'running', status: 'passed', head: H1 })
+    cancelled(store)
+    pass()
+    expect(store.workItems.get('wi_1')?.state).toBe('reviewing')
+  })
+})

@@ -49,7 +49,9 @@ describe('an objective that needs commands', () => {
   })
 
   it('words that only contain a command word do not count', () => {
-    expect(commandNeed('Fix the runtime error in the browserslist config and the nodes list')).toBe(undefined)
+    expect(
+      commandNeed('Fix the runtime error in the browserslist config, the nodes list and the overrun guard'),
+    ).toBe(undefined)
   })
 })
 

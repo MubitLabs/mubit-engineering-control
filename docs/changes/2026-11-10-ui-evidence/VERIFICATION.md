@@ -39,7 +39,54 @@ One existing test was extended, not weakened: `packages/domain/test/stages.test.
 - no retry offer; a retry that retakes nothing; Work not reading the fact; the PR body leaving it out;
 - the web decoder loading any image URL; a save dropping the repository's globs.
 
+## Round 2: an independent check found a channel out of the page
+
+The check, on `26ab525`, found one blocker. `context.route('**/*')` never sees a WebSocket: a probe page's `new WebSocket('ws://127.0.0.1:<other port>/ws')` reached a second loopback listener. That breaks spec §13 hard invariant 1, and CHANGE.md's claim that the page reaches no network was false (it also cited §13.7). The fix and its tests are in `382e918`.
+
+**Failing first.** Four tests were added in `apps/desktop/test/ui-evidence.test.ts` with the source unchanged. All four failed (`-t "no channel|answers an error"`: 4 failed):
+
+- WebSocket to another loopback origin: `expected [ 'upgrade /ws' ] to deeply equal []`.
+- A start-command app that answers 302 to another origin: `[ 'http /hop.png', 'http /hop-nav', 'http /style.css', 'http /app.js' ]` reached the other listener. Redirects bypass `route` too, which the check had not named.
+- WebRTC with a STUN server on a local UDP socket: `expected [ 20, 20 ] to deeply equal []`. Two STUN binding requests went out.
+- An after page answering 404 was `captured`, with state `taken`.
+
+**What did not work, probed on playwright-core 1.64.1.** The suggested port-specific bypass does not work. With a closed-port proxy and bypass `127.0.0.1:<app port>`, Chromium sent the app itself to the proxy (`ERR_CONNECTION_RESET`). Chromium ignores the port on an IP-literal bypass rule. Bypass `127.0.0.1` let the other loopback port through: 1 leak.
+
+**What does.** Chromium's only proxy is a fence MEC runs (`openFence`), with no bypass. It forwards only to the app's host and port, returns 403 for any other request, and closes any other CONNECT. With it, plus `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` and `routeWebSocket(/.*/, ws => ws.close())` next to `route`, a probe saw no leak by fetch, WebSocket (a CONNECT, refused) or STUN, and the app loaded through the fence (200). Two tests check the fences on their own, so neither layer stands alone untested:
+
+- The fence by itself, over raw HTTP: the app's path gets 200, another loopback port or `example.invalid` gets 403, a CONNECT to another port is closed, and a CONNECT to the app gets `200`.
+- The page fences with no proxy at all (Chromium launched bare through the `launch` seam): a WebSocket and a fetch to another origin reach nothing.
+
+**The status rule.** After the change, 400 or more is `could_not`: "the page /about.html answered HTTP 404 at the result". Before the change, the status is recorded and the capture stands, because a 404 is legitimate for a page the change adds. The test asserts both sides.
+
+**Green.**
+
+- `apps/desktop/test/ui-evidence.test.ts`: 18 passed, real Chromium.
+- With `ui-evidence-surfaces`, `repository-edit` and `bundle-defaults`: 56 passed.
+- Domain `ui-evidence` and `stages`, meta `ui-evidence` and web `ui-evidence`: 75 passed.
+- `pnpm typecheck` is clean, and `biome check .` reports 0 errors (150 warnings, unchanged).
+
+**Mutants.** `--self-check` is OK. The full spec has 34 mutants, and **34 of 34 were killed**. The 7 new ones are:
+
+- `routeWebSocket` removed;
+- the fence proxy dropped from the launch;
+- the WebRTC flag dropped;
+- the fence forwarding to any host;
+- the fence tunnelling to any host;
+- an after page answering an error counted as captured;
+- a before 404 refused.
+
+Each of the 7 was killed both in a run of its own and in the full run.
+
+**Text fixes.**
+
+- CHANGE.md now cites §13 hard invariant 1 and describes the three fences.
+- The `start.url` error now names `[::1]`, which the parser accepts, as do CHANGE.md and `docs/reference.md`.
+
+## Package, by the independent check
+
+On this branch the checker built `dist-internal/mec-0.3.8.tgz` with `pnpm pack:internal` and ran `npm install --omit=dev` on it (41 packages). `playwright-core` resolved, Chromium 156.0.8078.4 launched, `mec --version` worked, and `scripts/smoke-package.mjs` passed. The builder did not run these itself.
+
 ## Not run
 
-- `pnpm pack:internal` and `scripts/smoke-package.mjs`. The tarball's `package.json` now lists `playwright-core`, but the install of it was not exercised.
-- No live proof. The open items in the report say what one on mec-sandbox should look like.
+- No live proof. The report's open items describe what one on mec-sandbox should look like.

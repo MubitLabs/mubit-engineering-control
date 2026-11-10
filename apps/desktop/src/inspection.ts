@@ -36,6 +36,7 @@ import {
 } from '@mec/domain'
 import { git } from '@mec/git'
 import {
+  ALL_TASKS_ENDED,
   assertRepoAdmission,
   awaitsAgreement,
   cutAtWord,
@@ -1248,7 +1249,7 @@ class Inspector {
           nextAction:
             offer !== undefined
               ? RETRY_NEXT[offer.kind]
-              : blocked?.startsWith(PROFILE_CHANGED) === true
+              : blocked?.startsWith(PROFILE_CHANGED) === true || blocked?.startsWith(ALL_TASKS_ENDED) === true
                 ? 'Stop this work and ask again'
                 : 'Resolve what blocks it',
         }

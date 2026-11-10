@@ -80,6 +80,7 @@ export type {
   SchedulerDeps,
 } from './scheduler'
 export {
+  ALL_TASKS_ENDED,
   blockTask,
   openRepairTask,
   ownerRepairOffer,

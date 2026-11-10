@@ -1,0 +1,79 @@
+[
+  {
+    "name": "an implementer's own finding artifacts count as review findings again",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (!isReviewer(attempt)) return []\n",
+    "replace": "",
+    "tests": ["packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "a planned reviewer role no longer finds",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "kindOf(attempt) === 'review' || REVIEWER_ROLES.has(String(attempt.role))",
+    "replace": "kindOf(attempt) === 'review'",
+    "tests": ["packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "a repair's dropped report cancels the task again",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (kindOf(attempt) === 'repair') return false\n",
+    "replace": "",
+    "tests": ["packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "a declined finding is recorded as fixed",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "said?.kind === 'dropped'",
+    "replace": "said?.kind === 'never'",
+    "tests": ["packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "a declined finding carries the whole summary, not one sentence",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "const first = /^.*?[.!?](?=\\s|$)/s.exec(text)?.[0] ?? text",
+    "replace": "const first = text",
+    "tests": ["packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "a finding is answered by any repair, not the one after its review",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "ordered.slice(index + 1).find((later) => kindOf(later) === 'repair')",
+    "replace": "ordered.find((later) => kindOf(later) === 'repair')",
+    "tests": ["packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "work whose every task ended is no longer blocked",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  settleEnded(deps, workItemId, tasks, at)\n",
+    "replace": "",
+    "tests": ["packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "work whose every task ended blocks while an attempt still holds its place",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (store.attempts.list({ workItemId }).some((attempt) => occupies(deps, attempt))) return\n",
+    "replace": "",
+    "tests": ["packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "reviewing work whose every task ended is left at reviewing",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "if (work?.state !== 'executing' && work?.state !== 'reviewing') return",
+    "replace": "if (work?.state !== 'executing') return",
+    "tests": ["packages/meta/test/repair.test.ts"]
+  },
+  {
+    "name": "the ended block's next action is vague again",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": " || blocked?.startsWith(ALL_TASKS_ENDED) === true",
+    "replace": "",
+    "tests": ["apps/desktop/test/inspection.test.ts"]
+  },
+  {
+    "name": "a declined finding's sentence is left out of the pull request body",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "finding.disposition === 'declined' && finding.reason !== undefined ? `: ${finding.reason}` : ''",
+    "replace": "''",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  }
+]

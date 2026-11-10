@@ -20,7 +20,7 @@ import {
 import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { commitWork } from '../src/attempt-launch'
-import { Delivery, deliveryDocId, movedWords, retryOffer } from '../src/delivery'
+import { Delivery, deliveryDocId, findingLine, movedWords, retryOffer } from '../src/delivery'
 import {
   cardEvidence,
   createPrBehindCard,
@@ -1703,5 +1703,14 @@ describe('a pull request head that moved on GitHub (owner, 9 November 2026: "Say
       expect(r.doc().stage).toBe('ready')
       expect(r.doc().ciSince).toBeUndefined()
     })
+  })
+})
+
+describe("a finding's line in the pull request body (§15)", () => {
+  it('a fixed finding says fixed, and a declined one carries its one sentence', () => {
+    expect(findingLine({ text: 'no alt text', disposition: 'fixed' })).toBe('no alt text (fixed)')
+    expect(
+      findingLine({ text: 'no alt text', disposition: 'declined', reason: 'The image is decorative.' }),
+    ).toBe('no alt text (declined: The image is decorative.)')
   })
 })

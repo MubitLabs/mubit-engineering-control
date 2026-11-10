@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.10 (10 November 2026)
+
+The 0.3.9 content, released. The v0.3.9 tag's release build failed before publishing anything: its check step had no Chromium for the UI evidence tests. The release workflow now installs Playwright's headless Chromium before `pnpm check`, as CI does. No code change and no migration.
+
 ## 0.3.9 (10 November 2026)
 
 The owner's answers of 10 November, built. See `docs/changes/2026-11-10-owner-answers/`, `2026-11-10-planner-capabilities/`, `2026-11-10-codex-filechange/` and `2026-11-10-ui-evidence/`. No migration.

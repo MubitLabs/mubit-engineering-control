@@ -15,7 +15,7 @@ import type {
   WorkGroupView,
   WorkRowView,
 } from './work-model'
-import { repoScopeApplies, stopInView } from './work-model'
+import { repoScopeApplies, screenshotCaption, stopInView } from './work-model'
 
 /** A failed read sits above what is kept, and a loading one always has somewhere to end. */
 export function ReadNotice({
@@ -217,7 +217,7 @@ function DeliveryDetail({
             <div key={set.key} className="screenshot-set">
               <p>
                 <strong>{set.title}</strong>
-                {set.note ? `. ${set.note}` : ''}
+                {screenshotCaption(set)}
               </p>
               <div className="screenshot-pair">
                 {[set.before, set.after].map((side) => (

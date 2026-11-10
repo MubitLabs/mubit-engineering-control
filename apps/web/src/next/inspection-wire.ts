@@ -65,6 +65,8 @@ export type DeliveryView = {
   movedTo?: string
   /** Why delivery stopped, in a sentence. Null when nothing failed. */
   failure: string | null
+  /** §14: the branch, and its pull request, that already carry this change. Absent otherwise. */
+  yieldedTo?: { branch: string; prNumber: number | null }
   /** The open merge card: the question is already asked. */
   mergeCardId: string | null
 }

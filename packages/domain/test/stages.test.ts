@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkItemView } from '../src'
-import { deliveryStopped, deliveryWaiting, plannerTurnEnded, STAGE_TABLE, stageOf, workViewOf } from '../src'
+import {
+  deliveryStopped,
+  deliveryWaiting,
+  deliveryYielded,
+  plannerTurnEnded,
+  STAGE_TABLE,
+  stageOf,
+  workViewOf,
+  yieldedWords,
+} from '../src'
 
 /** The neutral view: open, mid-execution, no hold, no question, nothing reported. */
 const view = (overrides: Partial<WorkItemView> = {}): WorkItemView => ({
@@ -25,6 +34,7 @@ const fixtures: readonly WorkItemView[] = [
   view({ holdStatus: 'held' }),
   view({ deliveryStopped: { step: 'push', outcome: 'declined' } }),
   view({ branchMoved: '63865a9' }),
+  view({ deliveryYielded: { branch: 'human/fix', prNumber: 10 } }),
   view({ hostRunUnagreed: true }),
   view({ screenshots: { state: 'could_not', side: 'after' } }),
   view({ screenshots: { state: 'waiting' } }),
@@ -49,6 +59,7 @@ describe('STAGE_TABLE', () => {
       'held',
       'person/blocked',
       'person/branch-moved',
+      'person/yielded',
       'person/agreement',
       'person/screenshots',
       'waiting/screenshots',
@@ -339,5 +350,43 @@ describe('an open pull request that waits on GitHub, not on MEC (owner, 9 Novemb
   it('a moved branch outranks its checks: they no longer speak for the head MEC pushed', () => {
     const record = { stage: 'pr_open', ci: 'ci_pending', headMoved: { sha: 'b'.repeat(40) } }
     expect(deliveryWaiting(record)).toEqual({ branchMoved: 'bbbbbbb' })
+  })
+})
+
+describe('a delivery that yielded to the same change elsewhere (§14; live, 10 November 2026)', () => {
+  const facts = { openQuestions: 0, awaitingConfirmation: false, attempts: [], merged: false }
+  const dropped = { stage: 'dropped', yieldTo: 'mec/mw9kvv16/integration', yieldPr: 10 }
+
+  it('reads the branch and the pull request it yielded to from the record', () => {
+    expect(deliveryYielded(dropped)).toEqual({ branch: 'mec/mw9kvv16/integration', prNumber: 10 })
+    expect(deliveryYielded({ stage: 'dropped', yieldTo: 'feat/x' })).toEqual({ branch: 'feat/x' })
+    for (const record of [undefined, { stage: 'dropped' }, { stage: 'push_card', yieldTo: 'feat/x' }]) {
+      expect(deliveryYielded(record)).toBeUndefined()
+    }
+  })
+
+  it('is a person stage, never Working, unless work is under way again', () => {
+    const work = (more: Record<string, unknown> = {}) =>
+      stageOf(
+        workViewOf(
+          { state: 'integrating' },
+          { ...facts, ...more, deliveryYielded: deliveryYielded(dropped) },
+        ),
+      )
+    expect(work()).toEqual({
+      key: 'person/yielded',
+      label: 'Same change already on GitHub',
+      waitingOn: 'person',
+    })
+    expect(work({ tasksOpen: true }).key).toBe('working')
+  })
+
+  it('says in plain words where the change already is', () => {
+    expect(yieldedWords({ branch: 'mec/mw9kvv16/integration', prNumber: 10 })).toBe(
+      'MEC found the same change already on mec/mw9kvv16/integration (pull request #10), so it pushed nothing and opened no pull request',
+    )
+    expect(yieldedWords({ branch: 'feat/x' })).toBe(
+      'MEC found the same change already on feat/x, so it pushed nothing and opened no pull request',
+    )
   })
 })

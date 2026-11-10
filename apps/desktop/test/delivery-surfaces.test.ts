@@ -824,3 +824,63 @@ describe('an open pull request that waits on GitHub reads in words (owner, 9 Nov
     expect((await row()).stage.key).toBe('person/review')
   })
 })
+
+describe('a delivery that yielded to the same change elsewhere reads in words (§14; live, 10 November 2026)', () => {
+  const seedDropped = (fields: Record<string, Json>): void => {
+    store.atomic(() => {
+      store.workItems.save({
+        id: 'wi_drop',
+        repoId: 'repo_a',
+        state: 'integrating',
+        default_branch: 'main',
+        title: 'Build a home page',
+        createdAt: AT,
+        updatedAt: AT,
+      })
+      store.engines.save({
+        id: deliveryDocId('wi_drop'),
+        workItemId: 'wi_drop',
+        repo: 'acme/alpha',
+        branch: 'mec/drop/integration',
+        head: 'a'.repeat(40),
+        stage: 'dropped',
+        yieldTo: 'human/home',
+        ...fields,
+      })
+    })
+  }
+  const row = async () =>
+    (await get('/api/inspect/work')).items.find((entry: { id: string }) => entry.id === 'wi_drop')
+  const words =
+    'MEC found the same change already on human/home (pull request #12), so it pushed nothing and opened no pull request'
+
+  it('says where the change already is, waits on you, and names what to do, never Working', async () => {
+    seedDropped({ yieldPr: 12, yieldRule: 'same_change' })
+    expect(await row()).toMatchObject({
+      stage: { key: 'person/yielded', label: 'Same change already on GitHub', waitingOn: 'person' },
+      reason: words,
+      nextAction: 'Look at pull request #12 on GitHub; stop this work if it covers your request',
+    })
+    const detail = await get('/api/inspect/work/wi_drop')
+    expect(detail.delivery).toMatchObject({
+      stage: 'local-complete',
+      repo: 'acme/alpha',
+      yieldedTo: { branch: 'human/home', prNumber: 12 },
+    })
+    expect((await get('/api/inspect/meta')).repositories[0]).toMatchObject({
+      state: 'delivering',
+      line: 'Same change already on human/home: Build a home page',
+    })
+  })
+
+  it('a branch with no pull request points at the branch', async () => {
+    seedDropped({ yieldRule: 'same_change' })
+    expect(await row()).toMatchObject({
+      reason:
+        'MEC found the same change already on human/home, so it pushed nothing and opened no pull request',
+      nextAction: 'Look at human/home on GitHub; stop this work if it covers your request',
+    })
+    const detail = await get('/api/inspect/work/wi_drop')
+    expect(detail.delivery.yieldedTo).toEqual({ branch: 'human/home', prNumber: null })
+  })
+})

@@ -159,6 +159,15 @@ function taskRow(path: string, value: unknown, what: string): TaskRow {
   }
 }
 
+/** §14: only on a delivery that yielded, so a record without it decodes as it always did. */
+function yieldedTo(path: string, value: unknown, what: string): NonNullable<DeliveryView['yieldedTo']> {
+  const raw = obj(path, value, what)
+  return {
+    branch: str(path, raw.branch, `${what}.branch`),
+    prNumber: numOrNull(path, raw.prNumber, `${what}.prNumber`),
+  }
+}
+
 function delivery(path: string, value: unknown, what: string): DeliveryView {
   const raw = obj(path, value, what)
   return {
@@ -194,6 +203,7 @@ function delivery(path: string, value: unknown, what: string): DeliveryView {
       ciQueued: raw.ciQueued === true,
     }),
     ...(raw.movedTo != null && { movedTo: str(path, raw.movedTo, `${what}.movedTo`) }),
+    ...(raw.yieldedTo != null && { yieldedTo: yieldedTo(path, raw.yieldedTo, `${what}.yieldedTo`) }),
     failure: raw.failure == null ? null : str(path, raw.failure, `${what}.failure`),
     mergeCardId: raw.mergeCardId == null ? null : str(path, raw.mergeCardId, `${what}.mergeCardId`),
   }

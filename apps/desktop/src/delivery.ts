@@ -38,6 +38,7 @@ import {
   Worktrees,
 } from '@mec/git'
 import {
+  type ChangedFile,
   type ControllerDeps,
   type ControllerTask,
   type IntegrationCheck,
@@ -99,6 +100,27 @@ import { prEvidenceLines } from './ui-evidence'
 
 export const deliveryDocId = (workItemId: string): string => `delivery/${workItemId}`
 
+/**
+ * What a head changes since its base, path by path, with the blob each path has at the head
+ * (null where the head deletes it): the same diff is what §14's yield compares (`yieldCheck`).
+ * Renames are a deletion and an addition, as GitHub's file list shows them to a blob compare.
+ */
+async function changedBlobs(gitDir: string, base: string, head: string): Promise<ChangedFile[]> {
+  const { stdout } = await git(['diff', '--raw', '--no-renames', '--no-abbrev', '-z', `${base}..${head}`], {
+    cwd: gitDir,
+  })
+  // `:<old mode> <new mode> <old blob> <new blob> <status>` NUL `<path>` NUL, per file.
+  const fields = stdout.split('\0')
+  const files: ChangedFile[] = []
+  for (let index = 0; index + 1 < fields.length; index += 2) {
+    const [, , , blob, status] = (fields[index] as string).split(' ')
+    const path = fields[index + 1] as string
+    if (blob === undefined || path === '') continue
+    files.push({ path, blob: status === 'D' ? null : blob })
+  }
+  return files
+}
+
 /** `mec/<work-item8>/integration` (§14). */
 const integrationBranch = (workItemId: string): string =>
   `mec/${workItemId.replace(/^wi_/, '').slice(0, 8)}/integration`
@@ -111,6 +133,13 @@ const RETRY_MS = 30_000
 const TITLE_CHARS = 72
 
 const OPEN_STATES: readonly string[] = ['executing', 'reviewing', 'integrating']
+
+/**
+ * The yield rule a `dropped` record was decided under: the same commits or the same diff (§14).
+ * A record without it was dropped by v0.3.11's path-only rule, so the next pass checks it once
+ * again under this one, and it goes on to its push card unless the change really is elsewhere.
+ */
+const SAME_CHANGE = 'same_change'
 
 /** What the integration path blocks with. Any other block needs more than the same step again. */
 const INTEGRATION_BLOCK = /^(integration: |bootstrap_failed: |checks failed on |could not run )/
@@ -755,6 +784,10 @@ export class Delivery {
       // §13: a card's answer binds its input SHA. A denial was about the old head, not this one.
       answer: undefined,
       prTarget: undefined,
+      // A yield spoke for the old head's change; the new head is checked again before its card.
+      yieldTo: undefined,
+      yieldPr: undefined,
+      yieldRule: undefined,
     })
   }
 
@@ -765,7 +798,8 @@ export class Delivery {
     const doc = this.#doc(id) as StoreDoc
     if (typeof doc.retryAt === 'string' && doc.retryAt > this.#now) return
     const { stage } = doc
-    if (stage === 'local_complete' || stage === 'moved') await this.#openPush(work, doc)
+    const recheck = stage === 'dropped' && doc.yieldRule !== SAME_CHANGE
+    if (stage === 'local_complete' || stage === 'moved' || recheck) await this.#openPush(work, doc)
     else if (stage === 'pushed') await this.#openPr(work, doc)
     else if (stage === 'pr_open' || stage === 'ready') {
       const update = doc.update as { status?: string } | undefined
@@ -820,8 +854,7 @@ export class Delivery {
     const head = String(doc.head)
     try {
       const { repo } = await pushTarget(this.release, repoId, branch)
-      const range = `${String(work.base_sha)}..${head}`
-      const changed = await gitLines(['diff', '--name-only', range], { cwd: String(work.git_dir) })
+      const changed = await changedBlobs(String(work.git_dir), String(work.base_sha), head)
       if (changed.length === 0) {
         this.#patch(id, { stage: 'no_change', repo })
         return
@@ -829,18 +862,28 @@ export class Delivery {
       // MEC's own open PR is not a duplicate of the head it is about to carry.
       if (doc.prNumber === undefined) {
         const defaultBranch = String(work.default_branch)
-        const { yieldTo } = await yieldCheck(this.release.run, repo, changed, {
+        const { yieldTo, prNumber } = await yieldCheck(this.release.run, repo, changed, {
           defaultBranch,
           ownBranch: branch,
+          head,
         })
         if (yieldTo !== null) {
-          this.#patch(id, { stage: 'dropped', repo, yieldTo })
-          this.#store.atomic(() => this.#workEvent(id, 'delivery_dropped', { yieldTo }))
+          const pr: Record<string, Json> = prNumber === undefined ? {} : { prNumber }
+          this.#patch(id, { stage: 'dropped', repo, yieldTo, yieldPr: prNumber, yieldRule: SAME_CHANGE })
+          this.#store.atomic(() => this.#workEvent(id, 'delivery_dropped', { yieldTo, ...pr }))
           return
         }
       }
       const card = await openPushCard(this.release, { repoId, branch, headSha: head, workItemId: id })
-      this.#patch(id, { stage: 'push_card', repo, pushCardId: card.confirmationId, error: undefined })
+      this.#patch(id, {
+        stage: 'push_card',
+        repo,
+        pushCardId: card.confirmationId,
+        error: undefined,
+        yieldTo: undefined,
+        yieldPr: undefined,
+        yieldRule: undefined,
+      })
     } catch (error) {
       this.#hold(id, error)
     }

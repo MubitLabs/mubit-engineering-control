@@ -1,6 +1,25 @@
 # Meta-agent journey checkpoint
 
-Updated 9 November 2026, reconciled with `origin/main` at the v0.3.4 bump (#62). **Execution authorized by the owner and in progress (5 November 2026).** Authority is bounded by the Execution contract below and `docs/DECISIONS.md` #14-64. Sections below "State on 9 November" are history.
+Updated 10 November 2026, reconciled with `origin/main` at the v0.3.8 bump (#74). **Execution authorized by the owner and in progress (5 November 2026).** Authority is bounded by the Execution contract below and `docs/DECISIONS.md` #14-66. Sections below "State on 10 November" are history.
+
+## State on 10 November 2026
+
+- **Installed:** v0.3.8 (#74), only `MubitLabs/mec-sandbox` agreed for host runs. Releases 0.3.5 to 0.3.8 were shipped and installed.
+- **Shipped since 0.3.4:** #64 OpenCode 2.2.6; #65 Codex lists models and picks only offered ones (gpt-5.6-luna, terra, sol); #66 a finished sign-in checks itself and the link line updates; #67 0.3.5; #68 Codex sandbox (worktree parent stattable, siblings denied by globs, each fileChange journalled; blockers-only review: no blockers); #69 a moved PR head reads in words, Bring up to date behind a push card, GitHub Update branch adopted, "Waiting for GitHub checks" (decision #65); #70 0.3.6; #71 follow-up tasks start from the integration head (decision #66, owner "A"), a replan restarts a changed blocked task, the planner reads a declined push correctly, a fixed result can be pushed after a declined push, the stage shows running work, a stale page says "MEC was updated"; #72 0.3.7; #73 a work leaves Blocked once none of its tasks is blocked, and accepted tasks don't wait behind an unrelated blocked task; #74 0.3.8.
+- **Live journeys on MubitLabs/mec-sandbox via Chrome:**
+  - OpenCode trot.js: PR #7 merged after MEC adopted the owner's Update branch.
+  - CI moved to ubuntu-latest: PR #8, made through MEC, owner's option 2, because the self-hosted mubit-any pool was saturated by a MubitLabs/mubit backlog.
+  - Codex gallop.js: PR #9 merged after MEC's Bring up to date.
+  - Owner's test "build a horse tinder website": PR #10 ready for review, not merged, as the owner asked. Six tasks across Codex, Claude and OpenCode. Two site bugs passed the repo's npm test: CSS overriding `hidden`, and a global `top` clashing with `window.top`. Each was found in Chrome and fixed through follow-ups.
+- **Real runs:** Claude 49 of the working cap of 50, Codex 15, OpenCode 10. Detail in `handoffs/engine-runs.md`.
+- **Open:**
+  - **Planner cancel resumes work (from #73):** a planner cancel that leaves no task blocked now resumes the work without the owner's go-ahead (decision needed).
+  - **Moved-head questions (from #69):** whether to adopt a moved head when the repository has no required checks; whether to withhold Bring up to date when someone else pushed.
+  - **Codex fileChange:** the failure seen twice has no known cause (runs 9 and att_7). Edits are now journalled.
+  - **Planner placement:** the planner placed a task that needed a browser check on OpenCode, which can't run commands.
+  - **UI evidence:** turning on the per-repo "UI evidence required" flag would catch broken pages before the push card.
+  - **Real-process timeouts:** the full `pnpm test` times out in real-process suites when the machine is loaded; CI is green.
+  - **Wording and windows:** queued-check wording; the 8 s confirm window.
 
 ## State on 9 November 2026
 

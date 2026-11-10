@@ -179,6 +179,39 @@ test('screenshots before review: off by default, turned on in plain words, and s
   await noHorizontalScroll(page)
 })
 
+test('screenshots before review: the checkbox sits at the start of its label’s line, at checkbox size', async ({
+  page,
+}) => {
+  await open(page, 'settings')
+  await page.getByRole('button', { name: 'Repositories' }).click()
+  const toggle = page.getByLabel('Require before and after screenshots for changes people can see')
+  await expect(toggle).toBeVisible()
+  const layout = await toggle.evaluate((input) => {
+    const label = input.closest('label') as HTMLLabelElement
+    const words = [...label.childNodes].find(
+      (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+    )
+    const range = document.createRange()
+    range.selectNodeContents(words as Node)
+    const box = input.getBoundingClientRect()
+    const text = range.getBoundingClientRect()
+    const row = label.getBoundingClientRect()
+    return {
+      width: box.width,
+      height: box.height,
+      fromStart: box.left - row.left,
+      gap: text.left - box.right,
+      offCentre: Math.abs(box.top + box.height / 2 - (text.top + text.height / 2)),
+    }
+  })
+  expect(layout.width, 'checkbox width').toBeLessThanOrEqual(20)
+  expect(layout.height, 'checkbox height').toBeLessThanOrEqual(20)
+  expect(layout.fromStart, 'checkbox starts the row').toBeLessThanOrEqual(4)
+  expect(layout.gap, 'label words follow the checkbox on its line').toBeGreaterThanOrEqual(0)
+  expect(layout.gap).toBeLessThanOrEqual(16)
+  expect(layout.offCentre, 'checkbox centred on the words').toBeLessThanOrEqual(4)
+})
+
 test('the agreement says what it allows, arms, and can be withdrawn', async ({ page }) => {
   await open(page, 'settings')
   await page.getByRole('button', { name: 'Repositories' }).click()

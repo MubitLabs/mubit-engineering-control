@@ -1,10 +1,13 @@
 // §14, §15 in the workbench: the repository setting saves as the API takes it, the work view shows
 // the before and after screenshots labelled with their short revisions, and a capture that could not
 // be taken offers "Take the screenshots again" through the same retry as every other.
+import { readFileSync } from 'node:fs'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { decodeRepositories } from '../src/config-decode'
 import { decodeWorkDetail } from '../src/inspection-decode'
-import { uiEvidencePatch } from '../src/next/SettingsView'
+import { UiEvidenceControl, uiEvidencePatch } from '../src/next/SettingsView'
 import { deliveryDetail } from '../src/next/work-model'
 import { workDetails } from './fixtures/inspection-fixtures'
 
@@ -84,6 +87,41 @@ describe('the repository setting (§14)', () => {
       required: true,
       paths: ['/'],
     })
+  })
+
+  it('the checkbox sits on its label’s line at checkbox size, not as a full-width field', () => {
+    // `.field input` makes every field input a full-width, 36 px tall box on its own grid row; the
+    // checkbox row is a flex line with a 16 px box, like the radio rows (the layout itself is in
+    // config.screens.playwright.ts).
+    const css = readFileSync(new URL('../src/next/shell.css', import.meta.url), 'utf8')
+    const row = css.match(/\n\.field-check \{([^}]*)\}/)?.[1] ?? ''
+    const box = css.match(/\n\.field-check input \{([^}]*)\}/)?.[1] ?? ''
+    expect(row).toContain('display: flex')
+    expect(row).toContain('align-items: center')
+    expect(box).toContain('width: 16px')
+    expect(box).toContain('height: 16px')
+    expect(box).toContain('min-height: 0')
+    expect(css.indexOf('\n.field-check input {')).toBeGreaterThan(css.indexOf('\n.field input,'))
+    const [repository] = decodeRepositories([
+      {
+        id: 'repo_a',
+        url: '/r',
+        bootstrap: [],
+        checks: [],
+        trust: false,
+        revision: 'r1',
+        hostRunAgreedAt: null,
+      },
+    ])
+    const html = renderToStaticMarkup(
+      createElement(UiEvidenceControl, {
+        repository: repository as NonNullable<typeof repository>,
+        busy: false,
+        error: null,
+        onSave: () => {},
+      }),
+    )
+    expect(html).toMatch(/<label class="field field-check"[^>]*><input [^>]*type="checkbox"/)
   })
 
   it('says what is wrong instead of saving it', () => {

@@ -1,0 +1,37 @@
+[
+  {
+    "name": "C1 the label loses the checkbox class",
+    "file": "apps/web/src/next/SettingsView.tsx",
+    "find": "className=\"field field-check\"",
+    "replace": "className=\"field\"",
+    "tests": ["apps/web/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "C2 the checkbox row is a grid again: the box sits above its words",
+    "file": "apps/web/src/next/shell.css",
+    "find": ".field-check {\n  display: flex;\n  align-items: center;",
+    "replace": ".field-check {\n  display: grid;\n  align-items: center;",
+    "tests": ["apps/web/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "C3 the box takes the field width",
+    "file": "apps/web/src/next/shell.css",
+    "find": "  flex: none;\n  width: 16px;",
+    "replace": "  flex: none;\n  width: 100%;",
+    "tests": ["apps/web/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "C4 the box keeps the field's 36 px height",
+    "file": "apps/web/src/next/shell.css",
+    "find": "  height: 16px;\n  min-height: 0;\n  margin: 0;",
+    "replace": "  height: 16px;\n  margin: 0;",
+    "tests": ["apps/web/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "C5 the checkbox rules are dropped entirely",
+    "file": "apps/web/src/next/shell.css",
+    "find": "\n.field-check input {\n",
+    "replace": "\n.field-check-unused input {\n",
+    "tests": ["apps/web/test/ui-evidence.test.ts"]
+  }
+]

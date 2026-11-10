@@ -1611,6 +1611,24 @@ button.choice:hover,
   font-weight: 400;
 }
 
+/* A checkbox field: the box then its words on one line, like a radio row, not a full-width input. */
+.field-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--target);
+}
+
+.field-check input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--ink);
+}
+
 .field-inline {
   display: inline-flex;
   align-items: center;

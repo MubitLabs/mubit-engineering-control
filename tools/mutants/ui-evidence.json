@@ -236,5 +236,12 @@
     "find": "      if (spec.side === 'after' && status !== null && status >= 400) {",
     "replace": "      if (status !== null && status >= 400) {",
     "tests": ["apps/desktop/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(3) the server bundle pulls Playwright in",
+    "file": "apps/desktop/src/ui-capture.ts",
+    "find": "(await import(PLAYWRIGHT)) as typeof import('playwright-core')",
+    "replace": "(await import('playwright-core')) as typeof import('playwright-core')",
+    "tests": ["apps/desktop/test/bundle-playwright.test.ts"]
   }
 ]

@@ -82,9 +82,16 @@ type PageLike = {
 /** WebRTC sends UDP only through the proxy, and an HTTP proxy carries none: no STUN or media leaves. */
 const WEBRTC_FENCE = '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'
 
+/**
+ * Loaded at capture time and never bundled: a specifier in a variable is one no bundler follows,
+ * so the server bundle neither inlines Playwright nor needs its lazy chromium-bidi, whatever its
+ * external list says. The installed package carries `playwright-core` as a dependency.
+ */
+const PLAYWRIGHT: string = 'playwright-core'
+
 /** Playwright's Chromium, headless, behind the fence. Its absence is a reason, not a crash. */
 export async function launchChromium(fence: Fence): Promise<BrowserLike> {
-  const { chromium } = await import('playwright-core')
+  const { chromium } = (await import(PLAYWRIGHT)) as typeof import('playwright-core')
   const browser = await chromium.launch({
     headless: true,
     proxy: { server: fence.proxy },

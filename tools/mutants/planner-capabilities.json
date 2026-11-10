@@ -1,0 +1,163 @@
+[
+  {
+    "name": "(1) no objective reads as needing commands",
+    "file": "packages/domain/src/reach.ts",
+    "find": "return COMMAND_WORDS.exec(objective)?.[1]?.toLowerCase()",
+    "replace": "return undefined",
+    "tests": ["packages/domain/test/reach.test.ts", "packages/meta/test/capabilities.test.ts"]
+  },
+  {
+    "name": "(1) command words match inside other words",
+    "file": "packages/domain/src/reach.ts",
+    "find": "/\\b(test command|run|",
+    "replace": "/(test command|run|",
+    "tests": ["packages/domain/test/reach.test.ts"]
+  },
+  {
+    "name": "(1) a slot with no reach recorded is ruled out",
+    "file": "packages/domain/src/reach.ts",
+    "find": "return slot.reach?.commands !== false",
+    "replace": "return slot.reach?.commands === true",
+    "tests": ["packages/domain/test/reach.test.ts", "packages/meta/test/capabilities.test.ts"]
+  },
+  {
+    "name": "(1) a worker that cannot run commands is worded as one that can",
+    "file": "packages/domain/src/reach.ts",
+    "find": "if (!reach.commands) return `${edits}; cannot run commands`",
+    "replace": "if (reach.commands) return `${edits}; cannot run commands`",
+    "tests": ["packages/domain/test/reach.test.ts", "packages/meta/test/capabilities.test.ts"]
+  },
+  {
+    "name": "(2) the slot line leaves out what its worker can run",
+    "file": "packages/meta/src/context.ts",
+    "find": "(slot.reach !== undefined ? ` · ${reachWords(slot.reach)}` : ''),",
+    "replace": "'',",
+    "tests": ["packages/meta/test/capabilities.test.ts"]
+  },
+  {
+    "name": "(2) the context builder drops the reach",
+    "file": "packages/meta/src/context.ts",
+    "find": "slotViewsFromStore(store, opts.marks, opts.reach)",
+    "replace": "slotViewsFromStore(store, opts.marks)",
+    "tests": ["packages/meta/test/capabilities.test.ts"]
+  },
+  {
+    "name": "(4) the plan tools and dispatch see no reach",
+    "file": "packages/meta/src/service.ts",
+    "find": "slotViewsFromStore(this.#store, this.#marks?.(), this.#reach?.())",
+    "replace": "slotViewsFromStore(this.#store, this.#marks?.())",
+    "tests": ["packages/meta/test/capabilities.test.ts"]
+  },
+  {
+    "name": "(4) admission never checks reach",
+    "file": "packages/meta/src/tools.ts",
+    "find": "      issues.push(...reachIssues(tasks, this.#config.slots, this.#config.table))\n",
+    "replace": "",
+    "tests": ["packages/meta/test/capabilities.test.ts"]
+  },
+  {
+    "name": "(4) no capable connection anywhere is not refused",
+    "file": "packages/meta/src/tools.ts",
+    "find": "    if (capable.length === 0) {",
+    "replace": "    if (capable.length < 0) {",
+    "tests": ["packages/meta/test/capabilities.test.ts"]
+  },
+  {
+    "name": "(4) a pin on a slot that cannot run commands is accepted",
+    "file": "packages/meta/src/tools.ts",
+    "find": "    if (pinned !== undefined && !runsCommands(pinned)) {\n      issues.push(",
+    "replace": "    if (false) {\n      issues.push(",
+    "tests": ["packages/meta/test/capabilities.test.ts"]
+  },
+  {
+    "name": "(4) a tier served only where commands cannot run is accepted",
+    "file": "packages/meta/src/tools.ts",
+    "find": "      if (!fits.includes(tier)) {",
+    "replace": "      if (false) {",
+    "tests": ["packages/meta/test/capabilities.test.ts"]
+  },
+  {
+    "name": "(5) placement ignores reach",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (word === undefined || process.env.MEC_FAKE_ENGINE === '1') return {}",
+    "replace": "  return {}",
+    "tests": ["packages/meta/test/capabilities.test.ts"]
+  },
+  {
+    "name": "(5) a pin on a slot that cannot run commands launches",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (pinned !== undefined && !runsCommands(pinned)) {\n    return {",
+    "replace": "  if (false) {\n    return {",
+    "tests": ["packages/meta/test/capabilities.test.ts"]
+  },
+  {
+    "name": "(5) no capable slot defers as a model wait",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "  if (slots.length === 0) {",
+    "replace": "  if (slots.length < 0) {",
+    "tests": ["packages/meta/test/capabilities.test.ts"]
+  },
+  {
+    "name": "(5) capable slots do not narrow the field",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "        reach.slots === undefined\n          ? fit.modelSlots",
+    "replace": "        true\n          ? fit.modelSlots",
+    "tests": ["packages/meta/test/capabilities.test.ts"]
+  },
+  {
+    "name": "(1) OpenCode's shell ask counts as a command it can run",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "shell === 'ask' && shellAllowed(row)",
+    "replace": "shell === 'ask'",
+    "tests": ["apps/desktop/test/engine-reach.test.ts"]
+  },
+  {
+    "name": "(1) the decider is read as if every row had the sandbox",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "sandboxRequired: row.sandbox === 'required' },",
+    "replace": "sandboxRequired: true },",
+    "tests": ["apps/desktop/test/engine-reach.test.ts"]
+  },
+  {
+    "name": "(1) Codex runs commands with its sandbox off",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "      commands: row.sandbox === 'required',",
+    "replace": "      commands: true,",
+    "tests": ["apps/desktop/test/engine-reach.test.ts"]
+  },
+  {
+    "name": "(1) Claude's own domains read as network",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": ".some((domain) => !own.has(domain))",
+    "replace": ".length > 0",
+    "tests": ["apps/desktop/test/engine-reach.test.ts"]
+  },
+  {
+    "name": "(1) Codex's disabled web search is not read",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "!argv.includes('web_search=\"disabled\"')",
+    "replace": "!argv.includes('web_search=\"never\"')",
+    "tests": ["apps/desktop/test/engine-reach.test.ts"]
+  },
+  {
+    "name": "(1) OpenCode's edit ask reads as no edits",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "opencodeEffect(rules, 'edit') !== 'deny'",
+    "replace": "opencodeEffect(rules, 'edit') === 'allow'",
+    "tests": ["apps/desktop/test/engine-reach.test.ts"]
+  },
+  {
+    "name": "(1) OpenCode's first matching rule wins",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "return match.at(-1)?.effect ?? 'deny'",
+    "replace": "return match.at(0)?.effect ?? 'deny'",
+    "tests": ["apps/desktop/test/engine-reach.test.ts"]
+  },
+  {
+    "name": "(1) a slot no row launches gets a reach",
+    "file": "apps/desktop/src/planner-placement.ts",
+    "find": "        .filter(isLaunchableSlot)\n        .map((slot) => [String(slot.id), reachOf(",
+    "replace": "        .map((slot) => [String(slot.id), reachOf(",
+    "tests": ["apps/desktop/test/engine-reach.test.ts"]
+  }
+]

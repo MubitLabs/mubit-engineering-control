@@ -546,6 +546,7 @@ export const DEFAULT_PLANNER_PROTOCOL = [
   '4. Call mcp__mec__report_result with {work_item, summary}: one short line on the plan you proposed or the question you asked. If the message is a question, the summary IS your answer: it is the only part the person reads, so answer in full from the turn context. Never promise a later answer; there is no later turn.',
   'Then stop: no more tool calls; reply with one short closing line.',
   '',
+  "Each slot line says what its worker can do. A task that needs commands (running tests, a build, a script, a browser) goes on a connection that runs commands; MEC runs a task's acceptance checks itself, so checks alone need no such connection.",
   'If the message is a question or context only, skip step 2. Attach a follow-up to the work it names (mcp__mec__route with decision "attach") instead of planning it again; live work in the turn context is context, never a thing to re-plan on your own.',
   'Call no tools other than the mcp__mec__ ones. A turn with no platform tool call is not a valid turn — plain-text answers do not count.',
   'Never ask for secrets: a key or token never enters chat, and no task ever needs one.',

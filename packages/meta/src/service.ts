@@ -312,6 +312,7 @@ export class MetaAgentService {
   readonly #now: () => string
   readonly #policyText: string
   readonly #marks?: () => Record<string, Record<string, import('@mec/domain').ModelAvailability>>
+  readonly #reach?: () => Record<string, import('@mec/domain').WorkerReach>
   readonly #modelsTable?: () => ModelsTableSource | undefined
   readonly #launchableSlots?: () => ReadonlySet<string>
   readonly #metaEngine?: SchedulerDeps['metaEngine']
@@ -334,6 +335,11 @@ export class MetaAgentService {
     policyText?: string
     /** Probe marks per slot, supplied per turn (slots appear after boot); absent → honestly unlisted. */
     marks?: () => Record<string, Record<string, import('@mec/domain').ModelAvailability>>
+    /**
+     * What each slot's worker can run, by slot id, from its engine row. Plans, the context and
+     * dispatch all read it; absent, no slot is ruled out.
+     */
+    reach?: () => Record<string, import('@mec/domain').WorkerReach>
     /** The capability-table seam (T1's loader); absent means the planner is told so honestly. */
     modelsTable?: () => ModelsTableSource | undefined
     /** The slots a launch can start on; absent means every slot. Plans and dispatch both obey it. */
@@ -352,6 +358,7 @@ export class MetaAgentService {
     this.#now = deps.now ?? (() => new Date().toISOString())
     this.#policyText = deps.policyText ?? '{"preAuthorised":{}}'
     this.#marks = deps.marks
+    this.#reach = deps.reach
     this.#modelsTable = deps.modelsTable
     this.#launchableSlots = deps.launchableSlots
     this.#metaEngine = deps.metaEngine
@@ -513,7 +520,7 @@ export class MetaAgentService {
 
   /** One slot list for tier validation and dispatch: a tier passes only where it can land. */
   #placementSlots(): ReturnType<typeof slotViewsFromStore> {
-    const views = slotViewsFromStore(this.#store, this.#marks?.())
+    const views = slotViewsFromStore(this.#store, this.#marks?.(), this.#reach?.())
     const launchable = this.#launchableSlots?.()
     return launchable === undefined ? views : views.filter((view) => launchable.has(view.slotId))
   }
@@ -560,6 +567,7 @@ export class MetaAgentService {
         ...(opts.workItemId !== undefined && { workItemId: opts.workItemId }),
       },
       ...(this.#marks !== undefined && { marks: this.#marks() }),
+      ...(this.#reach !== undefined && { reach: this.#reach() }),
       ...(this.#modelsTable !== undefined && { modelsTable: this.#modelsTable }),
     })
   }

@@ -17,12 +17,20 @@
  * probe result, I/O); a slot without marks is honestly unlisted.
  */
 import type { Store, StoreDoc } from '@mec/contracts'
-import type { Caps, ModelAvailability, ModelTier, SlotModelsView, TierTableLike } from '@mec/domain'
+import type {
+  Caps,
+  ModelAvailability,
+  ModelTier,
+  SlotModelsView,
+  TierTableLike,
+  WorkerReach,
+} from '@mec/domain'
 import {
   availableTiersOnSlot,
   deliveryStopped,
   deliveryWaiting,
   plannerTurnEnded,
+  reachWords,
   stageOf,
   tableEntries,
   WORK_ITEM_TERMINAL,
@@ -137,6 +145,8 @@ export type PlannerSlotRow = {
   utilisation?: number
   resetAt?: string
   availableTiers: ModelTier[]
+  /** What its worker can run, from its engine row; absent prints nothing. */
+  reach?: WorkerReach
 }
 
 export type PlannerBudgetRow = {
@@ -293,7 +303,8 @@ function slotsSection(input: PlannerContextInput): string {
       `- ${slot.id} · ${slot.engine}${slot.provider !== undefined ? ` · ${slot.provider}` : ''} · ${slot.state}` +
       ` · utilisation: ${slot.utilisation !== undefined ? `${Math.round(slot.utilisation * 100)}%` : 'unknown'}` +
       (slot.resetAt !== undefined ? ` · resets ${slot.resetAt}` : '') +
-      ` · available tiers: ${slot.availableTiers.length > 0 ? slot.availableTiers.join(', ') : 'none marked available'}`,
+      ` · available tiers: ${slot.availableTiers.length > 0 ? slot.availableTiers.join(', ') : 'none marked available'}` +
+      (slot.reach !== undefined ? ` · ${reachWords(slot.reach)}` : ''),
   )
   return [
     `slots: ${rows.length} slot(s)${input.slots.length > rows.length ? ` (${input.slots.length - rows.length} omitted)` : ''}`,
@@ -442,16 +453,21 @@ export function compilePlannerContext(input: PlannerContextInput): string {
 
 // ── The store snapshot builder ──────────────────────────────────────────────────────────────
 
-/** Slot docs as the slot section sees them (marks supplied by the caller; unlisted without). */
+/**
+ * Slot docs as the slot section sees them (marks supplied by the caller; unlisted without). The
+ * reach is the caller's too, from the engine rows; a slot without one claims nothing.
+ */
 export function slotViewsFromStore(
   store: Store,
   marks?: Record<string, Record<string, ModelAvailability>>,
+  reach?: Record<string, WorkerReach>,
 ): SlotModelsView[] {
   return store.slots.list().map((doc) => ({
     slotId: String(doc.id ?? ''),
     engine: typeof doc.engine === 'string' ? doc.engine : '',
     healthy: String(doc.state ?? '') === 'healthy',
     marks: marks?.[String(doc.id ?? '')] ?? {},
+    ...(reach?.[String(doc.id ?? '')] !== undefined && { reach: reach[String(doc.id ?? '')] }),
     ...(typeof doc.provider === 'string' && { provider: doc.provider }),
     ...(typeof doc.slotClass === 'string' && { slotClass: doc.slotClass }),
     ...(typeof doc.usageUtilization === 'number' && { utilisation: doc.usageUtilization }),
@@ -596,6 +612,8 @@ export function plannerContextFromStore(
     policyText: string
     caps: Caps
     marks?: Record<string, Record<string, ModelAvailability>>
+    /** What each slot's worker can run, by slot id (the engine rows' reach). */
+    reach?: Record<string, WorkerReach>
     modelsTable?: () => ModelsTableSource | undefined
     scorecards?: () => PlannerScorecardRow[] | undefined
     bundleRevision?: string
@@ -636,7 +654,7 @@ export function plannerContextFromStore(
       ...(doc.ackText !== undefined && { acknowledged: true }),
     }))
 
-  const slots = slotViewsFromStore(store, opts.marks)
+  const slots = slotViewsFromStore(store, opts.marks, opts.reach)
   const open = store.workItems
     .list()
     .filter((doc) => !WORK_ITEM_TERMINAL.includes(String(doc.state) as WorkItemState))
@@ -713,6 +731,7 @@ export function plannerContextFromStore(
       ...(typeof doc?.usageUtilization === 'number' && { utilisation: doc.usageUtilization }),
       ...(typeof doc?.resetAt === 'string' && { resetAt: doc.resetAt }),
       availableTiers: tableSource !== undefined ? availableTiersOnSlot(slot, tableSource.table) : [],
+      ...(slot.reach !== undefined && { reach: slot.reach }),
     }
   })
 

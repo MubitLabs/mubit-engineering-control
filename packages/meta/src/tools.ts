@@ -27,8 +27,11 @@ import {
   ATTEMPT_TERMINAL,
   BUILTIN_ROLE_NAMES,
   BUILTIN_ROSTER,
+  commandNeed,
   DEFAULT_CAPS,
   isModelTier,
+  placeableTiers,
+  runsCommands,
   TASK_TERMINAL,
   type TierIssue,
   validateGraph,
@@ -140,6 +143,51 @@ const MAX_ARTIFACTS = 10
 const CONFIRMATION_TTL_MS = 24 * 60 * 60_000
 
 const STOPPABLE_ATTEMPT_STATES = new Set(['queued', 'running', 'work_complete', 'stalled'])
+
+/**
+ * A task whose objective needs commands goes where its worker can run them (owner's horse tinder
+ * test, 9 November 2026): refused when pinned to a slot that cannot, when no slot can, or when its
+ * tier is served only where none can. Without a pin, placement picks a slot that can. Acceptance
+ * checks are no reason on their own: MEC runs those, not the worker.
+ */
+function reachIssues(
+  tasks: readonly PlannerPlanTask[],
+  slots: readonly SlotModelsView[],
+  table: TierTableLike,
+): string[] {
+  const healthy = slots.filter((slot) => slot.healthy)
+  const capable = healthy.filter(runsCommands)
+  const names = capable.map((slot) => slot.slotId).join(', ')
+  const issues: string[] = []
+  for (const task of tasks) {
+    const word = commandNeed(task.objective)
+    if (word === undefined || healthy.length === 0) continue
+    const needs = `reach: task '${task.taskId}' needs a worker that runs commands (its objective says "${word}")`
+    if (capable.length === 0) {
+      issues.push(
+        `${needs}, and no connection here can run commands: plan it as file edits only, because MEC runs the acceptance checks itself, and say in report_result what a person must run`,
+      )
+      continue
+    }
+    const pinned = slots.find((slot) => slot.slotId === task.slotHint?.slotId)
+    if (pinned !== undefined && !runsCommands(pinned)) {
+      issues.push(
+        `${needs}, but slot '${pinned.slotId}' (${pinned.engine}) cannot run commands; pin it to one that can (${names}) or leave slot_hint out`,
+      )
+      continue
+    }
+    const tier = task.modelRequest?.tier
+    if (tier !== undefined && placeableTiers(table, healthy).includes(tier)) {
+      const fits = placeableTiers(table, capable)
+      if (!fits.includes(tier)) {
+        issues.push(
+          `${needs}, but tier '${tier}' is served only by connections that cannot run commands; choose a tier ${names} serves (${fits.join(', ') || 'none'})`,
+        )
+      }
+    }
+  }
+  return issues
+}
 
 const countWords = (text: string): number => text.split(/\s+/).filter(Boolean).length
 
@@ -439,6 +487,7 @@ export class PlannerTools {
         frontierPreAuthorised: this.#config.frontierPreAuthorised ?? false,
       })
       issues.push(...tierIssues.map((issue) => `${issue.kind}: ${issue.detail}`))
+      issues.push(...reachIssues(tasks, this.#config.slots, this.#config.table))
     }
 
     if (issues.length > 0) {

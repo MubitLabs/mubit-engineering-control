@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.9 (10 November 2026)
+
+The owner's answers of 10 November, built. See `docs/changes/2026-11-10-owner-answers/`, `2026-11-10-planner-capabilities/`, `2026-11-10-codex-filechange/` and `2026-11-10-ui-evidence/`. No migration.
+
+- **UI evidence (spec §15), a repository setting, off by default.** Settings › Repositories › "Screenshots before review". When it is on, MEC itself takes before and after screenshots, labelled with their revisions, of a change people can see, and holds the task until both exist. A screenshot it can't take says why and never counts as a pass. The captured page has no way out to the network. Turning it on doesn't disturb running work. The machine needs Playwright's Chromium (`npx playwright install chromium`).
+- **The planner knows which connections can run commands.** OpenCode edits files but can't run commands; a task that needs commands is placed on a connection that can, or the plan says why not.
+- **Codex file edits work.** MEC started Codex through the `~/.local/bin` link, which the worker's sandbox blocks, so every native file edit failed. It now starts Codex by its real path.
+- **Bring up to date is not offered when someone else pushed to the branch**; MEC says so and points to the pull request (DECISIONS #68).
+
 ## 0.3.8 (9 November 2026)
 
 A fix from the owner's horse tinder test on the installed 0.3.7. See `docs/changes/2026-11-09-stale-block/`. No migration.

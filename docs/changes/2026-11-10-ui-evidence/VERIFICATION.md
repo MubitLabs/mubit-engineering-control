@@ -83,6 +83,22 @@ Each of the 7 was killed both in a run of its own and in the full run.
 - CHANGE.md now cites §13 hard invariant 1 and describes the three fences.
 - The `start.url` error now names `[::1]`, which the parser accepts, as do CHANGE.md and `docs/reference.md`.
 
+## Round 3: CI on PR #79
+
+At `3ce24e4`, suite-b (22) and (24) failed. 7 of 9 checks passed.
+
+- `restart.test.ts` failed to load. It bundles `serve.ts` with only the natives external, and esbuild inlined `playwright-core`, then could not resolve its lazily-loaded `chromium-bidi/lib/cjs/bidiMapper/BidiMapper` and `.../cdp/CdpConnection`.
+  - **Failing first:** a new test, `apps/desktop/test/bundle-playwright.test.ts`, bundles `serve.ts` the same way. It failed locally with the same esbuild error (`Build failed with 2 errors`).
+  - **Fix:** `ui-capture.ts` imports Playwright through a specifier held in a variable, which esbuild does not follow.
+  - **Bundle paths:** these are all of them: `scripts/bundle-desktop.mjs` (release; `playwright-core` stays external), and the bundles inside `bundle-defaults.test.ts` and `restart.test.ts`. None inlines Playwright now. `pnpm build:desktop` output has no `chromium-bidi`.
+  - **Runtime check:** a variable `import('playwright-core')` from `apps/desktop/dist/` resolved Playwright and Chromium's path.
+- 9 tests in `ui-evidence.test.ts` read `Chromium could not start: … Executable doesn't exist at /home/runner/.cache/ms-playwright/chromium_headless_shell-1248/…`. suite-b had never installed a browser, and no CI job did.
+  - **Fix:** suite-b now runs `pnpm --filter @mec/desktop exec playwright-core install --with-deps --only-shell chromium` before `pnpm test:b`. Nothing is skipped and no assertion changed.
+  - **Not a failure:** the log line `"reason": "the start command exited with code 4"` is the expected after side of "before taken and after not". That test failed only because its before side could not start Chromium either.
+- **Green, locally:** `restart`, `bundle-playwright`, `bundle-defaults` and `ui-evidence`: 48 passed. `pnpm typecheck` is clean. `biome check .` reports 0 errors.
+- **Mutants:** a 35th, "the server bundle pulls Playwright in" (the literal import back), is killed by `bundle-playwright.test.ts`. The full spec: **35 of 35 killed**.
+- **Not proven:** the CI install step itself (that needs a push, which is the coordinator's).
+
 ## Package, by the independent check
 
 On this branch the checker built `dist-internal/mec-0.3.8.tgz` with `pnpm pack:internal` and ran `npm install --omit=dev` on it (41 packages). `playwright-core` resolved, Chromium 156.0.8078.4 launched, `mec --version` worked, and `scripts/smoke-package.mjs` passed. The builder did not run these itself.

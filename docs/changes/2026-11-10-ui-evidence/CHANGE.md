@@ -65,7 +65,8 @@ The retry is a new `retryOffer` kind, `screenshots`, through `POST /api/work/:id
 - `packages/domain/src/ui-evidence.ts` (new): setting, globs, verdict. `acceptance.ts`, `stages.ts`, `index.ts`.
 - `packages/meta/src/ui-evidence.ts` (new): store reads, `screenshotWait`, retry offer and retake. `scheduler.ts` (`acceptanceOf`, `taskAcceptance`), `context.ts`, `index.ts`.
 - `apps/desktop/src/ui-capture.ts` (new), `apps/desktop/src/ui-evidence.ts` (new). `composition.ts`, `server.ts`, `config-routes.ts`, `delivery.ts` (retry kind and PR body, small and local), `inspection.ts` (two stage cases, the fact, `screenshots` on detail), `release.ts`, `reason-words.ts`.
-- `apps/desktop/package.json` (`playwright-core` 1.64.1, already in the lockfile), `scripts/bundle-desktop.mjs` and `scripts/pack-tarball.mjs` (external, installed).
+- `apps/desktop/package.json` (`playwright-core` 1.64.1, already in the lockfile), `scripts/bundle-desktop.mjs` and `scripts/pack-tarball.mjs` (external, installed). `ui-capture.ts` loads it at capture time through a specifier held in a variable. No bundler follows that, so no bundle of the server inlines Playwright or needs its lazily-loaded chromium-bidi, whatever its external list says.
+- `.github/workflows/ci.yml`: suite-b installs Chromium's headless shell at the revision playwright-core pins (`playwright-core install --with-deps --only-shell chromium`). The real-browser tests, which include the network-fence evidence, run in CI and are not skipped.
 - `apps/web`: `config-model.ts`, `config-decode.ts`, `api-config.ts`, `SettingsView.tsx`, `live/config.tsx`, `inspection-wire.ts`, `inspection-decode.ts`, `work-model.ts`, `WorkView.tsx`, `shell.css`.
 - Tests and `tools/mutants/ui-evidence.json`; `docs/reference.md`.
 

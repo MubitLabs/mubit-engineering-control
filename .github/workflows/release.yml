@@ -26,6 +26,7 @@ jobs:
         run: |
           version=$(node -p "require('./apps/desktop/package.json').version")
           [ "${GITHUB_REF_NAME}" = "v${version}" ] || { echo "tag ${GITHUB_REF_NAME} does not match apps/desktop version v${version}"; exit 1; }
+      - run: pnpm --filter @mec/desktop exec playwright-core install --with-deps --only-shell chromium
       - run: pnpm check
 
   tarball:

@@ -336,9 +336,19 @@ const DELIVERY_LABELS: Record<WorkDetail['delivery']['stage'], string> = {
   merged: 'Merged',
 }
 
+/** §14: where the same change already is, in the server's words for the row (`yieldedWords`). */
+function yieldedLabel({ branch, prNumber }: NonNullable<DeliveryView['yieldedTo']>): string {
+  const pr = prNumber === null ? '' : ` (pull request #${prNumber})`
+  return `MEC found the same change already on ${branch}${pr}, so it pushed nothing and opened no pull request.`
+}
+
+/** `owner/name`, the only repository a link to GitHub is ever built from. */
+const REPO_SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+
 function deliveryLabel(detail: WorkDetail): string {
   if (detail.delivery.failure !== null) return `Delivery failed: ${detail.delivery.failure}`
   if (!detail.coverage.delivery) return 'Delivery is not recorded yet'
+  if (detail.delivery.yieldedTo !== undefined) return yieldedLabel(detail.delivery.yieldedTo)
   const { stage, prNumber } = detail.delivery
   const label = DELIVERY_LABELS[stage]
   const line = prNumber !== null ? `${label}, pull request #${prNumber}` : label
@@ -381,8 +391,14 @@ export interface DeliverySection {
 
 function deliverySection(detail: WorkDetail): DeliverySection {
   const { delivery } = detail
-  const { prNumber, prUrl } = delivery
-  const link = prUrl?.startsWith('https://') ? prUrl : null
+  const { prUrl, repo, yieldedTo } = delivery
+  // A yield points at the pull request that already carries the change, on its own repository.
+  const theirs =
+    yieldedTo?.prNumber != null && repo !== null && REPO_SLUG.test(repo)
+      ? `https://github.com/${repo}/pull/${yieldedTo.prNumber}`
+      : null
+  const prNumber = theirs === null ? delivery.prNumber : (yieldedTo?.prNumber ?? null)
+  const link = theirs ?? (prUrl?.startsWith('https://') ? prUrl : null)
   return {
     label: deliveryLabel(detail),
     ci: ciLine(delivery),
@@ -566,6 +582,15 @@ function screenshotSide(side: ScreenshotSide | null, name: 'Before' | 'After'): 
     })),
     note: null,
   }
+}
+
+/**
+ * What follows a set's title on its line: its note, after a full stop unless the title already
+ * ends its own sentence (a task title often does), so the line never reads `shadow).. Taken`.
+ */
+export function screenshotCaption(set: Pick<ScreenshotsView, 'title' | 'note'>): string {
+  if (set.note === null) return ''
+  return /[.!?]$/.test(set.title.trimEnd()) ? ` ${set.note}` : `. ${set.note}`
 }
 
 function screenshotsView(set: ScreenshotSet, title: string): ScreenshotsView {

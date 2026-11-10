@@ -40,6 +40,8 @@ export type WorkItemView = {
   branchMoved?: string
   /** That head carries someone else's commits (owner, 10 November 2026). */
   branchForeign?: boolean
+  /** §14: MEC found the same change already on another branch or pull request, and opened nothing. */
+  deliveryYielded?: YieldedTo
   /** GitHub's required checks on the pull request have not finished. */
   checksWaiting?: ChecksWait
   /** UI evidence (§15): MEC is taking the before and after screenshots, or could not take one. */
@@ -51,6 +53,9 @@ export type ScreenshotWait = { state: 'waiting' } | { state: 'could_not'; side: 
 
 /** Required checks still waiting on GitHub: queued (none started) or running, and since when MEC saw it. */
 export type ChecksWait = { queued: boolean; since?: string }
+
+/** The branch, and its pull request when one was open, that already carries the change (§14). */
+export type YieldedTo = { branch: string; prNumber?: number }
 
 /** Where a delivery stopped short, and how. */
 export type DeliveryStop = { step: 'push' | 'pr'; outcome: 'declined' | 'failed' }
@@ -77,6 +82,8 @@ export type WorkFacts = {
   branchForeign?: boolean
   /** `deliveryWaiting(record).checksWaiting`; absent where the caller reads no delivery. */
   checksWaiting?: ChecksWait
+  /** `deliveryYielded(record)`; absent where the caller reads no delivery. */
+  deliveryYielded?: YieldedTo
   /** `screenshotWait(store, work)`; absent where the caller reads no captures. */
   screenshots?: ScreenshotWait
 }
@@ -190,6 +197,14 @@ export const STAGE_TABLE: readonly StageRow[] = [
       w.branchForeign === true ? 'Someone else pushed to the branch' : 'Branch changed on GitHub',
   },
   {
+    // §14: the same change is already on another branch or pull request, so MEC opened nothing
+    // (live, 10 November 2026). A person looks at it there; it never reads as Working.
+    key: 'person/yielded',
+    waitingOn: 'person',
+    match: (w) => w.deliveryYielded !== undefined && w.underWay !== true,
+    label: () => 'Same change already on GitHub',
+  },
+  {
     key: 'person/agreement',
     waitingOn: 'person',
     match: (w) => w.hostRunUnagreed === true,
@@ -287,6 +302,20 @@ export function deliveryStopped(record: Record<string, unknown> | undefined): De
 
 const text = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
 
+/** A delivery record (`delivery/<work item>`) dropped because its change is already elsewhere (§14). */
+export function deliveryYielded(record: Record<string, unknown> | undefined): YieldedTo | undefined {
+  const branch = text(record?.yieldTo)
+  if (record?.stage !== 'dropped' || branch === undefined) return undefined
+  const pr = record.yieldPr
+  return typeof pr === 'number' && Number.isInteger(pr) ? { branch, prNumber: pr } : { branch }
+}
+
+/** Where the change already is, in a sentence without its full stop. */
+export function yieldedWords(yielded: YieldedTo): string {
+  const pr = yielded.prNumber === undefined ? '' : ` (pull request #${yielded.prNumber})`
+  return `MEC found the same change already on ${yielded.branch}${pr}, so it pushed nothing and opened no pull request`
+}
+
 /**
  * What an open pull request (`delivery/<work item>` at `pr_open`) waits on outside MEC: a head that
  * moved on GitHub, or required checks that have not finished. A moved head comes first, since the
@@ -356,6 +385,7 @@ export function workViewOf(doc: Record<string, unknown>, facts: WorkFacts): Work
     ...(facts.branchMoved !== undefined && { branchMoved: facts.branchMoved }),
     ...(facts.branchForeign === true && { branchForeign: true }),
     ...(facts.checksWaiting !== undefined && { checksWaiting: facts.checksWaiting }),
+    ...(facts.deliveryYielded !== undefined && { deliveryYielded: facts.deliveryYielded }),
     ...(facts.screenshots !== undefined && { screenshots: facts.screenshots }),
   }
 }

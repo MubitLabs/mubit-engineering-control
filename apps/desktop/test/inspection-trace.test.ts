@@ -304,7 +304,8 @@ describe('evidence from the records M2 wrote', () => {
     ['ready', 'pr-ready'],
     ['merged', 'merged'],
     ['no_change', 'none'],
-    ['dropped', 'none'],
+    // §14: yielded to the same change elsewhere: complete here, nothing left (live, 10 November 2026).
+    ['dropped', 'local-complete'],
     ['closed', 'none'],
     ['declined', 'local-complete'],
     ['failed', 'local-complete'],

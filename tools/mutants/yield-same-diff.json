@@ -1,0 +1,115 @@
+[
+  {
+    "name": "Y1 the yield rule goes back to path-only: touching every changed path is enough",
+    "file": "packages/integration/src/yield.ts",
+    "find": "(file) => theirs.has(file.path) && theirs.get(file.path) === file.blob,",
+    "replace": "(file) => theirs.has(file.path),",
+    "tests": [
+      "packages/integration/test/yield.test.ts",
+      "apps/desktop/test/release.test.ts",
+      "apps/desktop/test/delivery.test.ts"
+    ]
+  },
+  {
+    "name": "Y2 a branch that carries our commits no longer yields",
+    "file": "packages/integration/src/yield.ts",
+    "find": "if (branch.containsHead === true) return { yield: true, branch: branch.name }",
+    "replace": "if (branch.containsHead === false) return { yield: true, branch: branch.name }",
+    "tests": ["packages/integration/test/yield.test.ts", "apps/desktop/test/release.test.ts"]
+  },
+  {
+    "name": "Y3 any compare answer, a diverged head included, reads as the same commits",
+    "file": "apps/desktop/src/release.ts",
+    "find": "return status === 'ahead' || status === 'identical'",
+    "replace": "return status !== ''",
+    "tests": ["apps/desktop/test/release.test.ts"]
+  },
+  {
+    "name": "Y4 a file GitHub reports removed keeps its old blob, so a deletion never matches",
+    "file": "apps/desktop/src/release.ts",
+    "find": "if (row[2] === 'removed') return [{ path: row[0], blob: null }]",
+    "replace": "if (row[2] === 'never') return [{ path: row[0], blob: null }]",
+    "tests": ["apps/desktop/test/release.test.ts"]
+  },
+  {
+    "name": "Y5 a delivery dropped under the old rule is never checked again",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "const recheck = stage === 'dropped' && doc.yieldRule !== SAME_CHANGE",
+    "replace": "const recheck = false",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "Y6 a dropped delivery is checked again on every pass",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "const recheck = stage === 'dropped' && doc.yieldRule !== SAME_CHANGE",
+    "replace": "const recheck = stage === 'dropped'",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "Y7 our side's blobs are lost, so the same content never matches",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "files.push({ path, blob: status === 'D' ? null : blob })",
+    "replace": "files.push({ path, blob: status === 'D' ? null : path })",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "Y8 the yielded stage row never matches, so the item reads Working again",
+    "file": "packages/domain/src/stages.ts",
+    "find": "match: (w) => w.deliveryYielded !== undefined && w.underWay !== true,",
+    "replace": "match: (w) => w.deliveryYielded === null && w.underWay !== true,",
+    "tests": [
+      "packages/domain/test/stages.test.ts",
+      "apps/desktop/test/delivery-surfaces.test.ts",
+      "packages/meta/test/context-stage.test.ts"
+    ]
+  },
+  {
+    "name": "Y9 a dropped record reads as no delivery on the wire",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "  dropped: 'local-complete',",
+    "replace": "  dropped_never: 'local-complete',",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "Y10 the live line loses where the change already is",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "if (yielded !== undefined) return `Same change already on ${yielded.branch}`",
+    "replace": "if (yielded === null) return `Same change already on ${yielded.branch}`",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "Y11 the planner's delivery fact forgets the yield",
+    "file": "packages/meta/src/context.ts",
+    "find": "if (yielded !== undefined) return `dropped: ${yieldedWords(yielded)}`",
+    "replace": "if (yielded === null) return `dropped: ${yieldedWords(yielded)}`",
+    "tests": ["packages/meta/test/context-stage.test.ts"]
+  },
+  {
+    "name": "Y12 the Delivery section says Nothing has left this machine again",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "if (detail.delivery.yieldedTo !== undefined) return yieldedLabel(detail.delivery.yieldedTo)",
+    "replace": "if (detail.delivery.yieldedTo === null) return yieldedLabel(detail.delivery.yieldedTo)",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "Y13 any stored repository becomes a link",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "yieldedTo?.prNumber != null && repo !== null && REPO_SLUG.test(repo)",
+    "replace": "yieldedTo?.prNumber != null && repo !== null",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "Y14 the yield is dropped when the page decodes the wire",
+    "file": "apps/web/src/inspection-decode.ts",
+    "find": "...(raw.yieldedTo != null && { yieldedTo: yieldedTo(path, raw.yieldedTo, `${what}.yieldedTo`) }),",
+    "replace": "...(raw.yieldedTo === 1 && { yieldedTo: yieldedTo(path, raw.yieldedTo, `${what}.yieldedTo`) }),",
+    "tests": ["apps/web/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "Y15 the screenshots caption doubles the full stop again",
+    "file": "apps/web/src/next/work-model.ts",
+    "find": "return /[.!?]$/.test(set.title.trimEnd()) ? ` ${set.note}` : `. ${set.note}`",
+    "replace": "return `. ${set.note}`",
+    "tests": ["apps/web/test/ui-evidence.test.ts"]
+  }
+]

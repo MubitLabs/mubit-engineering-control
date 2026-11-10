@@ -57,9 +57,13 @@ const gitIn = (cwd: string, ...args: string[]): string =>
 
 const ok = (stdout: string): GhResult => ({ code: 0, stdout, stderr: '' })
 const fail = (stderr: string): GhResult => ({ code: 1, stdout: '', stderr })
+/** The git blob id of a file's content, as GitHub reports it. */
+const blobOf = (text: string): string =>
+  execFileSync('git', ['hash-object', '--stdin'], { input: text, encoding: 'utf8' }).trim()
 
 type World = {
-  prs: { number: number; headRefName: string; files: string[] }[]
+  /** Open PRs, each with what it changes: a path and the content at its head (null where it removes the path). */
+  prs: { number: number; headRefName: string; files: { path: string; text: string | null }[] }[]
   pr: { state: string; headRefOid: string; mergeStateStatus?: string } | undefined
   checks: GhResult
   target: string
@@ -80,9 +84,17 @@ function fakeGh(rig: { bare: () => string }, world: World) {
       return ok(`${gitIn(rig.bare(), 'rev-parse', `refs/heads/${ref}`)}\n`)
     }
     if (args[0] === 'pr' && args[1] === 'list') return ok(JSON.stringify(world.prs))
-    if (args[0] === 'pr' && args[1] === 'view' && text.includes('files')) {
-      const pr = world.prs.find((row) => row.number === Number(args[2]))
-      return ok(JSON.stringify({ files: (pr?.files ?? []).map((filename) => ({ filename })) }))
+    const filesOf = /^repos\/[^/]+\/[^/]+\/pulls\/(\d+)\/files$/.exec(String(args[1]))
+    if (args[0] === 'api' && filesOf !== null) {
+      // GitHub's blob id for each file, as `--jq … | @json` prints it: one row per line.
+      const pr = world.prs.find((row) => row.number === Number(filesOf[1]))
+      return ok(
+        (pr?.files ?? [])
+          .map(({ path, text }) =>
+            JSON.stringify(text === null ? [path, '0'.repeat(40), 'removed'] : [path, blobOf(text), 'added']),
+          )
+          .join('\n'),
+      )
     }
     if (args[0] === 'pr' && args[1] === 'view') {
       return world.pr === undefined
@@ -643,11 +655,63 @@ describe('the result path (§14, #11, #12)', () => {
     expect(r.cards('pr_create')).toEqual([])
   })
 
-  it('human duplicate PR gives dropped', async () => {
-    const r = rig({ world: { prs: [{ number: 3, headRefName: 'human/fix', files: ['b.txt'] }] } })
+  it('human duplicate PR gives dropped: the same change, with its PR number', async () => {
+    const same = [{ path: 'b.txt', text: 'two\n' }]
+    const r = rig({ world: { prs: [{ number: 3, headRefName: 'human/fix', files: same }] } })
     r.accepted('task_a', 'b.txt', 'two\n')
     await r.passes()
-    expect(r.doc()).toMatchObject({ stage: 'dropped', yieldTo: 'human/fix' })
+    expect(r.doc()).toMatchObject({
+      stage: 'dropped',
+      yieldTo: 'human/fix',
+      yieldPr: 3,
+      yieldRule: 'same_change',
+    })
+    expect(r.cards('push')).toEqual([])
+    const dropped = r.store.events.read(`work:${WORK}`).filter((event) => event.type === 'delivery_dropped')
+    expect(dropped.map((event) => event.body)).toMatchObject([{ yieldTo: 'human/fix', prNumber: 3 }])
+  })
+
+  it('a PR that touches the same paths with other content is other work: the push card opens (live, 10 November 2026)', async () => {
+    const other = [{ path: 'b.txt', text: 'a horse tinder site\n' }]
+    const r = rig({ world: { prs: [{ number: 10, headRefName: 'mec/mw9kvv16/integration', files: other }] } })
+    r.accepted('task_a', 'b.txt', 'two\n')
+    await r.passes()
+    expect(r.doc().stage).toBe('push_card')
+    expect(r.doc().yieldTo).toBeUndefined()
+    expect(r.cards('push')).toHaveLength(1)
+  })
+
+  it('a delivery dropped under the old path-only rule is checked again once, and goes on to its push card', async () => {
+    const r = rig()
+    r.accepted('task_a', 'b.txt', 'two\n')
+    await r.passes(1)
+    // What v0.3.11 stored: dropped for a PR that only touched the same path, with no rule marked.
+    const { pushCardId: _card, ...stored } = r.doc()
+    for (const card of r.cards('push')) r.store.confirmations.save({ ...card, status: 'stale' })
+    r.store.engines.save({ ...stored, stage: 'dropped', repo: SLUG, yieldTo: 'mec/mw9kvv16/integration' })
+    r.world.prs = [
+      { number: 10, headRefName: 'mec/mw9kvv16/integration', files: [{ path: 'b.txt', text: 'other\n' }] },
+    ]
+    await r.passes(1)
+    expect(r.doc()).toMatchObject({ stage: 'push_card' })
+    expect(r.doc().yieldTo).toBeUndefined()
+    expect(r.cards('push').filter((card) => card.status === 'pending')).toHaveLength(1)
+  })
+
+  it('a re-check that still finds the same change stays dropped, marked, and is not checked again', async () => {
+    const r = rig({
+      world: { prs: [{ number: 3, headRefName: 'human/fix', files: [{ path: 'b.txt', text: 'two\n' }] }] },
+    })
+    r.accepted('task_a', 'b.txt', 'two\n')
+    await r.passes(1)
+    const { yieldRule: _rule, ...old } = r.doc()
+    r.store.engines.save(old)
+    await r.passes(1)
+    expect(r.doc()).toMatchObject({ stage: 'dropped', yieldTo: 'human/fix', yieldRule: 'same_change' })
+    const reads = () => r.calls.filter((args) => String(args[1]).endsWith('/pulls/3/files')).length
+    const before = reads()
+    await r.passes(2)
+    expect(reads()).toBe(before)
     expect(r.cards('push')).toEqual([])
   })
 

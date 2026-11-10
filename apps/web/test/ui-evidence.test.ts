@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest'
 import { decodeRepositories } from '../src/config-decode'
 import { decodeWorkDetail } from '../src/inspection-decode'
 import { UiEvidenceControl, uiEvidencePatch } from '../src/next/SettingsView'
-import { deliveryDetail } from '../src/next/work-model'
+import { deliveryDetail, screenshotCaption } from '../src/next/work-model'
 import { workDetails } from './fixtures/inspection-fixtures'
 
 const BASE = 'b'.repeat(40)
@@ -172,6 +172,25 @@ describe('the screenshots on the work view (§15)', () => {
       { src: shot('after').url, alt: `After at ${HEAD.slice(0, 7)}: /`, path: '/' },
     ])
     expect(set?.note).toBe('Taken by MEC from the real application at 1280x800.')
+    expect(set === undefined ? null : screenshotCaption(set)).toBe(
+      '. Taken by MEC from the real application at 1280x800.',
+    )
+  })
+
+  it('a task title that ends its own sentence gets no second full stop (live, 10 November 2026)', () => {
+    const set = {
+      key: 'att_1',
+      title: 'Build a home page (centred card with a soft shadow).',
+      note: 'Taken by MEC from the real application.',
+    }
+    expect(screenshotCaption(set)).toBe(' Taken by MEC from the real application.')
+    expect(screenshotCaption({ ...set, title: 'Is it done?' })).toBe(
+      ' Taken by MEC from the real application.',
+    )
+    expect(screenshotCaption({ ...set, title: 'Build a page' })).toBe(
+      '. Taken by MEC from the real application.',
+    )
+    expect(screenshotCaption({ ...set, note: null })).toBe('')
   })
 
   it('a capture that could not be taken says why, with no image', () => {

@@ -90,6 +90,15 @@ describe('planner context stage', () => {
     expect(stageIn(store)).toBe('Branch changed on GitHub')
   })
 
+  it('a delivery that yielded to the same change elsewhere reads as Work reads it, not Working (§14)', () => {
+    const store = storeWith({ id: 'wi_1', state: 'integrating' })
+    store.engines.save({ id: 'delivery/wi_1', stage: 'dropped', yieldTo: 'human/home', yieldPr: 12 })
+    expect(stageIn(store)).toBe('Same change already on GitHub')
+    expect(context(store).work[0]?.delivery).toBe(
+      'dropped: MEC found the same change already on human/home (pull request #12), so it pushed nothing and opened no pull request',
+    )
+  })
+
   it('checks GitHub has not finished read as a wait on GitHub, not Working', () => {
     const store = storeWith({ id: 'wi_1', state: 'integrating' })
     store.engines.save({ id: 'delivery/wi_1', stage: 'pr_open', ci: 'ci_pending' })

@@ -28,11 +28,13 @@ import {
   checksWaitLabel,
   deliveryStopped,
   deliveryWaiting,
+  deliveryYielded,
   plannerTurnEnded,
   type ScreenshotWait,
   type Stage,
   stageOf,
   workViewOf,
+  yieldedWords,
 } from '@mec/domain'
 import { git } from '@mec/git'
 import {
@@ -138,6 +140,8 @@ export type DeliveryView = {
   movedTo?: string
   /** Why delivery stopped, in a sentence. Absent when nothing failed. */
   failure?: string
+  /** §14: the branch, and its pull request, that already carry this change, so MEC opened nothing. */
+  yieldedTo?: { branch: string; prNumber: number | null }
   /** The open merge card, so nothing asks twice. */
   mergeCardId?: string
 }
@@ -629,6 +633,8 @@ const ACTIVITY_TYPES = new Set([
 const DELIVERY_STAGES: Readonly<Record<string, DeliveryView['stage']>> = {
   local_complete: 'local-complete',
   moved: 'local-complete',
+  // §14: yielded to the same change elsewhere. Complete here, and nothing left this machine.
+  dropped: 'local-complete',
   declined: 'local-complete',
   failed: 'local-complete',
   push_card: 'awaiting-push',
@@ -646,6 +652,8 @@ function deliveryLine(
   delivery: { stage: DeliveryView['stage']; prNumber: number | null },
   record: StoreDoc | undefined,
 ): string | undefined {
+  const yielded = deliveryYielded(record)
+  if (yielded !== undefined) return `Same change already on ${yielded.branch}`
   const wait = deliveryWaiting(record)
   if (wait.branchMoved !== undefined) {
     return wait.branchForeign === true
@@ -1158,10 +1166,14 @@ class Inspector {
       (item) => item.kind === 'card' && item.cls === 'pr_merge' && item.workItemId === String(doc.id),
     )
     const moved = deliveryWaiting(record).branchMoved
+    const yielded = deliveryYielded(record)
     return {
       ...(repo !== null && { repo: cutText(repo, LABEL_CAP) }),
       ...(record !== undefined && this.#ciOf(record)),
       ...(moved !== undefined && { movedTo: moved }),
+      ...(yielded !== undefined && {
+        yieldedTo: { branch: cutText(yielded.branch, LABEL_CAP), prNumber: yielded.prNumber ?? null },
+      }),
       ...(failure !== null && { failure }),
       ...(card !== undefined && { mergeCardId: card.id }),
     }
@@ -1263,6 +1275,16 @@ class Inspector {
           nextAction: offer === undefined ? 'Look at the pull request on GitHub' : RETRY_NEXT[offer.kind],
         }
       }
+      case 'person/yielded': {
+        // §14 (live, 10 November 2026): where the change already is, and what a person does next.
+        const yielded = deliveryYielded(this.#deliveryRecord(doc))
+        if (yielded === undefined) return { reason: null, nextAction: null }
+        const where = yielded.prNumber === undefined ? yielded.branch : `pull request #${yielded.prNumber}`
+        return {
+          reason: cutAtWord(redactText(yieldedWords(yielded)), 200),
+          nextAction: `Look at ${where} on GitHub; stop this work if it covers your request`,
+        }
+      }
       case 'person/screenshots': {
         // §15: the handoff stays incomplete, and the reason says which capture and why.
         const offer = retryOffer(this.#store, doc)
@@ -1350,6 +1372,7 @@ class Inspector {
       const delivery = this.#deliveryOf(doc).stage
       const record = this.#deliveryRecord(doc)
       const stopped = deliveryStopped(record)
+      const yielded = deliveryYielded(record)
       const byStatus = counts[id] ?? {}
       const total = Object.values(byStatus).reduce((sum, n) => sum + n, 0)
       const turnEnded = plannerTurnEnded(messages.get(id) ?? [], questions.get(id) ?? [])
@@ -1368,6 +1391,7 @@ class Inspector {
                 tasksOpen: (byStatus.ready ?? 0) + (byStatus.active ?? 0) > 0,
                 ...(stopped !== undefined && { deliveryStopped: stopped }),
                 ...deliveryWaiting(record),
+                ...(yielded !== undefined && { deliveryYielded: yielded }),
                 ...screenshotFacts(this.#store, doc),
               }),
             )

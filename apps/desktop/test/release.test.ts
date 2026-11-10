@@ -103,8 +103,19 @@ afterEach(async () => {
   while (servers.length > 0) await servers.pop()?.close()
 })
 
-describe('yieldCheck (§14 yield-to-duplicate first)', () => {
+describe('yieldCheck (§14 yield-to-duplicate first: the same commits or the same diff)', () => {
   const MAIN = { defaultBranch: 'main' }
+  const OURS = 'c'.repeat(40)
+  const BLOB_A = '1'.repeat(40)
+  const BLOB_B = '2'.repeat(40)
+  const OTHER = '9'.repeat(40)
+  const A = { path: 'a.ts', blob: BLOB_A }
+  const B = { path: 'b.ts', blob: BLOB_B }
+  /** One line per file, as the `@json` jq filter prints it. */
+  const rows = (...files: [string, string, string][]): string =>
+    files.map((file) => `${JSON.stringify(file)}\n`).join('')
+  const listed = (prs: { number: number; headRefName: string; headRefOid?: string }[]) =>
+    ok(JSON.stringify(prs))
 
   it('compares against the pinned default branch, never a hardcoded one', async () => {
     const seen: string[] = []
@@ -113,59 +124,125 @@ describe('yieldCheck (§14 yield-to-duplicate first)', () => {
       if (args[1]?.endsWith('/branches')) return { code: 0, stdout: 'trunk\nfeat/x\n', stderr: '' }
       return { code: 1, stdout: '', stderr: '' }
     }
-    await yieldCheck(run, REPO, ['a.ts'], { defaultBranch: 'trunk' })
-    expect(seen).toContain(`api repos/${REPO}/compare/trunk...feat/x --jq .files[].filename`)
+    await yieldCheck(run, REPO, [A], { defaultBranch: 'trunk' })
+    expect(seen).toContain(
+      `api repos/${REPO}/compare/trunk...feat/x --jq .files[] | [.filename, .sha, .status] | @json`,
+    )
     expect(seen.join('\n')).not.toContain('compare/trunk...trunk')
     expect(seen.join('\n')).not.toContain('compare/main')
   })
 
   it('never yields to its own branch or PR', async () => {
-    const run: GhRun = async (args) => {
-      if (args[0] === 'pr' && args[1] === 'list') {
-        return { code: 0, stdout: '[{"number":1,"headRefName":"mec/x/integration"}]', stderr: '' }
-      }
-      if (args[0] === 'pr') return { code: 0, stdout: '{"files":[{"filename":"a.ts"}]}', stderr: '' }
-      if (args[1]?.endsWith('/branches')) return { code: 0, stdout: 'mec/x/integration\n', stderr: '' }
-      return { code: 0, stdout: 'a.ts\n', stderr: '' }
-    }
-    const answer = await yieldCheck(run, REPO, ['a.ts'], { ...MAIN, ownBranch: 'mec/x/integration' })
+    const { run } = fakeGh((args) => {
+      const text = args.join(' ')
+      if (text.includes('pr list')) return listed([{ number: 1, headRefName: 'mec/x/integration' }])
+      if (text.includes('/pulls/1/files')) return ok(rows(['a.ts', BLOB_A, 'added']))
+      if (text.includes('/branches')) return ok('mec/x/integration\n')
+      if (text.includes('/compare/')) return ok(rows(['a.ts', BLOB_A, 'added']))
+      return ok('')
+    })
+    const answer = await yieldCheck(run, REPO, [A], { ...MAIN, ownBranch: 'mec/x/integration' })
     expect(answer).toEqual({ yieldTo: null })
   })
 
-  it('yields to an open PR whose files are a strict superset of the change', async () => {
+  it('yields to an open PR that carries our exact content, with its number', async () => {
     const { run } = fakeGh((args) => {
       const text = args.join(' ')
-      if (text.includes('pr list')) return ok(JSON.stringify([{ number: 7, headRefName: 'human/fix' }]))
-      if (text.includes('pr view'))
-        return ok(JSON.stringify({ files: [{ filename: 'a.ts' }, { filename: 'b.ts' }] }))
+      if (text.includes('pr list')) return listed([{ number: 7, headRefName: 'human/fix' }])
+      if (text.includes(`api repos/${REPO}/pulls/7/files --paginate`))
+        return ok(rows(['a.ts', BLOB_A, 'added'], ['c.ts', OTHER, 'modified']))
       return ok('')
     })
-    await expect(yieldCheck(run, REPO, ['a.ts'], MAIN)).resolves.toEqual({ yieldTo: 'human/fix' })
+    await expect(yieldCheck(run, REPO, [A], MAIN)).resolves.toEqual({ yieldTo: 'human/fix', prNumber: 7 })
+  })
+
+  it('a PR or branch that only touches the same paths is other work, and never yields (live, 10 November 2026)', async () => {
+    const { run } = fakeGh((args) => {
+      const text = args.join(' ')
+      if (text.includes('pr list')) return listed([{ number: 10, headRefName: 'mec/mw9kvv16/integration' }])
+      if (text.includes('/pulls/10/files'))
+        return ok(rows(['a.ts', OTHER, 'added'], ['b.ts', BLOB_B, 'added']))
+      if (text.includes('pr view'))
+        return ok(JSON.stringify({ files: [{ filename: 'a.ts' }, { filename: 'b.ts' }] }))
+      if (text.includes('/branches')) return ok('main\nmec/mw9kvv16/integration\nhorse\n')
+      if (text.includes('/compare/')) return ok(rows(['a.ts', OTHER, 'added'], ['b.ts', OTHER, 'added']))
+      return ok('')
+    })
+    await expect(yieldCheck(run, REPO, [A, B], MAIN)).resolves.toEqual({ yieldTo: null })
   })
 
   it('partial overlap is related work, not a duplicate', async () => {
     const { run } = fakeGh((args) => {
       const text = args.join(' ')
-      if (text.includes('pr list')) return ok(JSON.stringify([{ number: 7, headRefName: 'human/fix' }]))
-      if (text.includes('pr view')) return ok(JSON.stringify({ files: [{ filename: 'a.ts' }] }))
+      if (text.includes('pr list')) return listed([{ number: 7, headRefName: 'human/fix' }])
+      if (text.includes('/pulls/7/files')) return ok(rows(['a.ts', BLOB_A, 'added']))
       if (text.includes('/branches')) return ok('main\nhuman/fix\n')
-      if (text.includes('/compare/')) return ok('a.ts\nc.ts\n')
+      if (text.includes('/compare/')) return ok(rows(['a.ts', BLOB_A, 'added'], ['c.ts', OTHER, 'added']))
       return ok('')
     })
-    await expect(yieldCheck(run, REPO, ['a.ts', 'b.ts'], MAIN)).resolves.toEqual({ yieldTo: null })
+    await expect(yieldCheck(run, REPO, [A, B], MAIN)).resolves.toEqual({ yieldTo: null })
   })
 
-  it('falls back to remote branches and yields when one contains every changed file', async () => {
+  it('a deletion is matched only by the same deletion', async () => {
+    const gone = { path: 'a.ts', blob: null }
+    const answer = (status: string) =>
+      fakeGh((args) => {
+        const text = args.join(' ')
+        if (text.includes('pr list')) return listed([{ number: 7, headRefName: 'human/fix' }])
+        if (text.includes('/pulls/7/files')) return ok(rows(['a.ts', BLOB_A, status]))
+        return ok('')
+      }).run
+    await expect(yieldCheck(answer('removed'), REPO, [gone], MAIN)).resolves.toEqual({
+      yieldTo: 'human/fix',
+      prNumber: 7,
+    })
+    await expect(yieldCheck(answer('modified'), REPO, [gone], MAIN)).resolves.toEqual({ yieldTo: null })
+  })
+
+  it('falls back to remote branches and yields when one carries our content for every changed file', async () => {
     const { run } = fakeGh((args) => {
       const text = args.join(' ')
       if (text.includes('pr list')) return ok('[]')
       if (text.includes('/branches')) return ok('main\nfeat/everything\n')
-      if (text.includes('/compare/')) return ok('a.ts\nb.ts\n')
+      if (text.includes('/compare/main...feat/everything'))
+        return ok(rows(['a.ts', BLOB_A, 'added'], ['b.ts', BLOB_B, 'modified']))
       return ok('')
     })
-    await expect(yieldCheck(run, REPO, ['a.ts', 'b.ts'], MAIN)).resolves.toEqual({
-      yieldTo: 'feat/everything',
+    await expect(yieldCheck(run, REPO, [A, B], MAIN)).resolves.toEqual({ yieldTo: 'feat/everything' })
+  })
+
+  it('yields to a PR whose head already contains our commits (the same commits)', async () => {
+    const { run } = fakeGh((args) => {
+      const text = args.join(' ')
+      if (text.includes('pr list'))
+        return listed([{ number: 4, headRefName: 'human/more', headRefOid: OTHER }])
+      if (text.includes('/pulls/4/files')) return ok(rows(['a.ts', OTHER, 'modified']))
+      if (text.includes(`/compare/${OURS}...${OTHER} --jq .status`)) return ok('ahead\n')
+      return ok('')
     })
+    await expect(yieldCheck(run, REPO, [A], { ...MAIN, head: OURS })).resolves.toEqual({
+      yieldTo: 'human/more',
+      prNumber: 4,
+    })
+  })
+
+  it('a head GitHub has not seen, or that diverged, is not the same commits', async () => {
+    const { run } = fakeGh((args) => {
+      const text = args.join(' ')
+      if (text.includes('pr list'))
+        return listed([{ number: 4, headRefName: 'human/more', headRefOid: OTHER }])
+      if (text.includes('/pulls/4/files')) return ok(rows(['a.ts', OTHER, 'modified']))
+      if (text.includes('/branches')) return ok('main\nhuman/other\n')
+      if (text.includes(`/compare/${OURS}...human/other`)) return ok('diverged\n')
+      if (text.includes(`/compare/${OURS}...`)) return fail('Not Found')
+      return ok('')
+    })
+    await expect(yieldCheck(run, REPO, [A], { ...MAIN, head: OURS })).resolves.toEqual({ yieldTo: null })
+  })
+
+  it('a gh failure is no duplicate', async () => {
+    const { run } = fakeGh(() => fail('HTTP 502'))
+    await expect(yieldCheck(run, REPO, [A], { ...MAIN, head: OURS })).resolves.toEqual({ yieldTo: null })
   })
 
   it('an empty change set never yields', async () => {

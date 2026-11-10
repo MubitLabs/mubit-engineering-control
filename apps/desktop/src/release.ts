@@ -13,7 +13,13 @@ import { execFile } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import type { Effects, Json, Store, StoreDoc } from '@mec/contracts'
-import { type PrEvent, type PrState, prTransition, yieldToDuplicate } from '@mec/integration'
+import {
+  type ChangedFile,
+  type PrEvent,
+  type PrState,
+  prTransition,
+  yieldToDuplicate,
+} from '@mec/integration'
 import { integrationDocId } from '@mec/meta'
 import { ALWAYS_CONFIRM, type ConfirmationRecord, openConfirmation, resolveConfirmation } from '@mec/policy'
 import { redact } from '@mec/slots'
@@ -94,36 +100,80 @@ const lines = (text: string): string[] =>
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
 
+/** One line per changed file, `["path","blob","status"]`, from a pull request's file list. */
+const PR_FILES_JQ = '.[] | [.filename, .sha, .status] | @json'
+/** The same, from a compare. */
+const COMPARE_FILES_JQ = '.files[] | [.filename, .sha, .status] | @json'
+
 /**
- * §14 yield-to-duplicate against GitHub, reusing the package's superset rule: only an open
- * PR (or a branch) that contains EVERY changed file yields — partial overlap is related
- * work, not a duplicate, and an empty change set must not match everything. Open PRs are
- * checked first (the common human-duplicate case), then up to ten remote branches via the
- * compare API. A gh call that fails is skipped, not fatal: no data is no duplicate.
+ * What GitHub shows a side changing, from the `@json` lines above: each path with its blob at
+ * that side's head, null where it removes the path. A line that is not such a row is skipped,
+ * so a path the reading did not show never matches.
+ */
+function filesOf(stdout: string): ChangedFile[] {
+  return lines(stdout).flatMap((line): ChangedFile[] => {
+    const row = parseJson<unknown[]>(line)
+    if (!Array.isArray(row) || typeof row[0] !== 'string') return []
+    if (row[2] === 'removed') return [{ path: row[0], blob: null }]
+    return typeof row[1] === 'string' ? [{ path: row[0], blob: row[1] }] : []
+  })
+}
+
+/**
+ * §14 yield-to-duplicate against GitHub: an open PR (or a branch) yields only when it already
+ * contains the change, the same commits or the same diff (`yieldToDuplicate`). The same diff is
+ * read as GitHub's blob for every changed path, compared with ours; the same commits as GitHub
+ * reporting that side's head ahead of, or identical to, ours, which it can only say of a head it
+ * has. Touching the same paths with other content is other work. Open PRs are checked first (the
+ * common human-duplicate case), then up to ten remote branches. A gh call that fails is skipped,
+ * not fatal: no data is no duplicate.
  */
 export async function yieldCheck(
   run: GhRun,
   repo: string,
-  changedFiles: string[],
-  branches: { defaultBranch: string; ownBranch?: string },
-): Promise<{ yieldTo: string | null }> {
+  changedFiles: readonly ChangedFile[],
+  branches: { defaultBranch: string; ownBranch?: string; head?: string },
+): Promise<{ yieldTo: string | null; prNumber?: number }> {
   if (changedFiles.length === 0) return { yieldTo: null }
-  const { defaultBranch, ownBranch } = branches
+  const { defaultBranch, ownBranch, head } = branches
 
-  const listed = await run(['pr', 'list', '-R', repo, '--json', 'number,headRefName', '--state', 'open'])
+  /** Their head contains ours: GitHub compares ours to theirs and finds theirs ahead or the same. */
+  const containsHead = async (theirs: string | undefined): Promise<boolean> => {
+    if (head === undefined || theirs === undefined || theirs === '') return false
+    const compared = await run(['api', `repos/${repo}/compare/${head}...${theirs}`, '--jq', '.status'])
+    if (compared.code !== 0) return false
+    const status = compared.stdout.trim()
+    return status === 'ahead' || status === 'identical'
+  }
+  const duplicate = async (name: string, files: ChangedFile[], theirHead: string | undefined) =>
+    yieldToDuplicate({ changedFiles, existingBranches: [{ name, files }] }).yield ||
+    (await containsHead(theirHead))
+
+  const listed = await run([
+    'pr',
+    'list',
+    '-R',
+    repo,
+    '--json',
+    'number,headRefName,headRefOid',
+    '--state',
+    'open',
+  ])
   if (listed.code === 0) {
-    for (const pr of parseJson<Array<{ number: number; headRefName: string }>>(listed.stdout) ?? []) {
+    type Listed = { number: number; headRefName: string; headRefOid?: string }
+    for (const pr of parseJson<Listed[]>(listed.stdout) ?? []) {
       if (pr.headRefName === ownBranch) continue
-      const viewed = await run(['pr', 'view', String(pr.number), '-R', repo, '--json', 'files'])
-      if (viewed.code !== 0) continue
-      const files = (parseJson<{ files: Array<{ filename: string }> }>(viewed.stdout)?.files ?? []).map(
-        (file) => file.filename,
-      )
-      const decision = yieldToDuplicate({
-        changedFiles,
-        existingBranches: [{ name: pr.headRefName, files }],
-      })
-      if (decision.yield) return { yieldTo: decision.branch ?? pr.headRefName }
+      const read = await run([
+        'api',
+        `repos/${repo}/pulls/${pr.number}/files`,
+        '--paginate',
+        '--jq',
+        PR_FILES_JQ,
+      ])
+      const files = read.code === 0 ? filesOf(read.stdout) : []
+      if (await duplicate(pr.headRefName, files, pr.headRefOid)) {
+        return { yieldTo: pr.headRefName, prNumber: pr.number }
+      }
     }
   }
 
@@ -138,14 +188,10 @@ export async function yieldCheck(
         'api',
         `repos/${repo}/compare/${defaultBranch}...${branch}`,
         '--jq',
-        '.files[].filename',
+        COMPARE_FILES_JQ,
       ])
-      if (compared.code !== 0) continue
-      const decision = yieldToDuplicate({
-        changedFiles,
-        existingBranches: [{ name: branch, files: lines(compared.stdout) }],
-      })
-      if (decision.yield) return { yieldTo: branch }
+      const files = compared.code === 0 ? filesOf(compared.stdout) : []
+      if (await duplicate(branch, files, branch)) return { yieldTo: branch }
     }
   }
   return { yieldTo: null }

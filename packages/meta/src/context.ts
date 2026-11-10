@@ -29,6 +29,7 @@ import {
   availableTiersOnSlot,
   deliveryStopped,
   deliveryWaiting,
+  deliveryYielded,
   plannerTurnEnded,
   reachWords,
   stageOf,
@@ -36,6 +37,7 @@ import {
   WORK_ITEM_TERMINAL,
   type WorkItemState,
   workViewOf,
+  yieldedWords,
 } from '@mec/domain'
 import { loadPolicy } from '../../policy/src/policy'
 import type { AttemptOutcome } from '../../scorecards/src/project'
@@ -567,6 +569,8 @@ function deliveryWords(record: StoreDoc | undefined): string | undefined {
       '; nothing has left this machine; the integrated commits are still here, and a new head gets a new push card'
     )
   }
+  const yielded = deliveryYielded(record)
+  if (yielded !== undefined) return `dropped: ${yieldedWords(yielded)}`
   const stage = record?.stage
   if (stage === 'push_card') return 'a push card waits for the owner'
   if (stage === 'pushed' || stage === 'pr_card' || stage === 'pr_open' || stage === 'ready') return 'pushed'
@@ -585,6 +589,7 @@ function stageFacts(store: Store, doc: StoreDoc, now: string): Parameters<typeof
   const mandateId = (doc.mandate as { id?: unknown } | undefined)?.id
   const delivery = store.engines.get(`delivery/${id}`)
   const stopped = deliveryStopped(delivery)
+  const yielded = deliveryYielded(delivery)
   return {
     openQuestions: store.engines
       .list()
@@ -605,6 +610,7 @@ function stageFacts(store: Store, doc: StoreDoc, now: string): Parameters<typeof
     merged: delivery?.stage === 'merged',
     ...(stopped !== undefined && { deliveryStopped: stopped }),
     ...deliveryWaiting(delivery),
+    ...(yielded !== undefined && { deliveryYielded: yielded }),
     ...withScreenshots(store, doc),
     turnEnded: plannerTurnEnded(
       store.messages.list({ workItemId: id }),

@@ -193,6 +193,48 @@ describe('the delivery section says what is true (§14, §18 honest state)', () 
     expect(shown.plan.footnote).toBe('Delivery failed: Combined checks failed on bbbbbbb: unit.')
   })
 
+  it('a delivery that yielded says where the same change already is, and links its pull request (§14)', () => {
+    const work = detail(
+      {
+        stage: 'local-complete',
+        ci: null,
+        prNumber: null,
+        prUrl: null,
+        yieldedTo: { branch: 'mec/mw9kvv16/integration', prNumber: 10 },
+      },
+      { stage: { key: 'person/yielded', label: 'Same change already on GitHub', waitingOn: 'person' } },
+    )
+    const shown = deliveryDetail(work, ALL)
+    const words =
+      'MEC found the same change already on mec/mw9kvv16/integration (pull request #10), so it pushed nothing and opened no pull request.'
+    expect(shown.delivery.label).toBe(words)
+    expect(shown.plan.footnote).toBe(words)
+    expect(shown.plan.stateLabel).toBe('Same change already on GitHub')
+    expect(shown.delivery.prUrl).toBe('https://github.com/acme/alpha/pull/10')
+    expect(shown.delivery.prLabel).toBe('Open pull request #10')
+  })
+
+  it('a yield to a bare branch names it, and makes no link up', () => {
+    const shown = view(
+      detail({
+        stage: 'local-complete',
+        ci: null,
+        prNumber: null,
+        prUrl: null,
+        yieldedTo: { branch: 'feat/x', prNumber: null },
+      }),
+    )
+    expect(shown.label).toBe(
+      'MEC found the same change already on feat/x, so it pushed nothing and opened no pull request.',
+    )
+    expect(shown.prUrl).toBeNull()
+    expect(
+      view(
+        detail({ prNumber: null, prUrl: null, repo: 'not a slug', yieldedTo: { branch: 'b', prNumber: 3 } }),
+      ).prUrl,
+    ).toBeNull()
+  })
+
   it('with truly nothing recorded it still says so', () => {
     const work = decodeWorkDetail({ ...base, coverage: { ...base.coverage, delivery: false } })
     expect(deliveryDetail(work, ALL).plan.footnote).toBe('Delivery is not recorded yet')

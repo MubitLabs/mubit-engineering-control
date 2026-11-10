@@ -270,6 +270,23 @@ describe('Codex through the runner', { timeout: 180_000 }, () => {
     expect(seen().cwd).toBe(String(end.worktree).replace(/^\/var\//, '/private/var/'))
   })
 
+  // 0.3.5 att_7 and 0.3.6 att_10: `~/.local/bin/codex` links into `~/.codex`, which the profile
+  // denies, and the app-server re-execs its own path for the fs helper that applies a patch. Run
+  // by the link, every fileChange failed "Failed to write file"; run by its real path, it lands.
+  it('the app-server runs by its real path, not by a link on PATH', async () => {
+    const { dataDir, repo, root, bin } = scratch('codex', { steps: [{ complete: 'completed' }] })
+    // The fake keeps its scenario and writes what it saw beside its real file.
+    const store = join(root, 'store')
+    mkdirSync(store)
+    for (const name of ['codex', 'scenario.json']) copyFileSync(join(bin, name), join(store, name))
+    rmSync(join(bin, 'codex'))
+    symlinkSync(join(store, 'codex'), join(bin, 'codex'))
+    seed(dataDir, repo, { slot: CODEX_SLOT })
+    await launched(dataDir)
+    const seen = JSON.parse(readFileSync(join(store, 'seen.json'), 'utf8'))
+    expect(seen.self).toBe(realpathSync(join(store, 'codex')))
+  })
+
   it('token is absent from argv, files, docs and events', async () => {
     const { dataDir, repo, seen, bin } = scratch('codex', { steps: SUCCESS })
     seed(dataDir, repo, { slot: CODEX_SLOT })

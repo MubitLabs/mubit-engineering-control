@@ -1,5 +1,16 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  accessSync,
+  chmodSync,
+  constants,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
@@ -19,8 +30,13 @@ import { startServer } from '../src/composition'
  *
  *   MEC_REAL_CODEX_MOCK=1 pnpm exec vitest run apps/desktop/test/codex-sandbox.mock.test.ts
  *
- * MOCK_FORM=shell sends the patch as `apply_patch <<'EOF'` through exec_command, the form a real
- * model used in Codex run 10; MOCK_NO_REALPATH=1 keeps the data dir under the `/var` symlink.
+ * The patch goes the way gpt-5.6 models sent every one in the store (att_7, att_10, att_15): code
+ * mode, `tools.apply_patch(patch)` inside the `exec` tool. MOCK_FORM=custom sends the bare
+ * `apply_patch` tool call, MOCK_FORM=shell `apply_patch <<'EOF'` through exec_command;
+ * MOCK_NO_REALPATH=1 keeps the data dir under the `/var` symlink.
+ *
+ * The wrapper sits behind a link on PATH, as `~/.local/bin/codex` links into `~/.codex`, and runs
+ * codex by the path MEC chose: by the link when MEC launched the link, by its real path otherwise.
  */
 const ON = process.env.MEC_REAL_CODEX_MOCK === '1'
 const POLICY = '{"preAuthorised":{}}'
@@ -31,10 +47,12 @@ type Step = { item: Record<string, unknown> }
 const gitIn = (cwd: string, ...args: string[]): string =>
   execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
 
-function realCodex(): string {
+/** The first codex on PATH, as MEC's launch finds it: not resolved. */
+function onPath(): string {
   for (const dir of (process.env.PATH ?? '').split(delimiter)) {
     try {
-      return realpathSync(join(dir, 'codex'))
+      accessSync(join(dir, 'codex'), constants.X_OK)
+      return join(dir, 'codex')
     } catch {}
   }
   throw new Error('no codex on PATH')
@@ -106,34 +124,67 @@ describe.skipIf(!ON)('the real launch path with a mock model (MEC_REAL_CODEX_MOC
       "+import { test } from 'node:test'",
       "+import assert from 'node:assert/strict'",
       "+import { gallop } from './gallop.js'",
-      "+test('gallops', () => assert.equal(gallop('Ana'), 'Ana galloped'))",
+      "+test('gallops', () => assert.match(gallop('Ana'), /^Ana galloped/))",
       '*** End Patch',
       '',
     ].join('\n')
-    const form = process.env.MOCK_FORM ?? 'custom'
+    const form = process.env.MOCK_FORM ?? 'exec'
     const editStep: Step =
-      form === 'shell'
+      form === 'exec'
         ? {
-            item: {
-              type: 'function_call',
-              id: 'fc_1',
-              call_id: 'call_1',
-              name: 'exec_command',
-              arguments: JSON.stringify({ cmd: `apply_patch <<'EOF'\n${patch}EOF\n`, workdir: worktree }),
-            },
-          }
-        : {
             item: {
               type: 'custom_tool_call',
               id: 'ctc_1',
               call_id: 'call_1',
-              name: 'apply_patch',
-              input: patch,
+              name: 'exec',
+              input: `const patch = ${JSON.stringify(patch)};\ntext(await tools.apply_patch(patch));\n`,
               status: 'completed',
             },
           }
+        : form === 'shell'
+          ? {
+              item: {
+                type: 'function_call',
+                id: 'fc_1',
+                call_id: 'call_1',
+                name: 'exec_command',
+                arguments: JSON.stringify({ cmd: `apply_patch <<'EOF'\n${patch}EOF\n`, workdir: worktree }),
+              },
+            }
+          : {
+              item: {
+                type: 'custom_tool_call',
+                id: 'ctc_1',
+                call_id: 'call_1',
+                name: 'apply_patch',
+                input: patch,
+                status: 'completed',
+              },
+            }
+    // A second patch edits a file the first one added, as att_15's did: an update reads the file
+    // through the same fs helper first ("fs sandbox helper failed" when it cannot start).
+    const update = [
+      '*** Begin Patch',
+      `*** Update File: ${worktree}/gallop.js`,
+      '@@',
+      '-export const gallop = (name) => `${name} galloped`',
+      '+export const gallop = (name) => `${name} galloped away`',
+      '*** End Patch',
+      '',
+    ].join('\n')
+    const updateStep: Step = {
+      item: {
+        type: 'custom_tool_call',
+        id: 'ctc_3',
+        call_id: 'call_3',
+        name: 'exec',
+        input: `const patch = ${JSON.stringify(update)};\ntext(await tools.apply_patch(patch));\n`,
+        status: 'completed',
+      },
+    }
     const mock = mockResponses(() => [
       editStep,
+      updateStep,
       {
         item: {
           type: 'function_call',
@@ -149,18 +200,24 @@ describe.skipIf(!ON)('the real launch path with a mock model (MEC_REAL_CODEX_MOC
     const port = (mock.server.address() as { port: number }).port
 
     const bin = join(root, 'bin')
+    const wrap = join(root, 'wrap')
     mkdirSync(bin)
+    mkdirSync(wrap)
     const provider = `model_providers.mock={name="mock",base_url="http://127.0.0.1:${port}/v1",wire_api="responses",requires_openai_auth=false,env_key="MOCK_PROVIDER_KEY"}`
     writeFileSync(
-      join(bin, 'codex'),
+      join(wrap, 'codex'),
       [
         '#!/bin/sh',
-        `if [ "$1" = "app-server" ]; then shift; MOCK_PROVIDER_KEY=mock-not-a-key exec ${JSON.stringify(realCodex())} app-server -c 'model_provider="mock"' -c '${provider}' "$@"; fi`,
-        `exec ${JSON.stringify(realCodex())} "$@"`,
+        // Run by the link MEC was handed, codex runs by the link on PATH too; run by its real path,
+        // codex does: so the codex below runs by the path MEC chose.
+        `if [ -L "$0" ]; then CODEX=${JSON.stringify(onPath())}; else CODEX=${JSON.stringify(realpathSync(onPath()))}; fi`,
+        `if [ "$1" = "app-server" ]; then shift; MOCK_PROVIDER_KEY=mock-not-a-key exec "$CODEX" app-server -c 'model_provider="mock"' -c '${provider}' "$@"; fi`,
+        'exec "$CODEX" "$@"',
         '',
       ].join('\n'),
     )
-    chmodSync(join(bin, 'codex'), 0o755)
+    chmodSync(join(wrap, 'codex'), 0o755)
+    symlinkSync(join(wrap, 'codex'), join(bin, 'codex'))
     const savedPath = process.env.PATH
     process.env.PATH = `${bin}${delimiter}${savedPath}`
     closers.push(async () => {
@@ -270,14 +327,17 @@ describe.skipIf(!ON)('the real launch path with a mock model (MEC_REAL_CODEX_MOC
         `${JSON.stringify({ state: read((s) => s.attempts.get('att_1'))?.state, calls, outputs, dummyAuth: (mock.seen as { dummyAuth: boolean }[]).map((r) => r.dummyAuth) }, null, 2)}\n`,
       )
     }
-    const fileChange = calls.find((body) => body.tool === 'fileChange')
+    const fileChanges = calls.filter((body) => body.tool === 'fileChange')
     const nodeTest = calls.find(
       (body) => body.tool === 'commandExecution' && JSON.stringify(body.input).includes("'node --test'"),
     )
-    expect(fileChange?.ok).toBe(true)
+    // 0.3.5 att_7, 0.3.6 att_10: run by the link into the denied `~/.codex`, the fs helper that
+    // applies the patch could not start, and the model heard "Failed to write file".
+    expect(JSON.stringify(outputs)).not.toContain('Failed to write file')
+    expect(fileChanges.map((body) => body.ok)).toEqual([true, true])
     // 0.3.5, att_7: with `<data>/work` denied whole this died `EPERM ... lstat '<data>/work'`.
     expect(String(nodeTest?.output)).not.toContain('EPERM')
     expect(nodeTest?.ok).toBe(true)
-    expect(readFileSync(join(worktree, 'gallop.js'), 'utf8')).toContain('galloped')
+    expect(readFileSync(join(worktree, 'gallop.js'), 'utf8')).toContain('galloped away')
   })
 })

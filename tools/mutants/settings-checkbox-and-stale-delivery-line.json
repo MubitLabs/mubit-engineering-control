@@ -2,8 +2,8 @@
   {
     "name": "C1 the label loses the checkbox class",
     "file": "apps/web/src/next/SettingsView.tsx",
-    "find": "<label className=\"field field-check\" htmlFor={id}>",
-    "replace": "<label className=\"field\" htmlFor={id}>",
+    "find": "className=\"field field-check\"",
+    "replace": "className=\"field\"",
     "tests": ["apps/web/test/ui-evidence.test.ts"]
   },
   {

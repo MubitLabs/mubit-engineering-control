@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.11 (10 November 2026)
+
+Fixes from the first live run of UI evidence. See `docs/changes/2026-11-10-self-findings-and-dropped-repair/` and `2026-11-10-settings-checkbox-and-stale-delivery-line/`. No migration.
+
+- **A worker's own notes never start a repair.** Only a reviewer's findings, or a failing check, send a task to repair. Before, an implementer's report that described its own files was read as review findings.
+- **A repair that finds nothing to fix no longer cancels the task.** The task is judged on the work it already has: acceptance, review when it's sensitive, screenshots, then delivery. A reviewer's finding the repair declined is recorded as declined, with its reason, in the pull request.
+- **Work whose every task ended says so.** It blocks in plain words, with "Stop this work and ask again", instead of showing Working with nothing running.
+- **The "Screenshots before review" checkbox sits inline with its label at normal size.**
+
 ## 0.3.10 (10 November 2026)
 
 The 0.3.9 content, released. The v0.3.9 tag's release build failed before publishing anything: its check step had no Chromium for the UI evidence tests. The release workflow now installs Playwright's headless Chromium before `pnpm check`, as CI does. No code change and no migration.

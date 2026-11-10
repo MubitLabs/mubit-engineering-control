@@ -187,5 +187,54 @@
     "find": "      state: 'requested',\n      requestedAt: at,\n",
     "replace": "      state: 'requested',\n      requestedAt: at,\n      ...(known?.after !== undefined && { after: known.after }),\n",
     "tests": ["packages/meta/test/ui-evidence.test.ts", "apps/desktop/test/ui-evidence-surfaces.test.ts"]
+  },
+  {
+    "name": "(3) WebSockets are not refused in the page",
+    "file": "apps/desktop/src/ui-capture.ts",
+    "find": "    await context.routeWebSocket(/.*/, (ws) => ws.close())\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(3) Chromium runs with no fence proxy",
+    "file": "apps/desktop/src/ui-capture.ts",
+    "find": "    proxy: { server: fence.proxy },\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(3) WebRTC may send UDP around the proxy",
+    "file": "apps/desktop/src/ui-capture.ts",
+    "find": "    args: [WEBRTC_FENCE],\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(3) the fence forwards to any host",
+    "file": "apps/desktop/src/ui-capture.ts",
+    "find": "    if (target.protocol !== 'http:' || target.host !== app.host) {",
+    "replace": "    if (target.protocol !== 'http:') {",
+    "tests": ["apps/desktop/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(3) the fence tunnels to any host",
+    "file": "apps/desktop/src/ui-capture.ts",
+    "find": "    if (request.url !== app.host) {",
+    "replace": "    if (request.url === '') {",
+    "tests": ["apps/desktop/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(3) an after page answering an error is captured",
+    "file": "apps/desktop/src/ui-capture.ts",
+    "find": "      if (spec.side === 'after' && status !== null && status >= 400) {",
+    "replace": "      if (spec.side === ('never' as string) && status !== null && status >= 400) {",
+    "tests": ["apps/desktop/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(3) a before page that did not exist yet is refused",
+    "file": "apps/desktop/src/ui-capture.ts",
+    "find": "      if (spec.side === 'after' && status !== null && status >= 400) {",
+    "replace": "      if (status !== null && status >= 400) {",
+    "tests": ["apps/desktop/test/ui-evidence.test.ts"]
   }
 ]

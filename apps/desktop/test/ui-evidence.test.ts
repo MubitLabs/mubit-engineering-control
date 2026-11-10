@@ -3,8 +3,9 @@
 // stores both under MEC's data dir, and the scheduler then accepts. Anything it cannot take is a
 // could-not-capture with its reason, and the task is never accepted on it.
 import { execFileSync } from 'node:child_process'
+import { createSocket } from 'node:dgram'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { createServer } from 'node:http'
+import { createServer, request as httpRequest } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -13,8 +14,9 @@ import { DEFAULT_CAPS } from '@mec/domain'
 import { evidenceDocId, FollowUps, repoFields, schedulePass, screenshotsOffer } from '@mec/meta'
 import { MemoryRepositories } from '@mec/testkit'
 import Fastify from 'fastify'
+import { chromium } from 'playwright-core'
 import { afterEach, describe, expect, it } from 'vitest'
-import { serveStatic } from '../src/ui-capture'
+import { type BrowserLike, openFence, serveStatic } from '../src/ui-capture'
 import { capturesDir, registerScreenshotRoutes, UiEvidence } from '../src/ui-evidence'
 
 const AT = '2026-11-10T12:00:00.000Z'
@@ -314,7 +316,7 @@ describe('UI evidence on a real repository (§15)', () => {
   })
 })
 
-describe('the page reaches no network (§13.7)', () => {
+describe('the page reaches no network (§13 hard invariant 1)', () => {
   it('a request to any other origin, loopback included, is refused', async () => {
     const seen: string[] = []
     const other = createServer((request, response) => {
@@ -332,6 +334,167 @@ describe('the page reaches no network (§13.7)', () => {
     } finally {
       await new Promise<void>((done) => other.close(() => done()))
     }
+  })
+})
+
+/** A second loopback listener: counts every request, WebSocket upgrade and raw connection it gets. */
+async function listener(): Promise<{ port: number; seen: string[]; close(): Promise<void> }> {
+  const seen: string[] = []
+  const server = createServer((request, response) => {
+    seen.push(`http ${String(request.url)}`)
+    response.end('x')
+  })
+  server.on('upgrade', (request, socket) => {
+    seen.push(`upgrade ${String(request.url)}`)
+    socket.destroy()
+  })
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', () => done()))
+  const { port } = server.address() as AddressInfo
+  return {
+    port,
+    seen,
+    close: () =>
+      new Promise<void>((done) => {
+        server.closeAllConnections()
+        server.close(() => done())
+      }),
+  }
+}
+
+describe('no channel out of the page (§13 hard invariant 1)', () => {
+  it('a WebSocket to another loopback origin gets no upgrade', async () => {
+    const other = await listener()
+    try {
+      const page = `<!doctype html><h1>ws</h1><script>new WebSocket('ws://127.0.0.1:${other.port}/ws')</script>`
+      const { store, dataDir } = rig({ required: true }, { extra: { 'index.html': page } })
+      await new UiEvidence({ store, dataDir }).pass()
+      expect(record(store)?.state).toBe('taken')
+      expect(other.seen).toEqual([])
+    } finally {
+      await other.close()
+    }
+  })
+
+  it('a redirect from the app to another origin reaches nothing', async () => {
+    const other = await listener()
+    try {
+      const app = [
+        "const http = require('node:http'); const fs = require('node:fs')",
+        'http.createServer((q, r) => {',
+        `  if (q.url !== '/') { r.writeHead(302, { location: 'http://127.0.0.1:${other.port}' + q.url }); r.end(); return }`,
+        "  r.setHeader('content-type', 'text/html'); r.end(fs.readFileSync('index.html'))",
+        "}).listen(Number(process.env.PORT), '127.0.0.1')",
+      ].join('\n')
+      const page =
+        "<!doctype html><h1>hop</h1><img src='/hop.png'><script>fetch('/hop-fetch'); location.href = '/hop-nav'</script>"
+      const { store, dataDir } = rig(
+        { required: true, start: { argv: [process.execPath, 'server.cjs'] } },
+        { extra: { 'server.cjs': app, 'index.html': page } },
+      )
+      await new UiEvidence({ store, dataDir }).pass()
+      expect(record(store)?.before).toBeDefined()
+      expect(other.seen).toEqual([])
+    } finally {
+      await other.close()
+    }
+  })
+
+  it('WebRTC sends no STUN packet out', async () => {
+    const udp = createSocket('udp4')
+    const packets: number[] = []
+    udp.on('message', (message) => packets.push(message.length))
+    await new Promise<void>((done) => udp.bind(0, '127.0.0.1', () => done()))
+    const { port } = udp.address()
+    try {
+      const page = [
+        '<!doctype html><h1>rtc</h1><script>',
+        `const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:127.0.0.1:${port}' }] })`,
+        "pc.createDataChannel('x')",
+        'pc.createOffer().then((offer) => pc.setLocalDescription(offer))',
+        '</script>',
+      ].join('\n')
+      const { store, dataDir } = rig({ required: true }, { extra: { 'index.html': page } })
+      await new UiEvidence({ store, dataDir }).pass()
+      expect(record(store)?.state).toBe('taken')
+      expect(packets).toEqual([])
+    } finally {
+      await new Promise<void>((done) => udp.close(() => done()))
+    }
+  })
+})
+
+describe('each fence on its own', () => {
+  it('the proxy forwards only to the app, and tunnels only to the app', async () => {
+    const app = await listener()
+    const other = await listener()
+    const fence = await openFence(`http://127.0.0.1:${app.port}`)
+    const { port } = new URL(fence.url)
+    const via = (target: string) =>
+      new Promise<number>((done, fail) => {
+        const request = httpRequest({
+          host: '127.0.0.1',
+          port,
+          path: target,
+          headers: { host: new URL(target).host },
+        })
+        request.on('response', (answer) => {
+          answer.resume()
+          done(answer.statusCode ?? 0)
+        })
+        request.on('error', fail)
+        request.end()
+      })
+    const tunnel = (target: string) =>
+      new Promise<string>((done) => {
+        const request = httpRequest({ host: '127.0.0.1', port, method: 'CONNECT', path: target })
+        request.on('connect', (answer, socket) => {
+          socket.destroy()
+          done(`open ${answer.statusCode}`)
+        })
+        request.on('error', () => done('closed'))
+        request.end()
+      })
+    try {
+      expect(await via(`http://127.0.0.1:${app.port}/page`)).toBe(200)
+      expect(await via(`http://127.0.0.1:${other.port}/leak`)).toBe(403)
+      expect(await via('http://example.invalid/leak')).toBe(403)
+      expect(await tunnel(`127.0.0.1:${other.port}`)).toBe('closed')
+      expect(await tunnel(`127.0.0.1:${app.port}`)).toBe('open 200')
+      expect(app.seen).toEqual(['http /page'])
+      expect(other.seen).toEqual([])
+    } finally {
+      await fence.close()
+      await app.close()
+      await other.close()
+    }
+  })
+
+  it('with no proxy at all, the page itself still refuses other origins and their WebSockets', async () => {
+    const other = await listener()
+    try {
+      const page = `<!doctype html><h1>bare</h1><script>new WebSocket('ws://127.0.0.1:${other.port}/ws'); fetch('http://127.0.0.1:${other.port}/beacon')</script>`
+      const { store, dataDir } = rig({ required: true }, { extra: { 'index.html': page } })
+      const bare = async () => (await chromium.launch({ headless: true })) as unknown as BrowserLike
+      await new UiEvidence({ store, dataDir, launch: bare }).pass()
+      expect(record(store)?.state).toBe('taken')
+      expect(other.seen).toEqual([])
+    } finally {
+      await other.close()
+    }
+  })
+})
+
+describe('a page that answers an error (§15)', () => {
+  it('after: 400 or above is could-not-capture; before: a page that did not exist yet is evidence', async () => {
+    const { store, dataDir, schedule } = rig({ required: true, paths: ['/about.html'] })
+    await new UiEvidence({ store, dataDir }).pass()
+    expect(record(store)).toMatchObject({
+      state: 'could_not',
+      before: { status: 'captured', shots: [{ path: '/about.html', status: 404 }] },
+      after: { status: 'could_not', reason: 'the page /about.html answered HTTP 404 at the result' },
+    })
+    schedule()
+    expect(status(store)).toBe('active')
   })
 })
 

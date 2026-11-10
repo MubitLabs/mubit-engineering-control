@@ -6,16 +6,24 @@
  * runs on this machine, so it needs the owner's agreement, as checks do), else MEC serves the
  * revision's files from a port it picks. Chromium is Playwright's, loaded only when needed.
  *
- * - **The page is data (§13.7).** Every request leaves only for the app's own origin; anything
- *   else is aborted, so a capture reaches no network and its result is the same on a rerun.
+ * - **No channel out of the page (§13, hard invariant 1).** Page script may be an engine's work, and
+ *   the engine had no network: the browser must not give it one. Three fences, so no one of them is
+ *   the only thing standing:
+ *   1. Chromium's only proxy is a fence MEC runs on loopback, with no bypass (Playwright adds
+ *      `<-loopback>`, so loopback goes through it too). It forwards to the app's own host and port
+ *      and refuses everything else, whatever opened it: a redirect, a WebSocket (a CONNECT), a
+ *      subresource. A port-specific bypass would be simpler, but Chromium ignores the port on an IP
+ *      literal, which would let every loopback port through.
+ *   2. WebRTC may send UDP only through the proxy, and an HTTP proxy carries none: no STUN leaves.
+ *   3. Each request and WebSocket the page makes to another origin is refused before it starts.
  * - **Bounded.** One viewport, at most `MAX_PATHS` paths, each PNG at most `MAX_PNG_BYTES`.
  * - **Never a pass by failing.** Anything that goes wrong is a `could_not` with its reason in
  *   words: the archive, the app, Chromium, a page, a size.
  */
 import { type ChildProcess, execFile, spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { createServer, type Server } from 'node:http'
-import type { AddressInfo } from 'node:net'
+import { createServer, request as httpRequest, type Server } from 'node:http'
+import { type AddressInfo, connect as netConnect, type Socket } from 'node:net'
 import { extname, join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { UI_VIEWPORT, type UiEvidenceSetting, type UiShot, type UiSide } from '@mec/domain'
@@ -55,11 +63,15 @@ const TYPES: Readonly<Record<string, string>> = {
 export type BrowserLike = {
   newContext(options: Record<string, unknown>): Promise<{
     route(url: string, handler: (route: RouteLike) => unknown): Promise<void>
+    routeWebSocket(url: RegExp, handler: (ws: { close(): Promise<void> | void }) => unknown): Promise<void>
     newPage(): Promise<PageLike>
     close(): Promise<void>
   }>
   close(): Promise<void>
 }
+
+/** Where the browser may go: the app's own origin, and a proxy that goes nowhere for the rest. */
+export type Fence = { origin: string; proxy: string }
 type RouteLike = { request(): { url(): string }; continue(): Promise<void>; abort(): Promise<void> }
 type PageLike = {
   goto(url: string, options: Record<string, unknown>): Promise<{ status(): number } | null>
@@ -67,10 +79,89 @@ type PageLike = {
   screenshot(options: Record<string, unknown>): Promise<Buffer>
 }
 
-/** Playwright's Chromium, headless. Its absence is a reason, not a crash. */
-export async function launchChromium(): Promise<BrowserLike> {
+/** WebRTC sends UDP only through the proxy, and an HTTP proxy carries none: no STUN or media leaves. */
+const WEBRTC_FENCE = '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'
+
+/** Playwright's Chromium, headless, behind the fence. Its absence is a reason, not a crash. */
+export async function launchChromium(fence: Fence): Promise<BrowserLike> {
   const { chromium } = await import('playwright-core')
-  return (await chromium.launch({ headless: true })) as unknown as BrowserLike
+  const browser = await chromium.launch({
+    headless: true,
+    proxy: { server: fence.proxy },
+    args: [WEBRTC_FENCE],
+  })
+  return browser as unknown as BrowserLike
+}
+
+/**
+ * The browser's only way out: an HTTP proxy on loopback that forwards to `origin`'s host and port
+ * and refuses anything else, plain requests and CONNECT tunnels alike.
+ */
+export async function openFence(origin: string): Promise<{ url: string; close(): Promise<void> }> {
+  const app = new URL(origin)
+  const appPort = Number(app.port || 80)
+  const sockets = new Set<Socket>()
+  const fence = createServer((request, response) => {
+    let target: URL
+    try {
+      target = new URL(String(request.url))
+    } catch {
+      response.writeHead(400).end()
+      return
+    }
+    if (target.protocol !== 'http:' || target.host !== app.host) {
+      response.writeHead(403, { 'content-type': 'text/plain' }).end('MEC: no network from a capture')
+      return
+    }
+    const upstream = httpRequest(
+      {
+        host: app.hostname.replace(/^\[|\]$/g, ''),
+        port: appPort,
+        method: request.method,
+        path: `${target.pathname}${target.search}`,
+        headers: request.headers,
+      },
+      (answer) => {
+        response.writeHead(answer.statusCode ?? 502, answer.headers)
+        answer.pipe(response)
+      },
+    )
+    upstream.on('error', () => response.destroy())
+    request.pipe(upstream)
+  })
+  fence.on('connection', (socket: Socket) => {
+    sockets.add(socket)
+    socket.on('close', () => sockets.delete(socket))
+  })
+  // A tunnel only to the app itself (its own WebSocket); any other is closed unanswered.
+  fence.on('connect', (request, socket: Socket, head: Buffer) => {
+    if (request.url !== app.host) {
+      socket.destroy()
+      return
+    }
+    const tunnel = netConnect(appPort, app.hostname.replace(/^\[|\]$/g, ''), () => {
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+      tunnel.write(head)
+      tunnel.pipe(socket)
+      socket.pipe(tunnel)
+    })
+    tunnel.on('error', () => socket.destroy())
+    socket.on('error', () => tunnel.destroy())
+  })
+  fence.on('upgrade', (_request, socket: Socket) => socket.destroy())
+  await new Promise<void>((done, fail) => {
+    fence.once('error', fail)
+    fence.listen(0, '127.0.0.1', () => done())
+  })
+  const { port } = fence.address() as AddressInfo
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () =>
+      new Promise<void>((done) => {
+        for (const socket of sockets) socket.destroy()
+        fence.close(() => done())
+      }),
+  }
 }
 
 export type CaptureSpec = {
@@ -91,7 +182,7 @@ export type CaptureSpec = {
   hostRunAgreed: boolean
   signal?: AbortSignal
   now?: () => string
-  launch?: () => Promise<BrowserLike>
+  launch?: (fence: Fence) => Promise<BrowserLike>
   startWaitMs?: number
 }
 
@@ -259,12 +350,14 @@ export async function captureRevision(spec: CaptureSpec): Promise<UiSide> {
   mkdirSync(spec.tmpDir, { recursive: true })
   const dir = mkdtempSync(join(spec.tmpDir, `${spec.side}-`))
   let app: { origin: string; close(): Promise<void> } | undefined
+  let fence: { url: string; close(): Promise<void> } | undefined
   let browser: BrowserLike | undefined
   try {
     await exportRevision(spec.gitDir, spec.sha, dir)
     app = spec.setting.start === undefined ? await serveStatic(dir) : await startApp(spec, dir)
+    fence = await openFence(app.origin)
     try {
-      browser = await (spec.launch ?? launchChromium)()
+      browser = await (spec.launch ?? launchChromium)({ origin: app.origin, proxy: fence.url })
     } catch (error) {
       throw new CouldNot(`Chromium could not start: ${firstLine(error)}`)
     }
@@ -277,6 +370,8 @@ export async function captureRevision(spec: CaptureSpec): Promise<UiSide> {
     await context.route('**/*', (route) =>
       ownOrigin(origin, route.request().url()) ? route.continue() : route.abort(),
     )
+    // `route` never sees a WebSocket; this does. The fence refuses one this misses.
+    await context.routeWebSocket(/.*/, (ws) => ws.close())
     mkdirSync(spec.outDir, { recursive: true })
     const shots: UiShot[] = []
     for (const [index, path] of spec.setting.paths.entries()) {
@@ -288,6 +383,11 @@ export async function captureRevision(spec: CaptureSpec): Promise<UiSide> {
         status = response?.status() ?? null
       } catch (error) {
         throw new CouldNot(`the page ${path} did not load: ${firstLine(error)}`)
+      }
+      // The result must show the page. Before the change it may not exist yet (a new page), so a
+      // before capture keeps its status as evidence of that, and only the after side refuses it.
+      if (spec.side === 'after' && status !== null && status >= 400) {
+        throw new CouldNot(`the page ${path} answered HTTP ${status} at the result`)
       }
       await page.waitForLoadState('networkidle', { timeout: SETTLE_MS }).catch(() => {})
       const png = await page.screenshot({ type: 'png', animations: 'disabled' })
@@ -307,6 +407,7 @@ export async function captureRevision(spec: CaptureSpec): Promise<UiSide> {
     return { sha: spec.sha, status: 'could_not', reason: cut(reason) }
   } finally {
     await browser?.close().catch(() => {})
+    await fence?.close().catch(() => {})
     await app?.close().catch(() => {})
     rmSync(dir, { recursive: true, force: true })
   }

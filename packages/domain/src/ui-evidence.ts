@@ -144,7 +144,7 @@ function parseStart(raw: unknown): UiStart {
       throw new Error('uiEvidence.start.url must be a URL')
     }
     if (url.protocol !== 'http:' || !LOOPBACK.has(url.hostname)) {
-      throw new Error('uiEvidence.start.url must be an http URL on loopback (127.0.0.1 or localhost)')
+      throw new Error('uiEvidence.start.url must be an http URL on loopback (127.0.0.1, localhost or [::1])')
     }
     start.url = url.toString()
   }

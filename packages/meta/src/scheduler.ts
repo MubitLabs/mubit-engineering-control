@@ -16,6 +16,7 @@ import { randomBytes } from 'node:crypto'
 import type { Effects, EngineId, Json, Report, Store, StoreDoc } from '@mec/contracts'
 import { ModelRequest } from '@mec/contracts'
 import type {
+  Acceptance,
   AttemptState,
   BasePolicy,
   BoundFinding,
@@ -54,6 +55,7 @@ import {
 import { ceilingWords, UTILISATION_CEILING } from './ceiling'
 import { enqueueWake, type FollowUps } from './followups'
 import { type Continuation, nextRepair, nextReview, repairLedger } from './repair'
+import { uiEvidenceInput } from './ui-evidence'
 import { classifyWake } from './wakes'
 import { integrationDocId, requiredChecks, verdictsOf } from './work-facts'
 
@@ -341,6 +343,45 @@ function continueTask(store: Store, task: StoreDoc, next: Continuation, at: stri
   moveTask(store, task, event, { next: next as unknown as Json }, at)
 }
 
+/** The one acceptance judgement of a task's latest attempt, from what is stored (§10, §15). */
+function acceptanceOf(
+  store: Store,
+  task: StoreDoc,
+  attempts: readonly StoreDoc[],
+  latest: StoreDoc,
+): Acceptance {
+  const report = lastReportDoc(store, latest)
+  const kind = (report?.report as Report | undefined)?.kind
+  const claimed = reportHead(report, latest)
+  const reviewed = reviewedSha(store, attempts)
+  const shots = uiEvidenceInput(store, task, attempts, latest)
+  return acceptance({
+    attemptState: String(latest.state),
+    ...(typeof latest.head_sha === 'string' && { head: latest.head_sha }),
+    ...(kind !== undefined && { report: { kind, ...(claimed !== undefined && { headSha: claimed }) } }),
+    required: requiredChecks(task, store.engines.get(String(task.repoId))),
+    verdicts: verdictsOf(store, latest),
+    findings: findingsOf(report, latest),
+    policy: { sensitive: task.sensitive === true, ...(reviewed !== undefined && { reviewedSha: reviewed }) },
+    // A reviewer reads and changes nothing, so no-change and owned paths judge the task's own work.
+    ...(kindOf(latest) !== 'review' && workFacts(task, latest)),
+    // Read at every judgement, never pinned: turning the flag on or off reaches the next one.
+    ...(shots !== undefined && { uiEvidence: shots }),
+  })
+}
+
+/**
+ * What acceptance says of a task waiting on its latest attempt, or undefined when there is none to
+ * judge. The scheduler's own judgement, for the readers that must agree with it (UI evidence).
+ */
+export function taskAcceptance(store: Store, task: StoreDoc): Acceptance | undefined {
+  if (task.next !== undefined || !['active', 'awaiting_review'].includes(String(task.status)))
+    return undefined
+  const attempts = store.attempts.list({ taskId: task.id })
+  const latest = latestOf(attempts)
+  return latest === undefined ? undefined : acceptanceOf(store, task, attempts, latest)
+}
+
 /**
  * §10, §15, decision #32: what a finished attempt's verdicts mean for its task. Reads only what
  * is stored, so a pass after a restart decides the same. A task with a continuation queued is
@@ -356,20 +397,8 @@ function settleAttempt(
   const { store, caps } = deps
   if (task.next !== undefined || !['active', 'awaiting_review'].includes(String(task.status))) return
   const report = lastReportDoc(store, latest)
-  const kind = (report?.report as Report | undefined)?.kind
   const claimed = reportHead(report, latest)
-  const reviewed = reviewedSha(store, attempts)
-  const decided = acceptance({
-    attemptState: String(latest.state),
-    ...(typeof latest.head_sha === 'string' && { head: latest.head_sha }),
-    ...(kind !== undefined && { report: { kind, ...(claimed !== undefined && { headSha: claimed }) } }),
-    required: requiredChecks(task, store.engines.get(String(task.repoId))),
-    verdicts: verdictsOf(store, latest),
-    findings: findingsOf(report, latest),
-    policy: { sensitive: task.sensitive === true, ...(reviewed !== undefined && { reviewedSha: reviewed }) },
-    // A reviewer reads and changes nothing, so no-change and owned paths judge the task's own work.
-    ...(kindOf(latest) !== 'review' && workFacts(task, latest)),
-  })
+  const decided = acceptanceOf(store, task, attempts, latest)
   if (decided.verdict === 'accepted') acceptTask(store, task, latest, attempts, at)
   if (decided.verdict === 'blocked') blockTask(store, task, decided.reason, at)
   if (decided.verdict !== 'repair' && decided.verdict !== 'review') return

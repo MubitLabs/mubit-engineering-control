@@ -18,6 +18,8 @@ import type {
   MetaAnswer,
   NeedItem,
   Page,
+  ScreenshotSet,
+  ScreenshotSide,
   SearchHit,
   Snapshot,
   Stage,
@@ -362,12 +364,68 @@ export function decodeWorkDetail(raw: unknown): WorkDetail {
       retry === null
         ? null
         : {
-            kind: oneOf(path, retry.kind, 'retry.kind', ['integration', 'push', 'pr', 'repair', 'update']),
+            kind: oneOf(path, retry.kind, 'retry.kind', [
+              'integration',
+              'push',
+              'pr',
+              'repair',
+              'update',
+              'screenshots',
+            ]),
             reason: str(path, retry.reason, 'retry.reason'),
           },
+    // A server from before UI evidence sends none.
+    screenshots:
+      body.screenshots === undefined
+        ? []
+        : list(path, body.screenshots, 'screenshots', (entry, label) => screenshotSet(path, entry, label)),
     coverage: coverage(path, body.coverage, 'coverage'),
     cursors: numberRecord(path, body.cursors, 'cursors'),
     cursorsTruncated: num(path, body.cursorsTruncated, 'cursorsTruncated'),
+  }
+}
+
+/** A screenshot's route is MEC's own: anything else is not an image this page will load. */
+const SCREENSHOT_URL = /^\/api\/work\/[^/]+\/screenshots\/[^/]+\/(before|after)-\d{1,2}\.png$/
+
+function screenshotSide(path: string, value: unknown, what: string): ScreenshotSide | null {
+  if (value === null) return null
+  const side = obj(path, value, what)
+  return {
+    sha: str(path, side.sha, `${what}.sha`),
+    short: str(path, side.short, `${what}.short`),
+    status: oneOf(path, side.status, `${what}.status`, ['captured', 'could_not']),
+    reason: strOrNull(path, side.reason, `${what}.reason`),
+    shots: list(path, side.shots, `${what}.shots`, (entry, label) => {
+      const shot = obj(path, entry, label)
+      const url = str(path, shot.url, `${label}.url`)
+      if (!SCREENSHOT_URL.test(url)) throw new DecodeError(path, `${label}.url is not a screenshot route`)
+      return {
+        path: str(path, shot.path, `${label}.path`),
+        url,
+        at: str(path, shot.at, `${label}.at`),
+        status: numOrNull(path, shot.status, `${label}.status`),
+      }
+    }),
+  }
+}
+
+function screenshotSet(path: string, value: unknown, what: string): ScreenshotSet {
+  const set = obj(path, value, what)
+  const viewport = set.viewport === null ? null : obj(path, set.viewport, `${what}.viewport`)
+  return {
+    taskId: str(path, set.taskId, `${what}.taskId`),
+    attemptId: str(path, set.attemptId, `${what}.attemptId`),
+    state: str(path, set.state, `${what}.state`),
+    viewport:
+      viewport === null
+        ? null
+        : {
+            width: num(path, viewport.width, `${what}.viewport.width`),
+            height: num(path, viewport.height, `${what}.viewport.height`),
+          },
+    before: screenshotSide(path, set.before, `${what}.before`),
+    after: screenshotSide(path, set.after, `${what}.after`),
   }
 }
 

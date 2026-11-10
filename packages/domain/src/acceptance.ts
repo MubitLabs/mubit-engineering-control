@@ -6,8 +6,10 @@
  * `failed` (ran, non-zero) is the code's fault and goes to a repair. `error` (could not start,
  * timed out) says nothing about the code, so no repair can answer it and a person must look.
  *
- * UI evidence (§15) applies only where a repository requires it. Repository docs have no such
- * field yet, so it is not required here.
+ * UI evidence (§15) applies only where a repository requires it: the caller passes `uiEvidence`
+ * only then, so with the flag off this decides exactly as it did before. Where it applies, work
+ * that would otherwise be accepted waits (`pending`) for before and after captures on the right
+ * commits, and a capture that could not be taken keeps it pending with the reason, never accepted.
  *
  * Green checks on a head that never left its base say nothing about the task: the base was green
  * already. With no `ready` report saying nothing needed changing, and no brief allowing it, that is
@@ -15,6 +17,12 @@
  * owned paths is sent back the same way, naming them (§10: a task owns its paths).
  */
 import { normalisePath } from './task-graph'
+import {
+  UI_EVIDENCE_FAILED,
+  UI_EVIDENCE_WAITING,
+  type UiEvidenceInput,
+  uiEvidenceVerdict,
+} from './ui-evidence'
 
 /** Stands for "no checks are registered". It names no command, so it can never pass by itself. */
 export const NO_CHECKS_MARKER = 'manual-review'
@@ -48,6 +56,8 @@ export type AcceptanceInput = {
   owned?: readonly string[]
   /** The files the attempt's commits changed against its base, as MEC read them. */
   changed?: readonly string[]
+  /** Present only where the repository requires UI evidence (§14, §15). */
+  uiEvidence?: UiEvidenceInput
 }
 
 export type RepairReason = 'checks_failed' | 'finding' | 'report_head' | 'no_change' | 'owned_paths'
@@ -127,5 +137,13 @@ export function acceptance(input: AcceptanceInput): Acceptance {
   const findings = input.findings.filter((finding) => finding.sha === head).map((finding) => finding.text)
   if (findings.length > 0) return { verdict: 'repair', reason: 'finding', head, failing: [], findings }
   if (policy.sensitive && policy.reviewedSha !== head) return { verdict: 'review', head }
+  if (input.uiEvidence !== undefined) {
+    const shots = uiEvidenceVerdict(input.uiEvidence, head)
+    if (shots.status === 'waiting') return { verdict: 'pending', reason: UI_EVIDENCE_WAITING }
+    if (shots.status === 'could_not') {
+      const reason = `${UI_EVIDENCE_FAILED}: Couldn't take the ${shots.side} screenshot: ${shots.reason}`
+      return { verdict: 'pending', reason }
+    }
+  }
   return { verdict: 'accepted', head }
 }

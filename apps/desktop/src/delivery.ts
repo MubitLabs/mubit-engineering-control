@@ -63,7 +63,9 @@ import {
   profileChanged,
   RepoAdmissionError,
   repairEvidence,
+  retakeScreenshots,
   revalidateWork,
+  screenshotsOffer,
   workResultOf,
 } from '@mec/meta'
 import { loadPolicy } from '@mec/policy'
@@ -93,6 +95,7 @@ import {
   workEvent,
   yieldCheck,
 } from './release'
+import { prEvidenceLines } from './ui-evidence'
 
 export const deliveryDocId = (workItemId: string): string => `delivery/${workItemId}`
 
@@ -125,8 +128,9 @@ const UPDATE_PATHS = 10
  * `repair`: the owner's Try again on blocked work, one fresh repair attempt (owner ruling 2026-11-07).
  * `update`: Bring up to date, for an open pull request that is behind its target or whose head
  * moved on GitHub (owner, 9 November 2026).
+ * `screenshots`: take the before and after screenshots again, after one could not be taken (§15).
  */
-export type RetryKind = 'integration' | 'push' | 'pr' | 'repair' | 'update'
+export type RetryKind = 'integration' | 'push' | 'pr' | 'repair' | 'update' | 'screenshots'
 export type RetryOffer = { kind: RetryKind; reason: string }
 export type RetryOutcome =
   | { status: 'retrying'; kind: RetryKind }
@@ -163,6 +167,8 @@ export function retryOffer(store: Store, work: StoreDoc): RetryOffer | undefined
   if (admittedUnderOtherCommands(store, work)) return undefined
   const id = String(work.id)
   const clean = (text: string): string => redact(text, [], []).slice(0, OFFER_CHARS)
+  const shots = work.state === 'blocked' ? undefined : screenshotsOffer(store, work)
+  if (shots !== undefined) return { kind: 'screenshots', reason: clean(shots.reason) }
   if (work.state === 'blocked') {
     const reason = String(work.blockedReason ?? '')
     if (!INTEGRATION_BLOCK.test(reason)) {
@@ -346,7 +352,8 @@ export class Delivery {
         if (outcome.status !== 'retrying') return outcome
         return { status: 'retrying', kind: 'repair' }
       }
-      if (offer.kind === 'integration') this.#resumeIntegration(work, at)
+      if (offer.kind === 'screenshots') retakeScreenshots(this.#store, workItemId, at)
+      else if (offer.kind === 'integration') this.#resumeIntegration(work, at)
       else if (offer.kind === 'update') this.#write(workItemId, { update: { status: 'requested', at } })
       else this.#askAgain(workItemId, offer.kind)
       this.#workEvent(workItemId, 'retry_requested', { kind: offer.kind })
@@ -891,6 +898,7 @@ export class Delivery {
         ...result.excluded.map((task) => `Excluded ${task.id}: ${task.reason}`),
         ...(slots.length > 0 ? [`Slots: ${slots.join(', ')}`] : []),
       ],
+      uiEvidence: prEvidenceLines(this.#store, id),
     })
   }
 

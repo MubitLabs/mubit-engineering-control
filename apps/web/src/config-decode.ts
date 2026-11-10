@@ -28,6 +28,7 @@ import type {
   SlotImpact,
   StepRoute,
   StepStatus,
+  UiEvidenceView,
 } from './next/config-model'
 
 type Obj = Record<string, unknown>
@@ -343,6 +344,32 @@ export function decodePreview(raw: unknown): { revision: string; text: string } 
   return { revision: str(path, body.revision, 'revision'), text: str(path, body.text, 'text') }
 }
 
+/** A server from before UI evidence sends none: that is off, never a guess at on. */
+function decodeUiEvidence(raw: unknown): UiEvidenceView {
+  const off: UiEvidenceView = { required: false, paths: ['/'], patterns: [] }
+  if (typeof raw !== 'object' || raw === null) return off
+  const record = raw as Record<string, unknown>
+  const strings = (value: unknown): string[] | undefined =>
+    Array.isArray(value) && value.every((entry) => typeof entry === 'string')
+      ? (value as string[])
+      : undefined
+  const start = record.start as Record<string, unknown> | undefined
+  const argv = strings(start?.argv)
+  return {
+    required: record.required === true,
+    ...(argv !== undefined &&
+      argv.length > 0 && {
+        start: {
+          argv,
+          ...(typeof start?.url === 'string' && { url: start.url }),
+          ...(typeof start?.port === 'number' && { port: start.port }),
+        },
+      }),
+    paths: strings(record.paths) ?? ['/'],
+    patterns: strings(record.patterns) ?? [],
+  }
+}
+
 export function decodeRepositories(raw: unknown): RepositoryView[] {
   const path = '/api/repositories'
   return arr(path, raw, 'the body').map((entry) => {
@@ -359,6 +386,7 @@ export function decodeRepositories(raw: unknown): RepositoryView[] {
       revision: str(path, repo.revision, 'repository.revision'),
       hostRunAgreedAt: typeof repo.hostRunAgreedAt === 'string' ? repo.hostRunAgreedAt : null,
       waiting: typeof repo.waiting === 'number' ? repo.waiting : 0,
+      uiEvidence: decodeUiEvidence(repo.uiEvidence),
     }
   })
 }

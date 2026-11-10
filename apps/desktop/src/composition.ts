@@ -69,6 +69,7 @@ import { buildHealthSnapshot, buildServer } from './server'
 import { listenEphemeral, listenOnLastPort, type PortMove } from './server-port'
 import { applyApprovedSwitches, autoFailover, requestSwitch, type SwitchDeps } from './slot-switch'
 import { specialistBridge, specialistTools } from './specialist-tools'
+import { UiEvidence } from './ui-evidence'
 
 /** A minimal valid policy: nothing is pre-authorised (§13); the user's file replaces it. */
 const DEFAULT_POLICY_TEXT = '{"preAuthorised":{}}'
@@ -409,6 +410,9 @@ export async function startServer(opts: {
           policyText,
         })
 
+  // §15: the screenshots acceptance waits for where a repository requires UI evidence.
+  const uiEvidence = launcher === undefined ? undefined : new UiEvidence({ store, dataDir: opts.dataDir })
+
   // What a boot learned of a card reaches delivery the way an answer would.
   for (const { card, outcome } of reconciled) delivery?.hooks.onCardSettled(card, outcome)
 
@@ -460,6 +464,7 @@ export async function startServer(opts: {
     heldPass()
     schedulerPass()
     if (!paused) delivery?.kick()
+    if (!paused) uiEvidence?.kick()
   }, PASS_INTERVAL_MS)
   queueTimer.unref()
   const probeTimer = setInterval(() => {
@@ -525,6 +530,7 @@ export async function startServer(opts: {
     // Before the tools go: an engine that loses its tools mid-turn fails instead of stopping.
     if (launcher !== undefined) await within(opts.closeBoundMs ?? CLOSE_BOUND_MS, launcher.close())
     if (delivery !== undefined) await within(opts.closeBoundMs ?? CLOSE_BOUND_MS, delivery.close())
+    if (uiEvidence !== undefined) await within(opts.closeBoundMs ?? CLOSE_BOUND_MS, uiEvidence.close())
     await within(opts.closeBoundMs ?? CLOSE_BOUND_MS, tools.stop())
     // §20, decision #36: only work already in flight finishes, within the bound. A drain would
     // start paid planner turns on the way out; pending rows are for the next start. Past the

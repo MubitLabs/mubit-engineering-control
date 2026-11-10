@@ -78,10 +78,11 @@ writeFileSync(
       bin: { mec: 'bin/mec.js' },
       files: ['bin', 'dist'],
       engines: appPkg.engines ?? { node: '>=22.12' },
-      // Only the natives stay external to the bundle; everything else is inlined.
+      // Only the natives and Playwright stay external to the bundle; everything else is inlined.
       dependencies: {
         'better-sqlite3': appPkg.dependencies['better-sqlite3'],
         'node-pty': appPkg.dependencies['node-pty'],
+        'playwright-core': appPkg.dependencies['playwright-core'],
       },
     },
     null,
@@ -166,6 +167,7 @@ Third-party packages this artifact depends on or bundles:
 | --- | --- | --- |
 | better-sqlite3 | MIT | installed at install time (native module, external to the bundle) |
 | node-pty | MIT | installed at install time (native module, external to the bundle) |
+| playwright-core | Apache-2.0 | installed at install time (UI evidence screenshots; Chromium itself is not shipped) |
 | fastify | MIT | inlined into dist/mec.mjs by esbuild |
 | react | MIT | the web workbench (apps/web), when bundled alongside |
 | zod | MIT | inlined into dist/mec.mjs by esbuild |

@@ -36,6 +36,7 @@ import type {
   RepositoryView,
   SetupAnswer,
   SlotImpact,
+  UiEvidenceEdit,
 } from './next/config-model'
 
 /** The server refused a base that is no longer current: 409, and the draft stands. */
@@ -210,7 +211,12 @@ export const configApi = {
   editRepository(
     id: string,
     baseRevision: string,
-    patch: { bootstrapCmds?: string[]; checkCmds?: CheckProfile[]; trusted?: boolean },
+    patch: {
+      bootstrapCmds?: string[]
+      checkCmds?: CheckProfile[]
+      trusted?: boolean
+      uiEvidence?: UiEvidenceEdit
+    },
   ): Promise<{ id: string; revision: string }> {
     return saving(
       send(`/api/repositories/${encodeURIComponent(id)}`, 'PATCH', {

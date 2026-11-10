@@ -29,6 +29,7 @@ import {
   deliveryStopped,
   deliveryWaiting,
   plannerTurnEnded,
+  type ScreenshotWait,
   type Stage,
   stageOf,
   workViewOf,
@@ -44,6 +45,7 @@ import {
   isHeld,
   type MetaTurn,
   processingOf,
+  screenshotWait,
   waitingForAgreement,
 } from '@mec/meta'
 import { type AttemptOutcome, type CheckRecord, projectAttempt } from '@mec/scorecards'
@@ -71,6 +73,7 @@ import {
   stoppedWords,
 } from './delivery'
 import { reasonWords } from './reason-words'
+import { type ScreenshotsView, screenshotsOf } from './ui-evidence'
 
 // ── The wire shape (handoff 30, "The wire shape") ────────────────────────────────────────────
 
@@ -153,6 +156,8 @@ export type WorkDetail = WorkRow & {
   delivery: DeliveryView
   /** What the owner may ask for again, and why it stopped. Null when a retry would answer nothing. */
   retry: RetryOffer | null
+  /** §15: the newest before and after screenshots MEC took for this work, by revision. */
+  screenshots: ScreenshotsView[]
   coverage: Coverage
   cursors: Record<string, number>
   /** Attempt streams left out of `cursors` (the work stream and the newest attempts are kept). */
@@ -674,6 +679,7 @@ const RETRY_NEXT: Readonly<Record<RetryKind, string>> = {
   pr: 'Ask to open the pull request again',
   repair: 'Try again',
   update: 'Bring up to date',
+  screenshots: 'Take the screenshots again',
 }
 /**
  * Work admitted under other commands is never delivered under them (§14, decision #41), and no
@@ -686,6 +692,8 @@ const INTEGRATION_BLOCK =
 /** A commit id, the only thing a stored ref may be before it reaches `git`. */
 const SHA = /^[0-9a-f]{7,64}$/
 const FAILURE_CAP = 500
+/** One record per attempt that needed screenshots; the newest few are what a reviewer looks at. */
+const SCREENSHOT_CAP = 5
 /** Stages with a Needs you row of their own: a question or card, or the repository's agreement. */
 const OWN_ROW_STAGES = new Set(['person/decision', 'person/agreement'])
 /** Headroom for the envelope fields around a page's items. */
@@ -701,6 +709,12 @@ type MeasuredDiff = {
 }
 
 const short = (sha: string): string => sha.slice(0, 7)
+
+/** §15: what a work item's tasks wait on for their screenshots, when anything does. */
+function screenshotFacts(store: Store, doc: StoreDoc): { screenshots?: ScreenshotWait } {
+  const screenshots = screenshotWait(store, doc)
+  return screenshots === undefined ? {} : { screenshots }
+}
 
 /**
  * The accepted head's real file list (§15), read from git because no writer stores one on the
@@ -1248,6 +1262,17 @@ class Inspector {
           nextAction: offer === undefined ? 'Look at the pull request on GitHub' : RETRY_NEXT[offer.kind],
         }
       }
+      case 'person/screenshots': {
+        // §15: the handoff stays incomplete, and the reason says which capture and why.
+        const offer = retryOffer(this.#store, doc)
+        return {
+          reason: offer === undefined ? null : cutAtWord(redactText(offer.reason), 200),
+          nextAction:
+            offer === undefined ? 'Look at why the screenshot could not be taken' : RETRY_NEXT[offer.kind],
+        }
+      }
+      case 'waiting/screenshots':
+        return { reason: 'MEC is taking the before and after screenshots of the change', nextAction: null }
       case 'waiting/checks': {
         const pr = num(this.#deliveryRecord(doc)?.prNumber)
         return {
@@ -1342,6 +1367,7 @@ class Inspector {
                 tasksOpen: (byStatus.ready ?? 0) + (byStatus.active ?? 0) > 0,
                 ...(stopped !== undefined && { deliveryStopped: stopped }),
                 ...deliveryWaiting(record),
+                ...screenshotFacts(this.#store, doc),
               }),
             )
       const repoId = repoIdOf(doc)
@@ -1480,6 +1506,7 @@ class Inspector {
       delegation: this.#delegation(allTasks.slice(0, tasks.length), attempts),
       delivery: { ...this.#deliveryOf(doc), ...this.#deliveryExtras(doc, needs) },
       retry: retryOffer(this.#store, doc) ?? null,
+      screenshots: screenshotsOf(this.#store, id).slice(-SCREENSHOT_CAP),
       coverage: this.#coverage(attempts, doc),
       cursors: this.#reads.cursors([`work:${id}`, ...attemptStreams]),
       cursorsTruncated: attempts.length - attemptStreams.length,

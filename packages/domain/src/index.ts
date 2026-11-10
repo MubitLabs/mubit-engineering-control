@@ -31,7 +31,7 @@ export type {
   SlotView,
 } from './scheduling'
 export { planDispatches } from './scheduling'
-export type { ChecksWait, DeliveryStop, Stage, StageRow, WorkItemView } from './stages'
+export type { ChecksWait, DeliveryStop, ScreenshotWait, Stage, StageRow, WorkItemView } from './stages'
 export {
   checksWaitLabel,
   deliveryStopped,
@@ -78,5 +78,25 @@ export {
 export type { BasePolicy, GraphIssue, GraphIssueKind, RoledTaskNode, TaskNode } from './task-graph'
 export { normalisePath, pathsOverlap, validateGraph } from './task-graph'
 export * from './tiers'
+export type {
+  UiEvidenceInput,
+  UiEvidenceSetting,
+  UiEvidenceVerdict,
+  UiShot,
+  UiSide,
+  UiStart,
+} from './ui-evidence'
+export {
+  DEFAULT_PATHS,
+  MAX_PATHS,
+  parseUiEvidence,
+  UI_EVIDENCE_FAILED,
+  UI_EVIDENCE_WAITING,
+  UI_PATTERNS,
+  UI_VIEWPORT,
+  uiEvidenceSetting,
+  uiEvidenceVerdict,
+  userVisible,
+} from './ui-evidence'
 export type { CombinedChecks, ResultTask, WorkResult, WorkResultInput } from './work-result'
 export { workResult } from './work-result'

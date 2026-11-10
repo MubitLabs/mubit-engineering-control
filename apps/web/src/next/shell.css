@@ -1441,6 +1441,27 @@ button.choice:hover,
   overflow-wrap: anywhere;
 }
 
+/* §15: before and after side by side, each labelled with its revision; stacked when narrow. */
+.screenshot-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.screenshot-pair figure {
+  margin: 0;
+}
+
+.screenshot-pair img {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
 .work-answer {
   font-size: 14px;
 }

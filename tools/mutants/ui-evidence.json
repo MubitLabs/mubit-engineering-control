@@ -1,0 +1,191 @@
+[
+  {
+    "name": "(5) acceptance never asks for screenshots",
+    "file": "packages/domain/src/acceptance.ts",
+    "find": "  if (input.uiEvidence !== undefined) {",
+    "replace": "  if (input.uiEvidence === null) {",
+    "tests": ["packages/domain/test/ui-evidence.test.ts", "packages/meta/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(5) waiting for screenshots reads as accepted",
+    "file": "packages/domain/src/acceptance.ts",
+    "find": "    if (shots.status === 'waiting') return { verdict: 'pending', reason: UI_EVIDENCE_WAITING }\n",
+    "replace": "",
+    "tests": ["packages/domain/test/ui-evidence.test.ts", "packages/meta/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(3) a capture that could not be taken passes",
+    "file": "packages/domain/src/acceptance.ts",
+    "find": "    if (shots.status === 'could_not') {",
+    "replace": "    if (shots.status === ('never' as string)) {",
+    "tests": ["packages/domain/test/ui-evidence.test.ts", "packages/meta/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(3) a capture of another commit counts",
+    "file": "packages/domain/src/ui-evidence.ts",
+    "find": "  if (side === undefined || side.sha !== sha) return 'missing'",
+    "replace": "  if (side === undefined) return 'missing'",
+    "tests": ["packages/domain/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(5) after-only is evidence",
+    "file": "packages/domain/src/ui-evidence.ts",
+    "find": "  return before === 'captured' && after === 'captured' ? { status: 'complete' } : { status: 'waiting' }",
+    "replace": "  return after === 'captured' ? { status: 'complete' } : { status: 'waiting' }",
+    "tests": ["packages/domain/test/ui-evidence.test.ts", "packages/meta/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(4) every change counts as user-visible",
+    "file": "packages/domain/src/ui-evidence.ts",
+    "find": "  if (!input.userVisible) return { status: 'not_needed' }\n",
+    "replace": "",
+    "tests": ["packages/domain/test/ui-evidence.test.ts", "packages/meta/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(4) a single star crosses directories",
+    "file": "packages/domain/src/ui-evidence.ts",
+    "find": "    } else if (char === '*') out += '[^/]*'",
+    "replace": "    } else if (char === '*') out += '.*'",
+    "tests": ["packages/domain/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(4) a glob matches a prefix",
+    "file": "packages/domain/src/ui-evidence.ts",
+    "find": "  return new RegExp(`^${out}$`)",
+    "replace": "  return new RegExp(`^${out}`)",
+    "tests": ["packages/domain/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(5) the scheduler never passes the evidence",
+    "file": "packages/meta/src/scheduler.ts",
+    "find": "    ...(shots !== undefined && { uiEvidence: shots }),",
+    "replace": "",
+    "tests": ["packages/meta/test/ui-evidence.test.ts", "apps/desktop/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(1) the flag is ignored: evidence is asked for everywhere",
+    "file": "packages/meta/src/ui-evidence.ts",
+    "find": "  if (!setting.required) return undefined\n",
+    "replace": "",
+    "tests": ["packages/meta/test/ui-evidence.test.ts", "apps/desktop/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(3) a review's own attempt is judged for captures",
+    "file": "packages/meta/src/ui-evidence.ts",
+    "find": "  if (kindOf(latest) !== 'review') return latest",
+    "replace": "  return latest",
+    "tests": ["packages/meta/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(5) a retake keeps the failed capture standing",
+    "file": "packages/meta/src/ui-evidence.ts",
+    "find": "  if (doc === undefined || doc.state === 'requested') return {}",
+    "replace": "  if (doc === undefined) return {}",
+    "tests": ["packages/meta/test/ui-evidence.test.ts", "apps/desktop/test/ui-evidence-surfaces.test.ts"]
+  },
+  {
+    "name": "(5) waiting outranks could-not-capture",
+    "file": "packages/meta/src/ui-evidence.ts",
+    "find": "  if (failed !== undefined) return { state: 'could_not', side: failed.side ?? 'after' }\n",
+    "replace": "",
+    "tests": ["packages/meta/test/ui-evidence.test.ts", "apps/desktop/test/ui-evidence-surfaces.test.ts"]
+  },
+  {
+    "name": "(5) the could-not-capture stage matches waiting",
+    "file": "packages/domain/src/stages.ts",
+    "find": "    match: (w) => w.screenshots?.state === 'could_not',",
+    "replace": "    match: (w) => w.screenshots !== undefined,",
+    "tests": ["packages/domain/test/ui-evidence.test.ts", "packages/domain/test/stages.test.ts"]
+  },
+  {
+    "name": "(2) the flag joins the pinned profile and refuses work in flight",
+    "file": "packages/meta/src/admission.ts",
+    "find": "    trust: repo.trust === true,\n",
+    "replace": "    trust: repo.trust === true,\n    uiEvidence: repo.uiEvidence ?? null,\n",
+    "tests": ["packages/meta/test/ui-evidence.test.ts", "apps/desktop/test/repository-edit.test.ts"]
+  },
+  {
+    "name": "(2) the stale-edit base ignores the setting",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "    ...(doc.uiEvidence !== undefined && { uiEvidence: doc.uiEvidence }),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/repository-edit.test.ts"]
+  },
+  {
+    "name": "(2) the edit route drops the setting",
+    "file": "apps/desktop/src/config-routes.ts",
+    "find": "      ...(uiEvidence !== undefined && { uiEvidence: uiEvidence as unknown as Json }),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/repository-edit.test.ts"]
+  },
+  {
+    "name": "(3) one side captured is taken",
+    "file": "apps/desktop/src/ui-evidence.ts",
+    "find": "      const taken = before.status === 'captured' && after.status === 'captured'",
+    "replace": "      const taken = before.status === 'captured' || after.status === 'captured'",
+    "tests": ["apps/desktop/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(3) the page reaches other origins",
+    "file": "apps/desktop/src/ui-capture.ts",
+    "find": "      ownOrigin(origin, route.request().url()) ? route.continue() : route.abort(),",
+    "replace": "      route.continue(),",
+    "tests": ["apps/desktop/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(3) the static server serves outside its tree",
+    "file": "apps/desktop/src/ui-capture.ts",
+    "find": "    if (file !== base && !file.startsWith(`${base}${sep}`)) {",
+    "replace": "    if (file === '') {",
+    "tests": ["apps/desktop/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(6) a PNG the record does not name is served",
+    "file": "apps/desktop/src/ui-evidence.ts",
+    "find": "    if (doc === undefined || doc.workItemId !== id || !SAFE_FILE.test(file) || !known) {",
+    "replace": "    if (doc === undefined || doc.workItemId !== id || !SAFE_FILE.test(file)) {",
+    "tests": ["apps/desktop/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(5) no retry is offered for a capture that could not be taken",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "  const shots = work.state === 'blocked' ? undefined : screenshotsOffer(store, work)",
+    "replace": "  const shots = undefined as { reason: string } | undefined",
+    "tests": ["apps/desktop/test/ui-evidence-surfaces.test.ts"]
+  },
+  {
+    "name": "(5) the retry takes nothing again",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      if (offer.kind === 'screenshots') retakeScreenshots(this.#store, workItemId, at)",
+    "replace": "      if (offer.kind === 'screenshots') void 0",
+    "tests": ["apps/desktop/test/ui-evidence-surfaces.test.ts"]
+  },
+  {
+    "name": "(5) Work never reads the screenshot facts",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "                ...screenshotFacts(this.#store, doc),\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/ui-evidence-surfaces.test.ts"]
+  },
+  {
+    "name": "(6) the PR body leaves the captures out",
+    "file": "apps/desktop/src/release.ts",
+    "find": "  if (input.uiEvidence !== undefined && input.uiEvidence.length > 0) {",
+    "replace": "  if (input.uiEvidence === null) {",
+    "tests": ["apps/desktop/test/ui-evidence-surfaces.test.ts"]
+  },
+  {
+    "name": "(6) the page loads an image from anywhere",
+    "file": "apps/web/src/inspection-decode.ts",
+    "find": "      if (!SCREENSHOT_URL.test(url)) throw new DecodeError(path, `${label}.url is not a screenshot route`)\n",
+    "replace": "",
+    "tests": ["apps/web/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(2) a save drops the repository's globs",
+    "file": "apps/web/src/next/SettingsView.tsx",
+    "find": "    ...(current.patterns.length > 0 && { patterns: current.patterns }),\n",
+    "replace": "",
+    "tests": ["apps/web/test/ui-evidence.test.ts"]
+  }
+]

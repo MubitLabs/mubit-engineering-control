@@ -141,7 +141,19 @@ export interface RepositoryView {
   hostRunAgreedAt: string | null
   /** Open work items only that agreement holds back. */
   waiting: number
+  /** §14, §15: whether a change users see needs before and after screenshots, and how MEC takes them. */
+  uiEvidence: UiEvidenceView
 }
+/** The repository's UI evidence setting as the API carries it (`PATCH /api/repositories/:id`, `uiEvidence`). */
+export interface UiEvidenceView {
+  required: boolean
+  /** Absent: MEC serves the revision's files itself. */
+  start?: { argv: string[]; url?: string; port?: number }
+  paths: string[]
+  patterns: string[]
+}
+/** What a save sends: no globs means MEC's defaults. */
+export type UiEvidenceEdit = Omit<UiEvidenceView, 'patterns'> & { patterns?: string[] }
 export interface CheckProfile {
   name: string
   cmd: string

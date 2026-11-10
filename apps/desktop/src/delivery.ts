@@ -189,21 +189,29 @@ export function retryOffer(store: Store, work: StoreDoc): RetryOffer | undefined
   return { kind: 'update', reason: clean(update) }
 }
 
-/** The head GitHub shows that MEC did not adopt, in words (owner, 9 November 2026). */
+/**
+ * The head GitHub shows that MEC did not adopt, in words (owner, 9 November 2026). One carrying
+ * someone else's commits says so: MEC will not merge over or replace them (owner, 10 November 2026).
+ */
 export function movedWords(doc: StoreDoc): string | undefined {
-  const sha = (doc.headMoved as { sha?: unknown } | undefined)?.sha
-  return typeof sha === 'string'
-    ? `The branch changed on GitHub (now ${sha.slice(0, 7)}). MEC won’t merge commits it didn’t check.`
-    : undefined
+  const moved = doc.headMoved as { sha?: unknown; foreign?: unknown } | undefined
+  const sha = moved?.sha
+  if (typeof sha !== 'string') return undefined
+  return moved?.foreign === true
+    ? `Someone else pushed to this branch on GitHub (now ${sha.slice(0, 7)}). MEC won’t merge over or replace their commits.`
+    : `The branch changed on GitHub (now ${sha.slice(0, 7)}). MEC won’t merge commits it didn’t check.`
 }
 
 /**
  * Why an open pull request needs bringing up to date, or what the last try said: undefined when
  * it does not, or while a try is on its way. A try that failed says so first, since it is the
- * newer fact and the cause it answered still stands.
+ * newer fact and the cause it answered still stands. A branch someone else pushed to is never
+ * brought up to date: its push could only merge over or replace their commits (owner, 10
+ * November 2026).
  */
 export function updateWords(doc: StoreDoc, target: string): string | undefined {
   if (doc.stage !== 'pr_open' && doc.stage !== 'ready') return undefined
+  if ((doc.headMoved as { foreign?: unknown } | undefined)?.foreign === true) return undefined
   const moved = movedWords(doc)
   if (moved === undefined && doc.behind !== true) return undefined
   const update = doc.update as
@@ -980,9 +988,12 @@ export class Delivery {
     if (seen?.sha === observed && seen.judged !== false) return false
     const branch = String(doc.branch)
     let why: string
+    // Someone else's commits, not just a head MEC could not judge: Bring up to date is withheld.
+    let foreign: boolean
     try {
       const github = await fetchGitHubBranches(this.release, String(work.repoId), branch)
       why = github.head !== observed ? 'github_disagrees' : await baseMergeOf(github, speaksFor)
+      foreign = FOREIGN_HEAD.has(why) && (await carriesOthers(github, speaksFor))
     } catch (error) {
       const refusal = refusalOf(error)
       if (refusal === undefined) throw error
@@ -997,9 +1008,10 @@ export class Delivery {
       this.#store.atomic(() => this.#workEvent(id, 'head_adopted', { from: speaksFor, to: observed, reason }))
       return true
     }
-    this.#patch(id, { headMoved: { sha: observed, at: this.#now, why } })
+    const said = { why, ...(foreign && { foreign: true as const }) }
+    this.#patch(id, { headMoved: { sha: observed, at: this.#now, ...said } })
     this.#store.atomic(() =>
-      this.#workEvent(id, 'head_moved_on_github', { from: speaksFor, sha: observed, why }),
+      this.#workEvent(id, 'head_moved_on_github', { from: speaksFor, sha: observed, ...said }),
     )
     return false
   }
@@ -1269,6 +1281,29 @@ async function changesOf(gitDir: string, target: string, head: string): Promise<
     changes.push(`${status} ${newMode} ${newBlob} ${String(fields[index + 1])}`)
   }
   return changes.sort()
+}
+
+/**
+ * The adoption refusals that say the head is something other than a pure merge of the target into
+ * MEC's head. `github_disagrees` and `changes_unreadable` say only that MEC could not tell.
+ */
+const FOREIGN_HEAD: ReadonlySet<string> = new Set(['not_on_mec_head', 'not_a_target_merge', 'changes_differ'])
+
+/**
+ * Whether GitHub's head holds a commit that is neither on the head MEC speaks for nor on the
+ * target: someone else's work, which Bring up to date could only merge over or replace (owner, 10
+ * November 2026). A branch put back on an older commit holds none. Unreadable counts as none, so
+ * the words claim nothing they did not see.
+ */
+async function carriesOthers(
+  github: { gitDir: string; head: string; target: string },
+  speaksFor: string,
+): Promise<boolean> {
+  const counted = await git(['rev-list', '--count', github.head, `^${speaksFor}`, `^${github.target}`], {
+    cwd: github.gitDir,
+    allowFailure: true,
+  })
+  return counted.code === 0 && Number(counted.stdout.trim()) > 0
 }
 
 /**

@@ -38,6 +38,8 @@ export type WorkItemView = {
   underWay?: boolean
   /** The pull request's head on GitHub is not the commit MEC pushed or adopted: its short id. */
   branchMoved?: string
+  /** That head carries someone else's commits (owner, 10 November 2026). */
+  branchForeign?: boolean
   /** GitHub's required checks on the pull request have not finished. */
   checksWaiting?: ChecksWait
 }
@@ -66,6 +68,8 @@ export type WorkFacts = {
   tasksOpen?: boolean
   /** `deliveryWaiting(record).branchMoved`; absent where the caller reads no delivery. */
   branchMoved?: string
+  /** `deliveryWaiting(record).branchForeign`; absent where the caller reads no delivery. */
+  branchForeign?: boolean
   /** `deliveryWaiting(record).checksWaiting`; absent where the caller reads no delivery. */
   checksWaiting?: ChecksWait
 }
@@ -175,7 +179,8 @@ export const STAGE_TABLE: readonly StageRow[] = [
     key: 'person/branch-moved',
     waitingOn: 'person',
     match: (w) => w.branchMoved !== undefined,
-    label: () => 'Branch changed on GitHub',
+    label: (w) =>
+      w.branchForeign === true ? 'Someone else pushed to the branch' : 'Branch changed on GitHub',
   },
   {
     key: 'person/agreement',
@@ -266,10 +271,13 @@ const text = (value: unknown): string | undefined => (typeof value === 'string' 
  */
 export function deliveryWaiting(
   record: Record<string, unknown> | undefined,
-): Pick<WorkFacts, 'branchMoved' | 'checksWaiting'> {
+): Pick<WorkFacts, 'branchMoved' | 'branchForeign' | 'checksWaiting'> {
   if (record?.stage !== 'pr_open') return {}
-  const moved = text((record.headMoved as { sha?: unknown } | undefined)?.sha)
-  if (moved !== undefined) return { branchMoved: moved.slice(0, 7) }
+  const head = record.headMoved as { sha?: unknown; foreign?: unknown } | undefined
+  const moved = text(head?.sha)
+  if (moved !== undefined) {
+    return { branchMoved: moved.slice(0, 7), ...(head?.foreign === true && { branchForeign: true }) }
+  }
   if (record.ci !== 'ci_pending') return {}
   const since = text(record.ciSince)
   return { checksWaiting: { queued: record.ciQueued === true, ...(since !== undefined && { since }) } }
@@ -323,6 +331,7 @@ export function workViewOf(doc: Record<string, unknown>, facts: WorkFacts): Work
     ...(facts.deliveryStopped !== undefined && { deliveryStopped: facts.deliveryStopped }),
     ...((live.length > 0 || facts.tasksOpen === true) && { underWay: true }),
     ...(facts.branchMoved !== undefined && { branchMoved: facts.branchMoved }),
+    ...(facts.branchForeign === true && { branchForeign: true }),
     ...(facts.checksWaiting !== undefined && { checksWaiting: facts.checksWaiting }),
   }
 }

@@ -1,0 +1,86 @@
+[
+  {
+    "name": "(b) Bring up to date is offered on a branch someone else pushed to",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "  if ((doc.headMoved as { foreign?: unknown } | undefined)?.foreign === true) return undefined\n",
+    "replace": "",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(b) a head is never read as someone else's",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      foreign = FOREIGN_HEAD.has(why) && (await carriesOthers(github, speaksFor))\n",
+    "replace": "      foreign = false\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(b) every moved head refused for a reason is read as someone else's",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "      foreign = FOREIGN_HEAD.has(why) && (await carriesOthers(github, speaksFor))\n",
+    "replace": "      foreign = FOREIGN_HEAD.has(why)\n",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(b) a base merge with a change of its own is not someone else's",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "new Set(['not_on_mec_head', 'not_a_target_merge', 'changes_differ'])",
+    "replace": "new Set(['not_on_mec_head', 'not_a_target_merge'])",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(b) a merge of something not on the target is not someone else's",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "new Set(['not_on_mec_head', 'not_a_target_merge', 'changes_differ'])",
+    "replace": "new Set(['not_on_mec_head', 'changes_differ'])",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(b) commits on the target count as someone else's",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "['rev-list', '--count', github.head, `^${speaksFor}`, `^${github.target}`]",
+    "replace": "['rev-list', '--count', github.head, `^${speaksFor}`]",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(b) MEC's own commits count as someone else's",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "['rev-list', '--count', github.head, `^${speaksFor}`, `^${github.target}`]",
+    "replace": "['rev-list', '--count', github.head, `^${github.target}`]",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(b) the words never say someone else pushed",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "  return moved?.foreign === true\n",
+    "replace": "  return false\n",
+    "tests": ["apps/desktop/test/delivery.test.ts", "apps/desktop/test/delivery-surfaces.test.ts"]
+  },
+  {
+    "name": "(b) the event does not say the head is someone else's",
+    "file": "apps/desktop/src/delivery.ts",
+    "find": "this.#workEvent(id, 'head_moved_on_github', { from: speaksFor, sha: observed, ...said })",
+    "replace": "this.#workEvent(id, 'head_moved_on_github', { from: speaksFor, sha: observed, why })",
+    "tests": ["apps/desktop/test/delivery.test.ts"]
+  },
+  {
+    "name": "(b) the stage never says someone else pushed",
+    "file": "packages/domain/src/stages.ts",
+    "find": "    return { branchMoved: moved.slice(0, 7), ...(head?.foreign === true && { branchForeign: true }) }\n",
+    "replace": "    return { branchMoved: moved.slice(0, 7) }\n",
+    "tests": ["packages/domain/test/stages.test.ts"]
+  },
+  {
+    "name": "(b) the work view drops someone else's push",
+    "file": "packages/domain/src/stages.ts",
+    "find": "    ...(facts.branchForeign === true && { branchForeign: true }),\n",
+    "replace": "",
+    "tests": ["packages/domain/test/stages.test.ts"]
+  },
+  {
+    "name": "(b) the live line never says someone else pushed",
+    "file": "apps/desktop/src/inspection.ts",
+    "find": "    return wait.branchForeign === true\n",
+    "replace": "    return false\n",
+    "tests": ["apps/desktop/test/delivery-surfaces.test.ts"]
+  }
+]

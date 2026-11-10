@@ -29,8 +29,10 @@ import {
   ACTIVE_ATTEMPT_STATES,
   acceptance,
   canTransition,
+  commandNeed,
   dependencySatisfied,
   planDispatches,
+  runsCommands,
   TASK_MACHINE,
   transition,
   WORK_ITEM_MACHINE,
@@ -842,6 +844,40 @@ function modelFit(
   return { modelSlots: [...resolved.keys()], degradedSlots, resolved }
 }
 
+/**
+ * Where a task whose objective needs commands may land: only a slot whose worker runs them (owner's
+ * horse tinder test, 9 November 2026). A pin on a slot that cannot is not honoured into a launch
+ * that can only report blocked; it waits for a replan. Any other task is not narrowed.
+ */
+function reachFit(
+  task: StoreDoc,
+  views: readonly SlotModelsView[],
+  pin: string | undefined,
+): { slots?: string[]; waits?: Deferred } {
+  const word = commandNeed(String(task.objective ?? ''))
+  if (word === undefined || process.env.MEC_FAKE_ENGINE === '1') return {}
+  const needs = `its objective needs commands ("${word}")`
+  const pinned = views.find((view) => view.slotId === pin)
+  if (pinned !== undefined && !runsCommands(pinned)) {
+    return {
+      waits: {
+        reason: `${needs}, but it is pinned to ${pin}, and ${pin} cannot run commands`,
+        releases: 'a replan moves it to a connection that can run commands',
+      },
+    }
+  }
+  const slots = views.filter(runsCommands).map((view) => view.slotId)
+  if (slots.length === 0) {
+    return {
+      waits: {
+        reason: `${needs}, and no connection can run commands`,
+        releases: 'a connection that can run commands is set up',
+      },
+    }
+  }
+  return { slots }
+}
+
 function nextAttemptId(store: Store): string {
   let max = 0
   for (const doc of store.attempts.list()) max = Math.max(max, attemptOrder(doc))
@@ -933,8 +969,18 @@ export function schedulePass(deps: SchedulerDeps, opts: { at: string; workItemId
       }
       const taskId = String(task.id)
       const next = task.next as Continuation | undefined
-      const { modelSlots, degradedSlots, resolved } = modelFit(deps, task, views)
       const hint = task.slotHint as { slotClass?: string; slotId?: string } | undefined
+      const reach = reachFit(task, views, hint?.slotId)
+      if (reach.waits !== undefined) {
+        defer(store, task, reach.waits, at)
+        continue
+      }
+      const fit = modelFit(deps, task, views)
+      const { degradedSlots, resolved } = fit
+      const modelSlots =
+        reach.slots === undefined
+          ? fit.modelSlots
+          : (fit.modelSlots ?? reach.slots).filter((slotId) => reach.slots?.includes(slotId))
       candidates.set(taskId, { doc: task, resolved })
       ready.push({
         taskId,

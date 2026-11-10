@@ -16,13 +16,13 @@
  */
 
 import { join } from 'node:path'
-import { type ModelAvailability, markKeyFor, tableEntries } from '@mec/domain'
+import { type ModelAvailability, markKeyFor, tableEntries, type WorkerReach } from '@mec/domain'
 import type { ModelsTableSource } from '@mec/meta'
 import { loadModelsTable, userModelsPath } from '@mec/prompts'
 import { probeModelAvailabilitySync } from '@mec/slots'
 import type { SqliteStore } from '@mec/store'
 import { isLaunchableSlot, realRunnerOn } from './attempt-launch'
-import { modelListingId } from './engine-registry'
+import { ENGINE_ROWS, type EngineRow, modelListingId, reachOf } from './engine-registry'
 
 type Marks = Record<string, Record<string, ModelAvailability>>
 
@@ -31,6 +31,8 @@ export type PlannerPlacement = {
   marks: () => Marks
   launchableSlots?: () => ReadonlySet<string>
   metaEngine: () => string | undefined
+  /** What each launchable slot's worker can run, from its engine row. */
+  reach?: () => Record<string, WorkerReach>
 }
 
 export function plannerPlacement(store: SqliteStore, dataDir: string): PlannerPlacement {
@@ -103,5 +105,13 @@ export function plannerPlacement(store: SqliteStore, dataDir: string): PlannerPl
         .filter(isLaunchableSlot)
         .map((slot) => String(slot.id)),
     )
-  return { modelsTable, marks, launchableSlots, metaEngine }
+  // A slot no row launches takes no work, so it has no reach to say.
+  const reach = (): Record<string, WorkerReach> =>
+    Object.fromEntries(
+      store.slots
+        .list()
+        .filter(isLaunchableSlot)
+        .map((slot) => [String(slot.id), reachOf(ENGINE_ROWS[String(slot.engine)] as EngineRow)]),
+    )
+  return { modelsTable, marks, launchableSlots, metaEngine, reach }
 }

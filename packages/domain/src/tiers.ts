@@ -2,6 +2,8 @@
 // frozen at v0 and another lane owns it, and domain depends on contracts only — a local
 // ladder keeps tier validation standalone. The integrator swaps the mirror for the
 // contracts import when v0.1 lands.
+import type { WorkerReach } from './reach'
+
 export const MODEL_TIERS = ['fast', 'balanced', 'strong', 'frontier'] as const
 export type ModelTier = (typeof MODEL_TIERS)[number]
 
@@ -81,6 +83,8 @@ export type SlotModelsView = {
   utilisation?: number
   /** Units the slot takes at once; absent means the policy's per-slot cap. */
   concurrency?: number
+  /** What its worker can run, from its engine row; absent says nothing and rules nothing out. */
+  reach?: WorkerReach
 }
 
 /**

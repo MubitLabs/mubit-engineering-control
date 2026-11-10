@@ -23,6 +23,7 @@ import type {
   ProviderId,
   StoreDoc,
 } from '@mec/contracts'
+import type { WorkerReach } from '@mec/domain'
 import {
   ClaudeAdapter,
   CODEX_ENGINE_VERSION,
@@ -42,6 +43,7 @@ import {
   codexOtherServers,
   defaultDenyRead,
   listCodexModels,
+  type OpenCodeRule,
   type OwnedSpawn,
   opencodeAttemptConfig,
   opencodeSlotEnv,
@@ -52,6 +54,7 @@ import {
   startOpenCodeClient,
 } from '@mec/runtime'
 import { engineHomeEnv, SlotKeystore } from '@mec/slots'
+import { judgeOperation } from './specialist-tools'
 
 /** §13's always-confirm commands, refused by the engine itself: see the Claude row. */
 const CLAUDE_DENIED_TOOLS = 'Bash(git push:*),Bash(gh:*)'
@@ -393,6 +396,95 @@ const codexRow: EngineRow = {
       env,
       spawn: ownedSpawn(new Supervisor(), { attemptId: 'model-list', generation: 1 }, { stdin: true }),
     }),
+}
+
+/** Stand-in paths for reading a row's launch config: only their shape matters, nothing is touched. */
+const SAMPLE = {
+  worktree: '/mec-reach/work/att',
+  tempDir: '/mec-reach/tmp/att',
+  homeDir: '/mec-reach/home',
+  dataDir: '/mec-reach/data',
+  sharedClone: '/mec-reach/repo.git',
+  toolsUrl: 'http://127.0.0.1:9/mcp',
+}
+
+/** The one shell command a worker asks for, as MEC's decider judges it under this row's sandbox. */
+const shellAllowed = (row: EngineRow): boolean =>
+  judgeOperation(
+    { kind: 'shell', summary: 'npm test', command: ['npm test'] },
+    { worktree: SAMPLE.worktree, tempDir: SAMPLE.tempDir, sandboxRequired: row.sandbox === 'required' },
+  ).allow
+
+/** OpenCode's last matching rule wins; `*` matches any action. */
+function opencodeEffect(rules: readonly OpenCodeRule[], action: string): OpenCodeRule['effect'] {
+  const match = rules.filter(
+    (rule) => (rule.action === '*' || rule.action === action) && rule.resource === '*',
+  )
+  return match.at(-1)?.effect ?? 'deny'
+}
+
+/** The isolation a launch builds for a writing role on this row (`attempt-launch.ts`). */
+const sampleIsolation = (row: EngineRow): IsolationProfile => ({
+  sandbox: row.sandbox,
+  read_only: false,
+  allow_write: [],
+  deny_read: [],
+  allowed_domains: [...row.domains],
+  blocked_commands: [],
+  background_cap_ms: 0,
+  permission_mode: 'bridge',
+  repo_trusted: false,
+})
+
+/**
+ * What a writing worker on this row can do (owner's horse tinder test, 9 November 2026), read off
+ * the config the row really writes, never typed in by hand: OpenCode's attempt permission rules and
+ * the decider that answers its asks, Claude's sandbox settings, Codex's sandbox profile. The
+ * planner sees it per connection, and plans and placement keep work that needs commands off a
+ * worker that cannot run them.
+ */
+export function reachOf(row: EngineRow): WorkerReach {
+  if (row.engine === 'opencode') {
+    const rules = opencodeAttemptConfig({ toolsUrl: SAMPLE.toolsUrl }).agents.build.permissions
+    const shell = opencodeEffect(rules, 'shell')
+    const commands = shell === 'allow' || (shell === 'ask' && shellAllowed(row))
+    return {
+      commands,
+      edits: opencodeEffect(rules, 'edit') !== 'deny',
+      network: opencodeEffect(rules, 'webfetch') !== 'deny',
+    }
+  }
+  if (row.engine === 'codex') {
+    const argv = codexAttemptArgs({
+      worktree: SAMPLE.worktree,
+      tempDir: SAMPLE.tempDir,
+      sharedClone: SAMPLE.sharedClone,
+      denyRead: defaultDenyRead(SAMPLE.homeDir, SAMPLE.dataDir),
+      toolsUrl: SAMPLE.toolsUrl,
+      otherServers: [],
+      readOnly: false,
+    })
+    // Every ask leaves the sandbox and is refused, so a command runs only inside it, unasked.
+    return {
+      commands: row.sandbox === 'required',
+      edits: argv.some((arg) => arg.includes(`${JSON.stringify(SAMPLE.worktree)}="write"`)),
+      network: argv.some((arg) => arg.includes('network')) || !argv.includes('web_search="disabled"'),
+    }
+  }
+  const settings = buildAttemptSettings(sampleIsolation(row), {
+    worktree: SAMPLE.worktree,
+    tempDir: SAMPLE.tempDir,
+    allowedDomains: [],
+    homeDir: SAMPLE.homeDir,
+    dataDir: SAMPLE.dataDir,
+    sharedClone: SAMPLE.sharedClone,
+  })
+  const own = new Set(row.domains)
+  return {
+    commands: settings.sandbox.enabled && shellAllowed(row),
+    edits: settings.sandbox.filesystem.allowWrite.includes(SAMPLE.worktree),
+    network: settings.sandbox.network.allowedDomains.some((domain) => !own.has(domain)),
+  }
 }
 
 /** Where the last listing of a slot's models is kept, for planning between launches. */

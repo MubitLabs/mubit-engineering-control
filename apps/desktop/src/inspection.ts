@@ -641,7 +641,11 @@ function deliveryLine(
   record: StoreDoc | undefined,
 ): string | undefined {
   const wait = deliveryWaiting(record)
-  if (wait.branchMoved !== undefined) return `The branch changed on GitHub (now ${wait.branchMoved})`
+  if (wait.branchMoved !== undefined) {
+    return wait.branchForeign === true
+      ? `Someone else pushed to this branch on GitHub (now ${wait.branchMoved})`
+      : `The branch changed on GitHub (now ${wait.branchMoved})`
+  }
   if (wait.checksWaiting !== undefined) return checksWaitLabel(wait.checksWaiting)
   const pr = delivery.prNumber === null ? 'The pull request' : `Pull request #${delivery.prNumber}`
   const words: Partial<Record<DeliveryView['stage'], string>> = {

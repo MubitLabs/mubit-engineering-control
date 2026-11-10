@@ -20,7 +20,7 @@ import {
 import { MemoryRepositories } from '@mec/testkit'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { commitWork } from '../src/attempt-launch'
-import { Delivery, deliveryDocId, retryOffer } from '../src/delivery'
+import { Delivery, deliveryDocId, movedWords, retryOffer } from '../src/delivery'
 import {
   cardEvidence,
   createPrBehindCard,
@@ -1397,10 +1397,6 @@ describe('a pull request head that moved on GitHub (owner, 9 November 2026: "Say
       expect(r.doc().headMoved).toMatchObject({ sha: theirs })
       expect(workEvents(r, 'head_moved_on_github')).toHaveLength(1)
       expect(workEvents(r, 'head_adopted')).toEqual([])
-      expect(retryOffer(r.store, work(r))).toEqual({
-        kind: 'update',
-        reason: `The branch changed on GitHub (now ${short(theirs)}). MEC won’t merge commits it didn’t check.`,
-      })
       await expect(
         openMergeCard(r.delivery.release, { repo: SLUG, prNumber: PR, workItemId: WORK }),
       ).rejects.toThrow('delivery_not_ready')
@@ -1412,8 +1408,9 @@ describe('a pull request head that moved on GitHub (owner, 9 November 2026: "Say
       mainMoves(r)
       const merged = updateBranch(r)
       await r.passes(3)
-      expect(r.doc()).toMatchObject({ stage: 'pr_open', headMoved: { sha: merged } })
+      expect(r.doc()).toMatchObject({ stage: 'pr_open', headMoved: { sha: merged, foreign: true } })
       expect(r.doc().prHead).toBeUndefined()
+      expect(retryOffer(r.store, work(r))).toBeUndefined()
     })
 
     it('a base merge that carries a change of its own is not adopted', async () => {
@@ -1421,8 +1418,9 @@ describe('a pull request head that moved on GitHub (owner, 9 November 2026: "Say
       mainMoves(r)
       const merged = updateBranch(r, { file: 'b.txt', text: 'edited in the merge\n' })
       await r.passes(3)
-      expect(r.doc()).toMatchObject({ stage: 'pr_open', headMoved: { sha: merged } })
+      expect(r.doc()).toMatchObject({ stage: 'pr_open', headMoved: { sha: merged, foreign: true } })
       expect(r.doc().prHead).toBeUndefined()
+      expect(retryOffer(r.store, work(r))).toBeUndefined()
     })
 
     it('a merge whose other parent is not on the target is not adopted', async () => {
@@ -1437,7 +1435,7 @@ describe('a pull request head that moved on GitHub (owner, 9 November 2026: "Say
       const merged = gitIn(path, 'rev-parse', 'HEAD')
       r.world.pr = { state: 'OPEN', headRefOid: merged }
       await r.passes(3)
-      expect(r.doc()).toMatchObject({ stage: 'pr_open', headMoved: { sha: merged } })
+      expect(r.doc()).toMatchObject({ stage: 'pr_open', headMoved: { sha: merged, foreign: true } })
     })
 
     it('a rebase onto main is not adopted, whatever it changes: the pushed head is not in it', async () => {
@@ -1450,7 +1448,10 @@ describe('a pull request head that moved on GitHub (owner, 9 November 2026: "Say
       const rebased = gitIn(path, 'rev-parse', 'HEAD')
       r.world.pr = { state: 'OPEN', headRefOid: rebased }
       await r.passes(3)
-      expect(r.doc()).toMatchObject({ stage: 'pr_open', headMoved: { sha: rebased, why: 'not_on_mec_head' } })
+      expect(r.doc()).toMatchObject({
+        stage: 'pr_open',
+        headMoved: { sha: rebased, why: 'not_on_mec_head', foreign: true },
+      })
       expect(r.doc().prHead).toBeUndefined()
     })
 
@@ -1471,6 +1472,66 @@ describe('a pull request head that moved on GitHub (owner, 9 November 2026: "Say
       await r.passes(2)
       expect(r.doc().headMoved).toBeUndefined()
       expect(r.doc().stage).toBe('ready')
+    })
+  })
+
+  describe('(b) Bring up to date is withheld when someone else pushed to the branch (owner, 10 November 2026)', () => {
+    it('a commit someone added is said in words, Bring up to date is not offered, and a retry is refused', async () => {
+      const r = await readyPr()
+      const theirs = foreignCommit(r)
+      await r.passes(3)
+      expect(r.doc().headMoved).toMatchObject({ sha: theirs, foreign: true })
+      expect(workEvents(r, 'head_moved_on_github').map((event) => event.body)).toEqual([
+        expect.objectContaining({ sha: theirs, foreign: true }),
+      ])
+      expect(movedWords(r.doc())).toBe(
+        `Someone else pushed to this branch on GitHub (now ${short(theirs)}). MEC won’t merge over or replace their commits.`,
+      )
+      expect(retryOffer(r.store, work(r))).toBeUndefined()
+      expect(r.delivery.retry(WORK)).toEqual({ status: 'refused', error: 'nothing_to_retry' })
+      await r.delivery.idle()
+      expect(r.doc().update).toBeUndefined()
+      expect(r.cards('push')).toHaveLength(1)
+      expect(r.remote(`refs/heads/${BRANCH}`)).toBe(theirs)
+    })
+
+    it('behind its target as well, a branch with their commits still offers nothing', async () => {
+      const r = await readyPr()
+      const theirs = foreignCommit(r)
+      mainMoves(r)
+      r.world.pr = { state: 'OPEN', headRefOid: theirs, mergeStateStatus: 'BEHIND' }
+      await r.passes(3)
+      expect(r.doc()).toMatchObject({ behind: true, headMoved: { sha: theirs, foreign: true } })
+      expect(retryOffer(r.store, work(r))).toBeUndefined()
+    })
+
+    it('a branch reset to the target carries nobody’s commits: Bring up to date stays', async () => {
+      const r = await readyPr()
+      const target = mainMoves(r)
+      gitIn(onGitHub(r), 'push', '--quiet', '--force', 'origin', `${target}:refs/heads/${BRANCH}`)
+      r.world.pr = { state: 'OPEN', headRefOid: target }
+      await r.passes(3)
+      expect(r.doc().headMoved).toMatchObject({ sha: target, why: 'not_on_mec_head' })
+      expect(r.doc().headMoved).not.toHaveProperty('foreign')
+      expect(retryOffer(r.store, work(r))).toEqual({
+        kind: 'update',
+        reason: `The branch changed on GitHub (now ${short(target)}). MEC won’t merge commits it didn’t check.`,
+      })
+    })
+
+    it('a branch put back on the head MEC pushed, under an adopted update, carries nobody’s commits', async () => {
+      const r = await readyPr()
+      const pushed = String(r.doc().head)
+      mainMoves(r)
+      const adopted = updateBranch(r)
+      await r.passes(3)
+      expect(r.doc().prHead).toBe(adopted)
+      gitIn(onGitHub(r), 'push', '--quiet', '--force', 'origin', `${pushed}:refs/heads/${BRANCH}`)
+      r.world.pr = { state: 'OPEN', headRefOid: pushed }
+      await r.passes(3)
+      expect(r.doc().headMoved).toMatchObject({ sha: pushed, why: 'not_on_mec_head' })
+      expect(r.doc().headMoved).not.toHaveProperty('foreign')
+      expect(retryOffer(r.store, work(r))?.kind).toBe('update')
     })
   })
 

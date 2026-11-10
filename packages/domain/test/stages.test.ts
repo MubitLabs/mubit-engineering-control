@@ -295,6 +295,16 @@ describe('an open pull request that waits on GitHub, not on MEC (owner, 9 Novemb
     })
   })
 
+  it('a branch someone else pushed to says so in its stage (owner, 10 November 2026)', () => {
+    const record = { stage: 'pr_open', headMoved: { sha: '63865a9'.padEnd(40, '0'), foreign: true } }
+    expect(deliveryWaiting(record)).toEqual({ branchMoved: '63865a9', branchForeign: true })
+    expect(stage(record)).toEqual({
+      key: 'person/branch-moved',
+      label: 'Someone else pushed to the branch',
+      waitingOn: 'person',
+    })
+  })
+
   it('pending required checks read as a wait on GitHub, queued or running, and since when', () => {
     const since = '2026-11-05T14:02:00.000Z'
     const queued = { stage: 'pr_open', ci: 'ci_pending', ciSince: since, ciQueued: true }

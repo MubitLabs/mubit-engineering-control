@@ -776,6 +776,30 @@ describe('an open pull request that waits on GitHub reads in words (owner, 9 Nov
     expect(await row()).toMatchObject({ reason: moved, nextAction: 'Look at the pull request on GitHub' })
   })
 
+  it('a branch someone else pushed to says so, offers nothing, and points at GitHub (owner, 10 November 2026)', async () => {
+    seedPr({
+      stage: 'pr_open',
+      behind: true,
+      headMoved: { sha: MOVED, at: AT, why: 'not_on_mec_head', foreign: true },
+    })
+    const theirs =
+      'Someone else pushed to this branch on GitHub (now 63865a9). MEC won’t merge over or replace their commits.'
+    expect(await row()).toMatchObject({
+      stage: { key: 'person/branch-moved', label: 'Someone else pushed to the branch', waitingOn: 'person' },
+      reason: theirs,
+      nextAction: 'Look at the pull request on GitHub',
+    })
+    const need = (await get('/api/inspect/needs')).items.find((entry: any) => entry.id === 'wi_pr')
+    expect(need).toMatchObject({ reason: theirs, nextAction: 'Look at the pull request on GitHub' })
+    const detail = await get('/api/inspect/work/wi_pr')
+    expect(detail.retry).toBeNull()
+    expect(detail.delivery).toMatchObject({ stage: 'pr-open', movedTo: '63865a9' })
+    expect((await get('/api/inspect/meta')).repositories[0]).toMatchObject({
+      state: 'delivering',
+      line: 'Someone else pushed to this branch on GitHub (now 63865a9): Add the audit log',
+    })
+  })
+
   it('required checks GitHub has not finished read as a wait on GitHub, and since when', async () => {
     const since = '2026-11-05T11:40:00.000Z'
     seedPr({ stage: 'pr_open', ci: 'ci_pending', ciAt: AT, ciSince: since, ciQueued: true })

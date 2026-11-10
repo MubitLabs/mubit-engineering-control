@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.12 (10 November 2026)
+
+A fix from the second live run of UI evidence. See `docs/changes/2026-11-10-yield-same-diff/`. No migration.
+
+- **MEC gives way only to the same change.** Before opening a pull request, MEC looks for a branch or pull request that already has the work. It used to give way when the other branch merely touched the same file names; now it needs the same commits, or the same contents in every changed file (spec §14). A delivery stopped under the old rule is checked again once, and goes on to the push card if it no longer matches.
+- **When MEC does give way, Work says so**: "Same change already on GitHub", naming the branch and pull request, instead of showing Working.
+- The Screenshots caption on Work no longer shows a doubled full stop.
+
 ## 0.3.11 (10 November 2026)
 
 Fixes from the first live run of UI evidence. See `docs/changes/2026-11-10-self-findings-and-dropped-repair/` and `2026-11-10-settings-checkbox-and-stale-delivery-line/`. No migration.

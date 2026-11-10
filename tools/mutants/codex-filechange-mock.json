@@ -1,0 +1,16 @@
+[
+  {
+    "name": "M1m the app-server runs by the link on PATH again: real binary, mock model (run with MEC_REAL_CODEX_MOCK=1)",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "          binary: realpathSync(binary),\n",
+    "replace": "          binary,\n",
+    "tests": ["apps/desktop/test/codex-sandbox.mock.test.ts"]
+  },
+  {
+    "name": "M2m the path is made absolute but its links are kept: real binary, mock model (run with MEC_REAL_CODEX_MOCK=1)",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "          binary: realpathSync(binary),\n",
+    "replace": "          binary: resolvePath(binary),\n",
+    "tests": ["apps/desktop/test/codex-sandbox.mock.test.ts"]
+  }
+]

@@ -1,0 +1,16 @@
+[
+  {
+    "name": "M1 the app-server runs by the link on PATH again (att_7, att_10)",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "          binary: realpathSync(binary),\n",
+    "replace": "          binary,\n",
+    "tests": ["apps/desktop/test/engine-registry.test.ts", "-t", "by its real path"]
+  },
+  {
+    "name": "M2 the path is made absolute but its links are kept",
+    "file": "apps/desktop/src/engine-registry.ts",
+    "find": "          binary: realpathSync(binary),\n",
+    "replace": "          binary: resolvePath(binary),\n",
+    "tests": ["apps/desktop/test/engine-registry.test.ts", "-t", "by its real path"]
+  }
+]

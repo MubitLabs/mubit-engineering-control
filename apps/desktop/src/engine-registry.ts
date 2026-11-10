@@ -375,7 +375,11 @@ const codexRow: EngineRow = {
       profile: CODEX_PROFILE,
       connect: async (spec) =>
         startCodexClient({
-          binary,
+          // By its real path: the app-server re-execs its own path for the fs helper that applies
+          // a patch, under the profile. `~/.local/bin/codex` links into `~/.codex`, which the
+          // profile denies, so run by the link every fileChange failed "Failed to write file"
+          // (0.3.5 att_7, 0.3.6 att_10) and every update "fs sandbox helper failed" (att_15).
+          binary: realpathSync(binary),
           args: prepared.argv?.(spec) ?? [],
           cwd,
           env: spec.env,

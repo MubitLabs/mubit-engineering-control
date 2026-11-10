@@ -7,7 +7,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import type { StoreDoc } from '@mec/contracts'
 import { DEFAULT_CAPS } from '@mec/domain'
 import { evidenceDocId, FollowUps, repoFields, schedulePass, screenshotsOffer } from '@mec/meta'
@@ -48,7 +48,10 @@ const PAGE = (title: string, colour: string) =>
   `<!doctype html><html><head><link rel="stylesheet" href="style.css"></head><body style="background:${colour}"><h1>${title}</h1><img src="https://example.invalid/tracker.png"><script src="app.js"></script></body></html>`
 
 /** A static site at its base, then a commit that changes what users see. */
-function site(extra: Record<string, string> = {}): { gitDir: string; base: string; head: string } {
+function site(
+  extra: Record<string, string> = {},
+  later: Record<string, string> = {},
+): { gitDir: string; base: string; head: string } {
   const repo = temp('repo')
   run(repo, 'init', '-q', '-b', 'main')
   writeFileSync(join(repo, 'index.html'), PAGE('Horses', 'white'))
@@ -59,14 +62,19 @@ function site(extra: Record<string, string> = {}): { gitDir: string; base: strin
   run(repo, 'commit', '-qm', 'base')
   const base = run(repo, 'rev-parse', 'HEAD')
   writeFileSync(join(repo, 'index.html'), PAGE('Swipe right on horses', 'pink'))
-  run(repo, 'commit', '-qam', 'change')
+  for (const [file, text] of Object.entries(later)) writeFileSync(join(repo, file), text)
+  run(repo, 'add', '-A')
+  run(repo, 'commit', '-qm', 'change')
   return { gitDir: repo, base, head: run(repo, 'rev-parse', 'HEAD') }
 }
 
-function rig(uiEvidence: StoreDoc, opts: { agreed?: boolean; extra?: Record<string, string> } = {}) {
+function rig(
+  uiEvidence: StoreDoc,
+  opts: { agreed?: boolean; extra?: Record<string, string>; later?: Record<string, string> } = {},
+) {
   const store = new MemoryRepositories()
   const dataDir = temp('data')
-  const { gitDir, base, head } = site(opts.extra)
+  const { gitDir, base, head } = site(opts.extra, opts.later)
   store.atomic(() => {
     store.engines.save({
       id: REPO,
@@ -235,6 +243,25 @@ describe('UI evidence on a real repository (§15)', () => {
     expect(status(store)).toBe('active')
   })
 
+  it('before taken and after not is could-not-capture, never taken', async () => {
+    const serve = [
+      "const http = require('node:http'); const fs = require('node:fs')",
+      "http.createServer((q, r) => r.end(fs.readFileSync('index.html'))).listen(Number(process.env.PORT), '127.0.0.1')",
+    ].join('\n')
+    const { store, dataDir, schedule } = rig(
+      { required: true, start: { argv: [process.execPath, 'server.cjs'] } },
+      { extra: { 'server.cjs': serve }, later: { 'server.cjs': 'process.exit(4)\n' } },
+    )
+    await new UiEvidence({ store, dataDir }).pass()
+    expect(record(store)).toMatchObject({
+      state: 'could_not',
+      before: { status: 'captured' },
+      after: { status: 'could_not', reason: 'the start command exited with code 4' },
+    })
+    schedule()
+    expect(status(store)).toBe('active')
+  })
+
   it('an app that never answers times out as could-not-capture', async () => {
     const { store, dataDir } = rig(
       { required: true, start: { argv: [process.execPath, 'idle.cjs'], port: 1 } },
@@ -312,12 +339,16 @@ describe('the static server', () => {
   it('serves the tree and nothing outside it', async () => {
     const root = temp('root')
     writeFileSync(join(root, 'index.html'), '<h1>hi</h1>')
-    writeFileSync(join(temp('outside'), 'secret.txt'), 'no')
+    const outside = temp('outside')
+    writeFileSync(join(outside, 'secret.txt'), 'no')
     const served = await serveStatic(root)
     try {
       expect(await (await fetch(`${served.origin}/`)).text()).toBe('<h1>hi</h1>')
       expect((await fetch(`${served.origin}/../secret.txt`)).status).toBe(404)
       expect((await fetch(`${served.origin}/%2e%2e/secret.txt`)).status).toBe(404)
+      // An encoded slash survives the client's own clean-up, so this reaches the server as `..`.
+      const sibling = `/..%2F${basename(outside)}%2Fsecret.txt`
+      expect((await fetch(`${served.origin}${sibling}`)).status).toBe(404)
       expect(served.origin.startsWith('http://127.0.0.1:')).toBe(true)
     } finally {
       await served.close()

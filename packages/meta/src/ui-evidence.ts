@@ -61,9 +61,9 @@ function sideOf(raw: unknown): UiSide | undefined {
   return { sha: side.sha, status: 'captured', shots: side.shots as UiShot[] }
 }
 
-/** The captures a record holds. A retry asked for holds none: they are being taken again. */
+/** The captures a record holds. A retry asked for is written with none: they are being taken again. */
 export function capturesOf(doc: StoreDoc | undefined): UiEvidenceInput['captures'] {
-  if (doc === undefined || doc.state === 'requested') return {}
+  if (doc === undefined) return {}
   const before = sideOf(doc.before)
   const after = sideOf(doc.after)
   return { ...(before !== undefined && { before }), ...(after !== undefined && { after }) }

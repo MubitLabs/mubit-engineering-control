@@ -77,13 +77,6 @@
     "tests": ["packages/meta/test/ui-evidence.test.ts"]
   },
   {
-    "name": "(5) a retake keeps the failed capture standing",
-    "file": "packages/meta/src/ui-evidence.ts",
-    "find": "  if (doc === undefined || doc.state === 'requested') return {}",
-    "replace": "  if (doc === undefined) return {}",
-    "tests": ["packages/meta/test/ui-evidence.test.ts", "apps/desktop/test/ui-evidence-surfaces.test.ts"]
-  },
-  {
     "name": "(5) waiting outranks could-not-capture",
     "file": "packages/meta/src/ui-evidence.ts",
     "find": "  if (failed !== undefined) return { state: 'could_not', side: failed.side ?? 'after' }\n",
@@ -187,5 +180,12 @@
     "find": "    ...(current.patterns.length > 0 && { patterns: current.patterns }),\n",
     "replace": "",
     "tests": ["apps/web/test/ui-evidence.test.ts"]
+  },
+  {
+    "name": "(5) a retake keeps the failed capture standing",
+    "file": "packages/meta/src/ui-evidence.ts",
+    "find": "      state: 'requested',\n      requestedAt: at,\n",
+    "replace": "      state: 'requested',\n      requestedAt: at,\n      ...(known?.after !== undefined && { after: known.after }),\n",
+    "tests": ["packages/meta/test/ui-evidence.test.ts", "apps/desktop/test/ui-evidence-surfaces.test.ts"]
   }
 ]

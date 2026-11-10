@@ -206,6 +206,15 @@ describe('UI evidence at acceptance (§15)', () => {
     expect(status(store)).toBe('accepted')
   })
 
+  it('a review changes nothing, yet the change it read still needs its screenshots', () => {
+    const { store, pass } = rig({ required: true })
+    finished(store, ['index.html'])
+    finished(store, [], 'att_2', { continuation: { kind: 'review' }, createdAt: '2026-11-10T12:05:00.000Z' })
+    pass()
+    expect(status(store)).toBe('active')
+    expect(screenshotsDue(store, 'wi_1').map((due) => due.attempt.id)).toEqual(['att_1'])
+  })
+
   it('turning the flag on changes no pinned profile: work in flight is not refused', () => {
     const { store } = rig()
     expect(profileChanged(store, REPO, work(store))).toBe(false)

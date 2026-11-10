@@ -19,15 +19,15 @@ One existing assertion changed, because the owner's answer #68 (b) changes this 
 
 ## Green
 
-- The three files together: 166 passed, after one fix during the work (`github` was out of scope in `#adoptMoved`).
+- The three files together: 167 passed, after one fix during the work (`github` was out of scope in `#adoptMoved`).
 - One run of the three files together had a single failure: "records when the wait began and whether anything started, and forgets it once they pass". Its file has no change on this branch, and the test is timing-based. It passed twice when run alone. Attributed to machine load, and not hidden.
 - `tsc --noEmit` for `apps/desktop`, `apps/web`, `packages/domain` and `packages/meta`: clean.
 - `biome check` on the changed files: clean after `biome format`.
 
 ## Mutants
 
-`python3 tools/mutants/run.py tools/mutants/owner-answers.json` has 12 mutants: the offer guard, the foreign flag forced off and forced on, each refusal reason dropped, each side of the commit count dropped, the words, the event, the domain fact, the view and the live line. **The run was still in progress when this record was written, so no result is recorded here.**
+`python3 tools/mutants/run.py tools/mutants/owner-answers.json` has 12 mutants: the offer guard, the foreign flag forced off and forced on, each refusal reason dropped, each side of the commit count dropped, the words, the event, the domain fact, the view and the live line. **Result: 12 of 12 killed** (`python3 tools/mutants/run.py tools/mutants/owner-answers.json`).
 
 ## Not run
 
-The full `pnpm check` / `pnpm test:a` / `pnpm test:b` did not run on this branch: the machine was loaded and the mutant run was still in progress. Neither did the web screens. The web side reads the server's words, and its code is unchanged.
+The full `pnpm check` / `pnpm test:a` / `pnpm test:b` did not run on this branch: the machine was loaded. Neither did the web screens. The web side reads the server's words, and its code is unchanged.

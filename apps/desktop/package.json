@@ -34,7 +34,7 @@
     "@mec/integration": "workspace:*",
     "@mec/slots": "workspace:*",
     "node-pty": "^1.1.0",
-    "playwright-core": "1.64.1"
+    "playwright-core": "1.65.0"
   },
   "devDependencies": {
     "@mec/testkit": "workspace:*",
